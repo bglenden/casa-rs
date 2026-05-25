@@ -14,7 +14,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -696,6 +696,45 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
             .unwrap_or_else(|| "none".to_string()),
     );
     manifest.insert("dirty_only".to_string(), config.dirty_only.to_string());
+    manifest.insert(
+        "standard_mfs_acceleration".to_string(),
+        standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration).to_string(),
+    );
+    manifest.insert(
+        "standard_mfs_backend".to_string(),
+        config
+            .standard_mfs_backend
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    manifest.insert(
+        "standard_mfs_grid_threads".to_string(),
+        config
+            .standard_mfs_grid_threads
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    manifest.insert(
+        "standard_mfs_tile_anchor".to_string(),
+        config
+            .standard_mfs_tile_anchor
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    manifest.insert(
+        "standard_mfs_residual_backend".to_string(),
+        config
+            .standard_mfs_residual_backend
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    manifest.insert(
+        "standard_mfs_initial_dirty_backend".to_string(),
+        config
+            .standard_mfs_initial_dirty_backend
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
     manifest.insert(
         "write_preview_pngs".to_string(),
         config.write_preview_pngs.to_string(),
@@ -2024,6 +2063,8 @@ fn run_single_image_from_config_with_gridder_override(
     let total_start = Instant::now();
     let stage_start = Instant::now();
     let ms_paths = measurement_set_paths(config)?;
+    let _standard_mfs_runtime_plan =
+        apply_standard_mfs_runtime_plan(config, force_standard_gridder, ms_paths.len());
     let mut ms = MeasurementSet::open(
         ms_paths
             .first()
@@ -2413,15 +2454,16 @@ fn run_single_image_from_config_with_gridder_override(
 
 fn can_run_standard_mfs_fixed_tile_streaming_clean(
     config: &CliConfig,
-    force_standard_gridder: bool,
+    _force_standard_gridder: bool,
     ms_count: usize,
 ) -> bool {
     ms_count == 1
         && standard_mfs_fixed_tile_backend_enabled_for_frontend()
         && matches!(config.spectral_mode, SpectralMode::Mfs)
-        && (force_standard_gridder || config.force_standard_gridder)
         && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
+        && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
+        && config.phasecenter.is_none()
         && config.save_model == SaveModelMode::None
         && config.outlier_file.is_none()
         && config.use_mask == CleanMaskMode::User
@@ -2432,14 +2474,15 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
 
 fn can_run_standard_mfs_dirty_streaming(
     config: &CliConfig,
-    force_standard_gridder: bool,
+    _force_standard_gridder: bool,
     ms_count: usize,
 ) -> bool {
     ms_count == 1
         && matches!(config.spectral_mode, SpectralMode::Mfs)
-        && (force_standard_gridder || config.force_standard_gridder)
         && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
+        && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
+        && config.phasecenter.is_none()
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
         && config.outlier_file.is_none()
@@ -5118,6 +5161,298 @@ fn env_flag_override(name: &str) -> Option<bool> {
     })
 }
 
+static STANDARD_MFS_RUNTIME_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+struct StandardMfsRuntimePlanGuard {
+    _env_lock: MutexGuard<'static, ()>,
+    previous: Vec<(&'static str, Option<OsString>)>,
+}
+
+impl StandardMfsRuntimePlanGuard {
+    fn new(env_lock: MutexGuard<'static, ()>) -> Self {
+        Self {
+            _env_lock: env_lock,
+            previous: Vec::new(),
+        }
+    }
+
+    fn set(&mut self, name: &'static str, value: &str) {
+        if !self.previous.iter().any(|(existing, _)| *existing == name) {
+            self.previous.push((name, env::var_os(name)));
+        }
+        // SAFETY: the imager runtime planner applies these process-local
+        // compatibility switches before launching any worker threads for the
+        // run and restores them when the run completes.
+        unsafe {
+            env::set_var(name, value);
+        }
+    }
+}
+
+impl Drop for StandardMfsRuntimePlanGuard {
+    fn drop(&mut self) {
+        for (name, previous) in self.previous.iter().rev() {
+            if let Some(previous) = previous {
+                // SAFETY: see `set`; restoration happens after the imaging run
+                // has joined its worker threads.
+                unsafe {
+                    env::set_var(name, previous);
+                }
+            } else {
+                // SAFETY: see `set`; restoration happens after the imaging run
+                // has joined its worker threads.
+                unsafe {
+                    env::remove_var(name);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StandardMfsRuntimeDecisionSource {
+    Auto,
+    Cli,
+    Env,
+    Policy,
+    NotApplicable,
+}
+
+impl StandardMfsRuntimeDecisionSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cli => "cli",
+            Self::Env => "env",
+            Self::Policy => "policy",
+            Self::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+fn apply_standard_mfs_runtime_plan(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> StandardMfsRuntimePlanGuard {
+    let env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+        .lock()
+        .expect("standard MFS runtime env lock");
+    apply_standard_mfs_runtime_plan_locked(config, force_standard_gridder, ms_count, env_lock)
+}
+
+fn apply_standard_mfs_runtime_plan_locked(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+    env_lock: MutexGuard<'static, ()>,
+) -> StandardMfsRuntimePlanGuard {
+    let eligible = can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
+    let auto_threads = standard_mfs_auto_grid_threads();
+    let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
+    let auto_metal = eligible
+        && cfg!(target_os = "macos")
+        && metal_device_available
+        && !config.dirty_only
+        && config.niter > 0;
+    let auto_multi_cpu = eligible && auto_threads > 1;
+
+    let mut guard = StandardMfsRuntimePlanGuard::new(env_lock);
+
+    let (backend, backend_source) = choose_standard_mfs_runtime_value(
+        config.standard_mfs_backend.as_deref(),
+        "CASA_RS_STANDARD_MFS_BACKEND",
+        match config.standard_mfs_acceleration {
+            StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("fixed_tile"),
+            StandardMfsAccelerationPolicy::Cpu => Some("cpu"),
+            StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
+                Some("fixed_tile")
+            }
+        },
+        config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
+    );
+    if let Some(value) = backend.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_BACKEND", value);
+    }
+
+    let default_threads = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then(|| auto_threads.to_string()),
+        StandardMfsAccelerationPolicy::Cpu => Some("1".to_string()),
+        StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
+            Some(auto_threads.max(2).to_string())
+        }
+    };
+    let (grid_threads, grid_threads_source) = choose_standard_mfs_runtime_value_owned(
+        config.standard_mfs_grid_threads.clone(),
+        "CASA_RS_STANDARD_MFS_GRID_THREADS",
+        default_threads,
+        config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
+    );
+    if let Some(value) = grid_threads.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_GRID_THREADS", value);
+    }
+
+    let (tile_anchor, tile_anchor_source) = choose_standard_mfs_runtime_value(
+        config.standard_mfs_tile_anchor.as_deref(),
+        "CASA_RS_STANDARD_MFS_TILE_ANCHOR",
+        match config.standard_mfs_acceleration {
+            StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("center_quadrants"),
+            StandardMfsAccelerationPolicy::Cpu => None,
+            StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
+                Some("center_quadrants")
+            }
+        },
+        config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
+    );
+    if let Some(value) = tile_anchor.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_TILE_ANCHOR", value);
+    }
+
+    let metal_policy = config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Metal;
+    let residual_default = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Auto => auto_metal.then_some("metal-row-run-grouped"),
+        StandardMfsAccelerationPolicy::Cpu | StandardMfsAccelerationPolicy::MultiCpu => Some("cpu"),
+        StandardMfsAccelerationPolicy::Metal => Some("metal-row-run-grouped"),
+    };
+    let (residual_backend, residual_backend_source) = choose_standard_mfs_runtime_value(
+        config.standard_mfs_residual_backend.as_deref(),
+        "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
+        residual_default,
+        config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
+    );
+    if let Some(value) = residual_backend.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND", value);
+    }
+
+    let initial_dirty_default = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Auto => auto_metal.then_some("metal-row-run-grouped"),
+        StandardMfsAccelerationPolicy::Cpu | StandardMfsAccelerationPolicy::MultiCpu => Some("cpu"),
+        StandardMfsAccelerationPolicy::Metal => Some("metal-row-run-grouped"),
+    };
+    let (initial_dirty_backend, initial_dirty_backend_source) = choose_standard_mfs_runtime_value(
+        config.standard_mfs_initial_dirty_backend.as_deref(),
+        "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND",
+        initial_dirty_default,
+        config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
+    );
+    if let Some(value) = initial_dirty_backend.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND", value);
+    }
+
+    let cache_override = config
+        .standard_mfs_metal_grouped_input_cache
+        .map(|value| if value { "1" } else { "0" });
+    let cache_default = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Cpu | StandardMfsAccelerationPolicy::MultiCpu => Some("0"),
+        StandardMfsAccelerationPolicy::Auto | StandardMfsAccelerationPolicy::Metal => None,
+    };
+    let (metal_cache, metal_cache_source) = choose_standard_mfs_runtime_value(
+        cache_override,
+        "CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE",
+        cache_default,
+        config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
+    );
+    if let Some(value) = metal_cache.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE", value);
+    }
+
+    eprintln!(
+        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={}",
+        standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
+        eligible,
+        auto_multi_cpu,
+        auto_metal || metal_policy,
+        metal_device_available,
+        backend.as_deref().unwrap_or("cpu"),
+        backend_source.label(),
+        grid_threads.as_deref().unwrap_or("1"),
+        grid_threads_source.label(),
+        tile_anchor.as_deref().unwrap_or("default"),
+        tile_anchor_source.label(),
+        residual_backend.as_deref().unwrap_or("cpu"),
+        residual_backend_source.label(),
+        initial_dirty_backend.as_deref().unwrap_or("cpu"),
+        initial_dirty_backend_source.label(),
+        metal_cache.as_deref().unwrap_or("planner"),
+        metal_cache_source.label(),
+    );
+
+    guard
+}
+
+fn can_plan_standard_mfs_acceleration(
+    config: &CliConfig,
+    _force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
+        && config.phasecenter.is_none()
+        && config.save_model == SaveModelMode::None
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
+        && config.uv_taper.is_none()
+        && matches!(config.w_term_mode, WTermMode::None)
+        && !needs_single_field_primary_beam_products(config)
+}
+
+fn standard_mfs_auto_grid_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, |value| value.get())
+        .clamp(1, 4)
+}
+
+fn choose_standard_mfs_runtime_value(
+    cli_value: Option<&str>,
+    env_name: &'static str,
+    default_value: Option<&str>,
+    force_policy_default: bool,
+) -> (Option<String>, StandardMfsRuntimeDecisionSource) {
+    choose_standard_mfs_runtime_value_owned(
+        cli_value.map(str::to_string),
+        env_name,
+        default_value.map(str::to_string),
+        force_policy_default,
+    )
+}
+
+fn choose_standard_mfs_runtime_value_owned(
+    cli_value: Option<String>,
+    env_name: &'static str,
+    default_value: Option<String>,
+    force_policy_default: bool,
+) -> (Option<String>, StandardMfsRuntimeDecisionSource) {
+    if let Some(value) = cli_value {
+        return (Some(value), StandardMfsRuntimeDecisionSource::Cli);
+    }
+    if !force_policy_default && let Ok(value) = env::var(env_name) {
+        return (Some(value), StandardMfsRuntimeDecisionSource::Env);
+    }
+    if let Some(value) = default_value {
+        return (
+            Some(value),
+            if force_policy_default {
+                StandardMfsRuntimeDecisionSource::Policy
+            } else {
+                StandardMfsRuntimeDecisionSource::Auto
+            },
+        );
+    }
+    (None, StandardMfsRuntimeDecisionSource::NotApplicable)
+}
+
+fn standard_mfs_acceleration_policy_label(policy: StandardMfsAccelerationPolicy) -> &'static str {
+    match policy {
+        StandardMfsAccelerationPolicy::Auto => "auto",
+        StandardMfsAccelerationPolicy::Cpu => "cpu",
+        StandardMfsAccelerationPolicy::MultiCpu => "multi-cpu",
+        StandardMfsAccelerationPolicy::Metal => "metal",
+    }
+}
+
 fn maybe_log_frontend_progress(stage: &str, stage_elapsed: Duration, total_elapsed: Duration) {
     if frontend_progress_enabled() {
         eprintln!(
@@ -5472,8 +5807,36 @@ pub struct CliConfig {
     pub w_project_planes: Option<usize>,
     /// Skip CLEAN and only write dirty/residual products.
     pub dirty_only: bool,
+    /// Standard-MFS runtime acceleration policy.
+    pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
+    /// Optional explicit standard-MFS backend override.
+    pub standard_mfs_backend: Option<String>,
+    /// Optional explicit standard-MFS grid worker count override.
+    pub standard_mfs_grid_threads: Option<String>,
+    /// Optional explicit standard-MFS fixed-tile anchor override.
+    pub standard_mfs_tile_anchor: Option<String>,
+    /// Optional explicit standard-MFS residual-refresh backend override.
+    pub standard_mfs_residual_backend: Option<String>,
+    /// Optional explicit standard-MFS initial dirty/PSF backend override.
+    pub standard_mfs_initial_dirty_backend: Option<String>,
+    /// Optional explicit Metal grouped input cache override.
+    pub standard_mfs_metal_grouped_input_cache: Option<bool>,
     /// Write PNG preview sidecars for the CASA image products.
     pub write_preview_pngs: bool,
+}
+
+/// Runtime acceleration policy for standard-MFS imaging.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StandardMfsAccelerationPolicy {
+    /// Let the runtime choose a backend from workload shape and platform support.
+    #[default]
+    Auto,
+    /// Force the serial/default CPU path unless a more specific backend option is supplied.
+    Cpu,
+    /// Prefer the fixed-tile multi-CPU path and disable Metal stage overrides.
+    MultiCpu,
+    /// Prefer the fixed-tile multi-CPU path with grouped Metal dirty/residual stages.
+    Metal,
 }
 
 impl CliConfig {
@@ -5531,6 +5894,13 @@ impl CliConfig {
         let mut force_standard_gridder = false;
         let mut w_project_planes = None::<usize>;
         let mut dirty_only = false;
+        let mut standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
+        let mut standard_mfs_backend = None::<String>;
+        let mut standard_mfs_grid_threads = None::<String>;
+        let mut standard_mfs_tile_anchor = None::<String>;
+        let mut standard_mfs_residual_backend = None::<String>;
+        let mut standard_mfs_initial_dirty_backend = None::<String>;
+        let mut standard_mfs_metal_grouped_input_cache = None::<bool>;
         let mut write_preview_pngs = true;
 
         let mut args = args.into_iter();
@@ -5920,6 +6290,45 @@ impl CliConfig {
                     dirty_only = true;
                     continue;
                 }
+                "--standard-mfs-acceleration" => {
+                    standard_mfs_acceleration = parse_standard_mfs_acceleration_policy(
+                        &next_value(&mut args, "--standard-mfs-acceleration")?,
+                    )?;
+                    continue;
+                }
+                "--standard-mfs-backend" => {
+                    standard_mfs_backend = Some(next_value(&mut args, "--standard-mfs-backend")?);
+                    continue;
+                }
+                "--standard-mfs-grid-threads" => {
+                    standard_mfs_grid_threads =
+                        Some(next_value(&mut args, "--standard-mfs-grid-threads")?);
+                    continue;
+                }
+                "--standard-mfs-tile-anchor" => {
+                    standard_mfs_tile_anchor =
+                        Some(next_value(&mut args, "--standard-mfs-tile-anchor")?);
+                    continue;
+                }
+                "--standard-mfs-residual-backend" => {
+                    standard_mfs_residual_backend =
+                        Some(next_value(&mut args, "--standard-mfs-residual-backend")?);
+                    continue;
+                }
+                "--standard-mfs-initial-dirty-backend" => {
+                    standard_mfs_initial_dirty_backend = Some(next_value(
+                        &mut args,
+                        "--standard-mfs-initial-dirty-backend",
+                    )?);
+                    continue;
+                }
+                "--standard-mfs-metal-grouped-input-cache" => {
+                    standard_mfs_metal_grouped_input_cache = Some(parse_bool_arg(
+                        &next_value(&mut args, "--standard-mfs-metal-grouped-input-cache")?,
+                        "--standard-mfs-metal-grouped-input-cache",
+                    )?);
+                    continue;
+                }
                 "--no-preview-pngs" => {
                     write_preview_pngs = false;
                     continue;
@@ -6002,6 +6411,13 @@ impl CliConfig {
             force_standard_gridder,
             w_project_planes,
             dirty_only,
+            standard_mfs_acceleration,
+            standard_mfs_backend,
+            standard_mfs_grid_threads,
+            standard_mfs_tile_anchor,
+            standard_mfs_residual_backend,
+            standard_mfs_initial_dirty_backend,
+            standard_mfs_metal_grouped_input_cache,
             write_preview_pngs,
         })
     }
@@ -18989,6 +19405,32 @@ fn parse_spectral_mode(text: &str) -> Result<SpectralMode, String> {
     }
 }
 
+fn parse_standard_mfs_acceleration_policy(
+    text: &str,
+) -> Result<StandardMfsAccelerationPolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(StandardMfsAccelerationPolicy::Auto),
+        "cpu" | "serial" | "off" | "none" => Ok(StandardMfsAccelerationPolicy::Cpu),
+        "multi-cpu" | "multicpu" | "fixed-tile" | "fixed_tile" | "tile" | "tiled" => {
+            Ok(StandardMfsAccelerationPolicy::MultiCpu)
+        }
+        "metal" | "gpu" => Ok(StandardMfsAccelerationPolicy::Metal),
+        _ => Err(format!(
+            "unsupported --standard-mfs-acceleration value {text:?}; expected auto, cpu, multi-cpu, or metal"
+        )),
+    }
+}
+
+fn parse_bool_arg(text: &str, option: &str) -> Result<bool, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!(
+            "unsupported {option} value {text:?}; expected true or false"
+        )),
+    }
+}
+
 fn parse_weighting_mode(text: &str, robust: f32) -> Result<WeightingMode, String> {
     match text.to_ascii_lowercase().as_str() {
         "natural" => Ok(WeightingMode::Natural),
@@ -21992,6 +22434,20 @@ Options:
   --wterm MODE              none, direct, or wproject
   --wprojplanes N           explicit CASA-style wproject plane budget
   --dirty-only              write dirty/residual products without CLEAN
+  --standard-mfs-acceleration MODE
+                            auto, cpu, multi-cpu, or metal (default auto)
+  --standard-mfs-backend MODE
+                            override standard-MFS backend: cpu, fixed_tile, metal, metal-row-run, or metal-row-run-grouped
+  --standard-mfs-grid-threads N|auto
+                            override standard-MFS grid worker count
+  --standard-mfs-tile-anchor MODE
+                            override fixed-tile anchor: zero, center_boundary, or center_quadrants
+  --standard-mfs-residual-backend MODE
+                            override residual refresh backend: cpu, metal, metal-row-run, or metal-row-run-grouped
+  --standard-mfs-initial-dirty-backend MODE
+                            override initial dirty/PSF backend: cpu or metal-row-run-grouped
+  --standard-mfs-metal-grouped-input-cache true|false
+                            override planner use of the grouped Metal input cache
   --no-preview-pngs         skip writing PNG preview sidecars
   --ui-schema               emit the launcher/TUI schema
   --json-schema             emit the canonical imager task JSON schema
@@ -22087,6 +22543,165 @@ mod tests {
         assert_eq!(parse_standard_mfs_grid_threads("many"), None);
         assert!(parse_standard_mfs_grid_threads("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_grid_threads("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    fn cli_parses_standard_mfs_acceleration_overrides() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("metal"),
+            OsString::from("--standard-mfs-grid-threads"),
+            OsString::from("3"),
+            OsString::from("--standard-mfs-residual-backend"),
+            OsString::from("cpu"),
+            OsString::from("--standard-mfs-metal-grouped-input-cache"),
+            OsString::from("false"),
+        ])
+        .expect("parse acceleration options");
+
+        assert_eq!(
+            config.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Metal
+        );
+        assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("3"));
+        assert_eq!(config.standard_mfs_residual_backend.as_deref(), Some("cpu"));
+        assert_eq!(config.standard_mfs_metal_grouped_input_cache, Some(false));
+    }
+
+    #[test]
+    fn standard_mfs_runtime_planner_defaults_to_fixed_tile_multi_cpu() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse minimal config");
+
+        {
+            let _plan = apply_standard_mfs_runtime_plan(&config, false, 1);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("fixed_tile")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_TILE_ANCHOR").as_deref(),
+                Ok("center_quadrants")
+            );
+            assert!(
+                env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .is_some_and(|threads| threads >= 1)
+            );
+            #[cfg(target_os = "macos")]
+            {
+                if casa_imaging::standard_mfs_metal_device_available() {
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                } else {
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+                }
+            }
+        }
+
+        assert!(env::var_os("CASA_RS_STANDARD_MFS_BACKEND").is_none());
+        assert!(env::var_os("CASA_RS_STANDARD_MFS_GRID_THREADS").is_none());
+    }
+
+    #[test]
+    fn standard_mfs_runtime_planner_cpu_policy_overrides_acceleration_env() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
+        let _threads = EnvGuard::set("CASA_RS_STANDARD_MFS_GRID_THREADS", "10");
+        let _residual = EnvGuard::set(
+            "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
+            "metal-row-run-grouped",
+        );
+        let _initial = EnvGuard::set(
+            "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND",
+            "metal-row-run-grouped",
+        );
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("cpu"),
+        ])
+        .expect("parse cpu policy");
+
+        {
+            let _plan = apply_standard_mfs_runtime_plan(&config, false, 1);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").as_deref(),
+                Ok("1")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+        }
+
+        assert_eq!(
+            env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+            Ok("fixed_tile")
+        );
+        assert_eq!(
+            env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").as_deref(),
+            Ok("10")
+        );
     }
 
     #[test]
@@ -23599,6 +24214,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -23656,6 +24278,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -23729,6 +24358,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -23794,6 +24430,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -23862,6 +24505,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -23927,6 +24577,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -23984,6 +24641,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -25913,6 +26577,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: true,
         }
     }
@@ -26204,6 +26875,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
         let ms = MeasurementSet::open(&config.ms).unwrap();
@@ -26306,6 +26984,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
         let ms = MeasurementSet::open(&config.ms).unwrap();
@@ -26404,6 +27089,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -26554,6 +27246,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -26684,6 +27383,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: Some(6),
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -26767,6 +27473,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -26882,6 +27595,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -26992,6 +27712,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27084,6 +27811,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27230,6 +27964,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27328,6 +28069,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27427,6 +28175,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27521,6 +28276,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27631,6 +28393,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27749,6 +28518,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -27844,6 +28620,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         }
     }
@@ -28131,6 +28914,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -28239,6 +29029,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         };
 
@@ -28364,6 +29161,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -28506,6 +29310,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -28615,6 +29426,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -28724,6 +29542,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -28852,6 +29677,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: true,
         })
         .unwrap();
@@ -28995,6 +29827,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -29116,6 +29955,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -29236,6 +30082,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -29334,6 +30187,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -29426,6 +30286,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -29519,6 +30386,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -29615,6 +30489,13 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: false,
         })
         .unwrap();

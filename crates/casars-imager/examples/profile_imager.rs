@@ -17,7 +17,9 @@ use std::time::Duration;
 
 use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::{CubeAxisConfig, CubeInterpolation};
-use casars_imager::{CliConfig, RunSummary, SpectralMode, run_from_config};
+use casars_imager::{
+    CliConfig, RunSummary, SpectralMode, StandardMfsAccelerationPolicy, run_from_config,
+};
 
 #[derive(Debug, Clone)]
 struct Options {
@@ -382,6 +384,13 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
+        standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+        standard_mfs_backend: None,
+        standard_mfs_grid_threads: None,
+        standard_mfs_tile_anchor: None,
+        standard_mfs_residual_backend: None,
+        standard_mfs_initial_dirty_backend: None,
+        standard_mfs_metal_grouped_input_cache: None,
         write_preview_pngs: false,
     }
 }

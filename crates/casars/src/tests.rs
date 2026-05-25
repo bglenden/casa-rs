@@ -8749,11 +8749,15 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
 
     start_run_with_default_imager_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
+    let stderr = app.stderr_for_test();
     assert!(
-        app.stderr_for_test().trim().is_empty(),
+        stderr.trim().is_empty()
+            || stderr
+                .lines()
+                .all(|line| line.starts_with("standard_mfs_runtime_plan ")),
         "status={} stderr={}",
         app.status_line_for_test(),
-        app.stderr_for_test()
+        stderr
     );
     assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
     assert!(

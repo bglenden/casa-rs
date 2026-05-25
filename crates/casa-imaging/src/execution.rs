@@ -9982,6 +9982,11 @@ impl MetalResidualGroupedRowRunChunk {
         self.group_scan_tests = 0;
     }
 
+    fn clear_group_scratch_after_finalize(&mut self) {
+        self.lane_group_ids.clear();
+        self.group_counts.clear();
+    }
+
     fn is_empty(&self) -> bool {
         self.row_runs.is_empty()
     }
@@ -10220,6 +10225,7 @@ pub struct StandardMfsMetalGroupedInputCachePrefill {
     chunks: Vec<MetalResidualGroupedRowRunChunk>,
     chunk: MetalResidualGroupedRowRunChunk,
     accumulation: StandardMfsTiledResidualAccumulation,
+    append_detail: MetalGroupedAppendDetail,
     runs: usize,
     logical_lanes: usize,
 }
@@ -10241,6 +10247,7 @@ impl StandardMfsMetalGroupedInputCachePrefill {
             partition,
             chunks: Vec::new(),
             accumulation: StandardMfsTiledResidualAccumulation::default(),
+            append_detail: MetalGroupedAppendDetail::default(),
             runs: 0,
             logical_lanes: 0,
         })
@@ -10274,13 +10281,17 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         {
             self.finish_current_chunk()?;
         }
-        self.backend.append_metal_residual_grouped_row_run_parts(
+        let parts = MetalRowRunParts {
             row,
             source_slot_range,
             tap_centers,
+        };
+        self.backend.append_metal_residual_grouped_row_run_parts(
+            parts,
             &self.partition,
             &mut self.accumulation,
             &mut self.chunk,
+            Some(&mut self.append_detail),
         )?;
         self.runs = self.runs.saturating_add(1);
         self.logical_lanes = self.logical_lanes.saturating_add(lane_count);
@@ -10331,6 +10342,17 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         }
         let mut cache = StandardMfsMetalGroupedInputCache::default();
         cache.replace(fill.key, cached_chunks, self.accumulation, None);
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_prefill_append_detail setup_ms={:.3} lane_push_ms={:.3} data_flag_copy_ms={:.3} run_desc_ms={:.3} group_assign_ms={:.3} group_finalize_ms={:.3}",
+                profile::millis(self.append_detail.setup),
+                profile::millis(self.append_detail.lane_push),
+                profile::millis(self.append_detail.data_flag_copy),
+                profile::millis(self.append_detail.run_desc),
+                profile::millis(self.append_detail.group_assign),
+                profile::millis(self.append_detail.group_finalize),
+            );
+        }
         Ok(cache)
     }
 
@@ -10338,9 +10360,10 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         if self.chunk.is_empty() {
             return Ok(());
         }
+        let finalize_started = Instant::now();
         self.chunk.finalize_groups(&self.partition)?;
-        self.chunk.lane_group_ids.clear();
-        self.chunk.group_counts.clear();
+        self.append_detail.group_finalize += finalize_started.elapsed();
+        self.chunk.clear_group_scratch_after_finalize();
         let finalized_chunk = std::mem::replace(
             &mut self.chunk,
             MetalResidualGroupedRowRunChunk::new(self.partition.tile_count()),
@@ -10348,6 +10371,24 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         self.chunks.push(finalized_chunk);
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalGroupedAppendDetail {
+    setup: Duration,
+    lane_push: Duration,
+    data_flag_copy: Duration,
+    run_desc: Duration,
+    group_assign: Duration,
+    group_finalize: Duration,
+}
+
+#[cfg(target_os = "macos")]
+struct MetalRowRunParts<'a> {
+    row: &'a StandardMfsRoutedVisibilityRow,
+    source_slot_range: Range<usize>,
+    tap_centers: &'a [[u32; 2]],
 }
 
 #[cfg(target_os = "macos")]
@@ -10375,6 +10416,7 @@ pub(crate) struct StandardMfsMetalGroupedInputCacheFill {
     accumulation: StandardMfsTiledResidualAccumulation,
     dirty_accumulation: StandardMfsDirtyAccumulation,
     collect_dirty_accumulation: bool,
+    append_detail: MetalGroupedAppendDetail,
 }
 
 #[cfg(target_os = "macos")]
@@ -10389,6 +10431,7 @@ pub(crate) struct MetalInitialDirtyGroupedState {
     pending: Vec<MetalInitialDirtyGroupedPendingDispatch>,
     storage_options: objc2_metal::MTLResourceOptions,
     append_grouped_row_run: Duration,
+    append_detail: MetalGroupedAppendDetail,
     dirty_accumulation: Duration,
     chunk_finalize_dispatch: Duration,
 }
@@ -10572,6 +10615,7 @@ struct MetalResidualRowRunRefreshTimings {
     grid_buffer: Duration,
     replay: Duration,
     append_total: Duration,
+    append_detail: MetalGroupedAppendDetail,
     dispatch_input_buffers: Duration,
     dispatch_params_buffer: Duration,
     dispatch_encode: Duration,
@@ -11861,7 +11905,9 @@ impl MetalDirtyBackend {
                 if chunk.is_empty() {
                     return Ok(());
                 }
+                let finalize_started = Instant::now();
                 chunk.finalize_groups(&partition)?;
+                timings.append_detail.group_finalize += finalize_started.elapsed();
                 let params = MetalResidualRowRunParams {
                     run_count: u32::try_from(chunk.row_runs.runs.len()).map_err(|_| {
                         ImagingError::InvalidRequest(
@@ -11939,8 +11985,7 @@ impl MetalDirtyBackend {
                     timings,
                 );
                 if let Some(cached_chunks) = cached_chunks.as_mut() {
-                    chunk.lane_group_ids.clear();
-                    chunk.group_counts.clear();
+                    chunk.clear_group_scratch_after_finalize();
                     let finalized_chunk = std::mem::replace(
                         chunk,
                         MetalResidualGroupedRowRunChunk::new(partition.tile_count()),
@@ -11968,11 +12013,12 @@ impl MetalDirtyBackend {
                     flush_chunk(&mut chunk, &mut timings, &mut cached_chunks)?;
                 }
                 let append_started = Instant::now();
-                self.append_metal_residual_grouped_row_run(
+                self.append_metal_residual_grouped_row_run_profiled(
                     routed_run,
                     &partition,
                     &mut accumulation,
                     &mut chunk,
+                    &mut timings.append_detail,
                 )?;
                 timings.append_total += append_started.elapsed();
                 if chunk.row_runs.logical_lanes >= chunk_lane_capacity {
@@ -12056,6 +12102,15 @@ impl MetalDirtyBackend {
                 timings.input_cache_fill,
                 timings.input_cache_chunks,
                 timings.input_cache_host_bytes,
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_append_detail setup_ms={:.3} lane_push_ms={:.3} data_flag_copy_ms={:.3} run_desc_ms={:.3} group_assign_ms={:.3} group_finalize_ms={:.3}",
+                profile::millis(timings.append_detail.setup),
+                profile::millis(timings.append_detail.lane_push),
+                profile::millis(timings.append_detail.data_flag_copy),
+                profile::millis(timings.append_detail.run_desc),
+                profile::millis(timings.append_detail.group_assign),
+                profile::millis(timings.append_detail.group_finalize),
             );
         }
         Ok(accumulation)
@@ -12148,6 +12203,7 @@ impl MetalDirtyBackend {
             pending: Vec::new(),
             storage_options,
             append_grouped_row_run: Duration::ZERO,
+            append_detail: MetalGroupedAppendDetail::default(),
             dirty_accumulation: Duration::ZERO,
             chunk_finalize_dispatch: Duration::ZERO,
         })
@@ -12171,11 +12227,12 @@ impl MetalDirtyBackend {
             self.finish_grouped_initial_dirty_chunk(state)?;
         }
         let append_started = Instant::now();
-        self.append_metal_residual_grouped_row_run(
+        self.append_metal_residual_grouped_row_run_profiled(
             routed_run,
             &state.fill.partition,
             &mut state.fill.accumulation,
             &mut state.fill.chunk,
+            &mut state.append_detail,
         )?;
         state.append_grouped_row_run += append_started.elapsed();
         let _ = weighting_plan;
@@ -12193,10 +12250,11 @@ impl MetalDirtyBackend {
             return Ok(());
         }
         let started = Instant::now();
+        let finalize_started = Instant::now();
         state.fill.chunk.finalize_groups(&state.fill.partition)?;
+        state.append_detail.group_finalize += finalize_started.elapsed();
         let params = grouped_row_run_params_from_fill(&state.fill)?;
-        state.fill.chunk.lane_group_ids.clear();
-        state.fill.chunk.group_counts.clear();
+        state.fill.chunk.clear_group_scratch_after_finalize();
         let finalized_chunk = std::mem::replace(
             &mut state.fill.chunk,
             MetalResidualGroupedRowRunChunk::new(state.fill.partition.tile_count()),
@@ -12477,6 +12535,15 @@ impl MetalDirtyBackend {
                 profile::millis(state.append_grouped_row_run),
                 profile::millis(state.dirty_accumulation),
                 profile::millis(state.chunk_finalize_dispatch),
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty_append_detail setup_ms={:.3} lane_push_ms={:.3} data_flag_copy_ms={:.3} run_desc_ms={:.3} group_assign_ms={:.3} group_finalize_ms={:.3}",
+                profile::millis(state.append_detail.setup),
+                profile::millis(state.append_detail.lane_push),
+                profile::millis(state.append_detail.data_flag_copy),
+                profile::millis(state.append_detail.run_desc),
+                profile::millis(state.append_detail.group_assign),
+                profile::millis(state.append_detail.group_finalize),
             );
         }
         Ok(accumulation)
@@ -12760,6 +12827,7 @@ impl MetalDirtyBackend {
             accumulation: StandardMfsTiledResidualAccumulation::default(),
             dirty_accumulation: StandardMfsDirtyAccumulation::default(),
             collect_dirty_accumulation,
+            append_detail: MetalGroupedAppendDetail::default(),
         })
     }
 
@@ -12779,11 +12847,12 @@ impl MetalDirtyBackend {
         {
             self.finish_grouped_input_cache_chunk(fill)?;
         }
-        self.append_metal_residual_grouped_row_run(
+        self.append_metal_residual_grouped_row_run_profiled(
             routed_run,
             &fill.partition,
             &mut fill.accumulation,
             &mut fill.chunk,
+            &mut fill.append_detail,
         )?;
         if fill.collect_dirty_accumulation {
             let accumulation =
@@ -12983,6 +13052,17 @@ impl MetalDirtyBackend {
             .collect_dirty_accumulation
             .then_some(fill.dirty_accumulation);
         cache.replace(fill.key, fill.chunks, fill.accumulation, dirty_accumulation);
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_fill_append_detail setup_ms={:.3} lane_push_ms={:.3} data_flag_copy_ms={:.3} run_desc_ms={:.3} group_assign_ms={:.3} group_finalize_ms={:.3}",
+                profile::millis(fill.append_detail.setup),
+                profile::millis(fill.append_detail.lane_push),
+                profile::millis(fill.append_detail.data_flag_copy),
+                profile::millis(fill.append_detail.run_desc),
+                profile::millis(fill.append_detail.group_assign),
+                profile::millis(fill.append_detail.group_finalize),
+            );
+        }
         Ok(())
     }
 
@@ -12993,7 +13073,9 @@ impl MetalDirtyBackend {
         if fill.chunk.is_empty() {
             return Ok(());
         }
+        let finalize_started = Instant::now();
         fill.chunk.finalize_groups(&fill.partition)?;
+        fill.append_detail.group_finalize += finalize_started.elapsed();
         let params = MetalResidualRowRunParams {
             run_count: u32::try_from(fill.chunk.row_runs.runs.len()).map_err(|_| {
                 ImagingError::InvalidRequest(
@@ -13049,8 +13131,7 @@ impl MetalDirtyBackend {
             briggs_f2: fill.briggs_f2,
             _pad1: 0.0,
         };
-        fill.chunk.lane_group_ids.clear();
-        fill.chunk.group_counts.clear();
+        fill.chunk.clear_group_scratch_after_finalize();
         let finalized_chunk = std::mem::replace(
             &mut fill.chunk,
             MetalResidualGroupedRowRunChunk::new(fill.partition.tile_count()),
@@ -13075,6 +13156,7 @@ impl MetalDirtyBackend {
             routed_run.tap_centers.as_ref(),
             accumulation,
             chunk,
+            None,
         )
     }
 
@@ -13085,7 +13167,9 @@ impl MetalDirtyBackend {
         tap_centers: &[[u32; 2]],
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualRowRunChunk,
+        mut append_detail: Option<&mut MetalGroupedAppendDetail>,
     ) -> Result<(), ImagingError> {
+        let setup_started = Instant::now();
         let lane_count = source_slot_range
             .end
             .saturating_sub(source_slot_range.start);
@@ -13201,6 +13285,10 @@ impl MetalDirtyBackend {
         let data_offset = chunk.data.len();
         let flag_offset = chunk.flags.len();
         let weight_offset = chunk.weights.len();
+        if let Some(detail) = append_detail.as_deref_mut() {
+            detail.setup += setup_started.elapsed();
+        }
+        let lane_push_started = Instant::now();
         for (lane_index, source_slot) in source_slot_range.clone().enumerate() {
             if contiguous_local_channels.is_none() {
                 let source_channel =
@@ -13238,6 +13326,10 @@ impl MetalDirtyBackend {
                 _pad0: 0,
             });
         }
+        if let Some(detail) = append_detail.as_deref_mut() {
+            detail.lane_push += lane_push_started.elapsed();
+        }
+        let data_flag_copy_started = Instant::now();
         if let (Some(local_channels), Some(data), Some(flags)) = (
             contiguous_local_channels,
             row.data.as_slice_memory_order(),
@@ -13284,6 +13376,10 @@ impl MetalDirtyBackend {
                 }
             }
         }
+        if let Some(detail) = append_detail.as_deref_mut() {
+            detail.data_flag_copy += data_flag_copy_started.elapsed();
+        }
+        let run_desc_started = Instant::now();
         chunk
             .weights
             .extend(row.weight.iter().take(corr_count).copied());
@@ -13343,42 +13439,51 @@ impl MetalDirtyBackend {
         accumulation.gridded_residual_samples = accumulation
             .gridded_residual_samples
             .saturating_add(lane_count);
+        if let Some(detail) = append_detail {
+            detail.run_desc += run_desc_started.elapsed();
+        }
         Ok(())
     }
 
-    fn append_metal_residual_grouped_row_run(
+    fn append_metal_residual_grouped_row_run_profiled(
         &self,
         routed_run: &StandardMfsRoutedVisibilityRun,
         partition: &MetalResidualGroupedTilePartition,
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualGroupedRowRunChunk,
+        append_detail: &mut MetalGroupedAppendDetail,
     ) -> Result<(), ImagingError> {
+        let parts = MetalRowRunParts {
+            row: routed_run.row.as_ref(),
+            source_slot_range: routed_run.source_slot_range.clone(),
+            tap_centers: routed_run.tap_centers.as_ref(),
+        };
         self.append_metal_residual_grouped_row_run_parts(
-            routed_run.row.as_ref(),
-            routed_run.source_slot_range.clone(),
-            routed_run.tap_centers.as_ref(),
+            parts,
             partition,
             accumulation,
             chunk,
+            Some(append_detail),
         )
     }
 
     fn append_metal_residual_grouped_row_run_parts(
         &self,
-        row: &StandardMfsRoutedVisibilityRow,
-        source_slot_range: Range<usize>,
-        tap_centers: &[[u32; 2]],
+        parts: MetalRowRunParts<'_>,
         partition: &MetalResidualGroupedTilePartition,
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualGroupedRowRunChunk,
+        mut append_detail: Option<&mut MetalGroupedAppendDetail>,
     ) -> Result<(), ImagingError> {
         let before_lanes = chunk.row_runs.lanes.len();
+        let row_detail = append_detail.as_deref_mut();
         self.append_metal_residual_row_run_parts(
-            row,
-            source_slot_range.clone(),
-            tap_centers,
+            parts.row,
+            parts.source_slot_range.clone(),
+            parts.tap_centers,
             accumulation,
             &mut chunk.row_runs,
+            row_detail,
         )?;
         let after_lanes = chunk.row_runs.lanes.len();
         if after_lanes == before_lanes {
@@ -13386,17 +13491,19 @@ impl MetalDirtyBackend {
         }
         let appended_lanes = after_lanes - before_lanes;
         chunk.lane_group_ids.reserve(appended_lanes);
-        let lane_count = source_slot_range
+        let lane_count = parts
+            .source_slot_range
             .end
-            .saturating_sub(source_slot_range.start);
+            .saturating_sub(parts.source_slot_range.start);
         if appended_lanes != lane_count {
             return Err(ImagingError::InvalidRequest(format!(
                 "standard MFS Metal grouped row-run appended {appended_lanes} lanes for a {}-lane run",
                 lane_count
             )));
         }
+        let group_assign_started = Instant::now();
         for lane_index in 0..appended_lanes {
-            let center = tap_centers.get(lane_index).ok_or_else(|| {
+            let center = parts.tap_centers.get(lane_index).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
                     "standard MFS Metal grouped row-run tap center {lane_index} is out of bounds"
                 ))
@@ -13419,6 +13526,9 @@ impl MetalDirtyBackend {
                 ))
             })?;
             *count = count.saturating_add(1);
+        }
+        if let Some(detail) = append_detail {
+            detail.group_assign += group_assign_started.elapsed();
         }
         Ok(())
     }

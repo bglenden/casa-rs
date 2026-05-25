@@ -3634,6 +3634,22 @@ fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
     matches!(request.w_term_mode, WTermMode::None) && standard_mfs_fixed_tile_backend_enabled()
 }
 
+/// Return whether this process can create a default macOS Metal device.
+///
+/// Auto runtime planners use this as an availability gate. Explicit Metal
+/// backend selections are still allowed to reach the backend so callers get
+/// the detailed backend error if the device cannot be opened.
+pub fn standard_mfs_metal_device_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        objc2_metal::MTLCreateSystemDefaultDevice().is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 fn should_use_standard_mfs_metal_backend(request: &ImagingRequest) -> bool {
     matches!(request.w_term_mode, WTermMode::None) && standard_mfs_metal_backend_enabled()
 }

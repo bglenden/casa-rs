@@ -613,6 +613,7 @@ mod tests {
     use crate::{
         AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, CubeAxisConfig,
         FrontendStageTimings, RunSummary, SaveModelMode, SpectralMode,
+        StandardMfsAccelerationPolicy,
     };
     use casa_imaging::{
         CleanStopReason, Deconvolver, HogbomIterationMode, ImagingStageTimings, RestoringBeamMode,
@@ -676,6 +677,13 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: true,
         }
     }
