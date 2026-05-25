@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal imaging execution plans and CPU workspaces.
 
+#[cfg(target_os = "macos")]
+use std::env;
 use std::{
     cmp::Ordering as CmpOrdering,
     collections::{BTreeMap, BinaryHeap, VecDeque},
-    env,
     ops::Range,
     sync::{
         Arc, Condvar, Mutex, MutexGuard,
@@ -23,13 +24,13 @@ use crate::{
     StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
     StandardMfsVisibilityPolarization, VisibilityBatch,
     gridder::{
-        DensityCellConvention, PositiveTapSet, STANDARD_GRIDDER_SUPPORT,
-        STANDARD_GRIDDER_TAP_COUNT, StandardGridder, StandardMfsTapCensus,
-        StandardMfsTapSkipReason, TapAxisSpan,
+        PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
+        StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
     },
     profile,
-    weighting::StandardMfsStreamingReweightPlan,
 };
+#[cfg(target_os = "macos")]
+use crate::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
 
 /// Internal backend selection for standard MFS execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

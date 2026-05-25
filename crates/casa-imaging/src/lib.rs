@@ -2593,7 +2593,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     weighting_plan: &StandardMfsStreamingWeightingPlan,
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
     stage_timings: &mut ImagingStageTimings,
-    mut metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+    metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
 ) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
@@ -2604,6 +2604,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     ) {
         #[cfg(target_os = "macos")]
         {
+            let mut metal_grouped_input_cache = metal_grouped_input_cache;
             let grid_started = Instant::now();
             let metal_executor =
                 StandardMfsMetalExecutor::new_with_initial_dirty_grouped(gridder, None)?;
