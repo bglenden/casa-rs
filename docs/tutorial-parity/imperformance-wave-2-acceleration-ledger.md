@@ -1,7 +1,7 @@
 # ImPerformance Wave 2 Acceleration Ledger
 
 Truth class: current descriptive
-Last reality check: 2026-05-24
+Last reality check: 2026-05-25
 Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging streaming_density_samples_match_batch_density_weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, final full-shape one-worker profiles on 2026-05-20, and bounded fixed-tile single-worker density-direct profiles on 2026-05-22
 
 Wave issue: #263
@@ -2962,6 +2962,7 @@ Artifacts:
 target/imperformance-wave2/metal-initial-dirty-20260525/current-control-after-gated-pipelines-niter150-cycleniter50.log
 target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-fused-gated-niter150-cycleniter50.log
 target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-gpu-run-accum-niter150-cycleniter50.log
+target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-density-prefill-default-niter150-cycleniter50.log
 ```
 
 This screen adds the explicit opt-in
@@ -2983,6 +2984,7 @@ same medium 64-channel, 1024-pixel, Briggs, multiscale `niter=150`,
 | CPU initial dirty, grouped residual cache | 31.349s | 18.420s | 18.643s | 4.934s | 9.686s | 4.888s | 31.53s | 9.55 GB | 9.55 GB |
 | Metal initial dirty, CPU scalar accumulation | 30.893s | 18.063s | 19.958s | 5.735s | 8.608s | 3.030s | 31.08s | 9.51 GB | 13.43 GB |
 | Metal initial dirty, GPU run scalar reduction | 30.597s | 17.634s | 19.257s | 5.451s | 8.414s | 3.122s | 31.83s | 9.55 GB | 13.31 GB |
+| Metal initial dirty, density-prefilled routed cache | 28.793s | 12.626s | 11.857s | 3.017s | 5.877s | 3.020s | 30.05s | 10.83 GB | 16.16 GB |
 
 The GPU run-reduction version moves initial dirty scalar bookkeeping
 (`sumwt`, gridded/skipped counts, and `max_abs_w_lambda`) out of the CPU
@@ -3004,12 +3006,41 @@ The initial dirty/PSF stage itself remains dominated by MS data reads and
 host-side grouped row-run construction, so this is not yet a default-on Mac
 backend.
 
-Decision: retain as an explicit experimental backend seam, not the default.
+Initial decision: retain as an explicit experimental backend seam, not the
+default.
 The GPU scalar reduction is architecturally useful because it removes duplicated
 producer-side lane semantics and keeps the initial-dirty path aligned with the
 future Metal backend contract. Default selection waits for a larger end-to-end
 gain or for a follow-up that avoids the separate initial dirty data/routing
 pass entirely.
+
+Follow-up: that separate initial dirty data/routing pass is now avoided when
+the memory plan can do so. With Metal grouped residual cache and Metal initial
+dirty selected, the frontend enables a transient routed-run cache by default
+for Uniform/Briggs weighting. The density pass reads row-shaped visibility
+essentials, accumulates density, and pre-fills routed row/channel runs. The
+first initial-dirty replay drains that cache while building the Metal grouped
+input cache, so the planner reserves the larger of the transient routed cache
+and the grouped input cache rather than treating both as long-lived concurrent
+buffers.
+
+The retained density-prefill screen reported:
+
+```text
+standard_mfs_routed_replay_cache pass=density status=prefill \
+  runs=3086235 lanes=197519040 estimated_bytes=6277202000
+standard_mfs_routed_replay_cache pass=initial_routed_visibility_run_replay \
+  status=drain_hit consumer_ms=4899.966 total_ms=5729.604
+```
+
+Versus the CPU initial-dirty control, frontend improves by `2.556s` (`8.2%`),
+core by `5.794s` (`31.5%`), PSF grid by `1.917s` (`38.9%`), and residual
+degrid/grid by `3.809s` (`39.3%`). The outer wall-clock wrapper improves by
+`1.48s` (`4.7%`). Peak footprint is `16159239880` bytes (`15.05 GiB`), under
+the default half-system target on this 32 GiB laptop. This is retained as the
+routine Metal initial-dirty data-flow shape, with
+`CASA_RS_STANDARD_MFS_ROUTED_REPLAY_CACHE=0` still available as an explicit
+disable switch.
 
 ## Reproduction
 

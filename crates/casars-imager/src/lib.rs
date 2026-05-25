@@ -2638,40 +2638,9 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         request.selected_frequency_range_hz,
     )
     .map_err(|error| error.to_string())?;
-    if weighting_plan.needs_density_pass() {
-        let mut density_stats = StandardMfsStreamingPassStats::new("density", 0);
-        if let Some(plane) = first_plane_for_initial_replay.as_ref() {
-            density_stats.record_cached_plane(plane);
-            let weighting_started_at = Instant::now();
-            weighting_plan.accumulate_density_batches(&plane.batches);
-            density_stats.add_weighting(weighting_started_at.elapsed());
-        }
-        stream_standard_mfs_density_row_blocks(
-            ms,
-            config,
-            data_column,
-            &selection,
-            &table_values,
-            &flag_row,
-            &active_selected_rows[first_rows_len..],
-            derived_engine.as_ref(),
-            channel_read_range,
-            &geometry_columns,
-            strategy.row_block_rows,
-            prepare_started_at,
-            &mut prepare_stage_timings,
-            &mut accumulate_timings,
-            &mut density_stats,
-            &mut weighting_plan,
-        )?;
-        density_stats.log();
-    }
-    weighting_plan.finish_density_pass();
-
     let execution_config = standard_mfs_execution_config_with_plan(config, &strategy);
     let planned_sample_builder = StandardMfsPlannedSampleBuilder::new(request.geometry)
         .map_err(|error| error.to_string())?;
-    let run_started_at = Instant::now();
     let force_tiled_one_worker = env::var("CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER")
         .map(|value| {
             matches!(
@@ -2684,16 +2653,92 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         || standard_mfs_fixed_tile_backend_enabled_for_frontend())
         && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none()
         && !force_tiled_one_worker;
+    let use_routed_tile_weighting = use_sample_streaming
+        && standard_mfs_fixed_tile_backend_enabled_for_frontend()
+        && env_standard_mfs_grid_threads().is_some_and(|threads| threads > 1)
+        && standard_mfs_planned_run_blocks_enabled()
+        && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_ROUTED_WEIGHTING").is_none();
+    let cache_routed_replays =
+        use_routed_tile_weighting && standard_mfs_routed_replay_cache_enabled(&strategy);
+    let mut routed_replay_cache = None::<Vec<StandardMfsRoutedVisibilityRun>>;
+    let mut routed_channel_axes = None::<Arc<MsImagingChannelAxisCatalog>>;
+    if weighting_plan.needs_density_pass() {
+        let mut density_stats = StandardMfsStreamingPassStats::new("density", 0);
+        if cache_routed_replays {
+            let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(ms)?);
+            let mut cache = Vec::<StandardMfsRoutedVisibilityRun>::new();
+            stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
+                ms,
+                config,
+                data_column,
+                &selection,
+                &table_values,
+                &active_selected_rows,
+                derived_engine.as_ref(),
+                Arc::clone(&channel_axes),
+                channel_read_range,
+                &geometry_columns,
+                strategy.row_block_rows,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                &mut density_stats,
+                &mut weighting_plan,
+                &planned_sample_builder,
+                &mut cache,
+            )?;
+            if standard_mfs_profile_detail_enabled() {
+                let cached_lanes = cache
+                    .iter()
+                    .map(StandardMfsRoutedVisibilityRun::len)
+                    .sum::<usize>();
+                eprintln!(
+                    "standard_mfs_routed_replay_cache pass=density status=prefill runs={} lanes={} estimated_bytes={}",
+                    cache.len(),
+                    cached_lanes,
+                    estimated_routed_visibility_run_cache_bytes(&cache),
+                );
+            }
+            routed_channel_axes = Some(channel_axes);
+            routed_replay_cache = Some(cache);
+        } else {
+            if let Some(plane) = first_plane_for_initial_replay.as_ref() {
+                density_stats.record_cached_plane(plane);
+                let weighting_started_at = Instant::now();
+                weighting_plan.accumulate_density_batches(&plane.batches);
+                density_stats.add_weighting(weighting_started_at.elapsed());
+            }
+            stream_standard_mfs_density_row_blocks(
+                ms,
+                config,
+                data_column,
+                &selection,
+                &table_values,
+                &flag_row,
+                &active_selected_rows[first_rows_len..],
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                strategy.row_block_rows,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                &mut density_stats,
+                &mut weighting_plan,
+            )?;
+        }
+        density_stats.log();
+    }
+    weighting_plan.finish_density_pass();
+
+    let run_started_at = Instant::now();
     let result = if use_sample_streaming {
-        let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(ms)?);
+        let channel_axes = match routed_channel_axes.take() {
+            Some(channel_axes) => channel_axes,
+            None => Arc::new(MsImagingChannelAxisCatalog::load(ms)?),
+        };
         let mut replay_invocation = 0usize;
-        let use_routed_tile_weighting = standard_mfs_fixed_tile_backend_enabled_for_frontend()
-            && env_standard_mfs_grid_threads().is_some_and(|threads| threads > 1)
-            && standard_mfs_planned_run_blocks_enabled()
-            && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_ROUTED_WEIGHTING").is_none();
         if use_routed_tile_weighting {
-            let cache_routed_replays = standard_mfs_routed_replay_cache_enabled(&strategy);
-            let mut routed_replay_cache = None::<Vec<StandardMfsRoutedVisibilityRun>>;
             let mut replay_routed_runs = |consumer: &mut dyn FnMut(
                 &StandardMfsRoutedVisibilityRun,
             )
@@ -2708,6 +2753,54 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 replay_invocation += 1;
                 let mut replay_stats =
                     StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
+                let drain_prefilled_cache = replay_ordinal == 0
+                    && execution_config.metal_grouped_input_cache
+                    && standard_mfs_metal_grouped_initial_dirty_backend_selected_for_frontend();
+                if drain_prefilled_cache {
+                    if let Some(mut cache) = routed_replay_cache.take() {
+                        let cached_started = Instant::now();
+                        let runs = cache.len();
+                        let estimated_bytes = estimated_routed_visibility_run_cache_bytes(&cache);
+                        let mut cached_lanes = 0usize;
+                        let mut consumer_elapsed = Duration::ZERO;
+                        let mut stream_error = None::<ImagingError>;
+                        for run in cache.drain(..) {
+                            cached_lanes = cached_lanes.saturating_add(run.len());
+                            let consumer_started = Instant::now();
+                            if let Err(error) = consumer(&run) {
+                                stream_error = Some(error);
+                                break;
+                            }
+                            consumer_elapsed += consumer_started.elapsed();
+                        }
+                        replay_stats.cached_row_blocks = 1;
+                        replay_stats.batches = runs;
+                        replay_stats.samples = cached_lanes;
+                        replay_stats.add_planned_sample_counts(
+                            cached_lanes,
+                            cached_lanes,
+                            cached_lanes.saturating_mul(49),
+                        );
+                        replay_stats.add_consumer(consumer_elapsed);
+                        if standard_mfs_profile_detail_enabled() {
+                            eprintln!(
+                                "standard_mfs_routed_replay_cache pass={} ordinal={} status=drain_hit runs={} lanes={} estimated_bytes={} consumer_ms={:.3} total_ms={:.3}",
+                                replay_pass,
+                                replay_ordinal,
+                                runs,
+                                cached_lanes,
+                                estimated_bytes,
+                                duration_ms(consumer_elapsed),
+                                duration_ms(cached_started.elapsed()),
+                            );
+                        }
+                        replay_stats.log();
+                        if let Some(error) = stream_error {
+                            return Err(error);
+                        }
+                        return Ok(());
+                    }
+                }
                 if let Some(cache) = routed_replay_cache.as_ref() {
                     let cached_started = Instant::now();
                     let mut cached_lanes = 0usize;
@@ -9283,6 +9376,122 @@ fn stream_standard_mfs_density_row_blocks(
     Ok(accepted_samples)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    cache: &mut Vec<StandardMfsRoutedVisibilityRun>,
+) -> Result<usize, String> {
+    let mut accepted_density_samples = 0usize;
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
+    let source_channel_indices =
+        Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
+    let mut next_input_seq = 0u64;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let (block, read_timings) = read_ms_imaging_essentials_block(
+            ms,
+            data_column_kind,
+            Arc::clone(&channel_axes),
+            geometry_columns,
+            row_chunk,
+            channel_read_range,
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
+            data_column: read_timings.data_column,
+            flag_column: read_timings.flag_column,
+            weight_column: read_timings.weight_column,
+            weight_spectrum: read_timings.weight_spectrum,
+            geometry_rows: read_timings.uvw_column,
+        });
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        let mut block_density_samples = 0usize;
+        let mut block_candidate_samples = 0usize;
+        let mut block_planned_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
+        for (selected_row, row) in row_chunk.iter().zip(block.rows.into_iter()) {
+            if row.spw_id != selected_row.spw_id {
+                return Err(format!(
+                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                    selected_row.row_index, selected_row.spw_id, row.spw_id
+                ));
+            }
+            block_density_samples += prepared.accumulate_standard_mfs_density_essentials_row(
+                selected_row,
+                &row,
+                derived_engine,
+                weighting_plan,
+                accumulate_timings,
+            )?;
+            let counts = prepared.stream_standard_mfs_routed_essentials_row_visibility_runs(
+                selected_row,
+                row,
+                derived_engine,
+                Arc::clone(&source_channel_indices),
+                planned_sample_builder,
+                &mut next_input_seq,
+                &mut |run| {
+                    cache.push(run.clone());
+                    Ok(())
+                },
+            )?;
+            block_candidate_samples += counts.candidate_samples;
+            block_planned_samples += counts.planned_samples;
+            block_detail.add(counts.detail);
+        }
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        pass_stats.add_planned_sample_counts(
+            block_candidate_samples,
+            block_planned_samples,
+            block_planned_samples.saturating_mul(49),
+        );
+        pass_stats.add_planned_sample_detail(block_detail);
+        pass_stats.record_density_block(
+            block_density_samples,
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        accepted_density_samples = accepted_density_samples.saturating_add(block_density_samples);
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/density_routed_cache_block rows_done={} rows_total={} accepted_density_samples={} cached_runs={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                accepted_density_samples,
+                cache.len(),
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(accepted_density_samples)
+}
+
 fn prepare_plane_input(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -10673,7 +10882,17 @@ fn standard_mfs_memory_plan(
 
     let routed_replay_cache_override =
         env_flag_override("CASA_RS_STANDARD_MFS_ROUTED_REPLAY_CACHE");
-    let routed_replay_cache_candidate = routed_replay_cache_override == Some(true);
+    let routed_replay_cache_transient_with_metal_cache = metal_grouped_input_cache_enabled
+        && standard_mfs_metal_grouped_initial_dirty_backend_selected_for_frontend()
+        && matches!(
+            config.weighting,
+            WeightingMode::Uniform
+                | WeightingMode::Briggs { .. }
+                | WeightingMode::BriggsBwTaper { .. }
+        )
+        && active_row_count > 0;
+    let routed_replay_cache_candidate = routed_replay_cache_override == Some(true)
+        || routed_replay_cache_transient_with_metal_cache;
     let routed_replay_cache_estimate = if routed_replay_cache_candidate {
         estimated_standard_mfs_routed_replay_cache_bytes(active_row_count, selected_channel_count)
     } else {
@@ -10682,13 +10901,24 @@ fn standard_mfs_memory_plan(
     let routed_replay_cache_enabled = match routed_replay_cache_override {
         Some(false) => false,
         Some(true) => routed_replay_cache_candidate,
-        None => false,
+        None => {
+            routed_replay_cache_transient_with_metal_cache
+                && reserved_without_cache_bytes.saturating_add(
+                    metal_grouped_input_cache_bytes.max(routed_replay_cache_estimate),
+                ) < total_budget_bytes
+        }
     };
     let routed_replay_cache_bytes = if routed_replay_cache_enabled {
         routed_replay_cache_estimate
     } else {
         0
     };
+    let cache_reservation_bytes =
+        if routed_replay_cache_enabled && routed_replay_cache_transient_with_metal_cache {
+            routed_replay_cache_bytes.max(metal_grouped_input_cache_bytes)
+        } else {
+            routed_replay_cache_bytes.saturating_add(metal_grouped_input_cache_bytes)
+        };
     let fixed_reserved_buffer_bytes = image_working_set_bytes
         .saturating_add(weighting_density_bytes)
         .saturating_add(gridded_visibility_bytes)
@@ -10698,8 +10928,7 @@ fn standard_mfs_memory_plan(
         .saturating_add(tile_cell_bin_bytes)
         .saturating_add(worker_staging_bytes)
         .saturating_add(gpu_staging_bytes)
-        .saturating_add(routed_replay_cache_bytes)
-        .saturating_add(metal_grouped_input_cache_bytes);
+        .saturating_add(cache_reservation_bytes);
     let prepare_buffer_floor_bytes = 64 * 1024 * 1024;
     let prepare_buffer_override = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)
@@ -11339,6 +11568,20 @@ fn standard_mfs_fixed_tile_backend_enabled_for_frontend() -> bool {
 
 fn standard_mfs_metal_grouped_residual_backend_selected_for_frontend() -> bool {
     env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "metal-row-run-grouped"
+                    | "metal_row_run_grouped"
+                    | "metal-grouped"
+                    | "metal_grouped"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn standard_mfs_metal_grouped_initial_dirty_backend_selected_for_frontend() -> bool {
+    env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND")
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
@@ -14290,6 +14533,168 @@ impl PreparedSelection {
                 | PreparedState::CollapsedMfs { .. }
                 | PreparedState::PairedMfs { .. }
         )
+    }
+
+    fn accumulate_standard_mfs_density_essentials_row(
+        &mut self,
+        selected_row: &SelectedMainRow,
+        row: &MsImagingEssentials,
+        derived_engine: Option<&MsCalEngine>,
+        weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+        timings: &mut AccumulateRowTimings,
+    ) -> Result<usize, String> {
+        timings.rows_seen += 1;
+        let adapt_started_at = Instant::now();
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
+        let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
+        let mut accepted_samples = 0usize;
+        match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                let channel_invariant_weight =
+                    if row.weight_spectrum.is_none() {
+                        Some(*row.weight.get(*corr_index).ok_or_else(|| {
+                            format!("WEIGHT correlation {corr_index} out of bounds")
+                        })?)
+                    } else {
+                        None
+                    };
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let local_channel = local_channel_index(
+                        channel_index,
+                        row.channel_origin,
+                        local_channel_count,
+                    )?;
+                    if *row.flag.get((*corr_index, local_channel)).ok_or_else(|| {
+                        format!("FLAG index [{corr_index}, {channel_index}] out of bounds")
+                    })? {
+                        continue;
+                    }
+                    let weight = if let Some(weight) = channel_invariant_weight {
+                        weight
+                    } else if let Some(weight_spectrum) = &row.weight_spectrum {
+                        *weight_spectrum
+                            .get((*corr_index, local_channel))
+                            .ok_or_else(|| {
+                                format!(
+                                    "WEIGHT_SPECTRUM index [{corr_index}, {channel_index}] out of bounds"
+                                )
+                            })?
+                    } else {
+                        *row.weight.get(*corr_index).ok_or_else(|| {
+                            format!("WEIGHT correlation {corr_index} out of bounds")
+                        })?
+                    };
+                    if !(weight.is_finite() && weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    weighting_plan.accumulate_density_sample(
+                        row.u_m * lambda_scale,
+                        row.v_m * lambda_scale,
+                        weight,
+                    );
+                    accepted_samples += 1;
+                }
+            }
+            PreparedState::CollapsedMfs { pair, .. } | PreparedState::PairedMfs { pair, .. } => {
+                let channel_invariant_pair_weights = if row.weight_spectrum.is_none() {
+                    Some((
+                        *row.weight.get(pair.0).ok_or_else(|| {
+                            format!("WEIGHT correlation {} out of bounds", pair.0)
+                        })?,
+                        *row.weight.get(pair.1).ok_or_else(|| {
+                            format!("WEIGHT correlation {} out of bounds", pair.1)
+                        })?,
+                    ))
+                } else {
+                    None
+                };
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let local_channel = local_channel_index(
+                        channel_index,
+                        row.channel_origin,
+                        local_channel_count,
+                    )?;
+                    if *row.flag.get((pair.0, local_channel)).ok_or_else(|| {
+                        format!("FLAG index [{}, {channel_index}] out of bounds", pair.0)
+                    })? || *row.flag.get((pair.1, local_channel)).ok_or_else(|| {
+                        format!("FLAG index [{}, {channel_index}] out of bounds", pair.1)
+                    })? {
+                        continue;
+                    }
+                    let (first_weight, second_weight) =
+                        if let Some(weights) = channel_invariant_pair_weights {
+                            weights
+                        } else if let Some(weight_spectrum) = &row.weight_spectrum {
+                            (
+                            *weight_spectrum
+                                .get((pair.0, local_channel))
+                                .ok_or_else(|| {
+                                    format!(
+                                        "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
+                                        pair.0
+                                    )
+                                })?,
+                            *weight_spectrum
+                                .get((pair.1, local_channel))
+                                .ok_or_else(|| {
+                                    format!(
+                                        "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
+                                        pair.1
+                                    )
+                                })?,
+                        )
+                        } else {
+                            (
+                                *row.weight.get(pair.0).ok_or_else(|| {
+                                    format!("WEIGHT correlation {} out of bounds", pair.0)
+                                })?,
+                                *row.weight.get(pair.1).ok_or_else(|| {
+                                    format!("WEIGHT correlation {} out of bounds", pair.1)
+                                })?,
+                            )
+                        };
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let combined_weight = 0.5 * (first_weight + second_weight);
+                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    weighting_plan.accumulate_density_sample(
+                        row.u_m * lambda_scale,
+                        row.v_m * lambda_scale,
+                        combined_weight,
+                    );
+                    accepted_samples += 1;
+                }
+            }
+            _ => {
+                return Err(
+                    "internal error: MS essentials density preparation requires MFS state"
+                        .to_string(),
+                );
+            }
+        }
+        timings.adapt_samples += adapt_started_at.elapsed();
+        Ok(accepted_samples)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -21201,6 +21606,38 @@ mod tests {
         assert!(!plan.routed_replay_cache_enabled);
         let execution = standard_mfs_execution_config_with_plan(&config, &plan);
         assert!(execution.metal_grouped_input_cache);
+    }
+
+    #[test]
+    fn standard_mfs_memory_planner_enables_transient_routed_cache_for_metal_initial_dirty() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "16384");
+        let _residual_backend = EnvGuard::set(
+            "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
+            "metal-row-run-grouped",
+        );
+        let _initial_backend = EnvGuard::set(
+            "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND",
+            "metal-row-run-grouped",
+        );
+        let _grouped_cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+        let _routed_cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_ROUTED_REPLAY_CACHE");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 1024;
+        config.weighting = WeightingMode::Briggs { robust: 0.5 };
+        config.niter = 2;
+        config.dirty_only = false;
+
+        let plan = standard_mfs_memory_plan(&config, 64, 1024);
+
+        assert!(plan.metal_grouped_input_cache_enabled);
+        assert!(plan.routed_replay_cache_enabled);
+        assert_eq!(
+            plan.routed_replay_cache_bytes,
+            1024 * 64 * ESTIMATED_STANDARD_MFS_ROUTED_REPLAY_CACHE_BYTES_PER_LANE
+        );
+        assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
     }
 
     #[test]
