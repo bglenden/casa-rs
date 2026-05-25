@@ -1,0 +1,1045 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ImPerformance Wave 2 Standard-MFS Experiment Summary - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imperformance-wave-2-standard-mfs-experiment-summary" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ImPerformance Wave 2 Standard-MFS Experiment Summary
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#retained-runtime-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retained Runtime Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retained-cpu-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retained CPU Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retained-metal-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retained Metal Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-worked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Worked
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-did-not-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Did Not Work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-lessons-to-carry-forward" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Lessons To Carry Forward
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-follow-up-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Follow-Up Direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imperformance-wave-2-standard-mfs-experiment-summary">ImPerformance Wave 2 Standard-MFS Experiment Summary<a class="headerlink" href="#imperformance-wave-2-standard-mfs-experiment-summary" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-05-25
+Verification: <code>cargo check -p casa-imaging -p casars-imager</code>; <code>cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib</code>; <code>cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib</code>; <code>cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib</code>; <code>cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib</code>; <code>cargo test -p casars-imager managed_output --lib</code>; <code>cargo test -p casars-imager task_contract --lib</code>; <code>just docs-check</code>; <code>git diff --check</code></p>
+<p>Wave issue: #263</p>
+<p>This document is the consolidated closeout record for ImPerformance Wave 2
+standard-MFS acceleration. It replaces the long acceleration ledger and the
+separate streaming-tile and producer/consumer design notes. The goal is to keep
+the useful results, rejected paths, and cross-mode lessons in one place before
+similar questions recur in cube, mosaic, and other imaging modes.</p>
+<h2 id="retained-runtime-policy">Retained Runtime Policy<a class="headerlink" href="#retained-runtime-policy" title="Permanent link">&para;</a></h2>
+<p>The standalone imager now has an automatic standard-MFS acceleration planner:</p>
+<div class="codehilite"><pre><span></span><code>Default runtime policy: --standard-mfs-acceleration auto
+CPU backend: fixed-tile multi-CPU when the standard-MFS workload is eligible
+Default CPU worker cap: 4
+Default CPU tile anchor: center_quadrants
+macOS clean backend: grouped Metal initial dirty/PSF and residual refresh when eligible and memory-planned
+Correctness/reference path: CPU standard-MFS path remains available
+</code></pre></div>
+
+<p>Every planned run logs <code>standard_mfs_runtime_plan</code> with the selected CPU
+backend, worker count, tile anchor, Metal stage choices, and whether the choice
+came from auto planning, a CLI override, or a legacy environment override.</p>
+<p>Explicit overrides:</p>
+<div class="codehilite"><pre><span></span><code>--standard-mfs-acceleration auto|cpu|multi-cpu|metal
+--standard-mfs-backend cpu|fixed_tile|metal|metal-row-run|metal-row-run-grouped
+--standard-mfs-grid-threads N|auto
+--standard-mfs-tile-anchor zero|center_boundary|center_quadrants
+--standard-mfs-residual-backend cpu|metal|metal-row-run|metal-row-run-grouped
+--standard-mfs-initial-dirty-backend cpu|metal-row-run-grouped
+--standard-mfs-metal-grouped-input-cache true|false
+</code></pre></div>
+
+<p>The planner intentionally errs toward using the retained accelerated paths when
+the workload is eligible and the central memory plan can account for them. This
+will give future runs enough logged evidence to improve the planner rather than
+leaving acceleration hidden behind environment variables.</p>
+<h2 id="retained-cpu-shape">Retained CPU Shape<a class="headerlink" href="#retained-cpu-shape" title="Permanent link">&para;</a></h2>
+<p>The retained CPU backend is the fixed-tile tile-inbox scheduler with four
+center-quadrant halo tiles. The partition places the standard gridder's integer
+center at the intersection of four tiles. This is only a load-balance heuristic:
+correctness comes from deterministic ownership by the gridder's integer tap
+center and full-halo merge into the global grid.</p>
+<p>Retained CPU contracts:</p>
+<ul>
+<li>do not retain full-MeasurementSet prepared visibility plans;</li>
+<li>do not retain persistent per-sample <code>PositiveTapSet</code> plans;</li>
+<li>do not allocate full stage grids per worker;</li>
+<li>keep global MFS density and global output grids resident for standard MFS;</li>
+<li>preserve row-shaped MS data as row/channel visibility runs until worker-side
+  gridding;</li>
+<li>push tile-local visibility runs into per-tile inboxes;</li>
+<li>have workers update resident tile buffers directly;</li>
+<li>flush resident tiles deterministically at stage or eviction boundaries;</li>
+<li>keep major buffers visible to the centralized standard-MFS memory planner.</li>
+</ul>
+<p>Natural weighting can stream directly. Uniform, Briggs, and BriggsBwTaper keep
+the exact two-pass logical shape: density and robust statistics first, then
+weighted gridding. Density remains global for standard MFS in this wave.</p>
+<h2 id="retained-metal-shape">Retained Metal Shape<a class="headerlink" href="#retained-metal-shape" title="Permanent link">&para;</a></h2>
+<p>Metal is now an intended optional macOS backend track, not a detached prototype.
+The retained production direction is grouped row-run work units with memory
+planner accounting. The Swift harness under <code>tools/experiments/metal/</code> remains
+the shader and benchmark workbench; Rust production integration is through the
+standard-MFS backend boundary.</p>
+<p>Retained Metal contracts:</p>
+<ul>
+<li>consume the same bounded row/run work-unit shape as the CPU path;</li>
+<li>do not use a full-MS retained visibility plan;</li>
+<li>do not use persistent per-sample tap plans;</li>
+<li>do not use CPU-expanded full tap-contribution lists as the production
+  contract;</li>
+<li>account for grouped input cache, staging, device buffers, and readback in the
+  central memory plan;</li>
+<li>keep CPU fallback/reference behavior available.</li>
+</ul>
+<p>Direct global-atomic Metal scatter was rejected for the measured workloads.
+Grouped row-run Metal is retained because it moved the heavy residual path from
+CPU gridding into a smaller GPU kernel. The retained implementation stages the
+same grid-coordinate convention that the CPU router used to form tap centers;
+the Metal kernels must not recompute centers from a subtly different
+floating-point path. The row-run ABI is versioned so cached grouped input is
+invalidated when the lane layout changes.</p>
+<p>The current next high-value boundary is still CPU-side grouped input
+construction. The next Metal redesign should move center calculation, lane
+grouping, and group finalization onto the device or otherwise remove that
+host-cache work.</p>
+<h2 id="key-measurements">Key Measurements<a class="headerlink" href="#key-measurements" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Artifact</th>
+<th style="text-align: right;">Frontend</th>
+<th style="text-align: right;">Core</th>
+<th>Important stages</th>
+<th style="text-align: right;">Peak memory</th>
+<th>Correctness</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>full-shape one-worker, 512-channel, 2048 image, Briggs, <code>niter=2</code></td>
+<td><code>target/imperformance-wave2/single-worker-full-shape-20260522/full-shape-one-worker-fixed-tile-sample-stream.log</code></td>
+<td style="text-align: right;">328.937s</td>
+<td style="text-align: right;">294.998s</td>
+<td>PSF 69.104s; residual 218.544s; major refresh 149.613s</td>
+<td style="text-align: right;">10.27GB</td>
+<td>GREEN vs saved CASA <code>.image</code>, <code>.residual</code>, <code>.psf</code>, <code>.model</code></td>
+<td>retained memory-controlled full-shape path</td>
+</tr>
+<tr>
+<td>heavy CPU clean, 64-channel, 1024 image, Briggs, <code>niter=500</code>, <code>minor_cycle_length=50</code>, 4 workers</td>
+<td><code>target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w.log</code></td>
+<td style="text-align: right;">97.81s</td>
+<td style="text-align: right;">85.17s</td>
+<td>PSF 3.86s; residual 70.81s; major refresh 67.49s; residual worker utilization 50-51%</td>
+<td style="text-align: right;">9.55GB</td>
+<td>GREEN targeted tests</td>
+<td>retained CPU baseline winner</td>
+</tr>
+<tr>
+<td>final heavy Metal clean, grouped initial dirty/residual cache path</td>
+<td><code>target/imperformance-wave2/ms-read-parallel-20260525/heavy-final-check.log</code></td>
+<td style="text-align: right;">18.746s</td>
+<td style="text-align: right;">5.115s</td>
+<td>prepare 9.631s; get MS values 5.363s; prepare buffer 4.268s; PSF 0.459s; residual 2.784s; major refresh 2.484s</td>
+<td style="text-align: right;">about 9.55GiB</td>
+<td>GREEN targeted tests</td>
+<td>retained accelerated screen before paired CASA product audit</td>
+</tr>
+<tr>
+<td>heavy 1k paired audit, 64-channel, 1024 image, 0.25arcsec cell, Briggs, <code>niter=500</code>, auto Metal + 4 CPU</td>
+<td><code>target/imperformance-wave2/medium-divergence-20260525/niter_500</code></td>
+<td style="text-align: right;">41.790s CLI; 41.527s profiler frontend</td>
+<td style="text-align: right;">23.930s</td>
+<td>prepare 13.131s; PSF 1.821s; residual 16.436s; major refresh 15.215s; minor 2.890s</td>
+<td style="text-align: right;">not recorded</td>
+<td>GREEN vs CASA: image <code>1.72e-5</code>, residual <code>3.53e-5</code>, model <code>1.02e-5</code>, psf <code>3.04e-5</code> RMS ratios</td>
+<td>retained paired correctness gate</td>
+</tr>
+<tr>
+<td>heavy 1k direct recheck, same parameters as paired audit</td>
+<td><code>target/imperformance-wave2/heavy-1k-current-rust-timed/rust</code></td>
+<td style="text-align: right;">35.47s CLI</td>
+<td style="text-align: right;">n/a</td>
+<td>auto planner selected fixed-tile 4 CPU plus grouped Metal dirty/PSF and residual</td>
+<td style="text-align: right;">not recorded</td>
+<td>completion check only</td>
+<td>confirms corrected path remains in the old 34s speed class outside comparison harness</td>
+</tr>
+<tr>
+<td>sparse touched-group Metal host grouping</td>
+<td><code>target/imperformance-wave2/structural-followups-20260525/heavy-sparse-metal-groups.log</code></td>
+<td style="text-align: right;">21.873s</td>
+<td style="text-align: right;">n/a</td>
+<td>prefill append 2.33s; group finalize 711ms vs 546ms reference</td>
+<td style="text-align: right;">n/a</td>
+<td>GREEN targeted tests</td>
+<td>rejected</td>
+</tr>
+</tbody>
+</table>
+<p>The full-shape product check compared <code>.image</code>, <code>.residual</code>, <code>.psf</code>, and
+<code>.model</code> against saved CASA products. Max absolute normalized deltas remained
+small: <code>.image</code> <code>1.85e-5</code> of CASA peak, <code>.residual</code> <code>3.26e-6</code>, <code>.psf</code>
+<code>2.10e-6</code>, and <code>.model</code> <code>3.00e-7</code>.</p>
+<p>The final paired 1k <code>niter=500</code> CASA comparison used the same 64-channel medium
+VLA MeasurementSet and showed CASA <code>tclean</code> at 733.660s versus casa-rs auto at
+41.790s in the comparison harness, or 35.47s in a direct timed CLI recheck. The
+paired-harness speedup is 17.6x; the direct-rust timing against the same CASA
+run is 20.7x. An earlier 34.122s / 1100.377s artifact produced a nominal 32.3x
+ratio, but that artifact is not retained as correctness evidence: PSF matched,
+while the image, residual, and model products diverged materially. The retained
+Wave 2 claim is therefore the corrected Metal path with CASA-compatible product
+tolerance, not the faster-but-wrong intermediate artifact.</p>
+<h2 id="what-worked">What Worked<a class="headerlink" href="#what-worked" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Evidence</th>
+<th>Retained lesson</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Central memory target and planner accounting</td>
+<td>Full-shape fixed-tile run stayed around 10.27GB RSS under the 16GiB target.</td>
+<td>Make active buffers visible to the standard-MFS memory plan before claiming scalability.</td>
+</tr>
+<tr>
+<td>Streaming fixed-tile memory repair</td>
+<td>Removed the rejected full-MS retained visibility shape and transient per-task tile buffers.</td>
+<td>Runtime memory must scale with bounded row/run queues and resident tiles, not with the full MeasurementSet.</td>
+</tr>
+<tr>
+<td>Row/channel visibility runs</td>
+<td>Replaced scalar inbox payloads and preserved the MS row-shaped data model.</td>
+<td>Do not scalarize visibilities before the tile worker unless instrumentation proves the vector shape is the bottleneck.</td>
+</tr>
+<tr>
+<td>Direct resident tile updates</td>
+<td>Removed millions of scratch tile buffers and main-thread scratch merges.</td>
+<td>Workers should update resident tile buffers directly; private tile scratch is a hot-splitting tool, not the default.</td>
+</tr>
+<tr>
+<td>Center-quadrant CPU tiling</td>
+<td>Beat fine tiles and adaptive chunks on the measured VLA medium target.</td>
+<td>A small number of coarse centered tiles gave the best demonstrated CPU balance/overhead tradeoff.</td>
+</tr>
+<tr>
+<td>Largest-ready tile scheduling</td>
+<td>Improved the four-quadrant path versus FIFO-like behavior.</td>
+<td>Schedule by ready tile work; do not wait for arbitrary queue thresholds when useful work is available.</td>
+</tr>
+<tr>
+<td>Worker-side final Briggs weighting and hot inlining</td>
+<td>Reduced producer work and helped bounded serial/multi-worker paths.</td>
+<td>Producer should route work; lane-level imaging semantics belong near the worker kernel.</td>
+</tr>
+<tr>
+<td>Direct row-run publish and shared tap centers</td>
+<td>Reduced queued payloads and staging overhead.</td>
+<td>The producer/core boundary should pass compact row/run work units, not duplicate scalar vectors.</td>
+</tr>
+<tr>
+<td>Grouped Metal row-run residual refresh</td>
+<td>Moved residual refresh into a much smaller GPU kernel and enabled cache reuse across major cycles.</td>
+<td>Metal is promising only with grouped/reduced work units, not direct global atomic scatter.</td>
+</tr>
+<tr>
+<td>Metal grouped input cache and no-copy cache hits</td>
+<td>Heavy run reached 18.746s frontend with controlled memory.</td>
+<td>Cache production-shaped grouped input when the planner can budget it; avoid duplicate resident Metal buffers without wall gain.</td>
+</tr>
+<tr>
+<td>CPU-grid-coordinate staging for Metal row runs</td>
+<td><code>target/imperformance-wave2/medium-divergence-20260525/niter_500</code> matches CASA at <code>1e-5</code> to <code>4e-5</code> RMS ratios for image/model/residual/PSF.</td>
+<td>Metal row-run kernels must consume the same discrete grid-coordinate convention used by the CPU router; do not recompute it independently on device.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-did-not-work">What Did Not Work<a class="headerlink" href="#what-did-not-work" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Candidate</th>
+<th>Evidence</th>
+<th style="text-align: right;">Result</th>
+<th>Reason rejected</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>coarse 256 zero-anchored tiles</td>
+<td><code>target/imperformance-wave2/fine-tile-scheduler-20260521/bounded-10w-edge256-zero.log</code></td>
+<td style="text-align: right;">50.897s frontend; hottest tile 53.95%</td>
+<td>A single tile capped useful parallelism.</td>
+</tr>
+<tr>
+<td>fine 64 center-boundary tiles</td>
+<td><code>target/imperformance-wave2/fine-tile-scheduler-20260521/bounded-10w-edge64-center.log</code></td>
+<td style="text-align: right;">41.477s frontend</td>
+<td>Useful diagnostic, but beaten by simpler center quadrants.</td>
+</tr>
+<tr>
+<td>fine 32 center-boundary tiles</td>
+<td><code>target/imperformance-wave2/fine-tile-scheduler-20260521/bounded-10w-edge32-center.log</code></td>
+<td style="text-align: right;">39.693s frontend</td>
+<td>Better load balance, but more tile, halo, and scheduler overhead than the retained coarse path.</td>
+</tr>
+<tr>
+<td>scalar direct inbox</td>
+<td><code>target/imperformance-wave2/run-inbox-20260523/medium-briggs-run-inbox-summary.md</code></td>
+<td style="text-align: right;">258.34s wall; 1020.53s sys; 14.4M drains</td>
+<td>Per-scalar synchronization dominated useful gridding.</td>
+</tr>
+<tr>
+<td>ready threshold 1</td>
+<td><code>target/imperformance-wave2/run-inbox-threshold-20260523/medium-briggs-ready-min1-10w.log</code></td>
+<td style="text-align: right;">97.56s frontend</td>
+<td>Too many ready heads and drains; scheduler traffic dominated.</td>
+</tr>
+<tr>
+<td>temporal hot splitting</td>
+<td><code>target/imperformance-wave2/hot-split-20260524/medium-briggs-temporal-split-profile-imager-hogbom-10w.log</code></td>
+<td style="text-align: right;">26.40s vs 21.20s reference</td>
+<td>Private whole-tile scratch and reduction cost exceeded the idle-tail benefit.</td>
+</tr>
+<tr>
+<td>spatial hot splitting</td>
+<td><code>target/imperformance-wave2/spatial-split-20260524/medium-briggs-hot-tile3-quadtree-4w.log</code></td>
+<td style="text-align: right;">19.56s dirty screen; heavy rerun effectively flat</td>
+<td>Small/noisy gains did not justify keeping manual split code.</td>
+</tr>
+<tr>
+<td>adaptive per-chunk equal-work tiles</td>
+<td><code>target/imperformance-wave2/adaptive-chunks-20260524/medium-briggs-niter500-cycle50-adaptive-4w.log</code></td>
+<td style="text-align: right;">193.52s</td>
+<td>Repeated planning/routing per chunk and residual refresh dominated.</td>
+</tr>
+<tr>
+<td>adaptive partition cache</td>
+<td><code>target/imperformance-wave2/adaptive-chunks-20260524/medium-briggs-niter500-cycle50-adaptive-cache-4w.log</code></td>
+<td style="text-align: right;">152.88s</td>
+<td>Better than uncached adaptive, still far slower than center quadrants.</td>
+</tr>
+<tr>
+<td>deep queue target</td>
+<td><code>target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w-deepqueue10m.log</code></td>
+<td style="text-align: right;">118.99s</td>
+<td>More queued memory did not improve utilization enough to offset overhead.</td>
+</tr>
+<tr>
+<td>residual metadata cache</td>
+<td><code>target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w-metadata-cache.log</code></td>
+<td style="text-align: right;">95.90s first run; 98.78s RSS rerun</td>
+<td>Modest/noisy signal with about 6.10GB logical cache; any future equivalent must be planner-budgeted.</td>
+</tr>
+<tr>
+<td>direct global-atomic Metal row-run</td>
+<td><code>target/imperformance-wave2/structural-followups-20260525/heavy-residual-metal-row-run.log</code></td>
+<td style="text-align: right;">51.329s frontend</td>
+<td>Repeated reread/reroute plus global atomics dominated.</td>
+</tr>
+<tr>
+<td>sparse touched-group host grouping</td>
+<td><code>target/imperformance-wave2/structural-followups-20260525/heavy-sparse-metal-groups.log</code></td>
+<td style="text-align: right;">21.873s frontend</td>
+<td>Sorting/touched tracking cost more than dense counter scanning.</td>
+</tr>
+<tr>
+<td>broad MS/Table read rewrite screen</td>
+<td><code>target/imperformance-wave2/structural-followups-20260525/ms-read-storage-profile-one-block.log</code></td>
+<td style="text-align: right;">3.53GiB logical payload in 1.869s</td>
+<td>Raw storage read was not dominant enough for this workload to justify the rewrite in Wave 2.</td>
+</tr>
+<tr>
+<td>specialized selected-correlation/channel packing</td>
+<td><code>target/imperformance-wave2/ms-read-parallel-20260525/heavy-packed-corr-metal-cache.log</code>; <code>target/imperformance-wave2/ms-read-parallel-20260525/heavy-metal-complex-bulk-copy.log</code></td>
+<td style="text-align: right;">19.360s and 21.145s frontend</td>
+<td>Packing changes worsened the measured heavy path.</td>
+</tr>
+<tr>
+<td>pre-fix 34s Metal paired artifact</td>
+<td><code>target/imperformance-wave2/heavy-1k-niter500-cell025-paired-20260525</code></td>
+<td style="text-align: right;">34.122s casa-rs; 1100.377s CASA</td>
+<td>Rejected as final evidence despite speed: image diff RMS was 0.130 of CASA RMS, residual 0.255, and model 0.064 in the raw comparison.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="design-lessons-to-carry-forward">Design Lessons To Carry Forward<a class="headerlink" href="#design-lessons-to-carry-forward" title="Permanent link">&para;</a></h2>
+<p>The most important cross-mode lessons are structural:</p>
+<ul>
+<li>Preserve bounded residency. Cubes and mosaics must not inherit any design that
+  assumes all planes, all visibilities, or all per-sample tap plans fit in
+  memory.</li>
+<li>Keep row-shaped data from the MS as long as possible. Scalar payloads created
+  synchronization and duplicate work.</li>
+<li>Separate routing from imaging semantics. The producer should read, classify
+  enough to route, and enqueue; workers should do flags, weights, tap planning,
+  gridding, degridding, and scalar reductions whenever practical.</li>
+<li>Stage-level UV distributions are not enough. Live queue snapshots showed that
+  active work moves dynamically; static hot-tile decisions often helped less
+  than expected.</li>
+<li>More memory did not automatically help. Deeper tile queues and larger caches
+  only matter when they convert producer-only time into worker/producer overlap
+  without adding routing or RSS cost.</li>
+<li>Hot splitting should be explicit and measured. Small fairness drains and
+  temporal scratch are not substitutes for a spatial split whose scratch and
+  reduction costs are budgeted.</li>
+<li>Metal needs a grouped/reduced input contract. If center calculation,
+  lane grouping, and group finalization stay as host work, kernel tuning alone
+  will not move the total wall time much.</li>
+</ul>
+<h2 id="current-follow-up-direction">Current Follow-Up Direction<a class="headerlink" href="#current-follow-up-direction" title="Permanent link">&para;</a></h2>
+<p>The retained Wave 2 path is good enough to use routinely through the runtime
+planner. Future work should not revive the rejected experiment surfaces unless
+new instrumentation changes the cost model.</p>
+<p>Most promising next steps:</p>
+<ul>
+<li>teach the runtime planner from real run logs and workload features;</li>
+<li>redesign the Metal grouped input contract so more center/group/finalize work
+  happens on device or in a lower-copy producer path;</li>
+<li>carry the fixed-tile memory planner discipline into cube/slab execution;</li>
+<li>add cross-mode profiling artifacts that report the same high-level fields:
+  frontend, core, prepare, grid/degrid, major refresh, peak memory, selected
+  backend, worker count, and product correctness.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
