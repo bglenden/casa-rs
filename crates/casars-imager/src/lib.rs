@@ -10235,10 +10235,8 @@ where
             weighting_plan,
             accumulate_timings,
         )?;
-        for ((selected_row, row), &mfs_frequency_scale) in row_chunk
-            .iter()
-            .zip(rows.into_iter())
-            .zip(row_frequency_scales.iter())
+        for ((selected_row, row), &mfs_frequency_scale) in
+            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -10366,10 +10364,8 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
             weighting_plan,
             accumulate_timings,
         )?;
-        for ((selected_row, row), &mfs_frequency_scale) in row_chunk
-            .iter()
-            .zip(rows.into_iter())
-            .zip(row_frequency_scales.iter())
+        for ((selected_row, row), &mfs_frequency_scale) in
+            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
         {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
@@ -11252,7 +11248,7 @@ where
         let mut block_candidate_samples = 0usize;
         let mut block_planned_samples = 0usize;
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
-        for (selected_row, row) in row_chunk.iter().zip(block.rows.into_iter()) {
+        for (selected_row, row) in row_chunk.iter().zip(block.rows) {
             accumulate_timings.rows_seen += 1;
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
