@@ -9478,6 +9478,22 @@ impl<'a> StandardMfsMetalExecutor<'a> {
             .finish_grouped_initial_dirty_state(state, cache, psf_grid, residual_grid)
     }
 
+    pub(crate) fn accumulate_initial_dirty_grids_from_grouped_input_cache(
+        &self,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        cache: &mut StandardMfsMetalGroupedInputCache,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<Option<StandardMfsDirtyAccumulation>, ImagingError> {
+        self.backend.grid_initial_dirty_from_grouped_input_cache(
+            self.gridder,
+            weighting_plan,
+            cache,
+            psf_grid,
+            residual_grid,
+        )
+    }
+
     pub(crate) fn append_grouped_input_cache_run(
         &self,
         fill: &mut StandardMfsMetalGroupedInputCacheFill,
@@ -10145,8 +10161,15 @@ struct MetalInitialDirtyGroupedPendingDispatch {
 }
 
 #[cfg(target_os = "macos")]
+/// Opaque grouped row-run cache for the experimental Metal standard-MFS path.
+///
+/// The cache owns host-side grouped row/channel payloads for one standard-MFS
+/// geometry and finalized weighting plan. It is optional acceleration state:
+/// callers may pass it back into the standard-MFS streaming runner to avoid
+/// replaying and repacking the same routed visibility runs for initial dirty
+/// and residual-refresh stages.
 #[derive(Debug, Default)]
-pub(crate) struct StandardMfsMetalGroupedInputCache {
+pub struct StandardMfsMetalGroupedInputCache {
     key: Option<MetalResidualGroupedInputCacheKey>,
     chunks: Vec<MetalResidualGroupedCachedChunk>,
     accumulation: StandardMfsTiledResidualAccumulation,
@@ -10180,6 +10203,135 @@ impl StandardMfsMetalGroupedInputCache {
         self.chunks = chunks;
         self.accumulation = accumulation;
         self.dirty_accumulation = dirty_accumulation;
+    }
+}
+
+/// Incremental builder for a Metal grouped input cache.
+///
+/// This lets a MeasurementSet frontend append routed row/channel runs while it
+/// is already streaming the density pass. Finalization is delayed until the
+/// streaming weighting plan has computed Uniform/Briggs density statistics.
+#[cfg(target_os = "macos")]
+pub struct StandardMfsMetalGroupedInputCachePrefill {
+    gridder: StandardGridder,
+    backend: MetalDirtyBackend,
+    partition: MetalResidualGroupedTilePartition,
+    chunk_lane_capacity: usize,
+    chunks: Vec<MetalResidualGroupedRowRunChunk>,
+    chunk: MetalResidualGroupedRowRunChunk,
+    accumulation: StandardMfsTiledResidualAccumulation,
+    runs: usize,
+    logical_lanes: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl StandardMfsMetalGroupedInputCachePrefill {
+    /// Create an empty prefill builder for one standard-MFS image geometry.
+    pub fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        let gridder = StandardGridder::new(geometry)?;
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let group_tile_edge = standard_mfs_metal_group_tile_edge();
+        let partition =
+            MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
+        Ok(Self {
+            gridder,
+            backend: MetalDirtyBackend::new()?,
+            chunk_lane_capacity: standard_mfs_metal_residual_chunk_samples(),
+            chunk: MetalResidualGroupedRowRunChunk::new(partition.tile_count()),
+            partition,
+            chunks: Vec::new(),
+            accumulation: StandardMfsTiledResidualAccumulation::default(),
+            runs: 0,
+            logical_lanes: 0,
+        })
+    }
+
+    /// Append one routed visibility run to the prefill cache.
+    pub fn append_run(
+        &mut self,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+    ) -> Result<(), ImagingError> {
+        if !self.chunk.is_empty()
+            && self
+                .chunk
+                .row_runs
+                .logical_lanes
+                .saturating_add(routed_run.len())
+                > self.chunk_lane_capacity
+        {
+            self.finish_current_chunk()?;
+        }
+        self.backend.append_metal_residual_grouped_row_run(
+            routed_run,
+            &self.partition,
+            &mut self.accumulation,
+            &mut self.chunk,
+        )?;
+        self.runs = self.runs.saturating_add(1);
+        self.logical_lanes = self.logical_lanes.saturating_add(routed_run.len());
+        if self.chunk.row_runs.logical_lanes >= self.chunk_lane_capacity {
+            self.finish_current_chunk()?;
+        }
+        Ok(())
+    }
+
+    /// Number of routed runs appended so far.
+    pub fn run_count(&self) -> usize {
+        self.runs
+    }
+
+    /// Number of logical channel lanes appended so far.
+    pub fn logical_lanes(&self) -> usize {
+        self.logical_lanes
+    }
+
+    /// Conservative host byte estimate for finalized and open grouped chunks.
+    pub fn estimated_host_bytes(&self) -> usize {
+        self.chunks
+            .iter()
+            .map(MetalResidualGroupedRowRunChunk::host_cache_bytes)
+            .sum::<usize>()
+            .saturating_add(self.chunk.host_cache_bytes())
+    }
+
+    /// Finalize into a reusable grouped input cache after weighting is known.
+    pub fn finish(
+        mut self,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsMetalGroupedInputCache, ImagingError> {
+        self.finish_current_chunk()?;
+        let fill = self
+            .backend
+            .begin_grouped_input_cache_fill(&self.gridder, weighting_plan)?;
+        let mut cached_chunks = Vec::with_capacity(self.chunks.len());
+        for chunk in self.chunks {
+            let params = grouped_row_run_params_from_fill_and_chunk(&fill, &chunk)?;
+            let metrics = MetalResidualGroupedChunkMetrics::from_chunk(&chunk);
+            cached_chunks.push(MetalResidualGroupedCachedChunk {
+                params,
+                metrics,
+                host: Some(chunk),
+                buffers: None,
+            });
+        }
+        let mut cache = StandardMfsMetalGroupedInputCache::default();
+        cache.replace(fill.key, cached_chunks, self.accumulation, None);
+        Ok(cache)
+    }
+
+    fn finish_current_chunk(&mut self) -> Result<(), ImagingError> {
+        if self.chunk.is_empty() {
+            return Ok(());
+        }
+        self.chunk.finalize_groups(&self.partition)?;
+        self.chunk.lane_group_ids.clear();
+        self.chunk.group_counts.clear();
+        let finalized_chunk = std::mem::replace(
+            &mut self.chunk,
+            MetalResidualGroupedRowRunChunk::new(self.partition.tile_count()),
+        );
+        self.chunks.push(finalized_chunk);
+        Ok(())
     }
 }
 
@@ -10227,16 +10379,36 @@ pub(crate) struct MetalInitialDirtyGroupedState {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalInitialDirtyGroupedFinishMetrics {
+    wait: Duration,
+    gpu: Duration,
+    kernel: Duration,
+    chunks: usize,
+    runs: usize,
+    logical_lanes: usize,
+    group_descs: usize,
+}
+
+#[cfg(target_os = "macos")]
 fn grouped_row_run_params_from_fill(
     fill: &StandardMfsMetalGroupedInputCacheFill,
 ) -> Result<MetalResidualRowRunParams, ImagingError> {
+    grouped_row_run_params_from_fill_and_chunk(fill, &fill.chunk)
+}
+
+#[cfg(target_os = "macos")]
+fn grouped_row_run_params_from_fill_and_chunk(
+    fill: &StandardMfsMetalGroupedInputCacheFill,
+    chunk: &MetalResidualGroupedRowRunChunk,
+) -> Result<MetalResidualRowRunParams, ImagingError> {
     Ok(MetalResidualRowRunParams {
-        run_count: u32::try_from(fill.chunk.row_runs.runs.len()).map_err(|_| {
+        run_count: u32::try_from(chunk.row_runs.runs.len()).map_err(|_| {
             ImagingError::InvalidRequest(
                 "standard MFS Metal grouped row-run chunk has too many runs".to_string(),
             )
         })?,
-        max_lane_count: u32::try_from(fill.chunk.row_runs.max_lane_count).map_err(|_| {
+        max_lane_count: u32::try_from(chunk.row_runs.max_lane_count).map_err(|_| {
             ImagingError::InvalidRequest(
                 "standard MFS Metal grouped row-run chunk has too many lanes per run".to_string(),
             )
@@ -10287,8 +10459,59 @@ fn grouped_row_run_params_from_fill(
 }
 
 #[cfg(not(target_os = "macos"))]
+/// Placeholder grouped input cache on platforms without Metal.
 #[derive(Debug, Default)]
-pub(crate) struct StandardMfsMetalGroupedInputCache;
+pub struct StandardMfsMetalGroupedInputCache;
+
+#[cfg(not(target_os = "macos"))]
+/// Placeholder grouped input cache prefill on platforms without Metal.
+#[derive(Debug)]
+pub struct StandardMfsMetalGroupedInputCachePrefill;
+
+#[cfg(not(target_os = "macos"))]
+impl StandardMfsMetalGroupedInputCachePrefill {
+    /// Return an unsupported error on non-macOS platforms.
+    pub fn new(_geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Err(ImagingError::Unsupported(
+            "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
+        ))
+    }
+
+    /// Return an unsupported error on non-macOS platforms.
+    pub fn append_run(
+        &mut self,
+        _routed_run: &StandardMfsRoutedVisibilityRun,
+    ) -> Result<(), ImagingError> {
+        Err(ImagingError::Unsupported(
+            "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
+        ))
+    }
+
+    /// Number of routed runs appended so far.
+    pub fn run_count(&self) -> usize {
+        0
+    }
+
+    /// Number of logical channel lanes appended so far.
+    pub fn logical_lanes(&self) -> usize {
+        0
+    }
+
+    /// Conservative host byte estimate for finalized and open grouped chunks.
+    pub fn estimated_host_bytes(&self) -> usize {
+        0
+    }
+
+    /// Return an unsupported error on non-macOS platforms.
+    pub fn finish(
+        self,
+        _weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsMetalGroupedInputCache, ImagingError> {
+        Err(ImagingError::Unsupported(
+            "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
+        ))
+    }
+}
 
 #[cfg(target_os = "macos")]
 #[derive(Debug, Default)]
@@ -12201,18 +12424,100 @@ impl MetalDirtyBackend {
         psf_grid: &mut Array2<Complex64>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        self.finish_grouped_initial_dirty_chunk(&mut state)?;
+        let (accumulation, metrics) =
+            self.finish_grouped_initial_dirty_pending(&mut state, psf_grid, residual_grid)?;
+        cache.replace(
+            state.fill.key,
+            state.fill.chunks,
+            state.fill.accumulation,
+            Some(accumulation),
+        );
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty chunks={} runs={} logical_lanes={} group_descs={} input_cache_hit=false dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} input_cache_host_bytes={}",
+                metrics.chunks,
+                metrics.runs,
+                metrics.logical_lanes,
+                metrics.group_descs,
+                profile::millis(metrics.wait),
+                profile::millis(metrics.gpu),
+                profile::millis(metrics.kernel),
+                cache.host_bytes,
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty_detail append_grouped_row_run_ms={:.3} dirty_accumulation_ms={:.3} chunk_finalize_dispatch_ms={:.3}",
+                profile::millis(state.append_grouped_row_run),
+                profile::millis(state.dirty_accumulation),
+                profile::millis(state.chunk_finalize_dispatch),
+            );
+        }
+        Ok(accumulation)
+    }
+
+    fn grid_initial_dirty_from_grouped_input_cache(
+        &self,
+        gridder: &StandardGridder,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        cache: &mut StandardMfsMetalGroupedInputCache,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<Option<StandardMfsDirtyAccumulation>, ImagingError> {
+        let mut state = self.begin_grouped_initial_dirty_state(gridder, weighting_plan)?;
+        if !cache.matches(state.fill.key) {
+            return Ok(None);
+        }
+        if cache.chunks.iter().any(|chunk| chunk.host.is_none()) {
+            return Ok(None);
+        }
+        let dispatch_started = Instant::now();
+        for cached in &cache.chunks {
+            let pending = self.dispatch_initial_dirty_grouped_chunk_async(cached, &state)?;
+            state.pending.push(pending);
+        }
+        state.chunk_finalize_dispatch += dispatch_started.elapsed();
+        let (accumulation, metrics) =
+            self.finish_grouped_initial_dirty_pending(&mut state, psf_grid, residual_grid)?;
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty chunks={} runs={} logical_lanes={} group_descs={} input_cache_hit=true dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} input_cache_host_bytes={}",
+                metrics.chunks,
+                metrics.runs,
+                metrics.logical_lanes,
+                metrics.group_descs,
+                profile::millis(metrics.wait),
+                profile::millis(metrics.gpu),
+                profile::millis(metrics.kernel),
+                cache.host_bytes,
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty_detail append_grouped_row_run_ms={:.3} dirty_accumulation_ms={:.3} chunk_finalize_dispatch_ms={:.3}",
+                profile::millis(state.append_grouped_row_run),
+                profile::millis(state.dirty_accumulation),
+                profile::millis(state.chunk_finalize_dispatch),
+            );
+        }
+        Ok(Some(accumulation))
+    }
+
+    fn finish_grouped_initial_dirty_pending(
+        &self,
+        state: &mut MetalInitialDirtyGroupedState,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<
+        (
+            StandardMfsDirtyAccumulation,
+            MetalInitialDirtyGroupedFinishMetrics,
+        ),
+        ImagingError,
+    > {
         use std::slice;
 
         use objc2_metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus};
 
-        self.finish_grouped_initial_dirty_chunk(&mut state)?;
         let wait_started = Instant::now();
-        let mut gpu = Duration::ZERO;
-        let mut kernel = Duration::ZERO;
-        let mut chunks = 0usize;
-        let mut runs = 0usize;
-        let mut logical_lanes = 0usize;
-        let mut group_descs = 0usize;
+        let mut metrics = MetalInitialDirtyGroupedFinishMetrics::default();
         let mut dirty_accumulation = StandardMfsDirtyAccumulation::default();
         for pending in state.pending.drain(..) {
             pending.command_buffer.waitUntilCompleted();
@@ -12229,17 +12534,21 @@ impl MetalDirtyBackend {
             let gpu_start = pending.command_buffer.GPUStartTime();
             let gpu_end = pending.command_buffer.GPUEndTime();
             if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
-                gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+                metrics.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
             }
             let kernel_start = pending.command_buffer.kernelStartTime();
             let kernel_end = pending.command_buffer.kernelEndTime();
             if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
-                kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+                metrics.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
             }
-            chunks = chunks.saturating_add(1);
-            runs = runs.saturating_add(pending.metrics.runs);
-            logical_lanes = logical_lanes.saturating_add(pending.metrics.logical_lanes);
-            group_descs = group_descs.saturating_add(pending.metrics.group_descs);
+            metrics.chunks = metrics.chunks.saturating_add(1);
+            metrics.runs = metrics.runs.saturating_add(pending.metrics.runs);
+            metrics.logical_lanes = metrics
+                .logical_lanes
+                .saturating_add(pending.metrics.logical_lanes);
+            metrics.group_descs = metrics
+                .group_descs
+                .saturating_add(pending.metrics.group_descs);
             let run_accum = unsafe {
                 slice::from_raw_parts(
                     pending
@@ -12265,7 +12574,7 @@ impl MetalDirtyBackend {
                     .max(f64::from(record.max_abs_w_lambda));
             }
         }
-        let wait = wait_started.elapsed();
+        metrics.wait = wait_started.elapsed();
         let [grid_width, grid_height] = [state.fill.grid_width, state.fill.grid_height];
         let cell_count = grid_width.saturating_mul(grid_height);
         let psf_re = unsafe {
@@ -12307,33 +12616,7 @@ impl MetalDirtyBackend {
                 f64::from(f32::from_bits(dirty_im_bits)),
             );
         }
-        let accumulation = dirty_accumulation;
-        cache.replace(
-            state.fill.key,
-            state.fill.chunks,
-            state.fill.accumulation,
-            Some(dirty_accumulation),
-        );
-        if profile::standard_mfs_profile_detail_enabled() {
-            eprintln!(
-                "standard_mfs_metal_row_run_grouped_initial_dirty chunks={} runs={} logical_lanes={} group_descs={} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} input_cache_host_bytes={}",
-                chunks,
-                runs,
-                logical_lanes,
-                group_descs,
-                profile::millis(wait),
-                profile::millis(gpu),
-                profile::millis(kernel),
-                cache.host_bytes,
-            );
-            eprintln!(
-                "standard_mfs_metal_row_run_grouped_initial_dirty_detail append_grouped_row_run_ms={:.3} dirty_accumulation_ms={:.3} chunk_finalize_dispatch_ms={:.3}",
-                profile::millis(state.append_grouped_row_run),
-                profile::millis(state.dirty_accumulation),
-                profile::millis(state.chunk_finalize_dispatch),
-            );
-        }
-        Ok(accumulation)
+        Ok((dirty_accumulation, metrics))
     }
 
     fn begin_grouped_input_cache_fill(

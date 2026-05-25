@@ -57,11 +57,12 @@ use beam::{
 };
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyAccumulation, StandardMfsDirtyCpuExecutor,
-    StandardMfsMetalGroupedInputCache, StandardMfsPlannedSample, StandardMfsTiledCpuExecutor,
-    StandardMfsTiledResidualAccumulation, StandardMfsVisibilityPlan, finite_visibility,
+    StandardMfsPlannedSample, StandardMfsTiledCpuExecutor, StandardMfsTiledResidualAccumulation,
+    StandardMfsVisibilityPlan, finite_visibility,
 };
 #[cfg(target_os = "macos")]
 use execution::{StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill};
+pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
     PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder,
@@ -1529,6 +1530,53 @@ where
     )
 }
 
+/// Run standard-MFS CLEAN from directly replayable routed visibility runs and
+/// an optional prebuilt Metal grouped input cache.
+pub fn run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache<
+    F,
+>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: F,
+    metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsRoutedVisibilityRunSource for RunSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_routed_visibility_runs(
+            &mut self,
+            consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunSource {
+        replay: replay_routed_runs,
+    };
+    run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
+        request,
+        execution_config,
+        weighting_plan,
+        &mut source,
+        metal_grouped_input_cache,
+    )
+}
+
 /// Run standard-MFS CLEAN from a replayable planned-sample block source.
 pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
     mut request: ImagingRequest,
@@ -1764,10 +1812,26 @@ pub fn run_standard_mfs_routed_visibility_run_block_source_streaming_with_execut
 
 /// Run standard-MFS CLEAN from a replayable routed visibility-run source.
 pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config(
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+) -> Result<ImagingResult, ImagingError> {
+    run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
+        request,
+        execution_config,
+        weighting_plan,
+        replay_routed_runs,
+        None,
+    )
+}
+
+fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     weighting_plan: &StandardMfsStreamingWeightingPlan,
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+    prebuilt_metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
 ) -> Result<ImagingResult, ImagingError> {
     let total_started = Instant::now();
     request.geometry.validate()?;
@@ -1804,9 +1868,10 @@ pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_co
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
     let mut stage_timings = ImagingStageTimings::default();
-    let mut metal_grouped_input_cache =
+    let mut metal_grouped_input_cache = prebuilt_metal_grouped_input_cache.or_else(|| {
         standard_mfs_metal_grouped_input_cache_enabled(execution_config.metal_grouped_input_cache)
-            .then(StandardMfsMetalGroupedInputCache::default);
+            .then(StandardMfsMetalGroupedInputCache::default)
+    });
 
     let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
         compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
@@ -2528,7 +2593,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     weighting_plan: &StandardMfsStreamingWeightingPlan,
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
     stage_timings: &mut ImagingStageTimings,
-    metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+    mut metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
 ) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
@@ -2542,6 +2607,39 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
             let grid_started = Instant::now();
             let metal_executor =
                 StandardMfsMetalExecutor::new_with_initial_dirty_grouped(gridder, None)?;
+            if let Some(cache) = metal_grouped_input_cache.as_deref_mut() {
+                if let Some(accumulation) = metal_executor
+                    .accumulate_initial_dirty_grids_from_grouped_input_cache(
+                        weighting_plan,
+                        cache,
+                        &mut psf_grid,
+                        &mut residual_grid,
+                    )?
+                {
+                    let grid_elapsed = grid_started.elapsed();
+                    let split_grid_elapsed =
+                        Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+                    stage_timings.psf_grid += split_grid_elapsed;
+                    stage_timings.residual_degrid_grid +=
+                        grid_elapsed.saturating_sub(split_grid_elapsed);
+                    if profile::standard_mfs_profile_detail_enabled() {
+                        eprintln!(
+                            "standard_mfs_metal_grouped_initial_dirty source=input_cache total_elapsed_ms={:.3}",
+                            profile::millis(grid_elapsed)
+                        );
+                    }
+                    return dirty_grids_to_psf_and_residual(
+                        gridder,
+                        &psf_grid,
+                        &residual_grid,
+                        accumulation,
+                        stage_timings,
+                    )
+                    .map(|(psf_state, residual)| {
+                        (psf_state, residual, accumulation.max_abs_w_lambda)
+                    });
+                }
+            }
             let mut state =
                 metal_executor.begin_grouped_initial_dirty_accumulation(weighting_plan)?;
             let dispatch_started = Instant::now();

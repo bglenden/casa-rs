@@ -3054,6 +3054,33 @@ degrid/grid from `5.877s` to `5.679s`; frontend was effectively noise
 host-side ndarray/index work from the Metal grouped path and preserves the
 fallback representation for non-contiguous selections.
 
+High-reward follow-up: the density-pass routed-run vector is no longer the
+routine path for Metal grouped initial dirty. When the planner enables the
+Metal grouped input cache, the frontend now builds a grouped Metal input-cache
+prefill directly while streaming the Briggs density pass, finalizes it after
+the density statistics are known, and hands the cache into the core runner. The
+initial dirty stage dispatches from that cache instead of replay-draining
+`StandardMfsRoutedVisibilityRun` values into Metal chunks.
+
+The retained artifact is
+`target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-direct-metal-prefill-niter150-cycleniter50.log`.
+The run reported:
+
+```text
+standard_mfs_metal_grouped_input_cache_prefill pass=density status=prefill \
+  runs=3086235 lanes=197519040 estimated_bytes=7805842344
+standard_mfs_metal_grouped_input_cache_prefill pass=density status=finish \
+  finish_ms=16.320
+standard_mfs_metal_row_run_grouped_initial_dirty \
+  input_cache_hit=true dispatch_wait_ms=1170.218 dispatch_gpu_ms=921.384
+```
+
+Versus the prior density-prefill retained run, frontend moved from `28.793s`
+to `25.463s` (`11.6%`), core from `12.626s` to `7.497s` (`40.6%`), PSF grid
+from `3.017s` to `0.593s`, residual degrid/grid from `5.877s` to `3.164s`,
+and peak RSS from `10.08 GiB` to `8.85 GiB`. This is retained: it removes the
+separate routed-run drain/repack boundary rather than merely optimizing it.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:

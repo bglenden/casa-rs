@@ -31,7 +31,8 @@ use casa_imaging::{
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsModelPredictor, StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBuilder,
+    StandardMfsMetalGroupedInputCachePrefill, StandardMfsModelPredictor,
+    StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBuilder,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
     StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock,
     StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
@@ -42,7 +43,7 @@ use casa_imaging::{
     run_cube, run_imaging, run_imaging_owned_with_execution_config, run_mtmfs,
     run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
-    run_standard_mfs_routed_visibility_run_streaming_with_execution_config,
+    run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
     run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan, trace_weighting,
@@ -2661,46 +2662,87 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     let cache_routed_replays =
         use_routed_tile_weighting && standard_mfs_routed_replay_cache_enabled(&strategy);
     let mut routed_replay_cache = None::<Vec<StandardMfsRoutedVisibilityRun>>;
+    let mut metal_grouped_input_cache_prefill = None::<StandardMfsMetalGroupedInputCachePrefill>;
+    let mut prebuilt_metal_grouped_input_cache = None;
     let mut routed_channel_axes = None::<Arc<MsImagingChannelAxisCatalog>>;
     if weighting_plan.needs_density_pass() {
         let mut density_stats = StandardMfsStreamingPassStats::new("density", 0);
         if cache_routed_replays {
             let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(ms)?);
-            let mut cache = Vec::<StandardMfsRoutedVisibilityRun>::new();
-            stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
-                ms,
-                config,
-                data_column,
-                &selection,
-                &table_values,
-                &active_selected_rows,
-                derived_engine.as_ref(),
-                Arc::clone(&channel_axes),
-                channel_read_range,
-                &geometry_columns,
-                strategy.row_block_rows,
-                prepare_started_at,
-                &mut prepare_stage_timings,
-                &mut accumulate_timings,
-                &mut density_stats,
-                &mut weighting_plan,
-                &planned_sample_builder,
-                &mut cache,
-            )?;
-            if standard_mfs_profile_detail_enabled() {
-                let cached_lanes = cache
-                    .iter()
-                    .map(StandardMfsRoutedVisibilityRun::len)
-                    .sum::<usize>();
-                eprintln!(
-                    "standard_mfs_routed_replay_cache pass=density status=prefill runs={} lanes={} estimated_bytes={}",
-                    cache.len(),
-                    cached_lanes,
-                    estimated_routed_visibility_run_cache_bytes(&cache),
-                );
+            let use_metal_grouped_prefill = execution_config.metal_grouped_input_cache
+                && standard_mfs_metal_grouped_initial_dirty_backend_selected_for_frontend();
+            if use_metal_grouped_prefill {
+                let mut prefill = StandardMfsMetalGroupedInputCachePrefill::new(request.geometry)
+                    .map_err(|error| error.to_string())?;
+                stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
+                    ms,
+                    config,
+                    data_column,
+                    &selection,
+                    &table_values,
+                    &active_selected_rows,
+                    derived_engine.as_ref(),
+                    Arc::clone(&channel_axes),
+                    channel_read_range,
+                    &geometry_columns,
+                    strategy.row_block_rows,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                    &mut density_stats,
+                    &mut weighting_plan,
+                    &planned_sample_builder,
+                    |run| prefill.append_run(run),
+                )?;
+                if standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "standard_mfs_metal_grouped_input_cache_prefill pass=density status=prefill runs={} lanes={} estimated_bytes={}",
+                        prefill.run_count(),
+                        prefill.logical_lanes(),
+                        prefill.estimated_host_bytes(),
+                    );
+                }
+                metal_grouped_input_cache_prefill = Some(prefill);
+            } else {
+                let mut cache = Vec::<StandardMfsRoutedVisibilityRun>::new();
+                stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
+                    ms,
+                    config,
+                    data_column,
+                    &selection,
+                    &table_values,
+                    &active_selected_rows,
+                    derived_engine.as_ref(),
+                    Arc::clone(&channel_axes),
+                    channel_read_range,
+                    &geometry_columns,
+                    strategy.row_block_rows,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                    &mut density_stats,
+                    &mut weighting_plan,
+                    &planned_sample_builder,
+                    |run| {
+                        cache.push(run.clone());
+                        Ok(())
+                    },
+                )?;
+                if standard_mfs_profile_detail_enabled() {
+                    let cached_lanes = cache
+                        .iter()
+                        .map(StandardMfsRoutedVisibilityRun::len)
+                        .sum::<usize>();
+                    eprintln!(
+                        "standard_mfs_routed_replay_cache pass=density status=prefill runs={} lanes={} estimated_bytes={}",
+                        cache.len(),
+                        cached_lanes,
+                        estimated_routed_visibility_run_cache_bytes(&cache),
+                    );
+                }
+                routed_replay_cache = Some(cache);
             }
             routed_channel_axes = Some(channel_axes);
-            routed_replay_cache = Some(cache);
         } else {
             if let Some(plane) = first_plane_for_initial_replay.as_ref() {
                 density_stats.record_cached_plane(plane);
@@ -2730,6 +2772,25 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         density_stats.log();
     }
     weighting_plan.finish_density_pass();
+    if let Some(prefill) = metal_grouped_input_cache_prefill.take() {
+        let finish_started = Instant::now();
+        let runs = prefill.run_count();
+        let lanes = prefill.logical_lanes();
+        let estimated_bytes = prefill.estimated_host_bytes();
+        let cache = prefill
+            .finish(&weighting_plan)
+            .map_err(|error| error.to_string())?;
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_prefill pass=density status=finish runs={} lanes={} estimated_bytes={} finish_ms={:.3}",
+                runs,
+                lanes,
+                estimated_bytes,
+                duration_ms(finish_started.elapsed()),
+            );
+        }
+        prebuilt_metal_grouped_input_cache = Some(cache);
+    }
 
     let run_started_at = Instant::now();
     let result = if use_sample_streaming {
@@ -2901,11 +2962,12 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 }
                 Ok(())
             };
-            run_standard_mfs_routed_visibility_run_streaming_with_execution_config(
+            run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache(
                 request,
                 execution_config,
                 &weighting_plan,
                 &mut replay_routed_runs,
+                prebuilt_metal_grouped_input_cache.take(),
             )
         } else if standard_mfs_planned_run_blocks_enabled() {
             let mut replay_weighted_samples =
@@ -9377,7 +9439,7 @@ fn stream_standard_mfs_density_row_blocks(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
+fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks<F>(
     ms: &MeasurementSet,
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
@@ -9395,8 +9457,11 @@ fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
     pass_stats: &mut StandardMfsStreamingPassStats,
     weighting_plan: &mut StandardMfsStreamingWeightingPlan,
     planned_sample_builder: &StandardMfsPlannedSampleBuilder,
-    cache: &mut Vec<StandardMfsRoutedVisibilityRun>,
-) -> Result<usize, String> {
+    mut consume: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+{
     let mut accepted_density_samples = 0usize;
     let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
         config,
@@ -9455,7 +9520,7 @@ fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
                 planned_sample_builder,
                 &mut next_input_seq,
                 &mut |run| {
-                    cache.push(run.clone());
+                    consume(run)?;
                     Ok(())
                 },
             )?;
@@ -9480,11 +9545,10 @@ fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
         accepted_density_samples = accepted_density_samples.saturating_add(block_density_samples);
         if frontend_progress_enabled() {
             eprintln!(
-                "frontend stage=prepare_plane_input/density_routed_cache_block rows_done={} rows_total={} accepted_density_samples={} cached_runs={} total_elapsed_s={:.3}",
+                "frontend stage=prepare_plane_input/density_routed_cache_block rows_done={} rows_total={} accepted_density_samples={} total_elapsed_s={:.3}",
                 accumulate_timings.rows_seen,
                 active_selected_rows.len(),
                 accepted_density_samples,
-                cache.len(),
                 prepare_started_at.elapsed().as_secs_f64(),
             );
         }
