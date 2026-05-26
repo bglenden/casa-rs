@@ -1269,7 +1269,12 @@ def stride_for(shape, max_elements):
         raise ValueError("max_elements_per_product must be >= 1")
     stride = [1] * len(shape)
     sampled = product(shape)
-    index = 0
+    if len(stride) >= 2:
+        while sampled > max_elements and (shape[0] > stride[0] or shape[1] > stride[1]):
+            stride[0] += 1
+            stride[1] += 1
+            sampled = product(math.ceil(size / step) for size, step in zip(shape, stride))
+    index = 2 if len(stride) > 2 else 0
     while sampled > max_elements:
         stride[index % len(stride)] += 1
         sampled = product(math.ceil(size / step) for size, step in zip(shape, stride))

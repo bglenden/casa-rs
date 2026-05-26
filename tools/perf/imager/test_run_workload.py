@@ -563,6 +563,16 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertIn('label="value"', script)
         self.assertIn('label="casa-rs - CASA"', script)
 
+    def test_product_comparison_stride_preserves_spatial_aspect(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        self.assertEqual(
+            [2, 2, 1, 1],
+            namespace["stride_for"]([1024, 1024, 1, 1], 1_000_000),
+        )
+
     def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
         log = """Rust stage medians (milliseconds):
   run=1 frontend_total_ms=100.000 open_ms=1.000 prepare_ms=2.000 phase_center_ms=3.000 imaging_ms=4.000 coords_ms=5.000 write_ms=6.000 core_total_ms=40.000 controller_ms=7.000 weighting_ms=8.000 major_refresh_ms=9.000 psf_grid_ms=10.000 psf_fft_ms=11.000 psf_normalize_ms=12.000 model_fft_ms=13.000 residual_grid_ms=14.000 residual_fft_ms=15.000 residual_normalize_ms=16.000 minor_ms=17.000 minor_solve_ms=18.000 beam_fit_ms=19.000 restore_ms=20.000
