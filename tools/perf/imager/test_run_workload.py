@@ -562,6 +562,9 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertIn('aspect="equal"', script)
         self.assertIn('label="value"', script)
         self.assertIn('label="casa-rs - CASA"', script)
+        self.assertIn('f"casa-rs {product_label}"', script)
+        self.assertIn('f"CASA {product_label}"', script)
+        self.assertIn('f"difference {product_label}', script)
 
     def test_product_comparison_stride_preserves_spatial_aspect(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}

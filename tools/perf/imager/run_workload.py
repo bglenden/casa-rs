@@ -1181,6 +1181,7 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
     if diff_abs is None:
         diff_abs = 0.0
     safe_name = suffix.strip(".").replace(".", "_") or "image"
+    product_label = suffix if suffix else ".image"
     panel_path = os.path.join(panel_dir, f"{safe_name}.review.png")
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
     rust_artist = axes[0].imshow(
@@ -1190,7 +1191,7 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         vmax=image_vmax,
         aspect="equal",
     )
-    axes[0].set_title("casa-rs")
+    axes[0].set_title(f"casa-rs {product_label}")
     casa_artist = axes[1].imshow(
         casa_plane.T,
         origin="lower",
@@ -1198,7 +1199,7 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         vmax=image_vmax,
         aspect="equal",
     )
-    axes[1].set_title("CASA")
+    axes[1].set_title(f"CASA {product_label}")
     diff_artist = axes[2].imshow(
         diff_plane.T,
         origin="lower",
@@ -1207,7 +1208,7 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         cmap="coolwarm",
         aspect="equal",
     )
-    axes[2].set_title("difference")
+    axes[2].set_title(f"difference {product_label}\n(casa-rs - CASA)")
     fig.colorbar(rust_artist, ax=axes[0], fraction=0.046, pad=0.04, label="value")
     fig.colorbar(casa_artist, ax=axes[1], fraction=0.046, pad=0.04, label="value")
     fig.colorbar(
