@@ -19,8 +19,18 @@ from typing import Any
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 WORKLOAD_DIR = pathlib.Path(__file__).resolve().parent / "workloads"
 BENCH_SCRIPT = REPO_ROOT / "scripts" / "bench-imager-vs-casa.sh"
-SUPPORTED_GRIDDER_VALUES = {"mosaic", "standard"}
-SUPPORTED_SPEC_MODES = {"mfs", "cube"}
+SUPPORTED_GRIDDER_VALUES = {
+    "awp2",
+    "awphpg",
+    "awproject",
+    "mosaic",
+    "standard",
+    "widefield",
+    "wproject",
+}
+RUNNABLE_GRIDDER_VALUES = {"mosaic", "standard"}
+SUPPORTED_SPEC_MODES = {"cubedata", "cube", "mfs"}
+RUNNABLE_SPEC_MODES = {"cube", "mfs"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
 SUPPORTED_MS_STAGING = {"copy", "direct"}
@@ -118,6 +128,7 @@ def main() -> None:
                 **plan,
                 "logs": {"benchmark_log": None},
                 "results": empty_results(casa_status="not_run", reason="dry run"),
+                "human_review": human_review_gate(plan, None),
             }
             write_json(result_path, result)
             print(result_path)
@@ -175,10 +186,14 @@ def build_plan(
     bench_mode = enum_value(imaging, "mode", SUPPORTED_BENCH_MODES)
     interpolation = enum_value_default(imaging, "interpolation", "linear", SUPPORTED_INTERPOLATION)
     wterm = str_value(imaging, "wterm", "none")
-    if wterm != "none":
-        raise HarnessError(
-            f"{workload_id}: wterm={wterm!r} is not supported by this harness yet"
-        )
+    run_support = benchmark_run_support(
+        workload_id=workload_id,
+        specmode=specmode,
+        gridder=gridder,
+        wterm=wterm,
+    )
+    if not dry_run and run_support["status"] != "runnable":
+        raise HarnessError(f"{workload_id}: {run_support['reason']}")
     repeats = repeats_override if repeats_override is not None else int_value(run, "repeats", 5)
     if repeats < 1:
         raise HarnessError("repeats must be >= 1")
@@ -273,6 +288,8 @@ def build_plan(
             "ms_staging": ms_staging,
             "phase_probe": phase_probe,
         },
+        "run_support": run_support,
+        "review": review_contract_value(manifest, run),
         "comparison": {
             "products": product_suffixes_value(comparison),
             "max_elements_per_product": int_value(
@@ -296,6 +313,93 @@ def attach_output_paths(plan: dict[str, Any], output_dir: pathlib.Path, *, dry_r
     }
     if not dry_run:
         plan["command"]["env"]["IMAGER_BENCH_KEEP_OUTPUT_ROOT"] = str(product_root)
+
+
+def benchmark_run_support(
+    *, workload_id: str, specmode: str, gridder: str, wterm: str
+) -> dict[str, Any]:
+    reasons = []
+    if specmode not in RUNNABLE_SPEC_MODES:
+        reasons.append(f"specmode={specmode!r} needs benchmark-script execution support")
+    if gridder not in RUNNABLE_GRIDDER_VALUES:
+        reasons.append(f"gridder={gridder!r} needs benchmark-script execution support")
+    if wterm != "none":
+        reasons.append(f"wterm={wterm!r} needs benchmark-script execution support")
+    if reasons:
+        return {
+            "status": "dry_run_only",
+            "reason": f"{workload_id}: " + "; ".join(reasons),
+            "bench_script": str(BENCH_SCRIPT),
+        }
+    return {
+        "status": "runnable",
+        "reason": None,
+        "bench_script": str(BENCH_SCRIPT),
+    }
+
+
+def review_contract_value(manifest: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    review = object_value(manifest, "review")
+    required_roles = review.get(
+        "required_evidence_roles",
+        ["before_baseline", "after_multi_worker_cpu", "after_gpu_metal", "casa_cpp"],
+    )
+    if not isinstance(required_roles, list) or not all(
+        isinstance(role, str) and role for role in required_roles
+    ):
+        raise HarnessError("review.required_evidence_roles must be a non-empty string list")
+    evidence_role = str_value(run, "evidence_role", "unspecified")
+    return {
+        "required_reviewer": str_value(review, "required_reviewer", "Brian"),
+        "requires_human_acceptance_before_done": bool(
+            review.get("requires_human_acceptance_before_done", True)
+        ),
+        "required_evidence_roles": required_roles,
+        "evidence_role": evidence_role,
+    }
+
+
+def human_review_gate(
+    plan: dict[str, Any], comparison: dict[str, Any] | None
+) -> dict[str, Any]:
+    review = plan.get("review", {})
+    panel_status = "not_run"
+    panel_reason = "benchmark has not produced comparison panels yet"
+    if comparison:
+        panel_status, panel_reason = review_panel_status(comparison)
+    return {
+        "status": "pending",
+        "required_reviewer": review.get("required_reviewer", "Brian"),
+        "requires_human_acceptance_before_done": review.get(
+            "requires_human_acceptance_before_done", True
+        ),
+        "evidence_role": review.get("evidence_role", "unspecified"),
+        "required_evidence_roles": review.get("required_evidence_roles", []),
+        "panel_status": panel_status,
+        "panel_reason": panel_reason,
+        "reason": "mode ticket cannot move to Done until the review bundle is accepted",
+    }
+
+
+def review_panel_status(comparison: dict[str, Any]) -> tuple[str, str | None]:
+    if comparison.get("status") != "completed":
+        return comparison.get("status", "missing"), comparison.get("reason")
+    products = comparison.get("products", {})
+    if not products:
+        return "missing", "comparison did not include products"
+    missing = []
+    skipped = []
+    for suffix, product in products.items():
+        panel = product.get("review_panel") if isinstance(product, dict) else None
+        if not panel:
+            missing.append(suffix)
+        elif panel.get("status") != "written":
+            skipped.append(f"{suffix}: {panel.get('reason') or panel.get('status')}")
+    if missing:
+        return "missing", "missing review panels for " + ", ".join(missing)
+    if skipped:
+        return "incomplete", "; ".join(skipped)
+    return "ready", None
 
 
 def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
@@ -324,6 +428,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
                 casa_status="blocked",
                 reason=f"benchmark command exited {completed.returncode}",
             ),
+            "human_review": human_review_gate(plan, None),
         }
 
     parsed = parse_benchmark_log(completed.stdout)
@@ -338,6 +443,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         "completed_at": utc_now(),
         "exit_code": completed.returncode,
         "results": parsed,
+        "human_review": human_review_gate(plan, comparison),
     }
 
 
@@ -644,11 +750,13 @@ def compare_products(
             "products": {},
         }
 
+    panel_dir = log_path.with_suffix(".panels")
     request = {
         "rust_prefix": rust_prefix,
         "casa_prefix": casa_prefix,
         "products": plan["comparison"]["products"],
         "max_elements_per_product": plan["comparison"]["max_elements_per_product"],
+        "panel_dir": str(panel_dir),
     }
     request_path = log_path.with_suffix(".comparison-input.json")
     output_path = log_path.with_suffix(".comparison.json")
@@ -683,6 +791,7 @@ def compare_products(
         }
     comparison["log"] = str(comparison_log_path)
     comparison["input"] = str(request_path)
+    comparison["panel_dir"] = str(panel_dir)
     return comparison
 
 
@@ -915,11 +1024,23 @@ import sys
 import numpy as np
 from casatools import image
 
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception as error:
+    plt = None
+    MATPLOTLIB_ERROR = str(error)
+else:
+    MATPLOTLIB_ERROR = None
+
 
 def main():
     with open(sys.argv[1], "r", encoding="utf-8") as handle:
         request = json.load(handle)
     products = {}
+    os.makedirs(request["panel_dir"], exist_ok=True)
     for suffix in request["products"]:
         rust_path = request["rust_prefix"] + suffix
         casa_path = request["casa_prefix"] + suffix
@@ -927,6 +1048,8 @@ def main():
             rust_path,
             casa_path,
             int(request["max_elements_per_product"]),
+            request["panel_dir"],
+            suffix,
         )
     output = {"status": "completed", "products": products}
     with open(sys.argv[2], "w", encoding="utf-8") as handle:
@@ -934,7 +1057,7 @@ def main():
         handle.write("\n")
 
 
-def compare_one(rust_path, casa_path, max_elements):
+def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix):
     if not os.path.isdir(rust_path) or not os.path.isdir(casa_path):
         return {
             "status": "missing",
@@ -973,6 +1096,18 @@ def compare_one(rust_path, casa_path, max_elements):
     casa_rms = rms(casa_valid)
     diff_rms = rms(diff)
     diff_abs_max = float(np.nanmax(np.abs(diff)))
+    correlation = correlation_value(rust_valid, casa_valid)
+    rust_peak = peak_summary(rust_data)
+    casa_peak_summary = peak_summary(casa_data)
+    diff_full = rust_data - casa_data
+    diff_peak = peak_summary(diff_full)
+    panel = write_review_panel(
+        panel_dir=panel_dir,
+        suffix=suffix,
+        rust_data=rust_data,
+        casa_data=casa_data,
+        diff_data=diff_full,
+    )
     return {
         "status": "compared",
         "rust_path": rust_path,
@@ -991,7 +1126,91 @@ def compare_one(rust_path, casa_path, max_elements):
         "diff_rms": finite_float(diff_rms),
         "diff_rms_over_casa_rms": finite_float(diff_rms / abs(casa_rms)) if casa_rms else None,
         "diff_abs_max_over_casa_peak": finite_float(diff_abs_max / casa_peak) if casa_peak else None,
+        "correlation": finite_float(correlation) if correlation is not None else None,
+        "rust_peak_abs": rust_peak,
+        "casa_peak_abs": casa_peak_summary,
+        "diff_peak_abs": diff_peak,
+        "review_panel": panel,
     }
+
+
+def correlation_value(left, right):
+    if left.size < 2 or right.size < 2:
+        return None
+    left_std = float(np.nanstd(left))
+    right_std = float(np.nanstd(right))
+    if left_std == 0.0 or right_std == 0.0:
+        return None
+    return float(np.corrcoef(left.ravel(), right.ravel())[0, 1])
+
+
+def peak_summary(data):
+    finite = np.isfinite(data)
+    if not np.any(finite):
+        return None
+    filled = np.where(finite, np.abs(data), -np.inf)
+    index = np.unravel_index(int(np.nanargmax(filled)), data.shape)
+    return {
+        "location": [int(value) for value in index],
+        "value": finite_float(data[index]),
+        "abs_value": finite_float(abs(data[index])),
+    }
+
+
+def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
+    if plt is None:
+        return {
+            "status": "skipped",
+            "reason": f"matplotlib unavailable: {MATPLOTLIB_ERROR}",
+        }
+    rust_plane = display_plane(rust_data)
+    casa_plane = display_plane(casa_data)
+    diff_plane = display_plane(diff_data)
+    shared = np.concatenate(
+        [
+            rust_plane[np.isfinite(rust_plane)].ravel(),
+            casa_plane[np.isfinite(casa_plane)].ravel(),
+        ]
+    )
+    if shared.size == 0:
+        return {"status": "skipped", "reason": "no finite pixels for panel scaling"}
+    image_vmin = finite_float(np.nanmin(shared))
+    image_vmax = finite_float(np.nanmax(shared))
+    finite_diff = diff_plane[np.isfinite(diff_plane)]
+    diff_abs = finite_float(np.nanmax(np.abs(finite_diff))) if finite_diff.size else None
+    if diff_abs is None:
+        diff_abs = 0.0
+    safe_name = suffix.strip(".").replace(".", "_") or "image"
+    panel_path = os.path.join(panel_dir, f"{safe_name}.review.png")
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4), constrained_layout=True)
+    axes[0].imshow(rust_plane.T, origin="lower", vmin=image_vmin, vmax=image_vmax)
+    axes[0].set_title("casa-rs")
+    axes[1].imshow(casa_plane.T, origin="lower", vmin=image_vmin, vmax=image_vmax)
+    axes[1].set_title("CASA")
+    axes[2].imshow(diff_plane.T, origin="lower", vmin=-diff_abs, vmax=diff_abs, cmap="coolwarm")
+    axes[2].set_title("difference")
+    for axis in axes:
+        axis.set_xticks([])
+        axis.set_yticks([])
+    fig.savefig(panel_path, dpi=160)
+    plt.close(fig)
+    return {
+        "status": "written",
+        "path": panel_path,
+        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
+        "difference_color_limits": [-diff_abs, diff_abs],
+    }
+
+
+def display_plane(data):
+    plane = np.squeeze(data)
+    while plane.ndim > 2:
+        plane = plane[..., 0]
+    if plane.ndim == 0:
+        plane = np.asarray([[float(plane)]])
+    elif plane.ndim == 1:
+        plane = plane[:, np.newaxis]
+    return np.asarray(plane, dtype=np.float64)
 
 
 def load_image(path, max_elements):

@@ -8754,7 +8754,8 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         stderr.trim().is_empty()
             || stderr
                 .lines()
-                .all(|line| line.starts_with("standard_mfs_runtime_plan ")),
+                .all(|line| line.starts_with("standard_mfs_runtime_plan ")
+                    || line.starts_with("single_plane_execution_plan ")),
         "status={} stderr={}",
         app.status_line_for_test(),
         stderr

@@ -89,7 +89,7 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("blocked", results["casa"]["status"])
         self.assertEqual("benchmark command exited 2", results["casa"]["reason"])
 
-    def test_unsupported_wterm_fails_in_preflight(self) -> None:
+    def test_wterm_manifest_can_be_dry_run_for_wave3_matrix(self) -> None:
         manifest = {
             "id": "unsupported-wterm",
             "mode_id": "standard-mfs-dirty-wterm",
@@ -105,15 +105,53 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
             },
         }
 
-        with self.assertRaisesRegex(run_workload.HarnessError, "wterm='direct'"):
-            run_workload.build_plan(
-                manifest_path=Path("manifest.json"),
-                manifest=manifest,
-                repeats_override=1,
-                run_label_override=None,
-                storage_label_override=None,
-                dry_run=True,
-            )
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("dry_run_only", plan["run_support"]["status"])
+        self.assertIn("wterm='direct'", plan["run_support"]["reason"])
+
+    def test_non_runnable_wave3_mode_fails_only_for_real_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            dataset = Path(tempdir) / "input.ms"
+            dataset.mkdir()
+            manifest = {
+                "id": "wproject-smoke",
+                "mode_id": "wprojection-mfs-dirty",
+                "dataset": {
+                    "key": "input.ms",
+                    "path": str(dataset),
+                },
+                "imaging": {
+                    "mode": "dirty",
+                    "specmode": "mfs",
+                    "gridder": "wproject",
+                },
+            }
+
+            with mock.patch.dict(
+                "os.environ",
+                {"CASA_RS_CASA_PYTHON": sys.executable},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    run_workload.HarnessError,
+                    "gridder='wproject'",
+                ):
+                    run_workload.build_plan(
+                        manifest_path=Path("manifest.json"),
+                        manifest=manifest,
+                        repeats_override=1,
+                        run_label_override=None,
+                        storage_label_override=None,
+                        dry_run=False,
+                    )
 
     def test_missing_casa_python_fails_before_running_benchmark(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -321,6 +359,42 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("direct", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
         self.assertEqual("0", plan["run"]["phase_probe"])
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASE_PROBE"])
+        self.assertEqual("runnable", plan["run_support"]["status"])
+        self.assertEqual("pending", run_workload.human_review_gate(plan, None)["status"])
+        self.assertEqual("Brian", plan["review"]["required_reviewer"])
+
+    def test_cubedata_is_accepted_as_dry_run_only_wave3_mode(self) -> None:
+        manifest = {
+            "id": "cubedata-one-plane",
+            "mode_id": "cubedata-one-channel",
+            "dataset": {
+                "key": "input.ms",
+                "path": "/tmp/input.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "cubedata",
+                "gridder": "standard",
+                "channel_count": 1,
+            },
+            "run": {
+                "evidence_role": "after_gpu_metal",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("cubedata", plan["mode"]["specmode"])
+        self.assertEqual("dry_run_only", plan["run_support"]["status"])
+        self.assertIn("specmode='cubedata'", plan["run_support"]["reason"])
+        self.assertEqual("after_gpu_metal", plan["review"]["evidence_role"])
 
     def test_phase_probe_is_opt_in_for_casa_stage_diagnostics(self) -> None:
         manifest = {
@@ -457,6 +531,30 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual(parsed["stage_breakdown"]["schema_version"], 1)
         self.assertEqual(parsed["stage_breakdown"]["rust"]["status"], "reported")
         self.assertEqual(parsed["stage_breakdown"]["casa"]["status"], "missing")
+
+    def test_human_review_gate_reports_panel_readiness(self) -> None:
+        plan = {
+            "review": {
+                "required_reviewer": "Brian",
+                "required_evidence_roles": ["before_baseline", "after_gpu_metal"],
+                "evidence_role": "after_gpu_metal",
+            }
+        }
+        comparison = {
+            "status": "completed",
+            "products": {
+                ".image": {
+                    "status": "compared",
+                    "review_panel": {"status": "written", "path": "/tmp/image.png"},
+                }
+            },
+        }
+
+        gate = run_workload.human_review_gate(plan, comparison)
+
+        self.assertEqual("pending", gate["status"])
+        self.assertEqual("ready", gate["panel_status"])
+        self.assertEqual("after_gpu_metal", gate["evidence_role"])
 
     def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
         log = """Rust stage medians (milliseconds):

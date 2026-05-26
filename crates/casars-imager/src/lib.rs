@@ -5,6 +5,7 @@
 mod managed_output;
 mod oracle;
 mod schema;
+mod single_plane_plan;
 mod task_contract;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -2063,6 +2064,12 @@ fn run_single_image_from_config_with_gridder_override(
     let total_start = Instant::now();
     let stage_start = Instant::now();
     let ms_paths = measurement_set_paths(config)?;
+    let single_plane_plan = single_plane_plan::build_single_plane_execution_plan(
+        config,
+        force_standard_gridder,
+        ms_paths.len(),
+    );
+    eprintln!("{}", single_plane_plan.log_line());
     let _standard_mfs_runtime_plan =
         apply_standard_mfs_runtime_plan(config, force_standard_gridder, ms_paths.len());
     let mut ms = MeasurementSet::open(
@@ -22577,6 +22584,9 @@ mod tests {
     #[test]
     fn standard_mfs_runtime_planner_defaults_to_fixed_tile_multi_cpu() {
         let _lock = ENV_LOCK.lock().expect("env lock");
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
         let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
         let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
         let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
@@ -22603,7 +22613,7 @@ mod tests {
         .expect("parse minimal config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan(&config, false, 1);
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("fixed_tile")
@@ -22643,6 +22653,9 @@ mod tests {
     #[test]
     fn standard_mfs_runtime_planner_cpu_policy_overrides_acceleration_env() {
         let _lock = ENV_LOCK.lock().expect("env lock");
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
         let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
         let _threads = EnvGuard::set("CASA_RS_STANDARD_MFS_GRID_THREADS", "10");
         let _residual = EnvGuard::set(
@@ -22671,7 +22684,7 @@ mod tests {
         .expect("parse cpu policy");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan(&config, false, 1);
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
