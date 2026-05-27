@@ -117,13 +117,13 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("dry_run_only", plan["run_support"]["status"])
         self.assertIn("wterm='direct'", plan["run_support"]["reason"])
 
-    def test_non_runnable_wave3_mode_fails_only_for_real_execution(self) -> None:
+    def test_non_runnable_wterm_fails_only_for_real_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             dataset = Path(tempdir) / "input.ms"
             dataset.mkdir()
             manifest = {
-                "id": "wproject-smoke",
-                "mode_id": "wprojection-mfs-dirty",
+                "id": "direct-wterm-smoke",
+                "mode_id": "direct-wterm-mfs-dirty",
                 "dataset": {
                     "key": "input.ms",
                     "path": str(dataset),
@@ -131,7 +131,8 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
                 "imaging": {
                     "mode": "dirty",
                     "specmode": "mfs",
-                    "gridder": "wproject",
+                    "gridder": "standard",
+                    "wterm": "direct",
                 },
             }
 
@@ -142,7 +143,7 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
             ):
                 with self.assertRaisesRegex(
                     run_workload.HarnessError,
-                    "gridder='wproject'",
+                    "wterm='direct'",
                 ):
                     run_workload.build_plan(
                         manifest_path=Path("manifest.json"),
@@ -309,6 +310,7 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
                 "phasecenter_field": 0,
                 "spw": "0",
                 "deconvolver": "mtmfs",
+                "hogbom_iteration_mode": "casa",
                 "nterms": 2,
             },
         }
@@ -329,6 +331,8 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
 
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
         self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
+        self.assertEqual("casa", plan["command"]["env"]["IMAGER_BENCH_HOGBOM_ITERATION_MODE"])
+        self.assertEqual("casa", plan["mode"]["hogbom_iteration_mode"])
         self.assertEqual(2, plan["mode"]["nterms"])
 
     def test_ms_staging_defaults_to_direct(self) -> None:
@@ -560,11 +564,13 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         script = run_workload.PRODUCT_COMPARISON_SCRIPT
 
         self.assertIn('aspect="equal"', script)
-        self.assertIn('label="value"', script)
-        self.assertIn('label="casa-rs - CASA"', script)
+        self.assertIn('axis.set_box_aspect(1)', script)
+        self.assertIn('label=value_label', script)
+        self.assertIn('label=f"casa-rs - CASA ({value_label})"', script)
         self.assertIn('f"casa-rs {product_label}"', script)
         self.assertIn('f"CASA {product_label}"', script)
         self.assertIn('f"difference {product_label}', script)
+        self.assertIn('return "Jy/beam"', script)
 
     def test_product_comparison_stride_preserves_spatial_aspect(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}

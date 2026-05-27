@@ -92,6 +92,11 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         imaging = object_field(mode, "imaging")
         for key in ("specmode", "gridder", "deconvolver"):
             string_field(imaging, key)
+        variants = optional_string_list_field(imaging, "deconvolver_variants")
+        if variants and string_field(imaging, "deconvolver") not in variants:
+            raise MatrixError(
+                f"issue #{issue} deconvolver_variants must include primary deconvolver"
+            )
         tiers = {string_field(row, "tier") for row in list_field(mode, "rows")}
         if not REQUIRED_TIERS.issubset(tiers):
             missing = ", ".join(sorted(REQUIRED_TIERS - tiers))
@@ -122,6 +127,10 @@ def enumerate_rows(matrix: dict[str, Any]) -> list[dict[str, Any]]:
                     "specmode": string_field(imaging, "specmode"),
                     "gridder": string_field(imaging, "gridder"),
                     "deconvolver": string_field(imaging, "deconvolver"),
+                    "deconvolver_variants": optional_string_list_field(
+                        imaging, "deconvolver_variants"
+                    )
+                    or [string_field(imaging, "deconvolver")],
                     "channel_count": int(imaging.get("channel_count", 1)),
                     "products": list(row["products"]),
                 }
@@ -141,6 +150,17 @@ def list_field(obj: dict[str, Any], key: str) -> list[Any]:
     if not isinstance(value, list):
         raise MatrixError(f"{key!r} must be a list")
     return value
+
+
+def optional_string_list_field(obj: dict[str, Any], key: str) -> list[str] | None:
+    value = obj.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise MatrixError(f"{key!r} must be a non-empty list when present")
+    if not all(isinstance(item, str) and item for item in value):
+        raise MatrixError(f"{key!r} must contain non-empty strings")
+    return list(value)
 
 
 def string_field(obj: dict[str, Any], key: str) -> str:

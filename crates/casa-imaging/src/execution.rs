@@ -9392,6 +9392,81 @@ impl<'a> StandardMfsMetalExecutor<'a> {
         self.accumulate_dirty_grids(batches, psf_grid, &mut residual_grid)
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn accumulate_mtmfs_psf_grids(
+        &self,
+        batches: &[VisibilityBatch],
+        sample_frequency_batches_hz: &[Vec<f64>],
+        reffreq_hz: f64,
+        term_count: usize,
+    ) -> Result<MtmfsMetalPsfAccumulation, ImagingError> {
+        self.backend.accumulate_mtmfs_psf_grids(
+            self.gridder,
+            batches,
+            sample_frequency_batches_hz,
+            reffreq_hz,
+            term_count,
+        )
+    }
+
+    pub(crate) fn prepare_mtmfs_input_cache(
+        &self,
+        batches: &[VisibilityBatch],
+        sample_frequency_batches_hz: &[Vec<f64>],
+        reffreq_hz: f64,
+        reported_term_count: usize,
+    ) -> Result<MtmfsMetalInputCache, ImagingError> {
+        self.backend.prepare_mtmfs_input_cache(
+            self.gridder,
+            batches,
+            sample_frequency_batches_hz,
+            reffreq_hz,
+            reported_term_count,
+        )
+    }
+
+    pub(crate) fn accumulate_mtmfs_psf_grids_from_cache(
+        &self,
+        cache: &MtmfsMetalInputCache,
+        term_count: usize,
+    ) -> Result<MtmfsMetalPsfAccumulation, ImagingError> {
+        self.backend
+            .accumulate_mtmfs_psf_grids_from_cache(self.gridder, cache, term_count)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn accumulate_mtmfs_residual_grids(
+        &self,
+        batches: &[VisibilityBatch],
+        sample_frequency_batches_hz: &[Vec<f64>],
+        reffreq_hz: f64,
+        term_count: usize,
+        model_grids: Option<&[Array2<Complex32>]>,
+    ) -> Result<MtmfsMetalResidualAccumulation, ImagingError> {
+        self.backend.accumulate_mtmfs_residual_grids(
+            self.gridder,
+            batches,
+            sample_frequency_batches_hz,
+            reffreq_hz,
+            term_count,
+            model_grids,
+        )
+    }
+
+    pub(crate) fn accumulate_mtmfs_residual_grids_from_cache(
+        &self,
+        cache: &MtmfsMetalInputCache,
+        term_count: usize,
+        model_grids: Option<&[Array2<Complex32>]>,
+    ) -> Result<MtmfsMetalResidualAccumulation, ImagingError> {
+        self.backend.accumulate_mtmfs_residual_grids_from_cache(
+            self.gridder,
+            cache,
+            term_count,
+            model_grids,
+        )
+    }
+
     pub(crate) fn accumulate_residual_grid_direct_routed_visibility_run_replay(
         &self,
         replay_routed_runs: &mut MetalResidualRunReplay<'_>,
@@ -9572,6 +9647,122 @@ struct MetalResidualSample {
     visibility_re: f32,
     visibility_im: f32,
     _pad1: [f32; 2],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalMtmfsSample {
+    positive_center_x: u32,
+    positive_center_y: u32,
+    positive_x_weight_base: u32,
+    positive_y_weight_base: u32,
+    negative_center_x: u32,
+    negative_center_y: u32,
+    negative_x_weight_base: u32,
+    negative_y_weight_base: u32,
+    weight: f32,
+    sumwt_factor: f32,
+    taylor_x: f32,
+    _pad0: f32,
+    visibility_re: f32,
+    visibility_im: f32,
+    _pad1: [f32; 2],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalMtmfsParams {
+    sample_count: u32,
+    grid_width: u32,
+    grid_height: u32,
+    term_count: u32,
+    model_term_count: u32,
+    _pad0: [u32; 3],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalMtmfsGroupedResidualLane {
+    positive_center_x: u32,
+    positive_center_y: u32,
+    positive_x_weight_base: u32,
+    positive_y_weight_base: u32,
+    negative_center_x: u32,
+    negative_center_y: u32,
+    negative_x_weight_base: u32,
+    negative_y_weight_base: u32,
+    residual0_re: f32,
+    residual0_im: f32,
+    residual1_re: f32,
+    residual1_im: f32,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct MtmfsMetalPsfAccumulation {
+    pub(crate) psf_grids: Vec<Array2<Complex32>>,
+    pub(crate) normalization_sumwt: f64,
+    pub(crate) reported_sumwt_terms: Vec<f64>,
+    pub(crate) gridded_samples: usize,
+    pub(crate) skipped_samples: usize,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct MtmfsMetalResidualAccumulation {
+    pub(crate) residual_grids: Vec<Array2<Complex32>>,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct MtmfsMetalInputCache {
+    // Keep this field before `samples` so the no-copy Metal buffer is dropped
+    // before the host Vec whose allocation backs it.
+    sample_buffer: MetalBuffer,
+    samples: Vec<MetalMtmfsSample>,
+    grouped_chunks: Vec<MtmfsMetalGroupedChunk>,
+    pub(crate) reported_sumwt_terms: Vec<f64>,
+    pub(crate) normalization_sumwt: f64,
+    pub(crate) gridded_samples: usize,
+    pub(crate) skipped_samples: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl MtmfsMetalInputCache {
+    pub(crate) fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub(crate) fn host_bytes(&self) -> usize {
+        self.grouped_chunks.iter().fold(
+            std::mem::size_of_val(self.samples.as_slice()),
+            |bytes, chunk| bytes.saturating_add(chunk.host_bytes()),
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct MtmfsMetalGroupedChunk {
+    sample_start: usize,
+    sample_count: usize,
+    group_descs: Vec<MetalResidualGroupedTileDesc>,
+    lane_refs: Vec<u32>,
+    max_halo_cells: usize,
+    group_cell_count: u64,
+    group_scan_tests: u64,
+}
+
+#[cfg(target_os = "macos")]
+impl MtmfsMetalGroupedChunk {
+    fn is_empty(&self) -> bool {
+        self.sample_count == 0 || self.group_descs.is_empty()
+    }
+
+    fn host_bytes(&self) -> usize {
+        std::mem::size_of_val(self.group_descs.as_slice())
+            .saturating_add(std::mem::size_of_val(self.lane_refs.as_slice()))
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -9881,6 +10072,10 @@ type MetalResidualRunReplay<'a> = dyn FnMut(
 type MetalBuffer = objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>;
 
 #[cfg(target_os = "macos")]
+type MetalPipeline =
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>>;
+
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MetalInputBufferCopyMode {
     Copy,
@@ -9945,6 +10140,123 @@ impl MetalResidualRowRunChunk {
             .saturating_add(std::mem::size_of_val(self.flags.as_slice()))
             .saturating_add(std::mem::size_of_val(self.weights.as_slice()))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn build_mtmfs_metal_grouped_chunks(
+    samples: &[MetalMtmfsSample],
+    grid_width: usize,
+    grid_height: usize,
+    chunk_capacity: usize,
+) -> Result<Vec<MtmfsMetalGroupedChunk>, ImagingError> {
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+    let partition = MetalResidualGroupedTilePartition::new(
+        grid_width,
+        grid_height,
+        standard_mfs_metal_group_tile_edge(),
+    )?;
+    let mut chunks = Vec::new();
+    for (chunk_index, chunk_samples) in samples.chunks(chunk_capacity).enumerate() {
+        let sample_start = chunk_index.checked_mul(chunk_capacity).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "MTMFS Metal grouped chunk offset is too large".to_string(),
+            )
+        })?;
+        let side_count = chunk_samples.len().checked_mul(2).ok_or_else(|| {
+            ImagingError::InvalidRequest("MTMFS Metal grouped side count is too large".to_string())
+        })?;
+        let mut group_counts = vec![0_u32; partition.tile_count()];
+        let mut lane_group_ids = Vec::with_capacity(side_count);
+        for sample in chunk_samples {
+            let positive_group = partition
+                .owner(sample.positive_center_x, sample.positive_center_y)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS Metal grouped positive sample center is outside the grid"
+                            .to_string(),
+                    )
+                })?;
+            let negative_group = partition
+                .owner(sample.negative_center_x, sample.negative_center_y)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS Metal grouped negative sample center is outside the grid"
+                            .to_string(),
+                    )
+                })?;
+            group_counts[positive_group] =
+                group_counts[positive_group].checked_add(1).ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS Metal grouped positive lane count exceeds u32".to_string(),
+                    )
+                })?;
+            group_counts[negative_group] =
+                group_counts[negative_group].checked_add(1).ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS Metal grouped negative lane count exceeds u32".to_string(),
+                    )
+                })?;
+            lane_group_ids.push(u32::try_from(positive_group).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped positive group id exceeds u32".to_string(),
+                )
+            })?);
+            lane_group_ids.push(u32::try_from(negative_group).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped negative group id exceeds u32".to_string(),
+                )
+            })?);
+        }
+
+        let mut group_offsets = vec![0usize; group_counts.len()];
+        let mut group_descs = Vec::new();
+        let mut max_halo_cells = 0usize;
+        let mut group_cell_count = 0u64;
+        let mut group_scan_tests = 0u64;
+        let mut ref_offset = 0usize;
+        for (group_index, &count) in group_counts.iter().enumerate() {
+            group_offsets[group_index] = ref_offset;
+            if count == 0 {
+                continue;
+            }
+            let desc = partition.tile_desc(group_index, ref_offset, count as usize)?;
+            let halo_cells = (desc.halo_width as usize).saturating_mul(desc.halo_height as usize);
+            max_halo_cells = max_halo_cells.max(halo_cells);
+            group_cell_count = group_cell_count.saturating_add(halo_cells as u64);
+            group_scan_tests =
+                group_scan_tests.saturating_add((halo_cells as u64).saturating_mul(count as u64));
+            group_descs.push(desc);
+            ref_offset = ref_offset.saturating_add(count as usize);
+        }
+
+        let mut lane_refs = vec![0_u32; side_count];
+        let mut cursors = group_offsets;
+        for (lane_index, &group_id) in lane_group_ids.iter().enumerate() {
+            let group_index = group_id as usize;
+            let slot = cursors.get_mut(group_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "MTMFS Metal grouped group id {group_id} is out of range"
+                ))
+            })?;
+            lane_refs[*slot] = u32::try_from(lane_index).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grouped lane ref exceeds u32".to_string())
+            })?;
+            *slot = (*slot).saturating_add(1);
+        }
+
+        chunks.push(MtmfsMetalGroupedChunk {
+            sample_start,
+            sample_count: chunk_samples.len(),
+            group_descs,
+            lane_refs,
+            max_halo_cells,
+            group_cell_count,
+            group_scan_tests,
+        });
+    }
+    Ok(chunks)
 }
 
 #[cfg(target_os = "macos")]
@@ -10671,6 +10983,36 @@ struct MetalResidualDispatchTiming {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct MtmfsMetalTermTimings {
+    input_buffer: Duration,
+    params_buffer: Duration,
+    tap_buffer: Duration,
+    grid_buffer: Duration,
+    model_pack: Duration,
+    model_buffer: Duration,
+    dispatch_sample_buffer: Duration,
+    dispatch_params_buffer: Duration,
+    dispatch_encode: Duration,
+    dispatch_wait: Duration,
+    dispatch_gpu: Duration,
+    dispatch_kernel: Duration,
+    readback: Duration,
+    staged_bytes: usize,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct MtmfsMetalDispatchTiming {
+    sample_buffer: Duration,
+    params_buffer: Duration,
+    encode: Duration,
+    wait: Duration,
+    gpu: Duration,
+    kernel: Duration,
+}
+
+#[cfg(target_os = "macos")]
 fn record_metal_grouped_residual_dispatch(
     chunk_number: usize,
     metrics: MetalResidualGroupedChunkMetrics,
@@ -10745,6 +11087,22 @@ struct MetalDirtyBackend {
     residual_pipeline: objc2::rc::Retained<
         objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
     >,
+    #[allow(dead_code)]
+    mtmfs_psf_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    mtmfs_residual_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    mtmfs_grouped_psf_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    mtmfs_grouped_residual_prepare_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    mtmfs_grouped_residual_accumulate_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
     residual_row_run_pipeline: objc2::rc::Retained<
         objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
     >,
@@ -10772,6 +11130,106 @@ struct MetalDirtyBackend {
             objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
         >,
     >,
+}
+
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
+fn mtmfs_metal_sample(
+    gridder: &StandardGridder,
+    u_lambda: f64,
+    v_lambda: f64,
+    weight: f32,
+    sumwt_factor: f32,
+    frequency_hz: f64,
+    reffreq_hz: f64,
+    visibility: Complex32,
+) -> Result<Option<MetalMtmfsSample>, ImagingError> {
+    let Some(positive_taps) = gridder.plan_positive_taps(u_lambda, v_lambda) else {
+        return Ok(None);
+    };
+    let Some(negative_taps) = gridder.plan_positive_taps(-u_lambda, -v_lambda) else {
+        return Ok(None);
+    };
+    let positive_center = [
+        u32::try_from(positive_taps.x.center()).map_err(|_| {
+            ImagingError::InvalidRequest("MTMFS Metal positive x center exceeds u32".to_string())
+        })?,
+        u32::try_from(positive_taps.y.center()).map_err(|_| {
+            ImagingError::InvalidRequest("MTMFS Metal positive y center exceeds u32".to_string())
+        })?,
+    ];
+    let negative_center = [
+        u32::try_from(negative_taps.x.center()).map_err(|_| {
+            ImagingError::InvalidRequest("MTMFS Metal negative x center exceeds u32".to_string())
+        })?,
+        u32::try_from(negative_taps.y.center()).map_err(|_| {
+            ImagingError::InvalidRequest("MTMFS Metal negative y center exceeds u32".to_string())
+        })?,
+    ];
+    let scaled = (frequency_hz - reffreq_hz) / reffreq_hz;
+    Ok(Some(MetalMtmfsSample {
+        positive_center_x: positive_center[0],
+        positive_center_y: positive_center[1],
+        positive_x_weight_base: mtmfs_metal_weight_base(positive_taps.x)?,
+        positive_y_weight_base: mtmfs_metal_weight_base(positive_taps.y)?,
+        negative_center_x: negative_center[0],
+        negative_center_y: negative_center[1],
+        negative_x_weight_base: mtmfs_metal_weight_base(negative_taps.x)?,
+        negative_y_weight_base: mtmfs_metal_weight_base(negative_taps.y)?,
+        weight,
+        sumwt_factor,
+        taylor_x: scaled as f32,
+        _pad0: 0.0,
+        visibility_re: visibility.re,
+        visibility_im: visibility.im,
+        _pad1: [0.0; 2],
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn mtmfs_metal_weight_base(span: TapAxisSpan) -> Result<u32, ImagingError> {
+    span.weight_index
+        .checked_mul(STANDARD_GRIDDER_TAP_COUNT)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("MTMFS Metal tap weight base exceeds u32".to_string())
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn mtmfs_taylor_power(taylor_x: f32, order: usize) -> f32 {
+    if order == 0 {
+        1.0
+    } else {
+        taylor_x.powi(order as i32)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_mtmfs_term_grids(
+    grid_re: &[u32],
+    grid_im: &[u32],
+    term_count: usize,
+    cell_count: usize,
+    grid_width: usize,
+    grid_height: usize,
+) -> Vec<Array2<Complex32>> {
+    let mut grids = Vec::with_capacity(term_count);
+    for term in 0..term_count {
+        let offset = term * cell_count;
+        let mut grid = Array2::<Complex32>::zeros((grid_width, grid_height));
+        for ((cell, &re_bits), &im_bits) in grid
+            .as_slice_memory_order_mut()
+            .expect("fresh MTMFS Metal term grid should be contiguous")
+            .iter_mut()
+            .zip(&grid_re[offset..offset + cell_count])
+            .zip(&grid_im[offset..offset + cell_count])
+        {
+            *cell = Complex32::new(f32::from_bits(re_bits), f32::from_bits(im_bits));
+        }
+        grids.push(grid);
+    }
+    grids
 }
 
 #[cfg(target_os = "macos")]
@@ -10824,6 +11282,75 @@ impl MetalDirtyBackend {
         let residual_pipeline = device
             .newComputePipelineStateWithFunction_error(&residual_function)
             .map_err(|error| metal_error("create residual refresh pipeline", error))?;
+        let mtmfs_psf_function_name =
+            objc2_foundation::NSString::from_str("mtmfs_psf_terms_global_atomic");
+        let mtmfs_psf_function = library
+            .newFunctionWithName(&mtmfs_psf_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' MTMFS PSF shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let mtmfs_psf_pipeline = device
+            .newComputePipelineStateWithFunction_error(&mtmfs_psf_function)
+            .map_err(|error| metal_error("create MTMFS PSF pipeline", error))?;
+        let mtmfs_residual_function_name =
+            objc2_foundation::NSString::from_str("mtmfs_residual_terms_global_atomic");
+        let mtmfs_residual_function = library
+            .newFunctionWithName(&mtmfs_residual_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' MTMFS residual shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let mtmfs_residual_pipeline = device
+            .newComputePipelineStateWithFunction_error(&mtmfs_residual_function)
+            .map_err(|error| metal_error("create MTMFS residual pipeline", error))?;
+        let mtmfs_grouped_psf_function_name =
+            objc2_foundation::NSString::from_str("mtmfs_psf_terms_grouped_accumulate");
+        let mtmfs_grouped_psf_function = library
+            .newFunctionWithName(&mtmfs_grouped_psf_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' grouped MTMFS PSF shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let mtmfs_grouped_psf_pipeline = device
+            .newComputePipelineStateWithFunction_error(&mtmfs_grouped_psf_function)
+            .map_err(|error| metal_error("create grouped MTMFS PSF pipeline", error))?;
+        let mtmfs_grouped_residual_prepare_function_name =
+            objc2_foundation::NSString::from_str("mtmfs_residual_terms_grouped_prepare_nterms2");
+        let mtmfs_grouped_residual_prepare_function = library
+            .newFunctionWithName(&mtmfs_grouped_residual_prepare_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' grouped MTMFS residual prepare shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let mtmfs_grouped_residual_prepare_pipeline = device
+            .newComputePipelineStateWithFunction_error(&mtmfs_grouped_residual_prepare_function)
+            .map_err(|error| {
+                metal_error("create grouped MTMFS residual prepare pipeline", error)
+            })?;
+        let mtmfs_grouped_residual_accumulate_function_name =
+            objc2_foundation::NSString::from_str("mtmfs_residual_terms_grouped_accumulate_nterms2");
+        let mtmfs_grouped_residual_accumulate_function = library
+            .newFunctionWithName(&mtmfs_grouped_residual_accumulate_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' grouped MTMFS residual accumulate shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let mtmfs_grouped_residual_accumulate_pipeline = device
+            .newComputePipelineStateWithFunction_error(&mtmfs_grouped_residual_accumulate_function)
+            .map_err(|error| {
+                metal_error("create grouped MTMFS residual accumulate pipeline", error)
+            })?;
         let residual_row_run_function_name =
             objc2_foundation::NSString::from_str("residual_refresh_row_run_global_atomic_exact");
         let residual_row_run_function = library
@@ -10965,6 +11492,11 @@ impl MetalDirtyBackend {
             queue,
             pipeline,
             residual_pipeline,
+            mtmfs_psf_pipeline,
+            mtmfs_residual_pipeline,
+            mtmfs_grouped_psf_pipeline,
+            mtmfs_grouped_residual_prepare_pipeline,
+            mtmfs_grouped_residual_accumulate_pipeline,
             residual_row_run_pipeline,
             residual_row_run_diagnostic_pipeline,
             residual_row_run_grouped_prepare_pipeline,
@@ -11133,6 +11665,1101 @@ impl MetalDirtyBackend {
         }
 
         Ok((psf_grid, residual_grid))
+    }
+
+    #[allow(dead_code)]
+    fn accumulate_mtmfs_psf_grids(
+        &self,
+        gridder: &StandardGridder,
+        batches: &[VisibilityBatch],
+        sample_frequency_batches_hz: &[Vec<f64>],
+        reffreq_hz: f64,
+        term_count: usize,
+    ) -> Result<MtmfsMetalPsfAccumulation, ImagingError> {
+        let cache = self.prepare_mtmfs_input_cache(
+            gridder,
+            batches,
+            sample_frequency_batches_hz,
+            reffreq_hz,
+            term_count,
+        )?;
+        self.accumulate_mtmfs_psf_grids_from_cache(gridder, &cache, term_count)
+    }
+
+    fn prepare_mtmfs_input_cache(
+        &self,
+        gridder: &StandardGridder,
+        batches: &[VisibilityBatch],
+        sample_frequency_batches_hz: &[Vec<f64>],
+        reffreq_hz: f64,
+        reported_term_count: usize,
+    ) -> Result<MtmfsMetalInputCache, ImagingError> {
+        if reported_term_count == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS Metal input cache requires at least one Taylor term".to_string(),
+            ));
+        }
+        let collect_profile = profile::standard_mfs_profile_detail_enabled();
+        let total_started = collect_profile.then(Instant::now);
+        let mut validate_time = Duration::ZERO;
+        let mut sample_plan_time = Duration::ZERO;
+        let mut sumwt_time = Duration::ZERO;
+        let mut grouping_time = Duration::ZERO;
+        let mut samples = Vec::<MetalMtmfsSample>::new();
+        let mut normalization_sumwt = 0.0_f64;
+        let mut reported_sumwt_terms = vec![0.0_f64; reported_term_count];
+        let mut gridded_samples = 0usize;
+        let mut skipped_samples = 0usize;
+        for (batch_index, batch) in batches.iter().enumerate() {
+            let validate_started = collect_profile.then(Instant::now);
+            batch.validate()?;
+            if let Some(started) = validate_started {
+                validate_time += started.elapsed();
+            }
+            let frequencies_hz = sample_frequency_batches_hz
+                .get(batch_index)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                    ))
+                })?;
+            samples.reserve(frequencies_hz.len().min(batch.len()));
+            for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
+                let weight = batch.weight[index];
+                let sumwt_factor = batch.sumwt_factor[index];
+                if !(batch.gridable[index]
+                    && weight.is_finite()
+                    && weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0
+                    && frequency_hz.is_finite()
+                    && frequency_hz > 0.0)
+                {
+                    skipped_samples = skipped_samples.saturating_add(1);
+                    continue;
+                }
+                let sample_plan_started = collect_profile.then(Instant::now);
+                let Some(sample) = mtmfs_metal_sample(
+                    gridder,
+                    batch.u_lambda[index],
+                    batch.v_lambda[index],
+                    weight,
+                    sumwt_factor,
+                    frequency_hz,
+                    reffreq_hz,
+                    batch.visibility[index],
+                )?
+                else {
+                    if let Some(started) = sample_plan_started {
+                        sample_plan_time += started.elapsed();
+                    }
+                    skipped_samples = skipped_samples.saturating_add(1);
+                    continue;
+                };
+                if let Some(started) = sample_plan_started {
+                    sample_plan_time += started.elapsed();
+                }
+                let sumwt_started = collect_profile.then(Instant::now);
+                normalization_sumwt += 2.0 * f64::from(weight);
+                for (order, sumwt) in reported_sumwt_terms.iter_mut().enumerate() {
+                    *sumwt += f64::from(weight)
+                        * f64::from(mtmfs_taylor_power(sample.taylor_x, order))
+                        * f64::from(sumwt_factor);
+                }
+                if let Some(started) = sumwt_started {
+                    sumwt_time += started.elapsed();
+                }
+                samples.push(sample);
+                gridded_samples = gridded_samples.saturating_add(1);
+            }
+        }
+        let sample_buffer_started = collect_profile.then(Instant::now);
+        let sample_buffer = self.buffer_from_slice_no_copy(
+            &samples,
+            objc2_metal::MTLResourceOptions::StorageModeShared,
+        )?;
+        let sample_buffer_time =
+            sample_buffer_started.map_or(Duration::ZERO, |started| started.elapsed());
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let grouped_chunks = if mtmfs_metal_grouped_terms_enabled() {
+            let grouping_started = collect_profile.then(Instant::now);
+            let chunks = build_mtmfs_metal_grouped_chunks(
+                &samples,
+                grid_width,
+                grid_height,
+                standard_mfs_metal_residual_chunk_samples(),
+            )?;
+            if let Some(started) = grouping_started {
+                grouping_time += started.elapsed();
+            }
+            chunks
+        } else {
+            Vec::new()
+        };
+        if collect_profile {
+            let grouped_host_bytes = grouped_chunks.iter().fold(0usize, |bytes, chunk| {
+                bytes.saturating_add(chunk.host_bytes())
+            });
+            let grouped_refs = grouped_chunks.iter().fold(0usize, |count, chunk| {
+                count.saturating_add(chunk.lane_refs.len())
+            });
+            let grouped_descs = grouped_chunks.iter().fold(0usize, |count, chunk| {
+                count.saturating_add(chunk.group_descs.len())
+            });
+            let grouped_cells = grouped_chunks.iter().fold(0u64, |count, chunk| {
+                count.saturating_add(chunk.group_cell_count)
+            });
+            let grouped_scan_tests = grouped_chunks.iter().fold(0u64, |count, chunk| {
+                count.saturating_add(chunk.group_scan_tests)
+            });
+            eprintln!(
+                "mtmfs_metal_input_cache samples={} reported_terms={} host_bytes={} skipped_samples={} grouped_chunks={} grouped_descs={} grouped_refs={} grouped_host_bytes={} grouped_cells={} grouped_scan_tests={} total_ms={:.3} validate_ms={:.3} sample_plan_ms={:.3} sumwt_ms={:.3} sample_buffer_ms={:.3} grouping_ms={:.3}",
+                samples.len(),
+                reported_term_count,
+                std::mem::size_of_val(samples.as_slice()),
+                skipped_samples,
+                grouped_chunks.len(),
+                grouped_descs,
+                grouped_refs,
+                grouped_host_bytes,
+                grouped_cells,
+                grouped_scan_tests,
+                total_started.map_or(0.0, |started| profile::millis(started.elapsed())),
+                profile::millis(validate_time),
+                profile::millis(sample_plan_time),
+                profile::millis(sumwt_time),
+                profile::millis(sample_buffer_time),
+                profile::millis(grouping_time),
+            );
+        }
+        Ok(MtmfsMetalInputCache {
+            sample_buffer,
+            samples,
+            grouped_chunks,
+            reported_sumwt_terms,
+            normalization_sumwt,
+            gridded_samples,
+            skipped_samples,
+        })
+    }
+
+    fn accumulate_mtmfs_psf_grids_from_cache(
+        &self,
+        gridder: &StandardGridder,
+        cache: &MtmfsMetalInputCache,
+        term_count: usize,
+    ) -> Result<MtmfsMetalPsfAccumulation, ImagingError> {
+        use std::{mem, slice};
+
+        use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
+
+        if term_count == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS Metal PSF requires at least one Taylor term".to_string(),
+            ));
+        }
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+            ImagingError::InvalidRequest("MTMFS Metal PSF grid is too large".to_string())
+        })?;
+        let output_cells = term_count.checked_mul(cell_count).ok_or_else(|| {
+            ImagingError::InvalidRequest("MTMFS Metal PSF term grid is too large".to_string())
+        })?;
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let mut timings = MtmfsMetalTermTimings::default();
+        let chunk_capacity = standard_mfs_metal_residual_chunk_samples();
+        let params_buffer_started = Instant::now();
+        let params_buffer = self
+            .device
+            .newBufferWithLength_options(mem::size_of::<MetalMtmfsParams>(), storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate MTMFS PSF params buffer"
+                        .to_string(),
+                )
+            })?;
+        timings.params_buffer += params_buffer_started.elapsed();
+        let tap_buffer_started = Instant::now();
+        let tap_weights_buffer =
+            self.buffer_from_slice_no_copy(gridder.normalized_tap_weights(), storage_options)?;
+        timings.tap_buffer += tap_buffer_started.elapsed();
+        let grid_buffer_started = Instant::now();
+        let zero_grid = vec![0_u32; output_cells];
+        let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        timings.grid_buffer += grid_buffer_started.elapsed();
+        let use_grouped_psf =
+            mtmfs_metal_grouped_terms_enabled() && !cache.grouped_chunks.is_empty();
+        let mut chunks_dispatched = 0usize;
+        if use_grouped_psf {
+            for chunk in &cache.grouped_chunks {
+                let dispatch_timing = self.dispatch_mtmfs_grouped_psf_chunk(
+                    chunk,
+                    grid_width,
+                    grid_height,
+                    term_count,
+                    &cache.sample_buffer,
+                    &params_buffer,
+                    &tap_weights_buffer,
+                    &grid_re_buffer,
+                    &grid_im_buffer,
+                )?;
+                timings.dispatch_sample_buffer += dispatch_timing.sample_buffer;
+                timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+                timings.dispatch_encode += dispatch_timing.encode;
+                timings.dispatch_wait += dispatch_timing.wait;
+                timings.dispatch_gpu += dispatch_timing.gpu;
+                timings.dispatch_kernel += dispatch_timing.kernel;
+                timings.staged_bytes = timings.staged_bytes.saturating_add(chunk.host_bytes());
+                chunks_dispatched = chunks_dispatched.saturating_add(1);
+            }
+        } else {
+            for (chunk_index, chunk) in cache.samples.chunks(chunk_capacity).enumerate() {
+                let sample_buffer_offset = chunk_index
+                    .checked_mul(chunk_capacity)
+                    .and_then(|offset| offset.checked_mul(mem::size_of::<MetalMtmfsSample>()))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "MTMFS Metal PSF sample buffer offset is too large".to_string(),
+                        )
+                    })?;
+                let dispatch_timing = self.dispatch_mtmfs_psf_chunk(
+                    chunk.len(),
+                    sample_buffer_offset,
+                    grid_width,
+                    grid_height,
+                    term_count,
+                    &cache.sample_buffer,
+                    &params_buffer,
+                    &tap_weights_buffer,
+                    &grid_re_buffer,
+                    &grid_im_buffer,
+                )?;
+                timings.dispatch_sample_buffer += dispatch_timing.sample_buffer;
+                timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+                timings.dispatch_encode += dispatch_timing.encode;
+                timings.dispatch_wait += dispatch_timing.wait;
+                timings.dispatch_gpu += dispatch_timing.gpu;
+                timings.dispatch_kernel += dispatch_timing.kernel;
+                timings.staged_bytes = timings
+                    .staged_bytes
+                    .saturating_add(std::mem::size_of_val(chunk));
+                chunks_dispatched = chunks_dispatched.saturating_add(1);
+            }
+        }
+
+        let readback_started = Instant::now();
+        let grid_re = unsafe {
+            slice::from_raw_parts(
+                grid_re_buffer.contents().as_ptr().cast::<u32>(),
+                output_cells,
+            )
+        };
+        let grid_im = unsafe {
+            slice::from_raw_parts(
+                grid_im_buffer.contents().as_ptr().cast::<u32>(),
+                output_cells,
+            )
+        };
+        let psf_grids = read_mtmfs_term_grids(
+            grid_re,
+            grid_im,
+            term_count,
+            cell_count,
+            grid_width,
+            grid_height,
+        );
+        timings.readback += readback_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mtmfs_metal_psf_terms strategy={} chunks={} chunk_capacity={} terms={} gridded_samples={} skipped_samples={} input_buffer_ms={:.3} params_buffer_ms={:.3} tap_buffer_ms={:.3} grid_buffer_ms={:.3} dispatch_sample_buffer_ms={:.3} dispatch_params_buffer_ms={:.3} dispatch_encode_ms={:.3} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} readback_ms={:.3} staged_bytes={}",
+                if use_grouped_psf {
+                    "grouped"
+                } else {
+                    "global_atomic"
+                },
+                chunks_dispatched,
+                chunk_capacity,
+                term_count,
+                cache.gridded_samples,
+                cache.skipped_samples,
+                profile::millis(timings.input_buffer),
+                profile::millis(timings.params_buffer),
+                profile::millis(timings.tap_buffer),
+                profile::millis(timings.grid_buffer),
+                profile::millis(timings.dispatch_sample_buffer),
+                profile::millis(timings.dispatch_params_buffer),
+                profile::millis(timings.dispatch_encode),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.dispatch_gpu),
+                profile::millis(timings.dispatch_kernel),
+                profile::millis(timings.readback),
+                timings.staged_bytes,
+            );
+        }
+        Ok(MtmfsMetalPsfAccumulation {
+            psf_grids,
+            normalization_sumwt: cache.normalization_sumwt,
+            reported_sumwt_terms: cache
+                .reported_sumwt_terms
+                .iter()
+                .copied()
+                .take(term_count)
+                .collect(),
+            gridded_samples: cache.gridded_samples,
+            skipped_samples: cache.skipped_samples,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn accumulate_mtmfs_residual_grids(
+        &self,
+        gridder: &StandardGridder,
+        batches: &[VisibilityBatch],
+        sample_frequency_batches_hz: &[Vec<f64>],
+        reffreq_hz: f64,
+        term_count: usize,
+        model_grids: Option<&[Array2<Complex32>]>,
+    ) -> Result<MtmfsMetalResidualAccumulation, ImagingError> {
+        let cache = self.prepare_mtmfs_input_cache(
+            gridder,
+            batches,
+            sample_frequency_batches_hz,
+            reffreq_hz,
+            term_count,
+        )?;
+        self.accumulate_mtmfs_residual_grids_from_cache(gridder, &cache, term_count, model_grids)
+    }
+
+    fn accumulate_mtmfs_residual_grids_from_cache(
+        &self,
+        gridder: &StandardGridder,
+        cache: &MtmfsMetalInputCache,
+        term_count: usize,
+        model_grids: Option<&[Array2<Complex32>]>,
+    ) -> Result<MtmfsMetalResidualAccumulation, ImagingError> {
+        use std::{mem, slice};
+
+        use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
+
+        if term_count == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS Metal residual requires at least one Taylor term".to_string(),
+            ));
+        }
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+            ImagingError::InvalidRequest("MTMFS Metal residual grid is too large".to_string())
+        })?;
+        let output_cells = term_count.checked_mul(cell_count).ok_or_else(|| {
+            ImagingError::InvalidRequest("MTMFS Metal residual term grid is too large".to_string())
+        })?;
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let mut timings = MtmfsMetalTermTimings::default();
+        let chunk_capacity = standard_mfs_metal_residual_chunk_samples();
+        let params_buffer_started = Instant::now();
+        let params_buffer = self
+            .device
+            .newBufferWithLength_options(mem::size_of::<MetalMtmfsParams>(), storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate MTMFS residual params buffer"
+                        .to_string(),
+                )
+            })?;
+        timings.params_buffer += params_buffer_started.elapsed();
+        let tap_buffer_started = Instant::now();
+        let tap_weights_buffer =
+            self.buffer_from_slice_no_copy(gridder.normalized_tap_weights(), storage_options)?;
+        timings.tap_buffer += tap_buffer_started.elapsed();
+        let model_term_count = model_grids.map_or(0, |grids| grids.len());
+        let model_pack_started = Instant::now();
+        let mut model_re = Vec::<f32>::with_capacity(model_term_count.max(1) * cell_count);
+        let mut model_im = Vec::<f32>::with_capacity(model_term_count.max(1) * cell_count);
+        if let Some(model_grids) = model_grids {
+            if model_grids.len() != term_count {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "MTMFS Metal residual expected {term_count} model terms but got {}",
+                    model_grids.len()
+                )));
+            }
+            for grid in model_grids {
+                if grid.shape() != [grid_width, grid_height] {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "MTMFS Metal model grid shape {:?} differs from gridder shape {:?}",
+                        grid.shape(),
+                        [grid_width, grid_height]
+                    )));
+                }
+                for value in grid.as_slice_memory_order().ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS Metal model grids must be contiguous".to_string(),
+                    )
+                })? {
+                    model_re.push(value.re);
+                    model_im.push(value.im);
+                }
+            }
+        } else {
+            model_re.push(0.0);
+            model_im.push(0.0);
+        }
+        timings.model_pack += model_pack_started.elapsed();
+        let model_buffer_started = Instant::now();
+        let model_re_buffer = self.buffer_from_slice(&model_re, storage_options)?;
+        let model_im_buffer = self.buffer_from_slice(&model_im, storage_options)?;
+        timings.model_buffer += model_buffer_started.elapsed();
+        let grid_buffer_started = Instant::now();
+        let zero_grid = vec![0_u32; output_cells];
+        let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        timings.grid_buffer += grid_buffer_started.elapsed();
+        let use_grouped_residual = term_count == 2
+            && mtmfs_metal_grouped_terms_enabled()
+            && !cache.grouped_chunks.is_empty();
+        let mut chunks_dispatched = 0usize;
+        if use_grouped_residual {
+            for chunk in &cache.grouped_chunks {
+                let dispatch_timing = self.dispatch_mtmfs_grouped_residual_chunk(
+                    chunk,
+                    grid_width,
+                    grid_height,
+                    model_term_count,
+                    &cache.sample_buffer,
+                    &params_buffer,
+                    &tap_weights_buffer,
+                    &model_re_buffer,
+                    &model_im_buffer,
+                    &grid_re_buffer,
+                    &grid_im_buffer,
+                )?;
+                timings.dispatch_sample_buffer += dispatch_timing.sample_buffer;
+                timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+                timings.dispatch_encode += dispatch_timing.encode;
+                timings.dispatch_wait += dispatch_timing.wait;
+                timings.dispatch_gpu += dispatch_timing.gpu;
+                timings.dispatch_kernel += dispatch_timing.kernel;
+                timings.staged_bytes = timings.staged_bytes.saturating_add(chunk.host_bytes());
+                chunks_dispatched = chunks_dispatched.saturating_add(1);
+            }
+        } else {
+            for (chunk_index, chunk) in cache.samples.chunks(chunk_capacity).enumerate() {
+                let sample_buffer_offset = chunk_index
+                    .checked_mul(chunk_capacity)
+                    .and_then(|offset| offset.checked_mul(mem::size_of::<MetalMtmfsSample>()))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "MTMFS Metal residual sample buffer offset is too large".to_string(),
+                        )
+                    })?;
+                let dispatch_timing = self.dispatch_mtmfs_residual_chunk(
+                    chunk.len(),
+                    sample_buffer_offset,
+                    grid_width,
+                    grid_height,
+                    term_count,
+                    model_term_count,
+                    &cache.sample_buffer,
+                    &params_buffer,
+                    &tap_weights_buffer,
+                    &model_re_buffer,
+                    &model_im_buffer,
+                    &grid_re_buffer,
+                    &grid_im_buffer,
+                )?;
+                timings.dispatch_sample_buffer += dispatch_timing.sample_buffer;
+                timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+                timings.dispatch_encode += dispatch_timing.encode;
+                timings.dispatch_wait += dispatch_timing.wait;
+                timings.dispatch_gpu += dispatch_timing.gpu;
+                timings.dispatch_kernel += dispatch_timing.kernel;
+                timings.staged_bytes = timings
+                    .staged_bytes
+                    .saturating_add(std::mem::size_of_val(chunk));
+                chunks_dispatched = chunks_dispatched.saturating_add(1);
+            }
+        }
+
+        let readback_started = Instant::now();
+        let grid_re = unsafe {
+            slice::from_raw_parts(
+                grid_re_buffer.contents().as_ptr().cast::<u32>(),
+                output_cells,
+            )
+        };
+        let grid_im = unsafe {
+            slice::from_raw_parts(
+                grid_im_buffer.contents().as_ptr().cast::<u32>(),
+                output_cells,
+            )
+        };
+        let residual_grids = read_mtmfs_term_grids(
+            grid_re,
+            grid_im,
+            term_count,
+            cell_count,
+            grid_width,
+            grid_height,
+        );
+        timings.readback += readback_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mtmfs_metal_residual_terms strategy={} chunks={} chunk_capacity={} terms={} model_terms={} gridded_samples={} skipped_samples={} input_buffer_ms={:.3} params_buffer_ms={:.3} tap_buffer_ms={:.3} model_pack_ms={:.3} model_buffer_ms={:.3} grid_buffer_ms={:.3} dispatch_sample_buffer_ms={:.3} dispatch_params_buffer_ms={:.3} dispatch_encode_ms={:.3} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} readback_ms={:.3} staged_bytes={}",
+                if use_grouped_residual {
+                    "grouped_nterms2"
+                } else {
+                    "global_atomic"
+                },
+                chunks_dispatched,
+                chunk_capacity,
+                term_count,
+                model_term_count,
+                cache.gridded_samples,
+                cache.skipped_samples,
+                profile::millis(timings.input_buffer),
+                profile::millis(timings.params_buffer),
+                profile::millis(timings.tap_buffer),
+                profile::millis(timings.model_pack),
+                profile::millis(timings.model_buffer),
+                profile::millis(timings.grid_buffer),
+                profile::millis(timings.dispatch_sample_buffer),
+                profile::millis(timings.dispatch_params_buffer),
+                profile::millis(timings.dispatch_encode),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.dispatch_gpu),
+                profile::millis(timings.dispatch_kernel),
+                profile::millis(timings.readback),
+                timings.staged_bytes,
+            );
+        }
+        Ok(MtmfsMetalResidualAccumulation { residual_grids })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_mtmfs_grouped_psf_chunk(
+        &self,
+        chunk: &MtmfsMetalGroupedChunk,
+        grid_width: usize,
+        grid_height: usize,
+        term_count: usize,
+        sample_buffer: &MetalBuffer,
+        params_buffer: &MetalBuffer,
+        tap_weights: &MetalBuffer,
+        grid_re: &MetalBuffer,
+        grid_im: &MetalBuffer,
+    ) -> Result<MtmfsMetalDispatchTiming, ImagingError> {
+        use std::ptr;
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLResourceOptions,
+            MTLSize,
+        };
+
+        let mut timing = MtmfsMetalDispatchTiming::default();
+        if chunk.is_empty() {
+            return Ok(timing);
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let input_buffers_started = Instant::now();
+        let group_desc_buffer = self.buffer_from_slice(&chunk.group_descs, storage_options)?;
+        let lane_ref_buffer = self.buffer_from_slice(&chunk.lane_refs, storage_options)?;
+        timing.sample_buffer += input_buffers_started.elapsed();
+        let params = MetalMtmfsParams {
+            sample_count: u32::try_from(chunk.sample_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped PSF chunk has too many samples".to_string(),
+                )
+            })?,
+            grid_width: u32::try_from(grid_width).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grid width exceeds u32".to_string())
+            })?,
+            grid_height: u32::try_from(grid_height).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grid height exceeds u32".to_string())
+            })?,
+            term_count: u32::try_from(term_count).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal term count exceeds u32".to_string())
+            })?,
+            model_term_count: 0,
+            _pad0: [0; 3],
+        };
+        let params_buffer_started = Instant::now();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                ptr::addr_of!(params).cast::<u8>(),
+                params_buffer.contents().as_ptr().cast::<u8>(),
+                std::mem::size_of::<MetalMtmfsParams>(),
+            );
+        }
+        timing.params_buffer += params_buffer_started.elapsed();
+
+        let sample_buffer_offset = chunk
+            .sample_start
+            .checked_mul(std::mem::size_of::<MetalMtmfsSample>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped PSF sample buffer offset is too large".to_string(),
+                )
+            })?;
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a grouped MTMFS PSF command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a grouped MTMFS PSF compute encoder"
+                    .to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.mtmfs_grouped_psf_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(sample_buffer), sample_buffer_offset, 0);
+            encoder.setBuffer_offset_atIndex(Some(&group_desc_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&lane_ref_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(tap_weights), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(grid_re), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(grid_im), 0, 6);
+        }
+        let accumulate_width = chunk.max_halo_cells.max(1);
+        let accumulate_height = chunk.group_descs.len().max(1);
+        let thread_width = self
+            .mtmfs_grouped_psf_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let max_threads = self
+            .mtmfs_grouped_psf_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let group_width = thread_width.min(accumulate_width).max(1);
+        let group_height = (max_threads / group_width)
+            .max(1)
+            .min(accumulate_height)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: accumulate_width,
+                height: accumulate_height,
+                depth: term_count,
+            },
+            MTLSize {
+                width: group_width,
+                height: group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' grouped MTMFS PSF command failed: {message}"
+            )));
+        }
+        let gpu_start = command_buffer.GPUStartTime();
+        let gpu_end = command_buffer.GPUEndTime();
+        if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+            timing.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+        }
+        let kernel_start = command_buffer.kernelStartTime();
+        let kernel_end = command_buffer.kernelEndTime();
+        if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+            timing.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+        }
+        Ok(timing)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_mtmfs_grouped_residual_chunk(
+        &self,
+        chunk: &MtmfsMetalGroupedChunk,
+        grid_width: usize,
+        grid_height: usize,
+        model_term_count: usize,
+        sample_buffer: &MetalBuffer,
+        params_buffer: &MetalBuffer,
+        tap_weights: &MetalBuffer,
+        model_re: &MetalBuffer,
+        model_im: &MetalBuffer,
+        grid_re: &MetalBuffer,
+        grid_im: &MetalBuffer,
+    ) -> Result<MtmfsMetalDispatchTiming, ImagingError> {
+        use std::ptr;
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
+            MTLResourceOptions, MTLSize,
+        };
+
+        let mut timing = MtmfsMetalDispatchTiming::default();
+        if chunk.is_empty() {
+            return Ok(timing);
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let input_buffers_started = Instant::now();
+        let group_desc_buffer = self.buffer_from_slice(&chunk.group_descs, storage_options)?;
+        let lane_ref_buffer = self.buffer_from_slice(&chunk.lane_refs, storage_options)?;
+        let residual_lane_bytes = chunk
+            .sample_count
+            .checked_mul(std::mem::size_of::<MetalMtmfsGroupedResidualLane>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped residual lane buffer is too large".to_string(),
+                )
+            })?;
+        let residual_lane_buffer = self
+            .device
+            .newBufferWithLength_options(residual_lane_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate grouped MTMFS residual lane buffer"
+                        .to_string(),
+                )
+            })?;
+        timing.sample_buffer += input_buffers_started.elapsed();
+        let params = MetalMtmfsParams {
+            sample_count: u32::try_from(chunk.sample_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped residual chunk has too many samples".to_string(),
+                )
+            })?,
+            grid_width: u32::try_from(grid_width).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grid width exceeds u32".to_string())
+            })?,
+            grid_height: u32::try_from(grid_height).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grid height exceeds u32".to_string())
+            })?,
+            term_count: 2,
+            model_term_count: u32::try_from(model_term_count).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal model term count exceeds u32".to_string())
+            })?,
+            _pad0: [0; 3],
+        };
+        let params_buffer_started = Instant::now();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                ptr::addr_of!(params).cast::<u8>(),
+                params_buffer.contents().as_ptr().cast::<u8>(),
+                std::mem::size_of::<MetalMtmfsParams>(),
+            );
+        }
+        timing.params_buffer += params_buffer_started.elapsed();
+
+        let sample_buffer_offset = chunk
+            .sample_start
+            .checked_mul(std::mem::size_of::<MetalMtmfsSample>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "MTMFS Metal grouped residual sample buffer offset is too large".to_string(),
+                )
+            })?;
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a grouped MTMFS residual command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a grouped MTMFS residual compute encoder"
+                    .to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.mtmfs_grouped_residual_prepare_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(sample_buffer), sample_buffer_offset, 0);
+            encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(tap_weights), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(model_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(model_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&residual_lane_buffer), 0, 5);
+        }
+        let prepare_thread_width = self
+            .mtmfs_grouped_residual_prepare_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let prepare_group_width = prepare_thread_width.min(chunk.sample_count).max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: chunk.sample_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: prepare_group_width,
+                height: 1,
+                depth: 1,
+            },
+        );
+
+        encoder.setComputePipelineState(&self.mtmfs_grouped_residual_accumulate_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&residual_lane_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&group_desc_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&lane_ref_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(tap_weights), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(grid_re), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(grid_im), 0, 6);
+        }
+        let accumulate_width = chunk.max_halo_cells.max(1);
+        let accumulate_height = chunk.group_descs.len().max(1);
+        let accumulate_thread_width = self
+            .mtmfs_grouped_residual_accumulate_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let accumulate_max_threads = self
+            .mtmfs_grouped_residual_accumulate_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let accumulate_group_width = accumulate_thread_width.min(accumulate_width).max(1);
+        let accumulate_group_height = (accumulate_max_threads / accumulate_group_width)
+            .max(1)
+            .min(accumulate_height)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: accumulate_width,
+                height: accumulate_height,
+                depth: 2,
+            },
+            MTLSize {
+                width: accumulate_group_width,
+                height: accumulate_group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' grouped MTMFS residual command failed: {message}"
+            )));
+        }
+        let gpu_start = command_buffer.GPUStartTime();
+        let gpu_end = command_buffer.GPUEndTime();
+        if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+            timing.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+        }
+        let kernel_start = command_buffer.kernelStartTime();
+        let kernel_end = command_buffer.kernelEndTime();
+        if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+            timing.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+        }
+        Ok(timing)
+    }
+
+    #[allow(dead_code, clippy::too_many_arguments)]
+    fn dispatch_mtmfs_psf_chunk(
+        &self,
+        sample_count: usize,
+        sample_buffer_offset: usize,
+        grid_width: usize,
+        grid_height: usize,
+        term_count: usize,
+        sample_buffer: &MetalBuffer,
+        params_buffer: &MetalBuffer,
+        tap_weights: &MetalBuffer,
+        grid_re: &MetalBuffer,
+        grid_im: &MetalBuffer,
+    ) -> Result<MtmfsMetalDispatchTiming, ImagingError> {
+        self.dispatch_mtmfs_chunk(
+            sample_count,
+            sample_buffer_offset,
+            grid_width,
+            grid_height,
+            term_count,
+            0,
+            sample_buffer,
+            params_buffer,
+            tap_weights,
+            None,
+            None,
+            grid_re,
+            grid_im,
+            &self.mtmfs_psf_pipeline,
+            "PSF",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_mtmfs_residual_chunk(
+        &self,
+        sample_count: usize,
+        sample_buffer_offset: usize,
+        grid_width: usize,
+        grid_height: usize,
+        term_count: usize,
+        model_term_count: usize,
+        sample_buffer: &MetalBuffer,
+        params_buffer: &MetalBuffer,
+        tap_weights: &MetalBuffer,
+        model_re: &MetalBuffer,
+        model_im: &MetalBuffer,
+        grid_re: &MetalBuffer,
+        grid_im: &MetalBuffer,
+    ) -> Result<MtmfsMetalDispatchTiming, ImagingError> {
+        self.dispatch_mtmfs_chunk(
+            sample_count,
+            sample_buffer_offset,
+            grid_width,
+            grid_height,
+            term_count,
+            model_term_count,
+            sample_buffer,
+            params_buffer,
+            tap_weights,
+            Some(model_re),
+            Some(model_im),
+            grid_re,
+            grid_im,
+            &self.mtmfs_residual_pipeline,
+            "residual",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_mtmfs_chunk(
+        &self,
+        sample_count: usize,
+        sample_buffer_offset: usize,
+        grid_width: usize,
+        grid_height: usize,
+        term_count: usize,
+        model_term_count: usize,
+        sample_buffer: &MetalBuffer,
+        params_buffer: &MetalBuffer,
+        tap_weights: &MetalBuffer,
+        model_re: Option<&MetalBuffer>,
+        model_im: Option<&MetalBuffer>,
+        grid_re: &MetalBuffer,
+        grid_im: &MetalBuffer,
+        pipeline: &MetalPipeline,
+        label: &str,
+    ) -> Result<MtmfsMetalDispatchTiming, ImagingError> {
+        use std::ptr;
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+        };
+
+        let mut timing = MtmfsMetalDispatchTiming::default();
+        if sample_count == 0 {
+            return Ok(timing);
+        }
+        let params = MetalMtmfsParams {
+            sample_count: u32::try_from(sample_count).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal chunk has too many samples".to_string())
+            })?,
+            grid_width: u32::try_from(grid_width).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grid width exceeds u32".to_string())
+            })?,
+            grid_height: u32::try_from(grid_height).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal grid height exceeds u32".to_string())
+            })?,
+            term_count: u32::try_from(term_count).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal term count exceeds u32".to_string())
+            })?,
+            model_term_count: u32::try_from(model_term_count).map_err(|_| {
+                ImagingError::InvalidRequest("MTMFS Metal model term count exceeds u32".to_string())
+            })?,
+            _pad0: [0; 3],
+        };
+        let params_buffer_started = Instant::now();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                ptr::addr_of!(params).cast::<u8>(),
+                params_buffer.contents().as_ptr().cast::<u8>(),
+                std::mem::size_of::<MetalMtmfsParams>(),
+            );
+        }
+        timing.params_buffer += params_buffer_started.elapsed();
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' could not create an MTMFS {label} command buffer"
+            ))
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' could not create an MTMFS {label} compute encoder"
+            ))
+        })?;
+        encoder.setComputePipelineState(pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(sample_buffer), sample_buffer_offset, 0);
+            encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(tap_weights), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(grid_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(grid_im), 0, 4);
+            if let (Some(model_re), Some(model_im)) = (model_re, model_im) {
+                encoder.setBuffer_offset_atIndex(Some(model_re), 0, 5);
+                encoder.setBuffer_offset_atIndex(Some(model_im), 0, 6);
+            }
+        }
+        let thread_width = pipeline.threadExecutionWidth().max(1);
+        let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+        let group_width = thread_width.min(sample_count).max(1);
+        let group_height = (max_threads / group_width).max(1).min(term_count).max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: sample_count,
+                height: term_count,
+                depth: 1,
+            },
+            MTLSize {
+                width: group_width,
+                height: group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' MTMFS {label} command failed: {message}"
+            )));
+        }
+        let gpu_start = command_buffer.GPUStartTime();
+        let gpu_end = command_buffer.GPUEndTime();
+        if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+            timing.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+        }
+        let kernel_start = command_buffer.kernelStartTime();
+        let kernel_end = command_buffer.kernelEndTime();
+        if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+            timing.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+        }
+        Ok(timing)
     }
 
     fn grid_residual_refresh_routed_visibility_runs(
@@ -14502,6 +16129,18 @@ fn standard_mfs_metal_resident_grouped_input_buffers_enabled() -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn mtmfs_metal_grouped_terms_enabled() -> bool {
+    env::var("CASA_RS_MTMFS_METAL_GROUPED_TERMS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
+#[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {}
 
@@ -14553,6 +16192,48 @@ struct ResidualParams {
     uint oversampling;
     uint tap_weight_count;
     uint _pad0[3];
+};
+
+struct MtmfsSample {
+    uint positive_center_x;
+    uint positive_center_y;
+    uint positive_x_weight_base;
+    uint positive_y_weight_base;
+    uint negative_center_x;
+    uint negative_center_y;
+    uint negative_x_weight_base;
+    uint negative_y_weight_base;
+    float weight;
+    float sumwt_factor;
+    float taylor_x;
+    float _pad0;
+    float visibility_re;
+    float visibility_im;
+    float _pad1[2];
+};
+
+struct MtmfsParams {
+    uint sample_count;
+    uint grid_width;
+    uint grid_height;
+    uint term_count;
+    uint model_term_count;
+    uint _pad0[3];
+};
+
+struct MtmfsResidualGroupedLane {
+    uint positive_center_x;
+    uint positive_center_y;
+    uint positive_x_weight_base;
+    uint positive_y_weight_base;
+    uint negative_center_x;
+    uint negative_center_y;
+    uint negative_x_weight_base;
+    uint negative_y_weight_base;
+    float residual0_re;
+    float residual0_im;
+    float residual1_re;
+    float residual1_im;
 };
 
 struct RowRunDesc {
@@ -14695,6 +16376,73 @@ static inline bool row_run_density_lookup(
     }
     cell_density = density[uint(anchor_x) * params.density_height + uint(anchor_y)];
     return isfinite(cell_density) && cell_density > 0.0f;
+}
+
+static inline float mtmfs_taylor_power(float taylor_x, uint order) {
+    float value = 1.0f;
+    for (uint index = 0u; index < order; ++index) {
+        value *= taylor_x;
+    }
+    return value;
+}
+
+static inline float2 mtmfs_degrid_term(
+    device const float *model_re,
+    device const float *model_im,
+    device const float *tap_weights,
+    constant MtmfsParams &params,
+    const MtmfsSample sample,
+    uint model_order
+) {
+    const int center_x = int(sample.positive_center_x);
+    const int center_y = int(sample.positive_center_y);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    const uint cell_offset = model_order * params.grid_width * params.grid_height;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[sample.positive_x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[sample.positive_y_weight_base + dy];
+            uint cell = cell_offset + uint(x) * params.grid_height + uint(y);
+            predicted_re += model_re[cell] * tap_weight;
+            predicted_im += model_im[cell] * tap_weight;
+        }
+    }
+    return float2(predicted_re, predicted_im);
+}
+
+static inline void mtmfs_grid_one_side(
+    device atomic_uint *grid_re,
+    device atomic_uint *grid_im,
+    device const float *tap_weights,
+    constant MtmfsParams &params,
+    uint term_order,
+    uint center_x_u,
+    uint center_y_u,
+    uint x_weight_base,
+    uint y_weight_base,
+    float2 value
+) {
+    const int center_x = int(center_x_u);
+    const int center_y = int(center_y_u);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    const uint cell_offset = term_order * params.grid_width * params.grid_height;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy];
+            uint cell = cell_offset + uint(x) * params.grid_height + uint(y);
+            atomic_add_float(&grid_re[cell], value.x * tap_weight);
+            atomic_add_float(&grid_im[cell], value.y * tap_weight);
+        }
+    }
 }
 
 static inline float2 row_run_collapse_pair(float2 first, float2 second, uint transform) {
@@ -15111,6 +16859,273 @@ kernel void residual_refresh_global_atomic_exact(
             atomic_add_float(&grid_im[cell], residual_im * tap_weight);
         }
     }
+}
+
+kernel void mtmfs_psf_terms_global_atomic(
+    device const MtmfsSample *samples [[buffer(0)]],
+    constant MtmfsParams &params [[buffer(1)]],
+    device const float *tap_weights [[buffer(2)]],
+    device atomic_uint *grid_re [[buffer(3)]],
+    device atomic_uint *grid_im [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint sample_index = gid.x;
+    const uint term_order = gid.y;
+    if (sample_index >= params.sample_count || term_order >= params.term_count) {
+        return;
+    }
+    const MtmfsSample sample = samples[sample_index];
+    const float factor = mtmfs_taylor_power(sample.taylor_x, term_order);
+    const float psf_weight = sample.weight * factor;
+    if (!(isfinite(psf_weight) && psf_weight != 0.0f)) {
+        return;
+    }
+    const float2 value = float2(psf_weight, 0.0f);
+    mtmfs_grid_one_side(
+        grid_re, grid_im, tap_weights, params, term_order,
+        sample.positive_center_x, sample.positive_center_y,
+        sample.positive_x_weight_base, sample.positive_y_weight_base, value);
+    mtmfs_grid_one_side(
+        grid_re, grid_im, tap_weights, params, term_order,
+        sample.negative_center_x, sample.negative_center_y,
+        sample.negative_x_weight_base, sample.negative_y_weight_base, value);
+}
+
+kernel void mtmfs_residual_terms_global_atomic(
+    device const MtmfsSample *samples [[buffer(0)]],
+    constant MtmfsParams &params [[buffer(1)]],
+    device const float *tap_weights [[buffer(2)]],
+    device atomic_uint *grid_re [[buffer(3)]],
+    device atomic_uint *grid_im [[buffer(4)]],
+    device const float *model_re [[buffer(5)]],
+    device const float *model_im [[buffer(6)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint sample_index = gid.x;
+    const uint residual_order = gid.y;
+    if (sample_index >= params.sample_count || residual_order >= params.term_count) {
+        return;
+    }
+    const MtmfsSample sample = samples[sample_index];
+    const float observed_factor = mtmfs_taylor_power(sample.taylor_x, residual_order);
+    float2 predicted = float2(0.0f, 0.0f);
+    for (uint model_order = 0u; model_order < params.model_term_count; ++model_order) {
+        const float factor = mtmfs_taylor_power(sample.taylor_x, residual_order + model_order);
+        const float2 model_visibility =
+            mtmfs_degrid_term(model_re, model_im, tap_weights, params, sample, model_order);
+        predicted += model_visibility * factor;
+    }
+    const float2 observed =
+        float2(sample.visibility_re * observed_factor, sample.visibility_im * observed_factor);
+    const float2 residual = (observed - predicted) * sample.weight;
+    if (!isfinite(residual.x) || !isfinite(residual.y)) {
+        return;
+    }
+    mtmfs_grid_one_side(
+        grid_re, grid_im, tap_weights, params, residual_order,
+        sample.positive_center_x, sample.positive_center_y,
+        sample.positive_x_weight_base, sample.positive_y_weight_base, residual);
+    mtmfs_grid_one_side(
+        grid_re, grid_im, tap_weights, params, residual_order,
+        sample.negative_center_x, sample.negative_center_y,
+        sample.negative_x_weight_base, sample.negative_y_weight_base,
+        float2(residual.x, -residual.y));
+}
+
+kernel void mtmfs_psf_terms_grouped_accumulate(
+    device const MtmfsSample *samples [[buffer(0)]],
+    device const GroupedTileDesc *group_descs [[buffer(1)]],
+    device const uint *lane_refs [[buffer(2)]],
+    constant MtmfsParams &params [[buffer(3)]],
+    device const float *tap_weights [[buffer(4)]],
+    device atomic_uint *grid_re [[buffer(5)]],
+    device atomic_uint *grid_im [[buffer(6)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint cell_index = gid.x;
+    const uint group_index = gid.y;
+    const uint term_order = gid.z;
+    if (term_order >= params.term_count) {
+        return;
+    }
+    const GroupedTileDesc desc = group_descs[group_index];
+    const uint halo_cell_count = desc.halo_width * desc.halo_height;
+    if (cell_index >= halo_cell_count) {
+        return;
+    }
+    const uint local_x = cell_index / desc.halo_height;
+    const uint local_y = cell_index - local_x * desc.halo_height;
+    const int global_x = int(desc.halo_x0 + local_x);
+    const int global_y = int(desc.halo_y0 + local_y);
+    const bool exact_center_group =
+        desc.halo_width == STANDARD_MFS_TAP_COUNT &&
+        desc.halo_height == STANDARD_MFS_TAP_COUNT;
+    float sum = 0.0f;
+    for (uint ref_index = 0; ref_index < desc.ref_count; ++ref_index) {
+        const uint encoded_ref = lane_refs[desc.ref_offset + ref_index];
+        const uint sample_index = encoded_ref >> 1u;
+        if (sample_index >= params.sample_count) {
+            continue;
+        }
+        const uint side = encoded_ref & 1u;
+        const MtmfsSample sample = samples[sample_index];
+        const uint center_x = side == 0u ? sample.positive_center_x : sample.negative_center_x;
+        const uint center_y = side == 0u ? sample.positive_center_y : sample.negative_center_y;
+        int tap_x;
+        int tap_y;
+        if (exact_center_group) {
+            tap_x = int(local_x);
+            tap_y = int(local_y);
+        } else {
+            tap_x = global_x - (int(center_x) - STANDARD_MFS_SUPPORT);
+            tap_y = global_y - (int(center_y) - STANDARD_MFS_SUPPORT);
+            if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
+                tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
+                continue;
+            }
+        }
+        const uint x_weight_base =
+            side == 0u ? sample.positive_x_weight_base : sample.negative_x_weight_base;
+        const uint y_weight_base =
+            side == 0u ? sample.positive_y_weight_base : sample.negative_y_weight_base;
+        const float factor = mtmfs_taylor_power(sample.taylor_x, term_order);
+        const float weighted_tap =
+            tap_weights[x_weight_base + uint(tap_x)] *
+            tap_weights[y_weight_base + uint(tap_y)] *
+            sample.weight * factor;
+        if (isfinite(weighted_tap)) {
+            sum += weighted_tap;
+        }
+    }
+    if (sum == 0.0f) {
+        return;
+    }
+    const uint cell =
+        term_order * params.grid_width * params.grid_height +
+        uint(global_x) * params.grid_height + uint(global_y);
+    atomic_add_float(&grid_re[cell], sum);
+    atomic_add_float(&grid_im[cell], 0.0f);
+}
+
+kernel void mtmfs_residual_terms_grouped_prepare_nterms2(
+    device const MtmfsSample *samples [[buffer(0)]],
+    constant MtmfsParams &params [[buffer(1)]],
+    device const float *tap_weights [[buffer(2)]],
+    device const float *model_re [[buffer(3)]],
+    device const float *model_im [[buffer(4)]],
+    device MtmfsResidualGroupedLane *grouped_lanes [[buffer(5)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const MtmfsSample sample = samples[sample_index];
+    MtmfsResidualGroupedLane output;
+    output.positive_center_x = sample.positive_center_x;
+    output.positive_center_y = sample.positive_center_y;
+    output.positive_x_weight_base = sample.positive_x_weight_base;
+    output.positive_y_weight_base = sample.positive_y_weight_base;
+    output.negative_center_x = sample.negative_center_x;
+    output.negative_center_y = sample.negative_center_y;
+    output.negative_x_weight_base = sample.negative_x_weight_base;
+    output.negative_y_weight_base = sample.negative_y_weight_base;
+
+    float2 model0 = float2(0.0f, 0.0f);
+    float2 model1 = float2(0.0f, 0.0f);
+    if (params.model_term_count > 0u) {
+        model0 = mtmfs_degrid_term(model_re, model_im, tap_weights, params, sample, 0u);
+    }
+    if (params.model_term_count > 1u) {
+        model1 = mtmfs_degrid_term(model_re, model_im, tap_weights, params, sample, 1u);
+    }
+    const float x = sample.taylor_x;
+    const float x2 = x * x;
+    const float2 observed = float2(sample.visibility_re, sample.visibility_im);
+    const float2 residual0 = (observed - (model0 + model1 * x)) * sample.weight;
+    const float2 residual1 = (observed * x - (model0 * x + model1 * x2)) * sample.weight;
+    output.residual0_re = isfinite(residual0.x) ? residual0.x : 0.0f;
+    output.residual0_im = isfinite(residual0.y) ? residual0.y : 0.0f;
+    output.residual1_re = isfinite(residual1.x) ? residual1.x : 0.0f;
+    output.residual1_im = isfinite(residual1.y) ? residual1.y : 0.0f;
+    grouped_lanes[sample_index] = output;
+}
+
+kernel void mtmfs_residual_terms_grouped_accumulate_nterms2(
+    device const MtmfsResidualGroupedLane *grouped_lanes [[buffer(0)]],
+    device const GroupedTileDesc *group_descs [[buffer(1)]],
+    device const uint *lane_refs [[buffer(2)]],
+    constant MtmfsParams &params [[buffer(3)]],
+    device const float *tap_weights [[buffer(4)]],
+    device atomic_uint *grid_re [[buffer(5)]],
+    device atomic_uint *grid_im [[buffer(6)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint cell_index = gid.x;
+    const uint group_index = gid.y;
+    const uint residual_order = gid.z;
+    if (residual_order >= 2u) {
+        return;
+    }
+    const GroupedTileDesc desc = group_descs[group_index];
+    const uint halo_cell_count = desc.halo_width * desc.halo_height;
+    if (cell_index >= halo_cell_count) {
+        return;
+    }
+    const uint local_x = cell_index / desc.halo_height;
+    const uint local_y = cell_index - local_x * desc.halo_height;
+    const int global_x = int(desc.halo_x0 + local_x);
+    const int global_y = int(desc.halo_y0 + local_y);
+    const bool exact_center_group =
+        desc.halo_width == STANDARD_MFS_TAP_COUNT &&
+        desc.halo_height == STANDARD_MFS_TAP_COUNT;
+    float sum_re = 0.0f;
+    float sum_im = 0.0f;
+    for (uint ref_index = 0; ref_index < desc.ref_count; ++ref_index) {
+        const uint encoded_ref = lane_refs[desc.ref_offset + ref_index];
+        const uint sample_index = encoded_ref >> 1u;
+        if (sample_index >= params.sample_count) {
+            continue;
+        }
+        const uint side = encoded_ref & 1u;
+        const MtmfsResidualGroupedLane lane = grouped_lanes[sample_index];
+        const uint center_x = side == 0u ? lane.positive_center_x : lane.negative_center_x;
+        const uint center_y = side == 0u ? lane.positive_center_y : lane.negative_center_y;
+        int tap_x;
+        int tap_y;
+        if (exact_center_group) {
+            tap_x = int(local_x);
+            tap_y = int(local_y);
+        } else {
+            tap_x = global_x - (int(center_x) - STANDARD_MFS_SUPPORT);
+            tap_y = global_y - (int(center_y) - STANDARD_MFS_SUPPORT);
+            if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
+                tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
+                continue;
+            }
+        }
+        const uint x_weight_base =
+            side == 0u ? lane.positive_x_weight_base : lane.negative_x_weight_base;
+        const uint y_weight_base =
+            side == 0u ? lane.positive_y_weight_base : lane.negative_y_weight_base;
+        const float tap_weight =
+            tap_weights[x_weight_base + uint(tap_x)] *
+            tap_weights[y_weight_base + uint(tap_y)];
+        const float residual_re = residual_order == 0u ? lane.residual0_re : lane.residual1_re;
+        float residual_im = residual_order == 0u ? lane.residual0_im : lane.residual1_im;
+        if (side != 0u) {
+            residual_im = -residual_im;
+        }
+        sum_re += residual_re * tap_weight;
+        sum_im += residual_im * tap_weight;
+    }
+    if (sum_re == 0.0f && sum_im == 0.0f) {
+        return;
+    }
+    const uint cell =
+        residual_order * params.grid_width * params.grid_height +
+        uint(global_x) * params.grid_height + uint(global_y);
+    atomic_add_float(&grid_re[cell], sum_re);
+    atomic_add_float(&grid_im[cell], sum_im);
 }
 
 kernel void residual_refresh_row_run_global_atomic_exact(

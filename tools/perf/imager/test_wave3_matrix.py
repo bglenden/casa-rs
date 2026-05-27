@@ -32,6 +32,20 @@ class Wave3MatrixTests(unittest.TestCase):
         self.assertIn("after_gpu_metal", roles)
         self.assertIn("casa_cpp", roles)
 
+    def test_clark_clean_is_explicit_for_single_term_modes(self) -> None:
+        matrix = wave3_matrix.load_matrix(wave3_matrix.MATRIX_PATH)
+        rows = wave3_matrix.enumerate_rows(matrix)
+
+        clark_issues = {
+            row["issue"]
+            for row in rows
+            if "clark" in row["deconvolver_variants"]
+        }
+
+        self.assertEqual({276, 279, 280, 281, 282, 283, 284}, clark_issues)
+        self.assertNotIn(277, clark_issues)
+        self.assertNotIn(278, clark_issues)
+
 
 if __name__ == "__main__":
     unittest.main()

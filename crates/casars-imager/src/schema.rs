@@ -735,7 +735,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 value_kind: UiValueKind::String,
                 default: Some("strict"),
                 choices: &["strict", "casa"],
-                help: "Hogbom iteration accounting policy",
+                help: "Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons",
                 group: "Stage Parameters",
                 required: false,
                 advanced: true,

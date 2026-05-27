@@ -26,6 +26,11 @@
         "specmode": "mfs",
         "gridder": "standard",
         "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
         "channel_count": 1
       },
       "rows": [
@@ -171,6 +176,11 @@
         "specmode": "mfs",
         "gridder": "wproject",
         "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
         "channel_count": 1
       },
       "rows": [
@@ -218,6 +228,11 @@
         "specmode": "mfs",
         "gridder": "mosaic",
         "deconvolver": "multiscale",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark",
+          "multiscale"
+        ],
         "channel_count": 1
       },
       "rows": [
@@ -276,6 +291,11 @@
         "specmode": "mfs",
         "gridder": "awproject",
         "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
         "channel_count": 1
       },
       "rows": [
@@ -331,6 +351,11 @@
         "specmode": "cube",
         "gridder": "standard",
         "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
         "channel_count": 1
       },
       "rows": [
@@ -379,6 +404,11 @@
         "specmode": "cubedata",
         "gridder": "standard",
         "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
         "channel_count": 1
       },
       "rows": [
@@ -425,6 +455,11 @@
         "specmode": "cube",
         "gridder": "mosaic",
         "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
         "channel_count": 1
       },
       "rows": [

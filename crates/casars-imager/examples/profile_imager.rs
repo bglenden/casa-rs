@@ -37,6 +37,8 @@ struct Options {
     weighting: WeightingMode,
     use_pointing: bool,
     deconvolver: Deconvolver,
+    standard_mfs_acceleration: StandardMfsAccelerationPolicy,
+    standard_mfs_grid_threads: Option<String>,
     nterms: usize,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
@@ -384,9 +386,9 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
-        standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+        standard_mfs_acceleration: options.standard_mfs_acceleration,
         standard_mfs_backend: None,
-        standard_mfs_grid_threads: None,
+        standard_mfs_grid_threads: options.standard_mfs_grid_threads.clone(),
         standard_mfs_tile_anchor: None,
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
@@ -511,6 +513,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut robust = 0.5f32;
     let mut use_pointing = false;
     let mut deconvolver = Deconvolver::Hogbom;
+    let mut standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
+    let mut standard_mfs_grid_threads = None::<String>;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
     let mut small_scale_bias = 0.0f32;
@@ -566,6 +570,16 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--usepointing" | "--use-pointing" => use_pointing = true,
             "--deconvolver" => {
                 deconvolver = parse_deconvolver(&next_value(&mut args, "--deconvolver")?)?
+            }
+            "--standard-mfs-acceleration" => {
+                standard_mfs_acceleration = parse_standard_mfs_acceleration(&next_value(
+                    &mut args,
+                    "--standard-mfs-acceleration",
+                )?)?
+            }
+            "--standard-mfs-grid-threads" => {
+                standard_mfs_grid_threads =
+                    Some(next_value(&mut args, "--standard-mfs-grid-threads")?)
             }
             "--nterms" => nterms = parse_next(&mut args, "--nterms")?,
             "--scales" => {
@@ -640,6 +654,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         weighting,
         use_pointing,
         deconvolver,
+        standard_mfs_acceleration,
+        standard_mfs_grid_threads,
         nterms,
         multiscale_scales,
         small_scale_bias,
@@ -750,6 +766,20 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
     }
 }
 
+fn parse_standard_mfs_acceleration(text: &str) -> Result<StandardMfsAccelerationPolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(StandardMfsAccelerationPolicy::Auto),
+        "cpu" | "serial" | "off" | "none" => Ok(StandardMfsAccelerationPolicy::Cpu),
+        "multi-cpu" | "multicpu" | "fixed-tile" | "fixed_tile" | "tile" | "tiled" => {
+            Ok(StandardMfsAccelerationPolicy::MultiCpu)
+        }
+        "metal" | "gpu" => Ok(StandardMfsAccelerationPolicy::Metal),
+        _ => Err(format!(
+            "unsupported --standard-mfs-acceleration value {text:?}; expected auto, cpu, multi-cpu, or metal"
+        )),
+    }
+}
+
 fn parse_hogbom_iteration_mode(text: &str) -> Result<HogbomIterationMode, String> {
     match text.to_ascii_lowercase().as_str() {
         "strict" => Ok(HogbomIterationMode::Strict),
@@ -814,6 +844,8 @@ Options:
   --robust VALUE
   --usepointing
   --deconvolver hogbom|clark|multiscale|mtmfs
+  --standard-mfs-acceleration auto|cpu|multi-cpu|metal
+  --standard-mfs-grid-threads N|auto
   --nterms N
   --scales PIXELS
   --smallscalebias VALUE

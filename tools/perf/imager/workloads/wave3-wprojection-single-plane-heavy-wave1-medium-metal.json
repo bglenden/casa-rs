@@ -1,39 +1,38 @@
 {
-  "id": "wave3-standard-mfs-single-term-heavy-wave2",
-  "mode_id": "standard-mfs-single-term",
-  "description": "Wave 3 #276 heavy regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
+  "id": "wave3-wprojection-single-plane-heavy-wave1-medium-metal",
+  "mode_id": "wprojection-single-plane",
+  "description": "Wave 3 #279 W-projection dirty explicit Metal row on the Wave 1 32 GiB VLA medium MS, 64 channels, 512 image, Briggs.",
   "dataset": {
     "key": "wave1-vla-single-medium",
     "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
     "root_env": "CASA_RS_IMPERF_DATA_ROOT"
   },
   "imaging": {
-    "mode": "clean",
+    "mode": "dirty",
     "specmode": "mfs",
-    "gridder": "standard",
+    "gridder": "wproject",
+    "wterm": "wproject",
     "field": "0",
     "spw": "0",
     "channel_start": 0,
     "channel_count": 64,
-    "imsize": 1024,
+    "imsize": 512,
     "cell_arcsec": 0.25,
     "weighting": "briggs",
     "robust": 0.5,
     "deconvolver": "hogbom",
     "hogbom_iteration_mode": "casa",
     "nterms": 1,
-    "niter": 500,
-    "gain": 0.1,
-    "threshold_jy": 0.0,
-    "minor_cycle_length": 50
+    "niter": 0,
+    "standard_mfs_acceleration": "metal"
   },
   "run": {
     "repeats": 1,
-    "run_label": "wave3-heavy-wave2-regression",
+    "run_label": "wave3-wprojection-metal-explicit",
     "storage_label": "external-ssd-wave1",
     "ms_staging": "direct",
     "phase_probe": "0",
-    "evidence_role": "after_multi_worker_cpu"
+    "evidence_role": "after_gpu_metal"
   },
   "review": {
     "required_reviewer": "Brian",
@@ -49,8 +48,7 @@
     "products": [
       ".image",
       ".residual",
-      ".psf",
-      ".model"
+      ".psf"
     ],
     "max_elements_per_product": 1000000
   }

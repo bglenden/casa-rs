@@ -1,7 +1,7 @@
 {
-  "id": "wave3-standard-mfs-single-term-heavy-wave2",
-  "mode_id": "standard-mfs-single-term",
-  "description": "Wave 3 #276 heavy regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
+  "id": "wave3-mfs-ms-multiscale-heavy-wave2",
+  "mode_id": "wave3-mfs-ms-multiscale",
+  "description": "Wave 3 #277 heavy regression row matching the retained Wave 2 multiscale MFS screen: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
   "dataset": {
     "key": "wave1-vla-single-medium",
     "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
@@ -19,8 +19,12 @@
     "cell_arcsec": 0.25,
     "weighting": "briggs",
     "robust": 0.5,
-    "deconvolver": "hogbom",
-    "hogbom_iteration_mode": "casa",
+    "deconvolver": "multiscale",
+    "scales": [
+      0,
+      5,
+      15
+    ],
     "nterms": 1,
     "niter": 500,
     "gain": 0.1,
@@ -33,7 +37,7 @@
     "storage_label": "external-ssd-wave1",
     "ms_staging": "direct",
     "phase_probe": "0",
-    "evidence_role": "after_multi_worker_cpu"
+    "evidence_role": "after_gpu_metal"
   },
   "review": {
     "required_reviewer": "Brian",

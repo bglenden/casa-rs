@@ -19,6 +19,7 @@
     "cell_arcsec": 30.0,
     "weighting": "natural",
     "deconvolver": "hogbom",
+    "hogbom_iteration_mode": "casa",
     "nterms": 1,
     "niter": 4,
     "gain": 0.1,

@@ -28,11 +28,12 @@ SUPPORTED_GRIDDER_VALUES = {
     "widefield",
     "wproject",
 }
-RUNNABLE_GRIDDER_VALUES = {"mosaic", "standard"}
+RUNNABLE_GRIDDER_VALUES = {"mosaic", "standard", "wproject"}
 SUPPORTED_SPEC_MODES = {"cubedata", "cube", "mfs"}
 RUNNABLE_SPEC_MODES = {"cube", "mfs"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
+SUPPORTED_HOGBOM_ITERATION_MODES = {"strict", "casa", "casa-inclusive", "casa_inclusive"}
 SUPPORTED_MS_STAGING = {"copy", "direct"}
 SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
@@ -185,6 +186,11 @@ def build_plan(
     gridder = enum_value(imaging, "gridder", SUPPORTED_GRIDDER_VALUES)
     bench_mode = enum_value(imaging, "mode", SUPPORTED_BENCH_MODES)
     interpolation = enum_value_default(imaging, "interpolation", "linear", SUPPORTED_INTERPOLATION)
+    hogbom_iteration_mode = enum_value_default(
+        imaging, "hogbom_iteration_mode", "strict", SUPPORTED_HOGBOM_ITERATION_MODES
+    )
+    if hogbom_iteration_mode == "casa_inclusive":
+        hogbom_iteration_mode = "casa"
     wterm = str_value(imaging, "wterm", "none")
     run_support = benchmark_run_support(
         workload_id=workload_id,
@@ -231,6 +237,10 @@ def build_plan(
         "IMAGER_BENCH_WEIGHTING": str_value(imaging, "weighting", "natural"),
         "IMAGER_BENCH_ROBUST": str(float_value(imaging, "robust", 0.5)),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
+        "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
+            imaging, "standard_mfs_acceleration", "auto"
+        ),
+        "IMAGER_BENCH_HOGBOM_ITERATION_MODE": hogbom_iteration_mode,
         "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
         "IMAGER_BENCH_WTERM": wterm,
@@ -277,6 +287,10 @@ def build_plan(
             "channel_count": int_value(imaging, "channel_count", 1),
             "weighting": str_value(imaging, "weighting", "natural"),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
+            "standard_mfs_acceleration": str_value(
+                imaging, "standard_mfs_acceleration", "auto"
+            ),
+            "hogbom_iteration_mode": hogbom_iteration_mode,
             "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
         },
@@ -323,7 +337,7 @@ def benchmark_run_support(
         reasons.append(f"specmode={specmode!r} needs benchmark-script execution support")
     if gridder not in RUNNABLE_GRIDDER_VALUES:
         reasons.append(f"gridder={gridder!r} needs benchmark-script execution support")
-    if wterm != "none":
+    if wterm != "none" and not (gridder == "wproject" and wterm == "wproject"):
         reasons.append(f"wterm={wterm!r} needs benchmark-script execution support")
     if reasons:
         return {
@@ -1182,6 +1196,7 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         diff_abs = 0.0
     safe_name = suffix.strip(".").replace(".", "_") or "image"
     product_label = suffix if suffix else ".image"
+    value_label = product_value_label(suffix)
     panel_path = os.path.join(panel_dir, f"{safe_name}.review.png")
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
     rust_artist = axes[0].imshow(
@@ -1209,14 +1224,17 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         aspect="equal",
     )
     axes[2].set_title(f"difference {product_label}\n(casa-rs - CASA)")
-    fig.colorbar(rust_artist, ax=axes[0], fraction=0.046, pad=0.04, label="value")
-    fig.colorbar(casa_artist, ax=axes[1], fraction=0.046, pad=0.04, label="value")
+    for axis in axes:
+        axis.set_aspect("equal", adjustable="box")
+        axis.set_box_aspect(1)
+    fig.colorbar(rust_artist, ax=axes[0], fraction=0.046, pad=0.04, label=value_label)
+    fig.colorbar(casa_artist, ax=axes[1], fraction=0.046, pad=0.04, label=value_label)
     fig.colorbar(
         diff_artist,
         ax=axes[2],
         fraction=0.046,
         pad=0.04,
-        label="casa-rs - CASA",
+        label=f"casa-rs - CASA ({value_label})",
     )
     for axis in axes:
         axis.set_xticks([])
@@ -1229,6 +1247,18 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
         "difference_color_limits": [-diff_abs, diff_abs],
     }
+
+
+def product_value_label(suffix):
+    if suffix in {".image", ".residual", ".image.pbcor"}:
+        return "Jy/beam"
+    if suffix == ".model":
+        return "Jy/pixel"
+    if suffix == ".psf":
+        return "PSF response"
+    if suffix in {".pb", ".weight"}:
+        return "relative weight"
+    return "value"
 
 
 def display_plane(data):

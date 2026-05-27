@@ -173,6 +173,10 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_ROBUST`
   - Briggs robustness parameter passed to both Rust and CASA when weighting is `briggs`
 - `IMAGER_BENCH_NITER`
+- `IMAGER_BENCH_HOGBOM_ITERATION_MODE`
+  - `strict` uses casa-rs' corrected Hogbom component accounting
+  - `casa` reproduces CASA's documented inclusive Hogbom off-by-one behavior;
+    use this for Rust-vs-CASA Hogbom product comparisons
 - `IMAGER_BENCH_GAIN`
 - `IMAGER_BENCH_THRESHOLD_JY`
 - `IMAGER_BENCH_NSIGMA`
@@ -211,6 +215,8 @@ Supported `imaging` values for executable #252-era benchmark rows:
 - `specmode`: `mfs` or `cube`
 - `gridder`: `standard` or `mosaic`
 - `interpolation`: `nearest` or `linear`
+- `hogbom_iteration_mode`: `strict` or `casa`; Wave 3 Hogbom CASA-comparison
+  rows use `casa`, while the imager application default remains `strict`
 - `wterm`: `none`
 
 Wave 3 dry runs additionally accept `specmode=cubedata`, `gridder=wproject`,
@@ -227,7 +233,8 @@ fail before timing claims if requested as real runs.
 - `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
   hash, and the exact delegated command/env
 - dataset key/path, selected mode, image shape, channel count, weighting,
-  deconvolver, `niter`, run label, storage label, and repeat count
+  deconvolver, Hogbom iteration mode, `niter`, run label, storage label, and
+  repeat count
 - Rust CLI per-run wallclock and median wallclock
 - CASA `tclean` per-run wallclock and median wallclock when CASA ran
 - parsed Rust and CASA stage medians when present

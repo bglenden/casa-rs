@@ -1,7 +1,7 @@
 {
-  "id": "wave3-standard-mfs-single-term-heavy-wave2",
-  "mode_id": "standard-mfs-single-term",
-  "description": "Wave 3 #276 heavy regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
+  "id": "wave3-mtmfs-heavy-wave1-medium-serial",
+  "mode_id": "wave3-mtmfs",
+  "description": "Wave 3 #278 MT-MFS serial CPU baseline row: 32 GiB VLA medium MS, 64 selected channels, 512 image, Briggs, nterms=2, niter=1000.",
   "dataset": {
     "key": "wave1-vla-single-medium",
     "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
@@ -15,25 +15,25 @@
     "spw": "0",
     "channel_start": 0,
     "channel_count": 64,
-    "imsize": 1024,
+    "imsize": 512,
     "cell_arcsec": 0.25,
     "weighting": "briggs",
     "robust": 0.5,
-    "deconvolver": "hogbom",
-    "hogbom_iteration_mode": "casa",
-    "nterms": 1,
-    "niter": 500,
+    "deconvolver": "mtmfs",
+    "standard_mfs_acceleration": "cpu",
+    "nterms": 2,
+    "niter": 1000,
     "gain": 0.1,
     "threshold_jy": 0.0,
-    "minor_cycle_length": 50
+    "minor_cycle_length": 100
   },
   "run": {
     "repeats": 1,
-    "run_label": "wave3-heavy-wave2-regression",
+    "run_label": "wave3-mtmfs-heavy-wave1-medium-serial",
     "storage_label": "external-ssd-wave1",
     "ms_staging": "direct",
     "phase_probe": "0",
-    "evidence_role": "after_multi_worker_cpu"
+    "evidence_role": "before_baseline"
   },
   "review": {
     "required_reviewer": "Brian",
@@ -47,11 +47,17 @@
   },
   "comparison": {
     "products": [
-      ".image",
-      ".residual",
-      ".psf",
-      ".model"
+      ".image.tt0",
+      ".image.tt1",
+      ".residual.tt0",
+      ".residual.tt1",
+      ".psf.tt0",
+      ".psf.tt1",
+      ".psf.tt2",
+      ".model.tt0",
+      ".model.tt1",
+      ".alpha"
     ],
-    "max_elements_per_product": 1000000
+    "max_elements_per_product": 2000000
   }
 }

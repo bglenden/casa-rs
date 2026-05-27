@@ -55,13 +55,15 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
+#[cfg(target_os = "macos")]
+use execution::{
+    MtmfsMetalInputCache, StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill,
+};
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyAccumulation, StandardMfsDirtyCpuExecutor,
     StandardMfsPlannedSample, StandardMfsTiledCpuExecutor, StandardMfsTiledResidualAccumulation,
     StandardMfsVisibilityPlan, finite_visibility,
 };
-#[cfg(target_os = "macos")]
-use execution::{StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill};
 pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
@@ -853,9 +855,17 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = request.initial_model.is_some();
     let can_start_from_combined_dirty_pass =
-        !has_initial_model && matches!(request.w_term_mode, WTermMode::None);
+        !has_initial_model && matches!(request.w_term_mode, WTermMode::None | WTermMode::WProject);
     let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
-        if use_metal_executor {
+        if request.w_term_mode == WTermMode::WProject {
+            compute_dirty_psf_and_residual_w_project(
+                request.geometry,
+                weighted_batches,
+                gridder,
+                request.w_project_planes,
+                &mut stage_timings,
+            )?
+        } else if use_metal_executor {
             compute_dirty_psf_and_residual_standard_metal(
                 weighted_batches,
                 gridder,
@@ -3693,6 +3703,36 @@ fn standard_mfs_metal_backend_enabled() -> bool {
     )
 }
 
+fn standard_mfs_mtmfs_metal_backend_enabled() -> bool {
+    if standard_mfs_metal_backend_enabled() {
+        return true;
+    }
+    matches!(
+        standard_mfs_residual_backend_selection_from_env(),
+        Ok(Some(
+            StandardMfsBackendSelection::Metal
+                | StandardMfsBackendSelection::MetalRowRun
+                | StandardMfsBackendSelection::MetalRowRunGrouped
+        ))
+    )
+}
+
+fn w_project_initial_dirty_metal_backend_enabled() -> bool {
+    standard_mfs_metal_backend_enabled()
+        || matches!(
+            standard_mfs_initial_dirty_backend_selection_from_env(),
+            Ok(Some(
+                StandardMfsBackendSelection::Metal
+                    | StandardMfsBackendSelection::MetalRowRun
+                    | StandardMfsBackendSelection::MetalRowRunGrouped
+            ))
+        )
+}
+
+fn w_project_residual_metal_backend_enabled() -> bool {
+    standard_mfs_mtmfs_metal_backend_enabled()
+}
+
 fn standard_mfs_metal_grouped_input_cache_enabled(planned_default: bool) -> bool {
     env::var("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE")
         .map(|value| {
@@ -3834,6 +3874,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
     }
 
     let gridder = StandardGridder::new(request.geometry)?;
+    let mut acceleration_backend = MtmfsAccelerationBackend::new(request, &gridder)?;
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
     let weighting_request = ImagingRequest {
@@ -3856,15 +3897,22 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
     };
     let weighted_batches = apply_weighting(&weighting_request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
+    acceleration_backend.prepare_weighted_batches(request, &weighted_batches)?;
 
-    let psf_state =
-        compute_mtmfs_psf_terms(request, &weighted_batches, &gridder, &mut stage_timings)?;
+    let psf_state = compute_mtmfs_psf_terms(
+        request,
+        &weighted_batches,
+        &gridder,
+        &acceleration_backend,
+        &mut stage_timings,
+    )?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model_terms = vec![Array2::<f32>::zeros((nx, ny)); request.nterms];
     let mut residual_terms = compute_mtmfs_residual_terms(
         request,
         &weighted_batches,
         &gridder,
+        &acceleration_backend,
         &model_terms,
         &psf_state,
         &mut stage_timings,
@@ -3985,6 +4033,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             request,
             &weighted_batches,
             &gridder,
+            &acceleration_backend,
             &model_terms,
             &psf_state,
             &mut stage_timings,
@@ -4019,6 +4068,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             request,
             &weighted_batches,
             &gridder,
+            &acceleration_backend,
             &model_terms,
             &psf_state,
             &mut stage_timings,
@@ -4874,6 +4924,20 @@ fn append_hogbom_trace(line: String) {
         }
         Err(error) => {
             eprintln!("failed to append CASA_RS_HOGBOM_TRACE: {error}");
+        }
+    }
+}
+
+fn append_clark_trace(line: String) {
+    let Some(path) = env::var_os("CASA_RS_CLARK_TRACE") else {
+        return;
+    };
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{line}");
+        }
+        Err(error) => {
+            eprintln!("failed to append CASA_RS_CLARK_TRACE: {error}");
         }
     }
 }
@@ -6333,6 +6397,11 @@ fn run_clark_minor_cycle(
             peak_location_masked(&working_residual, request.clean_mask.as_ref())
         else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break_clark_trace(
+                cycle_component_updates,
+                "no_cleanable_pixels",
+                cycle_threshold_jy_per_beam,
+            );
             break;
         };
         let cycle_peak_abs = cycle_peak_value.abs();
@@ -6355,50 +6424,78 @@ fn run_clark_minor_cycle(
             request.clean_mask.as_ref(),
             selection_limit,
         );
+        append_clark_trace(format!(
+            "{{\"event\":\"subcycle_start\",\"subcycle\":{},\"cycle_update_start\":{},\"cycle_peak_abs\":{:.17e},\"max_exterior_abs\":{:.17e},\"factor\":{:.17e},\"flux_limit\":{:.17e},\"cycle_threshold\":{:.17e},\"selection_limit\":{:.17e},\"active_pixels\":{},\"cycle_reported_niter\":{},\"max_minor_iterations_this_cycle\":{},\"algorithm\":\"casa_lat_solve\"}}",
+            num_major_cycles,
+            cycle_component_updates,
+            cycle_peak_abs,
+            psf_patch.max_exterior_abs,
+            factor,
+            flux_limit,
+            cycle_threshold_jy_per_beam,
+            selection_limit,
+            active_pixels.len(),
+            cycle_reported_niter,
+            max_minor_iterations_this_cycle
+        ));
+        let mut cur_iter = 0usize;
         if active_pixels.is_empty() {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
-        }
-        let cycle_start_iterations = cycle_component_updates;
-        let remaining_iterations = cycle_reported_niter - cycle_component_updates;
-        let cycle_minor_limit = remaining_iterations.min(max_minor_iterations_this_cycle);
-        let mut cur_iter = 0usize;
-        let mut fmn = 0.0f32;
-        let fac = if flux_limit > 0.0 {
-            (flux_limit / cycle_peak_abs).powf(-1.0)
         } else {
-            0.0
-        };
-        let mut iter_flux_limit = flux_limit.max(cycle_threshold_jy_per_beam);
-        while cur_iter < cycle_minor_limit {
-            let Some((_, peak_pixel)) = peak_clark_active_pixel(&active_pixels) else {
-                break;
+            let cycle_start_iterations = cycle_component_updates;
+            let remaining_iterations = cycle_reported_niter - cycle_component_updates;
+            let cycle_minor_limit = remaining_iterations.min(max_minor_iterations_this_cycle);
+            let mut fmn = 0.0f32;
+            let fac = if flux_limit > 0.0 {
+                (flux_limit / cycle_peak_abs).powf(-1.0)
+            } else {
+                0.0
             };
-            let peak_abs = peak_pixel.value.abs();
-            if let Some(reason) = minor_cycle_stop_reason(
-                peak_abs,
-                request.clean.threshold_jy_per_beam,
-                iter_flux_limit,
-                nsigma_threshold_jy_per_beam,
-            ) {
-                stop_reason = Some(reason);
-                break;
+            let mut iter_flux_limit = flux_limit.max(cycle_threshold_jy_per_beam);
+            while cur_iter < cycle_minor_limit {
+                let Some((_, peak_pixel)) = peak_clark_active_pixel(&active_pixels) else {
+                    break;
+                };
+                let peak_abs = peak_pixel.value.abs();
+                if let Some(reason) = minor_cycle_stop_reason(
+                    peak_abs,
+                    request.clean.threshold_jy_per_beam,
+                    iter_flux_limit,
+                    nsigma_threshold_jy_per_beam,
+                ) {
+                    stop_reason = Some(reason);
+                    append_clark_trace(format!(
+                        "{{\"event\":\"stop\",\"cycle_update\":{},\"reason\":\"{:?}\",\"peak_abs\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                        cycle_component_updates, reason, peak_abs, iter_flux_limit
+                    ));
+                    break;
+                }
+                let component = request.clean.gain * peak_pixel.value;
+                append_clark_trace(format!(
+                    "{{\"event\":\"component\",\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                    cycle_component_updates,
+                    peak_pixel.x,
+                    peak_pixel.y,
+                    peak_pixel.value,
+                    component,
+                    iter_flux_limit
+                ));
+                model[(peak_pixel.x, peak_pixel.y)] += component;
+                delta_components.push(((peak_pixel.x, peak_pixel.y), component));
+                subtract_clark_component_from_active(
+                    &mut active_pixels,
+                    peak_pixel.x,
+                    peak_pixel.y,
+                    component,
+                    psf_patch,
+                );
+                cycle_component_updates += 1;
+                cur_iter += 1;
+                updated_model = true;
+                fmn += fac / (cycle_start_iterations as f32 + cur_iter as f32);
+                iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
             }
-            let component = request.clean.gain * peak_pixel.value;
-            model[(peak_pixel.x, peak_pixel.y)] += component;
-            delta_components.push(((peak_pixel.x, peak_pixel.y), component));
-            subtract_clark_component_from_active(
-                &mut active_pixels,
-                peak_pixel.x,
-                peak_pixel.y,
-                component,
-                psf_patch,
-            );
-            cycle_component_updates += 1;
-            cur_iter += 1;
-            updated_model = true;
-            fmn += fac / (cycle_start_iterations as f32 + cur_iter as f32);
-            iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
         }
         if cur_iter == 0 {
             stop_reason = Some(CleanStopReason::CycleThresholdReached);
@@ -6409,6 +6506,10 @@ fn run_clark_minor_cycle(
             subtract_shifted_psf(&mut working_residual, psf, (peak_x, peak_y), component);
         }
         let current_peak = peak_abs_value_masked(&working_residual, request.clean_mask.as_ref());
+        append_clark_trace(format!(
+            "{{\"event\":\"residual_refresh\",\"subcycle\":{},\"updates\":{},\"peak_abs\":{:.17e},\"previous_peak_abs\":{:.17e},\"factor_before\":{:.17e}}}",
+            num_major_cycles, cycle_component_updates, current_peak, max_res_previous, factor
+        ));
         if current_peak > max_res_previous {
             factor *= 3.0;
             max_minor_iterations_this_cycle = 10;
@@ -6431,6 +6532,17 @@ fn run_clark_minor_cycle(
         final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
         final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
     }
+}
+
+fn break_clark_trace(
+    cycle_component_updates: usize,
+    reason: &str,
+    cycle_threshold_jy_per_beam: f32,
+) {
+    append_clark_trace(format!(
+        "{{\"event\":\"stop\",\"cycle_update\":{},\"reason\":\"{}\",\"cycle_threshold\":{:.17e}}}",
+        cycle_component_updates, reason, cycle_threshold_jy_per_beam
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6579,6 +6691,43 @@ struct ClarkActivePixel {
     x: usize,
     y: usize,
     value: f32,
+}
+
+struct ClarkActiveSet {
+    pixels: Vec<ClarkActivePixel>,
+    pixel_to_active_index: Vec<usize>,
+    image_ny: usize,
+}
+
+impl ClarkActiveSet {
+    const MISSING_INDEX: usize = usize::MAX;
+
+    fn new(image_shape: (usize, usize)) -> Self {
+        Self {
+            pixels: Vec::new(),
+            pixel_to_active_index: vec![Self::MISSING_INDEX; image_shape.0 * image_shape.1],
+            image_ny: image_shape.1,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.pixels.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pixels.is_empty()
+    }
+
+    fn push(&mut self, pixel: ClarkActivePixel) {
+        let index = self.pixels.len();
+        self.pixel_to_active_index[pixel.x * self.image_ny + pixel.y] = index;
+        self.pixels.push(pixel);
+    }
+
+    fn active_index(&self, x: usize, y: usize) -> Option<usize> {
+        let index = self.pixel_to_active_index[x * self.image_ny + y];
+        (index != Self::MISSING_INDEX).then_some(index)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7212,8 +7361,8 @@ fn collect_clark_active_pixels(
     residual: &Array2<f32>,
     mask: Option<&Array2<bool>>,
     flux_limit: f32,
-) -> Vec<ClarkActivePixel> {
-    let mut active = Vec::new();
+) -> ClarkActiveSet {
+    let mut active = ClarkActiveSet::new(residual.dim());
     for ((x, y), value) in residual.indexed_iter() {
         if value.abs() < flux_limit {
             continue;
@@ -7230,11 +7379,9 @@ fn collect_clark_active_pixels(
     active
 }
 
-fn peak_clark_active_pixel(
-    active_pixels: &[ClarkActivePixel],
-) -> Option<(usize, ClarkActivePixel)> {
+fn peak_clark_active_pixel(active_pixels: &ClarkActiveSet) -> Option<(usize, ClarkActivePixel)> {
     let mut best = None::<(usize, ClarkActivePixel)>;
-    for (index, pixel) in active_pixels.iter().copied().enumerate() {
+    for (index, pixel) in active_pixels.pixels.iter().copied().enumerate() {
         match best {
             None => best = Some((index, pixel)),
             Some((_, current)) if pixel.value.abs() > current.value.abs() => {
@@ -7247,31 +7394,40 @@ fn peak_clark_active_pixel(
 }
 
 fn subtract_clark_component_from_active(
-    active_pixels: &mut [ClarkActivePixel],
+    active_pixels: &mut ClarkActiveSet,
     peak_x: usize,
     peak_y: usize,
     component: f32,
     psf_patch: &ClarkPsfPatch,
 ) {
-    for pixel in active_pixels {
-        let Some(patch_x) = pixel
-            .x
-            .checked_add(psf_patch.radius_x)
-            .and_then(|value| value.checked_sub(peak_x))
+    let (patch_nx, patch_ny) = psf_patch.patch.dim();
+    let image_nx = active_pixels.pixel_to_active_index.len() / active_pixels.image_ny;
+    for patch_x in 0..patch_nx {
+        let Some(pixel_x) = peak_x
+            .checked_add(patch_x)
+            .and_then(|value| value.checked_sub(psf_patch.radius_x))
         else {
             continue;
         };
-        let Some(patch_y) = pixel
-            .y
-            .checked_add(psf_patch.radius_y)
-            .and_then(|value| value.checked_sub(peak_y))
-        else {
-            continue;
-        };
-        if patch_x >= psf_patch.patch.dim().0 || patch_y >= psf_patch.patch.dim().1 {
+        if pixel_x >= image_nx {
             continue;
         }
-        pixel.value -= component * psf_patch.patch[(patch_x, patch_y)];
+        for patch_y in 0..patch_ny {
+            let Some(pixel_y) = peak_y
+                .checked_add(patch_y)
+                .and_then(|value| value.checked_sub(psf_patch.radius_y))
+            else {
+                continue;
+            };
+            if pixel_y >= active_pixels.image_ny {
+                continue;
+            }
+            let Some(active_index) = active_pixels.active_index(pixel_x, pixel_y) else {
+                continue;
+            };
+            active_pixels.pixels[active_index].value -=
+                component * psf_patch.patch[(patch_x, patch_y)];
+        }
     }
 }
 
@@ -7305,6 +7461,98 @@ struct MtmfsPsfState {
     skipped_samples: usize,
 }
 
+#[derive(Debug)]
+struct MtmfsPsfGridAccumulation {
+    psf_grids: Vec<Array2<Complex32>>,
+    normalization_sumwt: f64,
+    reported_sumwt_terms: Vec<f64>,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+#[derive(Debug)]
+struct MtmfsResidualGridAccumulation {
+    residual_grids: Vec<Array2<Complex32>>,
+}
+
+struct MtmfsAccelerationBackend<'a> {
+    #[cfg(target_os = "macos")]
+    metal: Option<StandardMfsMetalExecutor<'a>>,
+    #[cfg(target_os = "macos")]
+    metal_input_cache: Option<MtmfsMetalInputCache>,
+}
+
+impl<'a> MtmfsAccelerationBackend<'a> {
+    fn new(request: &MtmfsRequest, gridder: &'a StandardGridder) -> Result<Self, ImagingError> {
+        if standard_mfs_mtmfs_metal_backend_enabled() && request.w_term_mode != WTermMode::WProject
+        {
+            #[cfg(target_os = "macos")]
+            {
+                return Ok(Self {
+                    metal: Some(StandardMfsMetalExecutor::new_with_resident_bytes(
+                        gridder, None,
+                    )?),
+                    metal_input_cache: None,
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "MTMFS Metal backend requires macOS Metal and is not available on this platform"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(Self {
+            #[cfg(target_os = "macos")]
+            metal: None,
+            #[cfg(target_os = "macos")]
+            metal_input_cache: None,
+        })
+    }
+
+    fn prepare_weighted_batches(
+        &mut self,
+        request: &MtmfsRequest,
+        batches: &[VisibilityBatch],
+    ) -> Result<(), ImagingError> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(metal) = self.metal.as_ref() {
+                self.metal_input_cache = Some(metal.prepare_mtmfs_input_cache(
+                    batches,
+                    &request.sample_frequency_batches_hz,
+                    request.reffreq_hz,
+                    2 * request.nterms - 1,
+                )?);
+                if let Some(cache) = self.metal_input_cache.as_ref() {
+                    eprintln!(
+                        "mtmfs_runtime_plan backend=metal-sample-cache terms={} psf_terms={} samples={} cache_host_bytes={} gridded_samples={} skipped_samples={}",
+                        request.nterms,
+                        2 * request.nterms - 1,
+                        cache.sample_count(),
+                        cache.host_bytes(),
+                        cache.gridded_samples,
+                        cache.skipped_samples
+                    );
+                }
+            }
+        }
+        let _ = (request, batches);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn metal(&self) -> Option<&StandardMfsMetalExecutor<'a>> {
+        self.metal.as_ref()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn metal_input_cache(&self) -> Option<&MtmfsMetalInputCache> {
+        self.metal_input_cache.as_ref()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct PsfComputationTimings {
     grid: Duration,
@@ -7320,12 +7568,29 @@ struct ResidualComputationTimings {
     normalize: Duration,
 }
 
-fn mtmfs_taylor_weight(frequency_hz: f64, reffreq_hz: f64, order: usize) -> f32 {
-    if order == 0 {
-        return 1.0;
+fn fill_mtmfs_taylor_weights(
+    weights: &mut Vec<f32>,
+    frequency_hz: f64,
+    reffreq_hz: f64,
+    count: usize,
+) {
+    weights.clear();
+    let scaled = ((frequency_hz - reffreq_hz) / reffreq_hz) as f32;
+    let mut value = 1.0f32;
+    for _ in 0..count {
+        weights.push(value);
+        value *= scaled;
     }
-    let scaled = (frequency_hz - reffreq_hz) / reffreq_hz;
-    scaled.powi(order as i32) as f32
+}
+
+fn mtmfs_worker_threads(work_items: usize) -> usize {
+    if work_items <= 1 {
+        return 1;
+    }
+    if !(standard_mfs_fixed_tile_backend_enabled() || standard_mfs_metal_backend_enabled()) {
+        return 1;
+    }
+    standard_mfs_grid_threads().min(work_items).max(1)
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -7333,74 +7598,59 @@ fn compute_mtmfs_psf_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    acceleration_backend: &MtmfsAccelerationBackend<'_>,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<MtmfsPsfState, ImagingError> {
     if request.w_term_mode == WTermMode::WProject {
         return compute_mtmfs_psf_terms_w_project(request, batches, gridder, stage_timings);
     }
     let term_count = 2 * request.nterms - 1;
-    let [nx, ny] = gridder.grid_shape();
-    let mut psf_grids = (0..term_count)
-        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
-        .collect::<Vec<_>>();
-    let mut normalization_sumwt = 0.0f64;
-    let mut reported_sumwt_terms = vec![0.0f64; term_count];
-    let mut gridded_samples = 0usize;
-    let mut skipped_samples = 0usize;
     let mut timings = PsfComputationTimings::default();
 
     let grid_started = Instant::now();
-    for (batch_index, batch) in batches.iter().enumerate() {
-        let frequencies_hz = request
-            .sample_frequency_batches_hz
-            .get(batch_index)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
-                ))
+    let worker_threads = mtmfs_worker_threads(batches.len());
+    let accumulation = if cfg!(target_os = "macos") && standard_mfs_mtmfs_metal_backend_enabled() {
+        #[cfg(target_os = "macos")]
+        {
+            let executor = acceleration_backend.metal().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no Metal executor was prepared"
+                        .to_string(),
+                )
             })?;
-        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
-            if !batch.gridable[index] {
-                skipped_samples += 1;
-                continue;
+            let cache = acceleration_backend.metal_input_cache().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no input cache was prepared".to_string(),
+                )
+            })?;
+            let metal = executor.accumulate_mtmfs_psf_grids_from_cache(cache, term_count)?;
+            MtmfsPsfGridAccumulation {
+                psf_grids: metal.psf_grids,
+                normalization_sumwt: metal.normalization_sumwt,
+                reported_sumwt_terms: metal.reported_sumwt_terms,
+                gridded_samples: metal.gridded_samples,
+                skipped_samples: metal.skipped_samples,
             }
-            let weight = batch.weight[index];
-            let sumwt_factor = batch.sumwt_factor[index];
-            if !(weight.is_finite()
-                && weight > 0.0
-                && sumwt_factor.is_finite()
-                && sumwt_factor > 0.0
-                && frequency_hz.is_finite()
-                && frequency_hz > 0.0)
-            {
-                skipped_samples += 1;
-                continue;
-            }
-            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
-            else {
-                skipped_samples += 1;
-                continue;
-            };
-            normalization_sumwt += 2.0 * f64::from(weight);
-            for order in 0..term_count {
-                let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
-                let psf_weight = Complex32::new(weight * factor, 0.0);
-                gridder.grid_sample_product_planned(
-                    &mut psf_grids[order],
-                    &plan.positive,
-                    psf_weight,
-                );
-                gridder.grid_sample_product_planned(
-                    &mut psf_grids[order],
-                    &plan.negative,
-                    psf_weight,
-                );
-                reported_sumwt_terms[order] +=
-                    f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
-            }
-            gridded_samples += 1;
         }
-    }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err(ImagingError::Unsupported(
+                "MTMFS Metal backend requires macOS Metal and is not available on this platform"
+                    .to_string(),
+            ));
+        }
+    } else if worker_threads > 1 {
+        accumulate_mtmfs_psf_grids_parallel(request, batches, gridder, term_count, worker_threads)?
+    } else {
+        accumulate_mtmfs_psf_grid_range(request, batches, gridder, term_count, 0, batches.len())?
+    };
+    let MtmfsPsfGridAccumulation {
+        psf_grids,
+        normalization_sumwt,
+        reported_sumwt_terms,
+        gridded_samples,
+        skipped_samples,
+    } = accumulation;
     timings.grid = grid_started.elapsed();
 
     if normalization_sumwt <= 0.0
@@ -7449,6 +7699,175 @@ fn compute_mtmfs_psf_terms(
     })
 }
 
+fn accumulate_mtmfs_psf_grids_parallel(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    term_count: usize,
+    worker_threads: usize,
+) -> Result<MtmfsPsfGridAccumulation, ImagingError> {
+    let chunk_size = batches.len().div_ceil(worker_threads);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start in (0..batches.len()).step_by(chunk_size) {
+            let end = (start + chunk_size).min(batches.len());
+            handles.push(scope.spawn(move || {
+                accumulate_mtmfs_psf_grid_range(request, batches, gridder, term_count, start, end)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest("MTMFS PSF worker thread panicked".to_string())
+                })?
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    merge_mtmfs_psf_accumulations(partials, term_count, gridder.grid_shape())
+}
+
+fn accumulate_mtmfs_psf_grid_range(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    term_count: usize,
+    start_batch: usize,
+    end_batch: usize,
+) -> Result<MtmfsPsfGridAccumulation, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grids = (0..term_count)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt_terms = vec![0.0f64; term_count];
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut taylor_weights = Vec::<f32>::with_capacity(term_count);
+
+    for (batch_index, batch) in batches.iter().enumerate().take(end_batch).skip(start_batch) {
+        let frequencies_hz = request
+            .sample_frequency_batches_hz
+            .get(batch_index)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                ))
+            })?;
+        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
+            if !batch.gridable[index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[index];
+            let sumwt_factor = batch.sumwt_factor[index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0
+                && frequency_hz.is_finite()
+                && frequency_hz > 0.0)
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            else {
+                skipped_samples += 1;
+                continue;
+            };
+            let scaled = ((frequency_hz - request.reffreq_hz) / request.reffreq_hz) as f32;
+            normalization_sumwt += 2.0 * f64::from(weight);
+            if term_count == 3 {
+                for (order, factor) in [1.0, scaled, scaled * scaled].into_iter().enumerate() {
+                    let psf_weight = Complex32::new(weight * factor, 0.0);
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.positive,
+                        psf_weight,
+                    );
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.negative,
+                        psf_weight,
+                    );
+                    reported_sumwt_terms[order] +=
+                        f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
+                }
+            } else {
+                fill_mtmfs_taylor_weights(
+                    &mut taylor_weights,
+                    frequency_hz,
+                    request.reffreq_hz,
+                    term_count,
+                );
+                for (order, &factor) in taylor_weights.iter().enumerate() {
+                    let psf_weight = Complex32::new(weight * factor, 0.0);
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.positive,
+                        psf_weight,
+                    );
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.negative,
+                        psf_weight,
+                    );
+                    reported_sumwt_terms[order] +=
+                        f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
+                }
+            }
+            gridded_samples += 1;
+        }
+    }
+
+    Ok(MtmfsPsfGridAccumulation {
+        psf_grids,
+        normalization_sumwt,
+        reported_sumwt_terms,
+        gridded_samples,
+        skipped_samples,
+    })
+}
+
+fn merge_mtmfs_psf_accumulations(
+    partials: Vec<MtmfsPsfGridAccumulation>,
+    term_count: usize,
+    [nx, ny]: [usize; 2],
+) -> Result<MtmfsPsfGridAccumulation, ImagingError> {
+    let mut merged = MtmfsPsfGridAccumulation {
+        psf_grids: (0..term_count)
+            .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+            .collect(),
+        normalization_sumwt: 0.0,
+        reported_sumwt_terms: vec![0.0; term_count],
+        gridded_samples: 0,
+        skipped_samples: 0,
+    };
+    for partial in partials {
+        if partial.psf_grids.len() != term_count || partial.reported_sumwt_terms.len() != term_count
+        {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS PSF worker returned an unexpected Taylor-term count".to_string(),
+            ));
+        }
+        for (target, source) in merged.psf_grids.iter_mut().zip(partial.psf_grids.iter()) {
+            *target += source;
+        }
+        for (target, source) in merged
+            .reported_sumwt_terms
+            .iter_mut()
+            .zip(partial.reported_sumwt_terms.iter())
+        {
+            *target += *source;
+        }
+        merged.normalization_sumwt += partial.normalization_sumwt;
+        merged.gridded_samples += partial.gridded_samples;
+        merged.skipped_samples += partial.skipped_samples;
+    }
+    Ok(merged)
+}
+
 #[allow(clippy::needless_range_loop)]
 fn compute_mtmfs_psf_terms_w_project(
     request: &MtmfsRequest,
@@ -7469,13 +7888,19 @@ fn compute_mtmfs_psf_terms_w_project(
         .map(|_| Array2::<Complex32>::zeros((nx, ny)))
         .collect::<Vec<_>>();
     let mut reported_sumwt_terms = vec![0.0f64; term_count];
+    let mut taylor_weights = Vec::<f32>::with_capacity(term_count);
 
     let grid_started = Instant::now();
     for sample in &prepared.samples {
         let frequency_hz =
             mtmfs_sample_frequency(request, sample.batch_index, sample.sample_index)?;
-        for order in 0..term_count {
-            let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
+        fill_mtmfs_taylor_weights(
+            &mut taylor_weights,
+            frequency_hz,
+            request.reffreq_hz,
+            term_count,
+        );
+        for (order, &factor) in taylor_weights.iter().enumerate().take(term_count) {
             let psf_weight = Complex32::new(sample.weight * factor, 0.0);
             prepared.projector.grid_sample_planned(
                 &mut psf_grids[order],
@@ -7540,6 +7965,7 @@ fn compute_mtmfs_residual_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    acceleration_backend: &MtmfsAccelerationBackend<'_>,
     model_terms: &[Array2<f32>],
     psf_state: &MtmfsPsfState,
     stage_timings: &mut ImagingStageTimings,
@@ -7554,10 +7980,6 @@ fn compute_mtmfs_residual_terms(
             stage_timings,
         );
     }
-    let [nx, ny] = gridder.grid_shape();
-    let mut residual_grids = (0..request.nterms)
-        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
-        .collect::<Vec<_>>();
     let mut timings = ResidualComputationTimings::default();
     let model_grids = if model_terms
         .iter()
@@ -7575,69 +7997,57 @@ fn compute_mtmfs_residual_terms(
     };
 
     let degrid_grid_started = Instant::now();
-    for (batch_index, batch) in batches.iter().enumerate() {
-        let frequencies_hz = request
-            .sample_frequency_batches_hz
-            .get(batch_index)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
-                ))
+    let worker_threads = mtmfs_worker_threads(batches.len());
+    let residual_grids = if cfg!(target_os = "macos") && standard_mfs_mtmfs_metal_backend_enabled()
+    {
+        #[cfg(target_os = "macos")]
+        {
+            let executor = acceleration_backend.metal().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no Metal executor was prepared"
+                        .to_string(),
+                )
             })?;
-        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
-            let weight = batch.weight[index];
-            let observed_visibility = batch.visibility[index];
-            let gridable = batch.gridable[index];
-            let planned_sample = if gridable
-                && weight.is_finite()
-                && weight > 0.0
-                && observed_visibility.re.is_finite()
-                && observed_visibility.im.is_finite()
-                && frequency_hz.is_finite()
-                && frequency_hz > 0.0
-            {
-                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
-            } else {
-                None
-            };
-            let Some(plan) = planned_sample.as_ref() else {
-                continue;
-            };
-            let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
-                model_grids
-                    .iter()
-                    .map(|grid| {
-                        gridder.degrid_sample_product_planned_normalized(grid, &plan.positive)
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![Complex32::new(0.0, 0.0); request.nterms]
-            };
-            for (residual_order, residual_grid) in
-                residual_grids.iter_mut().enumerate().take(request.nterms)
-            {
-                let observed_term = observed_visibility
-                    * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
-                let mut predicted_term = Complex32::new(0.0, 0.0);
-                for (model_order, predicted_visibility) in predicted_visibility_terms
-                    .iter()
-                    .enumerate()
-                    .take(request.nterms)
-                {
-                    let factor = mtmfs_taylor_weight(
-                        frequency_hz,
-                        request.reffreq_hz,
-                        residual_order + model_order,
-                    );
-                    predicted_term += *predicted_visibility * factor;
-                }
-                let residual_visibility = observed_term - predicted_term;
-                let residual = residual_visibility * weight;
-                gridder.grid_sample_product_planned(residual_grid, &plan.positive, residual);
-                gridder.grid_sample_product_planned(residual_grid, &plan.negative, residual.conj());
-            }
+            let cache = acceleration_backend.metal_input_cache().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no input cache was prepared".to_string(),
+                )
+            })?;
+            executor
+                .accumulate_mtmfs_residual_grids_from_cache(
+                    cache,
+                    request.nterms,
+                    model_grids.as_deref(),
+                )?
+                .residual_grids
         }
-    }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err(ImagingError::Unsupported(
+                "MTMFS Metal backend requires macOS Metal and is not available on this platform"
+                    .to_string(),
+            ));
+        }
+    } else if worker_threads > 1 {
+        accumulate_mtmfs_residual_grids_parallel(
+            request,
+            batches,
+            gridder,
+            model_grids.as_deref(),
+            worker_threads,
+        )?
+        .residual_grids
+    } else {
+        accumulate_mtmfs_residual_grid_range(
+            request,
+            batches,
+            gridder,
+            model_grids.as_deref(),
+            0,
+            batches.len(),
+        )?
+        .residual_grids
+    };
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -7703,38 +8113,41 @@ fn compute_mtmfs_residual_terms_w_project(
     };
 
     let degrid_started = Instant::now();
+    let mut taylor_weights = Vec::<f32>::with_capacity(2 * request.nterms);
+    let mut predicted_visibility_terms = Vec::<Complex32>::with_capacity(request.nterms);
     for sample in &prepared.samples {
         let frequency_hz =
             mtmfs_sample_frequency(request, sample.batch_index, sample.sample_index)?;
-        let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
-            model_grids
-                .iter()
-                .map(|grid| {
+        fill_mtmfs_taylor_weights(
+            &mut taylor_weights,
+            frequency_hz,
+            request.reffreq_hz,
+            2 * request.nterms,
+        );
+        predicted_visibility_terms.clear();
+        if let Some(model_grids) = model_grids.as_ref() {
+            for grid in model_grids.iter().take(request.nterms) {
+                predicted_visibility_terms.push(
                     prepared
                         .projector
-                        .degrid_sample_planned(grid, &sample.positive_plan)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            vec![Complex32::new(0.0, 0.0); request.nterms]
-        };
+                        .degrid_sample_planned(grid, &sample.positive_plan),
+                );
+            }
+        }
         for (residual_order, residual_grid) in
             residual_grids.iter_mut().enumerate().take(request.nterms)
         {
-            let observed_term = sample.visibility
-                * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
+            let observed_term = sample.visibility * taylor_weights[residual_order];
             let mut predicted_term = Complex32::new(0.0, 0.0);
-            for (model_order, predicted_visibility) in predicted_visibility_terms
-                .iter()
-                .enumerate()
-                .take(request.nterms)
-            {
-                let factor = mtmfs_taylor_weight(
-                    frequency_hz,
-                    request.reffreq_hz,
-                    residual_order + model_order,
-                );
-                predicted_term += *predicted_visibility * factor;
+            if model_grids.is_some() {
+                for (model_order, predicted_visibility) in predicted_visibility_terms
+                    .iter()
+                    .enumerate()
+                    .take(request.nterms)
+                {
+                    predicted_term +=
+                        *predicted_visibility * taylor_weights[residual_order + model_order];
+                }
             }
             let residual = (observed_term - predicted_term) * sample.weight;
             prepared
@@ -7768,6 +8181,200 @@ fn compute_mtmfs_residual_terms_w_project(
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
     Ok(residual_terms)
+}
+
+fn accumulate_mtmfs_residual_grids_parallel(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model_grids: Option<&[Array2<Complex32>]>,
+    worker_threads: usize,
+) -> Result<MtmfsResidualGridAccumulation, ImagingError> {
+    let chunk_size = batches.len().div_ceil(worker_threads);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start in (0..batches.len()).step_by(chunk_size) {
+            let end = (start + chunk_size).min(batches.len());
+            handles.push(scope.spawn(move || {
+                accumulate_mtmfs_residual_grid_range(
+                    request,
+                    batches,
+                    gridder,
+                    model_grids,
+                    start,
+                    end,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS residual worker thread panicked".to_string(),
+                    )
+                })?
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    merge_mtmfs_residual_accumulations(partials, request.nterms, gridder.grid_shape())
+}
+
+fn accumulate_mtmfs_residual_grid_range(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model_grids: Option<&[Array2<Complex32>]>,
+    start_batch: usize,
+    end_batch: usize,
+) -> Result<MtmfsResidualGridAccumulation, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grids = (0..request.nterms)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut taylor_weights = Vec::<f32>::with_capacity(2 * request.nterms);
+    let mut predicted_visibility_terms = Vec::<Complex32>::with_capacity(request.nterms);
+
+    for (batch_index, batch) in batches.iter().enumerate().take(end_batch).skip(start_batch) {
+        let frequencies_hz = request
+            .sample_frequency_batches_hz
+            .get(batch_index)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                ))
+            })?;
+        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
+            let weight = batch.weight[index];
+            let observed_visibility = batch.visibility[index];
+            let gridable = batch.gridable[index];
+            let planned_sample = if gridable
+                && weight.is_finite()
+                && weight > 0.0
+                && observed_visibility.re.is_finite()
+                && observed_visibility.im.is_finite()
+                && frequency_hz.is_finite()
+                && frequency_hz > 0.0
+            {
+                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            } else {
+                None
+            };
+            let Some(plan) = planned_sample.as_ref() else {
+                continue;
+            };
+            if request.nterms == 2 {
+                let scaled = ((frequency_hz - request.reffreq_hz) / request.reffreq_hz) as f32;
+                let taylor0 = 1.0f32;
+                let taylor1 = scaled;
+                let taylor2 = scaled * scaled;
+                let (predicted0, predicted1) = if let Some(model_grids) = model_grids {
+                    (
+                        gridder.degrid_sample_product_planned_normalized(
+                            &model_grids[0],
+                            &plan.positive,
+                        ),
+                        gridder.degrid_sample_product_planned_normalized(
+                            &model_grids[1],
+                            &plan.positive,
+                        ),
+                    )
+                } else {
+                    (Complex32::new(0.0, 0.0), Complex32::new(0.0, 0.0))
+                };
+                let residual0 =
+                    observed_visibility * taylor0 - (predicted0 * taylor0 + predicted1 * taylor1);
+                let residual1 =
+                    observed_visibility * taylor1 - (predicted0 * taylor1 + predicted1 * taylor2);
+                let residual0 = residual0 * weight;
+                let residual1 = residual1 * weight;
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[0],
+                    &plan.positive,
+                    residual0,
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[0],
+                    &plan.negative,
+                    residual0.conj(),
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[1],
+                    &plan.positive,
+                    residual1,
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[1],
+                    &plan.negative,
+                    residual1.conj(),
+                );
+                continue;
+            }
+            fill_mtmfs_taylor_weights(
+                &mut taylor_weights,
+                frequency_hz,
+                request.reffreq_hz,
+                2 * request.nterms,
+            );
+            predicted_visibility_terms.clear();
+            if let Some(model_grids) = model_grids {
+                for grid in model_grids.iter().take(request.nterms) {
+                    predicted_visibility_terms.push(
+                        gridder.degrid_sample_product_planned_normalized(grid, &plan.positive),
+                    );
+                }
+            }
+            for (residual_order, residual_grid) in
+                residual_grids.iter_mut().enumerate().take(request.nterms)
+            {
+                let observed_term = observed_visibility * taylor_weights[residual_order];
+                let mut predicted_term = Complex32::new(0.0, 0.0);
+                if model_grids.is_some() {
+                    for (model_order, predicted_visibility) in predicted_visibility_terms
+                        .iter()
+                        .enumerate()
+                        .take(request.nterms)
+                    {
+                        predicted_term +=
+                            *predicted_visibility * taylor_weights[residual_order + model_order];
+                    }
+                }
+                let residual_visibility = observed_term - predicted_term;
+                let residual = residual_visibility * weight;
+                gridder.grid_sample_product_planned(residual_grid, &plan.positive, residual);
+                gridder.grid_sample_product_planned(residual_grid, &plan.negative, residual.conj());
+            }
+        }
+    }
+
+    Ok(MtmfsResidualGridAccumulation { residual_grids })
+}
+
+fn merge_mtmfs_residual_accumulations(
+    partials: Vec<MtmfsResidualGridAccumulation>,
+    term_count: usize,
+    [nx, ny]: [usize; 2],
+) -> Result<MtmfsResidualGridAccumulation, ImagingError> {
+    let mut merged = MtmfsResidualGridAccumulation {
+        residual_grids: (0..term_count)
+            .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+            .collect(),
+    };
+    for partial in partials {
+        if partial.residual_grids.len() != term_count {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS residual worker returned an unexpected Taylor-term count".to_string(),
+            ));
+        }
+        for (target, source) in merged
+            .residual_grids
+            .iter_mut()
+            .zip(partial.residual_grids.iter())
+        {
+            *target += source;
+        }
+    }
+    Ok(merged)
 }
 
 fn mtmfs_sample_frequency(
@@ -7913,9 +8520,54 @@ fn find_mtmfs_component(
     clean_mask: Option<&Array2<bool>>,
 ) -> Option<((usize, usize), Vec<f32>, f32)> {
     let (nx, ny) = residual_terms.first()?.dim();
+    let worker_threads = mtmfs_worker_threads(nx);
+    if worker_threads <= 1 {
+        return find_mtmfs_component_range(
+            residual_terms,
+            hessian,
+            inv_hessian,
+            clean_mask,
+            0,
+            nx,
+            ny,
+        );
+    }
+    let chunk_size = nx.div_ceil(worker_threads);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start_x in (0..nx).step_by(chunk_size) {
+            let end_x = (start_x + chunk_size).min(nx);
+            handles.push(scope.spawn(move || {
+                find_mtmfs_component_range(
+                    residual_terms,
+                    hessian,
+                    inv_hessian,
+                    clean_mask,
+                    start_x,
+                    end_x,
+                    ny,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok().flatten())
+            .max_by(|left, right| left.2.total_cmp(&right.2))
+    })
+}
+
+fn find_mtmfs_component_range(
+    residual_terms: &[Array2<f32>],
+    hessian: &[Vec<f32>],
+    inv_hessian: &[Vec<f32>],
+    clean_mask: Option<&Array2<bool>>,
+    start_x: usize,
+    end_x: usize,
+    ny: usize,
+) -> Option<((usize, usize), Vec<f32>, f32)> {
     let mut best = None::<((usize, usize), Vec<f32>, f32)>;
     let mut best_penalty = -1.0f32;
-    for x in 0..nx {
+    for x in start_x..end_x {
         for y in 0..ny {
             if clean_mask.is_some_and(|mask| !mask[(x, y)]) {
                 continue;
@@ -9626,6 +10278,21 @@ fn add_complex64_grid(target: &mut Array2<Complex64>, source: &Array2<Complex64>
     });
 }
 
+fn add_complex32_grid(target: &mut Array2<Complex32>, source: &Array2<Complex32>) {
+    if let (Some(target), Some(source)) = (
+        target.as_slice_memory_order_mut(),
+        source.as_slice_memory_order(),
+    ) {
+        for (target, source) in target.iter_mut().zip(source.iter()) {
+            *target += *source;
+        }
+        return;
+    }
+    Zip::from(target).and(source).for_each(|target, source| {
+        *target += *source;
+    });
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct ResidualGridAccumulation {
     valid_samples: usize,
@@ -10468,6 +11135,15 @@ fn compute_psf_w_project(
     w_project_planes: Option<usize>,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<PsfState, ImagingError> {
+    if !w_project_initial_dirty_metal_backend_enabled() {
+        return compute_psf_w_project_streaming(
+            geometry,
+            batches,
+            gridder,
+            w_project_planes,
+            stage_timings,
+        );
+    }
     let prepare_started = Instant::now();
     let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
     let mut timings = PsfComputationTimings {
@@ -10478,11 +11154,10 @@ fn compute_psf_w_project(
     let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
 
     let grid_started = Instant::now();
-    for sample in &prepared.samples {
-        let psf_weight = Complex32::new(sample.weight, 0.0);
-        prepared
-            .projector
-            .grid_sample_planned(&mut psf_grid, &sample.positive_plan, psf_weight);
+    if w_project_initial_dirty_metal_backend_enabled() {
+        accumulate_w_project_psf_grid_metal(&prepared, &mut psf_grid)?;
+    } else {
+        accumulate_w_project_psf_grid(&prepared, &mut psf_grid)?;
     }
     timings.grid += grid_started.elapsed();
 
@@ -10519,6 +11194,225 @@ fn compute_psf_w_project(
     })
 }
 
+fn compute_dirty_psf_and_residual_w_project(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    if !w_project_initial_dirty_metal_backend_enabled() {
+        return compute_dirty_psf_and_residual_w_project_streaming(
+            geometry,
+            batches,
+            gridder,
+            w_project_planes,
+            stage_timings,
+        );
+    }
+    let prepare_started = Instant::now();
+    let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    if w_project_initial_dirty_metal_backend_enabled() {
+        accumulate_w_project_dirty_grids_metal(&prepared, &mut psf_grid, &mut residual_grid)?;
+    } else {
+        accumulate_w_project_dirty_grids(&prepared, &mut psf_grid, &mut residual_grid)?;
+    }
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    timings.grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    if prepared.normalization_sumwt <= 0.0 || prepared.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2(&psf_grid);
+    timings.fft = psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf =
+        gridder.corrected_w_project_image_from_grid(&raw_psf, prepared.projector.sampling());
+    psf.mapv_inplace(|value| 2.0 * value / prepared.normalization_sumwt);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual =
+        gridder.corrected_w_project_image_from_grid(&raw_residual, prepared.projector.sampling());
+    residual.mapv_inplace(|value| 2.0 * value / prepared.normalization_sumwt / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: prepared.normalization_sumwt,
+            reported_sumwt: prepared.reported_sumwt,
+            psf_peak,
+            gridded_samples: prepared.gridded_samples,
+            skipped_samples: prepared.skipped_samples.len(),
+        },
+        residual,
+    ))
+}
+
+fn compute_psf_w_project_streaming(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let prepare_started = Instant::now();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    let accumulation = accumulate_w_project_psf_grid_streaming(batches, &projector, &mut psf_grid)?;
+    timings.grid += grid_started.elapsed();
+
+    let psf_state =
+        psf_grid_to_w_project_state(gridder, &projector, &psf_grid, accumulation, &mut timings)?;
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+    Ok(psf_state)
+}
+
+fn compute_dirty_psf_and_residual_w_project_streaming(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    let prepare_started = Instant::now();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    let accumulation = accumulate_w_project_dirty_grids_streaming(
+        batches,
+        &projector,
+        &mut psf_grid,
+        &mut residual_grid,
+    )?;
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    timings.grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    let psf_state =
+        psf_grid_to_w_project_state(gridder, &projector, &psf_grid, accumulation, &mut timings)?;
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual =
+        gridder.corrected_w_project_image_from_grid(&raw_residual, projector.sampling());
+    residual.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+    Ok((psf_state, residual))
+}
+
+fn compute_residual_w_project_streaming(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let prepare_started = Instant::now();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let mut timings = ResidualComputationTimings {
+        degrid_grid: prepare_started.elapsed(),
+        ..ResidualComputationTimings::default()
+    };
+    let model_nonzero = model.iter().any(|value| value.abs() > 0.0);
+    let model_grid = if model_nonzero {
+        let model_fft_started = Instant::now();
+        let transformed =
+            centered_fft2(&gridder.apodize_w_project_model(model, projector.sampling()));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let degrid_started = Instant::now();
+    accumulate_w_project_residual_grid_streaming(
+        batches,
+        &projector,
+        model_grid.as_ref(),
+        &mut residual_grid,
+    )?;
+    timings.degrid_grid += degrid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_w_project_image_from_grid(&raw, projector.sampling());
+    image.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(image)
+}
+
 fn compute_residual_w_project(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -10528,6 +11422,17 @@ fn compute_residual_w_project(
     w_project_planes: Option<usize>,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
+    if !w_project_residual_metal_backend_enabled() {
+        return compute_residual_w_project_streaming(
+            geometry,
+            batches,
+            gridder,
+            model,
+            psf_state,
+            w_project_planes,
+            stage_timings,
+        );
+    }
     let prepare_started = Instant::now();
     let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
     let mut timings = ResidualComputationTimings {
@@ -10548,19 +11453,14 @@ fn compute_residual_w_project(
 
     let degrid_started = Instant::now();
     let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
-    for sample in &prepared.samples {
-        let predicted = model_grid.as_ref().map_or_else(
-            || Complex32::new(0.0, 0.0),
-            |grid| {
-                prepared
-                    .projector
-                    .degrid_sample_planned(grid, &sample.positive_plan)
-            },
-        );
-        let residual = (sample.visibility - predicted) * sample.weight;
-        prepared
-            .projector
-            .grid_sample_planned(&mut residual_grid, &sample.positive_plan, residual);
+    if w_project_residual_metal_backend_enabled() {
+        accumulate_w_project_residual_grid_metal(
+            &prepared,
+            model_grid.as_ref(),
+            &mut residual_grid,
+        )?;
+    } else {
+        accumulate_w_project_residual_grid(&prepared, model_grid.as_ref(), &mut residual_grid)?;
     }
     timings.degrid_grid += degrid_started.elapsed();
 
@@ -10579,62 +11479,1466 @@ fn compute_residual_w_project(
     Ok(image)
 }
 
+fn w_project_grid_threads(sample_count: usize) -> usize {
+    let requested_threads = standard_mfs_grid_threads();
+    requested_threads
+        .min(sample_count)
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WProjectGridAccumulation {
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+impl WProjectGridAccumulation {
+    fn add(&mut self, other: Self) {
+        self.normalization_sumwt += other.normalization_sumwt;
+        self.reported_sumwt += other.reported_sumwt;
+        self.gridded_samples += other.gridded_samples;
+        self.skipped_samples += other.skipped_samples;
+    }
+}
+
+fn psf_grid_to_w_project_state(
+    gridder: &StandardGridder,
+    projector: &WProjector,
+    psf_grid: &Array2<Complex32>,
+    accumulation: WProjectGridAccumulation,
+    timings: &mut PsfComputationTimings,
+) -> Result<PsfState, ImagingError> {
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2(psf_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf = gridder.corrected_w_project_image_from_grid(&raw_psf, projector.sampling());
+    psf.mapv_inplace(|value| 2.0 * value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = normalize_started.elapsed();
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: accumulation.normalization_sumwt as f32,
+        reported_sumwt: accumulation.reported_sumwt as f32,
+        psf_peak,
+        gridded_samples: accumulation.gridded_samples,
+        skipped_samples: accumulation.skipped_samples,
+    })
+}
+
+fn accumulate_w_project_psf_grid_streaming(
+    batches: &[VisibilityBatch],
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+) -> Result<WProjectGridAccumulation, ImagingError> {
+    let thread_count = w_project_grid_threads(batches.iter().map(VisibilityBatch::len).sum());
+    if thread_count <= 1 {
+        return Ok(accumulate_w_project_psf_grid_streaming_serial(
+            batches, 0, projector, psf_grid,
+        ));
+    }
+    let [nx, ny] = projector.grid_shape();
+    let local_results = accumulate_w_project_streaming_parallel(
+        batches,
+        thread_count,
+        || {
+            (
+                Array2::<Complex32>::zeros((nx, ny)),
+                Array2::<Complex32>::zeros((0, 0)),
+            )
+        },
+        |batch, batch_index, sample_index, (psf_grid, _)| {
+            accumulate_w_project_psf_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+            )
+        },
+    )?;
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (local_accumulation, (local_psf_grid, _)) in &local_results {
+        accumulation.add(*local_accumulation);
+        add_complex32_grid(psf_grid, local_psf_grid);
+    }
+    Ok(accumulation)
+}
+
+fn accumulate_w_project_dirty_grids_streaming(
+    batches: &[VisibilityBatch],
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<WProjectGridAccumulation, ImagingError> {
+    let thread_count = w_project_grid_threads(batches.iter().map(VisibilityBatch::len).sum());
+    if thread_count <= 1 {
+        return Ok(accumulate_w_project_dirty_grids_streaming_serial(
+            batches,
+            0,
+            projector,
+            psf_grid,
+            residual_grid,
+        ));
+    }
+    let [nx, ny] = projector.grid_shape();
+    let local_results = accumulate_w_project_streaming_parallel(
+        batches,
+        thread_count,
+        || {
+            (
+                Array2::<Complex32>::zeros((nx, ny)),
+                Array2::<Complex32>::zeros((nx, ny)),
+            )
+        },
+        |batch, batch_index, sample_index, (psf_grid, residual_grid)| {
+            accumulate_w_project_dirty_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+                residual_grid,
+            )
+        },
+    )?;
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (local_accumulation, (local_psf_grid, local_residual_grid)) in &local_results {
+        accumulation.add(*local_accumulation);
+        add_complex32_grid(psf_grid, local_psf_grid);
+        add_complex32_grid(residual_grid, local_residual_grid);
+    }
+    Ok(accumulation)
+}
+
+fn accumulate_w_project_residual_grid_streaming(
+    batches: &[VisibilityBatch],
+    projector: &WProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<WProjectGridAccumulation, ImagingError> {
+    let thread_count = w_project_grid_threads(batches.iter().map(VisibilityBatch::len).sum());
+    if thread_count <= 1 {
+        return Ok(accumulate_w_project_residual_grid_streaming_serial(
+            batches,
+            0,
+            projector,
+            model_grid,
+            residual_grid,
+        ));
+    }
+    let [nx, ny] = projector.grid_shape();
+    let local_results = accumulate_w_project_streaming_parallel(
+        batches,
+        thread_count,
+        || {
+            (
+                Array2::<Complex32>::zeros((0, 0)),
+                Array2::<Complex32>::zeros((nx, ny)),
+            )
+        },
+        |batch, batch_index, sample_index, (_, residual_grid)| {
+            accumulate_w_project_residual_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                model_grid,
+                residual_grid,
+            )
+        },
+    )?;
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (local_accumulation, (_, local_residual_grid)) in &local_results {
+        accumulation.add(*local_accumulation);
+        add_complex32_grid(residual_grid, local_residual_grid);
+    }
+    Ok(accumulation)
+}
+
+fn accumulate_w_project_streaming_parallel<S, I, F>(
+    batches: &[VisibilityBatch],
+    thread_count: usize,
+    init_state: I,
+    accumulate_sample: F,
+) -> Result<Vec<(WProjectGridAccumulation, S)>, ImagingError>
+where
+    S: Send,
+    I: Fn() -> S + Copy + Send + Sync,
+    F: Fn(&VisibilityBatch, usize, usize, &mut S) -> WProjectGridAccumulation + Copy + Send + Sync,
+{
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            handles.push(scope.spawn(move || {
+                let mut state = init_state();
+                let mut accumulation = WProjectGridAccumulation::default();
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulation.add(accumulate_sample(
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut state,
+                        ));
+                    }
+                }
+                (accumulation, state)
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject streaming worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    Ok(local_results)
+}
+
+fn accumulate_w_project_psf_grid_streaming_serial(
+    batches: &[VisibilityBatch],
+    batch_offset: usize,
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (relative_batch_index, batch) in batches.iter().enumerate() {
+        let batch_index = batch_offset + relative_batch_index;
+        for sample_index in 0..batch.len() {
+            accumulation.add(accumulate_w_project_psf_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+            ));
+        }
+    }
+    accumulation
+}
+
+fn accumulate_w_project_dirty_grids_streaming_serial(
+    batches: &[VisibilityBatch],
+    batch_offset: usize,
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (relative_batch_index, batch) in batches.iter().enumerate() {
+        let batch_index = batch_offset + relative_batch_index;
+        for sample_index in 0..batch.len() {
+            accumulation.add(accumulate_w_project_dirty_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+                residual_grid,
+            ));
+        }
+    }
+    accumulation
+}
+
+fn accumulate_w_project_residual_grid_streaming_serial(
+    batches: &[VisibilityBatch],
+    batch_offset: usize,
+    projector: &WProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (relative_batch_index, batch) in batches.iter().enumerate() {
+        let batch_index = batch_offset + relative_batch_index;
+        for sample_index in 0..batch.len() {
+            accumulation.add(accumulate_w_project_residual_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                model_grid,
+                residual_grid,
+            ));
+        }
+    }
+    accumulation
+}
+
+fn w_project_streaming_plan_for_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+) -> Result<(RawWProjectSample, WProjectSamplePlan), WProjectGridAccumulation> {
+    let sample = RawWProjectSample {
+        batch_index,
+        sample_index,
+        u_lambda: batch.u_lambda[sample_index],
+        v_lambda: batch.v_lambda[sample_index],
+        w_lambda: batch.w_lambda[sample_index],
+        weight: batch.weight[sample_index],
+        visibility: batch.visibility[sample_index],
+        sumwt_factor: batch.sumwt_factor[sample_index],
+    };
+    if !batch.gridable[sample_index] || !raw_w_project_sample_is_valid(sample) {
+        return Err(WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        });
+    }
+    let Some(plan) = projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+    else {
+        return Err(WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        });
+    };
+    Ok((sample, plan))
+}
+
+fn w_project_accumulation_for_sample(
+    sample: RawWProjectSample,
+    plan: &WProjectSamplePlan,
+) -> WProjectGridAccumulation {
+    WProjectGridAccumulation {
+        normalization_sumwt: 2.0 * f64::from(sample.weight) * f64::from(plan.normalization),
+        reported_sumwt: f64::from(sample.weight) * f64::from(sample.sumwt_factor),
+        gridded_samples: 1,
+        skipped_samples: 0,
+    }
+}
+
+fn accumulate_w_project_psf_streaming_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    psf_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let Ok((sample, plan)) =
+        w_project_streaming_plan_for_sample(projector, batch, batch_index, sample_index)
+    else {
+        return WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        };
+    };
+    projector.grid_sample_planned(psf_grid, &plan, Complex32::new(sample.weight, 0.0));
+    w_project_accumulation_for_sample(sample, &plan)
+}
+
+fn accumulate_w_project_dirty_streaming_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let Ok((sample, plan)) =
+        w_project_streaming_plan_for_sample(projector, batch, batch_index, sample_index)
+    else {
+        return WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        };
+    };
+    projector.grid_sample_planned_pair(
+        psf_grid,
+        Complex32::new(sample.weight, 0.0),
+        residual_grid,
+        sample.visibility * sample.weight,
+        &plan,
+    );
+    w_project_accumulation_for_sample(sample, &plan)
+}
+
+fn accumulate_w_project_residual_streaming_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let Ok((sample, plan)) =
+        w_project_streaming_plan_for_sample(projector, batch, batch_index, sample_index)
+    else {
+        return WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        };
+    };
+    let predicted = model_grid.as_ref().map_or_else(
+        || Complex32::new(0.0, 0.0),
+        |grid| projector.degrid_sample_planned(grid, &plan),
+    );
+    let residual = (sample.visibility - predicted) * sample.weight;
+    projector.grid_sample_planned(residual_grid, &plan, residual);
+    w_project_accumulation_for_sample(sample, &plan)
+}
+
+fn accumulate_w_project_psf_grid(
+    prepared: &WProjectPreparedData,
+    psf_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let samples = &prepared.samples;
+    let thread_count = w_project_grid_threads(samples.len());
+    if thread_count <= 1 || samples.len() < 10_000 {
+        for sample in samples {
+            let psf_weight = Complex32::new(sample.weight, 0.0);
+            prepared
+                .projector
+                .grid_sample_planned(psf_grid, &sample.positive_plan, psf_weight);
+        }
+        return Ok(());
+    }
+
+    let [nx, ny] = prepared.projector.grid_shape();
+    let chunk_len = samples.len().div_ceil(thread_count);
+    let mut local_grids = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk in samples.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut local_grid = Array2::<Complex32>::zeros((nx, ny));
+                for sample in chunk {
+                    let psf_weight = Complex32::new(sample.weight, 0.0);
+                    prepared.projector.grid_sample_planned(
+                        &mut local_grid,
+                        &sample.positive_plan,
+                        psf_weight,
+                    );
+                }
+                local_grid
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject PSF grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    for local_grid in &local_grids {
+        add_complex32_grid(psf_grid, local_grid);
+    }
+    Ok(())
+}
+
+fn accumulate_w_project_dirty_grids(
+    prepared: &WProjectPreparedData,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let samples = &prepared.samples;
+    let thread_count = w_project_grid_threads(samples.len());
+    if thread_count <= 1 || samples.len() < 10_000 {
+        for sample in samples {
+            let psf_weight = Complex32::new(sample.weight, 0.0);
+            let residual = sample.visibility * sample.weight;
+            prepared.projector.grid_sample_planned_pair(
+                psf_grid,
+                psf_weight,
+                residual_grid,
+                residual,
+                &sample.positive_plan,
+            );
+        }
+        return Ok(());
+    }
+
+    let [nx, ny] = prepared.projector.grid_shape();
+    let chunk_len = samples.len().div_ceil(thread_count);
+    let mut local_grids = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk in samples.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut local_psf_grid = Array2::<Complex32>::zeros((nx, ny));
+                let mut local_residual_grid = Array2::<Complex32>::zeros((nx, ny));
+                for sample in chunk {
+                    let psf_weight = Complex32::new(sample.weight, 0.0);
+                    let residual = sample.visibility * sample.weight;
+                    prepared.projector.grid_sample_planned_pair(
+                        &mut local_psf_grid,
+                        psf_weight,
+                        &mut local_residual_grid,
+                        residual,
+                        &sample.positive_plan,
+                    );
+                }
+                (local_psf_grid, local_residual_grid)
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject dirty grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    for (local_psf_grid, local_residual_grid) in &local_grids {
+        add_complex32_grid(psf_grid, local_psf_grid);
+        add_complex32_grid(residual_grid, local_residual_grid);
+    }
+    Ok(())
+}
+
+fn accumulate_w_project_residual_grid(
+    prepared: &WProjectPreparedData,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let samples = &prepared.samples;
+    let thread_count = w_project_grid_threads(samples.len());
+    if thread_count <= 1 || samples.len() < 10_000 {
+        for sample in samples {
+            accumulate_w_project_residual_sample(prepared, model_grid, sample, residual_grid);
+        }
+        return Ok(());
+    }
+
+    let [nx, ny] = prepared.projector.grid_shape();
+    let chunk_len = samples.len().div_ceil(thread_count);
+    let mut local_grids = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk in samples.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut local_grid = Array2::<Complex32>::zeros((nx, ny));
+                for sample in chunk {
+                    accumulate_w_project_residual_sample(
+                        prepared,
+                        model_grid,
+                        sample,
+                        &mut local_grid,
+                    );
+                }
+                local_grid
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject residual grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    for local_grid in &local_grids {
+        add_complex32_grid(residual_grid, local_grid);
+    }
+    Ok(())
+}
+
+fn accumulate_w_project_residual_sample(
+    prepared: &WProjectPreparedData,
+    model_grid: Option<&Array2<Complex32>>,
+    sample: &WProjectPreparedSample,
+    residual_grid: &mut Array2<Complex32>,
+) {
+    let predicted = model_grid.as_ref().map_or_else(
+        || Complex32::new(0.0, 0.0),
+        |grid| {
+            prepared
+                .projector
+                .degrid_sample_planned(grid, &sample.positive_plan)
+        },
+    );
+    let residual = (sample.visibility - predicted) * sample.weight;
+    prepared
+        .projector
+        .grid_sample_planned(residual_grid, &sample.positive_plan, residual);
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WProjectMetalSample {
+    loc_x: u32,
+    loc_y: u32,
+    plane_index: u32,
+    support: u32,
+    off_x: i32,
+    off_y: i32,
+    conjugate_kernel: u32,
+    _pad0: u32,
+    weight: f32,
+    visibility_re: f32,
+    visibility_im: f32,
+    _pad1: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WProjectMetalComplex {
+    re: f32,
+    im: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WProjectMetalParams {
+    sample_count: u32,
+    grid_width: u32,
+    grid_height: u32,
+    kernel_width: u32,
+    sampling: u32,
+    mode: u32,
+    model_present: u32,
+    _pad0: u32,
+}
+
+const W_PROJECT_METAL_MODE_PSF: u32 = 0;
+const W_PROJECT_METAL_MODE_DIRTY: u32 = 1;
+const W_PROJECT_METAL_MODE_RESIDUAL: u32 = 2;
+
+fn w_project_metal_samples(
+    prepared: &WProjectPreparedData,
+) -> Result<Vec<WProjectMetalSample>, ImagingError> {
+    prepared
+        .samples
+        .iter()
+        .map(|sample| {
+            let support = prepared
+                .projector
+                .kernel_support(sample.positive_plan.plane_index);
+            Ok(WProjectMetalSample {
+                loc_x: u32::try_from(sample.positive_plan.loc_x).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal sample x coordinate is negative".to_string(),
+                    )
+                })?,
+                loc_y: u32::try_from(sample.positive_plan.loc_y).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal sample y coordinate is negative".to_string(),
+                    )
+                })?,
+                plane_index: u32::try_from(sample.positive_plan.plane_index).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal plane index exceeds u32".to_string(),
+                    )
+                })?,
+                support: u32::try_from(support).map_err(|_| {
+                    ImagingError::InvalidRequest("wproject Metal support exceeds u32".to_string())
+                })?,
+                off_x: i32::try_from(sample.positive_plan.off_x).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal x subpixel offset exceeds i32".to_string(),
+                    )
+                })?,
+                off_y: i32::try_from(sample.positive_plan.off_y).map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal y subpixel offset exceeds i32".to_string(),
+                    )
+                })?,
+                conjugate_kernel: u32::from(sample.positive_plan.conjugate_kernel),
+                _pad0: 0,
+                weight: sample.weight,
+                visibility_re: sample.visibility.re,
+                visibility_im: sample.visibility.im,
+                _pad1: 0.0,
+            })
+        })
+        .collect()
+}
+
+fn w_project_metal_kernel_weights(prepared: &WProjectPreparedData) -> Vec<WProjectMetalComplex> {
+    prepared
+        .projector
+        .flattened_kernel_weights()
+        .into_iter()
+        .map(|value| WProjectMetalComplex {
+            re: value.re,
+            im: value.im,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_psf_grid_metal(
+    prepared: &WProjectPreparedData,
+    psf_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let mut residual_grid = Array2::<Complex32>::zeros(psf_grid.raw_dim());
+    accumulate_w_project_grid_metal(
+        prepared,
+        None,
+        psf_grid,
+        &mut residual_grid,
+        W_PROJECT_METAL_MODE_PSF,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_w_project_psf_grid_metal(
+    _prepared: &WProjectPreparedData,
+    _psf_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    Err(ImagingError::Unsupported(
+        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_dirty_grids_metal(
+    prepared: &WProjectPreparedData,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    accumulate_w_project_grid_metal(
+        prepared,
+        None,
+        psf_grid,
+        residual_grid,
+        W_PROJECT_METAL_MODE_DIRTY,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_w_project_dirty_grids_metal(
+    _prepared: &WProjectPreparedData,
+    _psf_grid: &mut Array2<Complex32>,
+    _residual_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    Err(ImagingError::Unsupported(
+        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_residual_grid_metal(
+    prepared: &WProjectPreparedData,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let mut psf_grid = Array2::<Complex32>::zeros(residual_grid.raw_dim());
+    accumulate_w_project_grid_metal(
+        prepared,
+        model_grid,
+        &mut psf_grid,
+        residual_grid,
+        W_PROJECT_METAL_MODE_RESIDUAL,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_w_project_residual_grid_metal(
+    _prepared: &WProjectPreparedData,
+    _model_grid: Option<&Array2<Complex32>>,
+    _residual_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    Err(ImagingError::Unsupported(
+        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_grid_metal(
+    prepared: &WProjectPreparedData,
+    model_grid: Option<&Array2<Complex32>>,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+    mode: u32,
+) -> Result<(), ImagingError> {
+    use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
+
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
+        MTLLibrary, MTLResourceOptions, MTLSize,
+    };
+
+    let [grid_width, grid_height] = prepared.projector.grid_shape();
+    let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+        ImagingError::InvalidRequest("wproject Metal grid is too large".to_string())
+    })?;
+    let samples = w_project_metal_samples(prepared)?;
+    if samples.is_empty() {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let kernel_weights = w_project_metal_kernel_weights(prepared);
+    let kernel_width = prepared.projector.kernel_weight_width();
+    let params = WProjectMetalParams {
+        sample_count: u32::try_from(samples.len()).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal sample count exceeds u32".to_string())
+        })?,
+        grid_width: u32::try_from(grid_width).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal grid width exceeds u32".to_string())
+        })?,
+        grid_height: u32::try_from(grid_height).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal grid height exceeds u32".to_string())
+        })?,
+        kernel_width: u32::try_from(kernel_width).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal kernel width exceeds u32".to_string())
+        })?,
+        sampling: u32::try_from(prepared.projector.sampling()).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal sampling exceeds u32".to_string())
+        })?,
+        mode,
+        model_present: u32::from(model_grid.is_some()),
+        _pad0: 0,
+    };
+
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not find a default Metal device".to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a Metal command queue".to_string(),
+        )
+    })?;
+    let source = objc2_foundation::NSString::from_str(W_PROJECT_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "wproject backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let function_name = objc2_foundation::NSString::from_str("wproject_grid_samples");
+    let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' shader entry point was not found".to_string(),
+        )
+    })?;
+    let pipeline = device
+        .newComputePipelineStateWithFunction_error(&function)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "wproject backend 'metal' failed to create pipeline: {error:?}"
+            ))
+        })?;
+    let storage_options = MTLResourceOptions::StorageModeShared;
+
+    let sample_buffer = unsafe {
+        let byte_len = mem::size_of_val(samples.as_slice());
+        let pointer =
+            NonNull::new(samples.as_ptr().cast::<c_void>() as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal sample pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not allocate sample buffer".to_string(),
+                )
+            })?
+    };
+    let kernel_buffer = unsafe {
+        let byte_len = mem::size_of_val(kernel_weights.as_slice());
+        let pointer = NonNull::new(kernel_weights.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal kernel pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not allocate kernel buffer".to_string(),
+                )
+            })?
+    };
+    let params_buffer = unsafe {
+        let params_slice = slice::from_ref(&params);
+        let byte_len = mem::size_of_val(params_slice);
+        let pointer = NonNull::new(params_slice.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal params pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not allocate params buffer".to_string(),
+                )
+            })?
+    };
+    let model_values = if let Some(model_grid) = model_grid {
+        model_grid
+            .iter()
+            .map(|value| WProjectMetalComplex {
+                re: value.re,
+                im: value.im,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![WProjectMetalComplex { re: 0.0, im: 0.0 }]
+    };
+    let model_buffer = unsafe {
+        let byte_len = mem::size_of_val(model_values.as_slice());
+        let pointer = NonNull::new(model_values.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal model pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not allocate model buffer".to_string(),
+                )
+            })?
+    };
+    let output_bytes = cell_count
+        .checked_mul(mem::size_of::<u32>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("wproject Metal output grid is too large".to_string())
+        })?;
+    let psf_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate PSF real buffer".to_string(),
+            )
+        })?;
+    let psf_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate PSF imag buffer".to_string(),
+            )
+        })?;
+    let residual_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate residual real buffer".to_string(),
+            )
+        })?;
+    let residual_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate residual imag buffer".to_string(),
+            )
+        })?;
+    unsafe {
+        ptr::write_bytes(psf_re.contents().as_ptr().cast::<u8>(), 0, output_bytes);
+        ptr::write_bytes(psf_im.contents().as_ptr().cast::<u8>(), 0, output_bytes);
+        ptr::write_bytes(
+            residual_re.contents().as_ptr().cast::<u8>(),
+            0,
+            output_bytes,
+        );
+        ptr::write_bytes(
+            residual_im.contents().as_ptr().cast::<u8>(),
+            0,
+            output_bytes,
+        );
+    }
+
+    let command_buffer = queue.commandBuffer().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a command buffer".to_string(),
+        )
+    })?;
+    let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a compute encoder".to_string(),
+        )
+    })?;
+    encoder.setComputePipelineState(&pipeline);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(&sample_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(&model_buffer), 0, 2);
+        encoder.setBuffer_offset_atIndex(Some(&psf_re), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(&psf_im), 0, 4);
+        encoder.setBuffer_offset_atIndex(Some(&residual_re), 0, 5);
+        encoder.setBuffer_offset_atIndex(Some(&residual_im), 0, 6);
+        encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 7);
+    }
+    let thread_count = samples.len();
+    let thread_width = pipeline.threadExecutionWidth().max(1);
+    let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+    let threads_per_group = thread_width.min(max_threads).min(thread_count).max(1);
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: thread_count,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: threads_per_group,
+            height: 1,
+            depth: 1,
+        },
+    );
+    encoder.endEncoding();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    if command_buffer.status() == MTLCommandBufferStatus::Error {
+        let message = command_buffer
+            .error()
+            .map(|error| format!("{error:?}"))
+            .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+        return Err(ImagingError::Unsupported(format!(
+            "wproject backend 'metal' command failed: {message}"
+        )));
+    }
+
+    let psf_re_values =
+        unsafe { slice::from_raw_parts(psf_re.contents().as_ptr().cast::<u32>(), cell_count) };
+    let psf_im_values =
+        unsafe { slice::from_raw_parts(psf_im.contents().as_ptr().cast::<u32>(), cell_count) };
+    let residual_re_values =
+        unsafe { slice::from_raw_parts(residual_re.contents().as_ptr().cast::<u32>(), cell_count) };
+    let residual_im_values =
+        unsafe { slice::from_raw_parts(residual_im.contents().as_ptr().cast::<u32>(), cell_count) };
+    for (
+        (((psf_cell, &psf_re_bits), &psf_im_bits), residual_cell),
+        (&residual_re_bits, &residual_im_bits),
+    ) in psf_grid
+        .as_slice_memory_order_mut()
+        .expect("wproject PSF grid should be contiguous")
+        .iter_mut()
+        .zip(psf_re_values)
+        .zip(psf_im_values)
+        .zip(
+            residual_grid
+                .as_slice_memory_order_mut()
+                .expect("wproject residual grid should be contiguous")
+                .iter_mut(),
+        )
+        .zip(residual_re_values.iter().zip(residual_im_values))
+    {
+        *psf_cell = Complex32::new(f32::from_bits(psf_re_bits), f32::from_bits(psf_im_bits));
+        *residual_cell = Complex32::new(
+            f32::from_bits(residual_re_bits),
+            f32::from_bits(residual_im_bits),
+        );
+    }
+
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "wproject_metal_grid mode={} samples={} grid={}x{} planes={} kernel_width={} sampling={}",
+            mode,
+            samples.len(),
+            grid_width,
+            grid_height,
+            prepared.projector.plane_count(),
+            kernel_width,
+            prepared.projector.sampling(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+const W_PROJECT_METAL_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct WProjectSample {
+    uint loc_x;
+    uint loc_y;
+    uint plane_index;
+    uint support;
+    int off_x;
+    int off_y;
+    uint conjugate_kernel;
+    uint _pad0;
+    float weight;
+    float visibility_re;
+    float visibility_im;
+    float _pad1;
+};
+
+struct WProjectParams {
+    uint sample_count;
+    uint grid_width;
+    uint grid_height;
+    uint kernel_width;
+    uint sampling;
+    uint mode;
+    uint model_present;
+    uint _pad0;
+};
+
+static inline void atomic_add_float(device atomic_uint *address, float value) {
+    uint old_bits = atomic_load_explicit(address, memory_order_relaxed);
+    while (true) {
+        float old_value = as_type<float>(old_bits);
+        uint new_bits = as_type<uint>(old_value + value);
+        if (atomic_compare_exchange_weak_explicit(
+                address,
+                &old_bits,
+                new_bits,
+                memory_order_relaxed,
+                memory_order_relaxed)) {
+            return;
+        }
+    }
+}
+
+kernel void wproject_grid_samples(
+    device const WProjectSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device const float2 *model [[buffer(2)]],
+    device atomic_uint *psf_re [[buffer(3)]],
+    device atomic_uint *psf_im [[buffer(4)]],
+    device atomic_uint *residual_re [[buffer(5)]],
+    device atomic_uint *residual_im [[buffer(6)]],
+    constant WProjectParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const WProjectSample sample = samples[sample_index];
+    const int support = int(sample.support);
+    const uint plane_offset =
+        sample.plane_index * params.kernel_width * params.kernel_width;
+
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    const bool needs_model = params.mode == 2u && params.model_present != 0u;
+    if (needs_model) {
+        for (int iy = -support; iy <= support; ++iy) {
+            const uint kernel_y = uint(abs(iy * int(params.sampling) + sample.off_y));
+            const uint grid_y = sample.loc_y + uint(iy);
+            for (int ix = -support; ix <= support; ++ix) {
+                const uint kernel_x = uint(abs(ix * int(params.sampling) + sample.off_x));
+                const uint grid_x = sample.loc_x + uint(ix);
+                float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+                if (sample.conjugate_kernel != 0u) {
+                    cwt.y = -cwt.y;
+                }
+                const float2 cell = model[grid_x * params.grid_height + grid_y];
+                predicted_re += cwt.x * cell.x + cwt.y * cell.y;
+                predicted_im += cwt.x * cell.y - cwt.y * cell.x;
+            }
+        }
+    }
+
+    const bool write_psf = params.mode == 0u || params.mode == 1u;
+    const bool write_residual = params.mode == 1u || params.mode == 2u;
+    const float residual_value_re = sample.visibility_re - predicted_re;
+    const float residual_value_im = sample.visibility_im - predicted_im;
+    for (int iy = -support; iy <= support; ++iy) {
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample.off_y));
+        const uint grid_y = sample.loc_y + uint(iy);
+        for (int ix = -support; ix <= support; ++ix) {
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample.off_x));
+            const uint grid_x = sample.loc_x + uint(ix);
+            float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+            if (sample.conjugate_kernel != 0u) {
+                cwt.y = -cwt.y;
+            }
+            const uint cell = grid_x * params.grid_height + grid_y;
+            if (write_psf) {
+                atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+                atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            }
+            if (write_residual) {
+                const float weighted_re =
+                    sample.weight * (residual_value_re * cwt.x - residual_value_im * cwt.y);
+                const float weighted_im =
+                    sample.weight * (residual_value_re * cwt.y + residual_value_im * cwt.x);
+                atomic_add_float(&residual_re[cell], weighted_re);
+                atomic_add_float(&residual_im[cell], weighted_im);
+            }
+        }
+    }
+}
+"#;
+
 fn prepare_w_project_data(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
     w_project_planes: Option<usize>,
 ) -> Result<WProjectPreparedData, ImagingError> {
-    let (raw_samples, mut skipped_samples, max_abs_w_lambda) =
-        collect_w_project_raw_samples(batches);
-    if raw_samples.is_empty() {
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
         return Err(ImagingError::NoUsableSamples);
     }
     let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
-    let mut samples = Vec::with_capacity(raw_samples.len());
+    let thread_count = w_project_grid_threads(input_sample_count);
+    if thread_count > 1 && raw_sample_count >= 10_000 {
+        return prepare_w_project_data_parallel(
+            w_project_planes,
+            max_abs_w_lambda,
+            projector,
+            batches,
+            raw_sample_count,
+            input_sample_count,
+            thread_count,
+        );
+    }
+    prepare_w_project_data_serial(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        batches,
+        raw_sample_count,
+    )
+}
+
+fn prepare_w_project_data_serial(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+) -> Result<WProjectPreparedData, ImagingError> {
+    let mut samples = Vec::with_capacity(raw_sample_count);
+    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
     let mut normalization_sumwt = 0.0f64;
     let mut reported_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
 
-    for sample in raw_samples {
-        let Some(positive_plan) =
-            projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
-        else {
-            skipped_samples.push(WProjectSkippedSample {
-                batch_index: sample.batch_index,
-                sample_index: sample.sample_index,
-                u_lambda: sample.u_lambda,
-                v_lambda: sample.v_lambda,
-                w_lambda: sample.w_lambda,
-                weight: sample.weight,
-                sumwt_factor: sample.sumwt_factor,
-                reason: WProjectSkipReason::OutsideGrid,
-            });
-            continue;
-        };
-        normalization_sumwt +=
-            2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
-        reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
-        gridded_samples += 1;
-        samples.push(WProjectPreparedSample {
-            batch_index: sample.batch_index,
-            sample_index: sample.sample_index,
-            u_lambda: sample.u_lambda,
-            v_lambda: sample.v_lambda,
-            w_lambda: sample.w_lambda,
-            sumwt_factor: sample.sumwt_factor,
-            positive_plan,
-            weight: sample.weight,
-            visibility: sample.visibility,
-        });
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for sample_index in 0..batch.len() {
+            accumulate_w_project_prepared_sample(
+                &projector,
+                batch,
+                batch_index,
+                sample_index,
+                &mut samples,
+                &mut skipped_samples,
+                &mut normalization_sumwt,
+                &mut reported_sumwt,
+                &mut gridded_samples,
+            );
+        }
     }
 
+    finish_w_project_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+    )
+}
+
+fn prepare_w_project_data_parallel(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+    input_sample_count: usize,
+    thread_count: usize,
+) -> Result<WProjectPreparedData, ImagingError> {
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            let projector = &projector;
+            handles.push(scope.spawn(move || {
+                let mut samples = Vec::<WProjectPreparedSample>::new();
+                let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
+                let mut normalization_sumwt = 0.0f64;
+                let mut reported_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulate_w_project_prepared_sample(
+                            projector,
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut samples,
+                            &mut skipped_samples,
+                            &mut normalization_sumwt,
+                            &mut reported_sumwt,
+                            &mut gridded_samples,
+                        );
+                    }
+                }
+                (
+                    sample_start,
+                    samples,
+                    skipped_samples,
+                    normalization_sumwt,
+                    reported_sumwt,
+                    gridded_samples,
+                )
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject sample planning worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    local_results.sort_by_key(|(batch_offset, _, _, _, _, _)| *batch_offset);
+
+    let mut samples = Vec::with_capacity(raw_sample_count);
+    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    for (
+        _,
+        mut local_samples,
+        mut local_skipped,
+        local_normalization,
+        local_reported,
+        local_gridded,
+    ) in local_results
+    {
+        samples.append(&mut local_samples);
+        skipped_samples.append(&mut local_skipped);
+        normalization_sumwt += local_normalization;
+        reported_sumwt += local_reported;
+        gridded_samples += local_gridded;
+    }
+
+    finish_w_project_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_w_project_prepared_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    samples: &mut Vec<WProjectPreparedSample>,
+    skipped_samples: &mut Vec<WProjectSkippedSample>,
+    normalization_sumwt: &mut f64,
+    reported_sumwt: &mut f64,
+    gridded_samples: &mut usize,
+) {
+    let sample = RawWProjectSample {
+        batch_index,
+        sample_index,
+        u_lambda: batch.u_lambda[sample_index],
+        v_lambda: batch.v_lambda[sample_index],
+        w_lambda: batch.w_lambda[sample_index],
+        weight: batch.weight[sample_index],
+        visibility: batch.visibility[sample_index],
+        sumwt_factor: batch.sumwt_factor[sample_index],
+    };
+    if !batch.gridable[sample_index] {
+        skipped_samples.push(w_project_skipped_sample(
+            sample,
+            WProjectSkipReason::NotGridable,
+        ));
+        return;
+    }
+    if !raw_w_project_sample_is_valid(sample) {
+        skipped_samples.push(w_project_skipped_sample(
+            sample,
+            WProjectSkipReason::InvalidInput,
+        ));
+        return;
+    }
+    let Some(positive_plan) =
+        projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+    else {
+        skipped_samples.push(w_project_skipped_sample(
+            sample,
+            WProjectSkipReason::OutsideGrid,
+        ));
+        return;
+    };
+    *normalization_sumwt += 2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
+    *reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
+    *gridded_samples += 1;
+    samples.push(WProjectPreparedSample {
+        batch_index: sample.batch_index,
+        sample_index: sample.sample_index,
+        u_lambda: sample.u_lambda,
+        v_lambda: sample.v_lambda,
+        w_lambda: sample.w_lambda,
+        sumwt_factor: sample.sumwt_factor,
+        positive_plan,
+        weight: sample.weight,
+        visibility: sample.visibility,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_w_project_prepared_data(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectPreparedSample>,
+    mut skipped_samples: Vec<WProjectSkippedSample>,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+) -> Result<WProjectPreparedData, ImagingError> {
     if samples.is_empty() || normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
         return Err(ImagingError::NoUsableSamples);
     }
 
     skipped_samples.sort_by_key(|sample| (sample.batch_index, sample.sample_index));
-
     Ok(WProjectPreparedData {
         requested_plane_count: w_project_planes,
         max_abs_w_lambda,
@@ -10647,17 +12951,13 @@ fn prepare_w_project_data(
     })
 }
 
-fn collect_w_project_raw_samples(
-    batches: &[VisibilityBatch],
-) -> (Vec<RawWProjectSample>, Vec<WProjectSkippedSample>, f64) {
-    let mut raw_samples = Vec::<RawWProjectSample>::new();
-    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
+fn w_project_raw_sample_summary(batches: &[VisibilityBatch]) -> (usize, f64) {
+    let mut raw_sample_count = 0usize;
     let mut max_abs_w_lambda = 0.0f64;
-
-    for (batch_index, batch) in batches.iter().enumerate() {
+    for batch in batches {
         for sample_index in 0..batch.len() {
             let sample = RawWProjectSample {
-                batch_index,
+                batch_index: 0,
                 sample_index,
                 u_lambda: batch.u_lambda[sample_index],
                 v_lambda: batch.v_lambda[sample_index],
@@ -10666,47 +12966,41 @@ fn collect_w_project_raw_samples(
                 visibility: batch.visibility[sample_index],
                 sumwt_factor: batch.sumwt_factor[sample_index],
             };
-            if !batch.gridable[sample_index] {
-                skipped_samples.push(WProjectSkippedSample {
-                    batch_index,
-                    sample_index,
-                    u_lambda: sample.u_lambda,
-                    v_lambda: sample.v_lambda,
-                    w_lambda: sample.w_lambda,
-                    weight: sample.weight,
-                    sumwt_factor: sample.sumwt_factor,
-                    reason: WProjectSkipReason::NotGridable,
-                });
-                continue;
+            if batch.gridable[sample_index] && raw_w_project_sample_is_valid(sample) {
+                raw_sample_count += 1;
+                max_abs_w_lambda = max_abs_w_lambda.max(sample.w_lambda.abs());
             }
-            if !(sample.weight.is_finite()
-                && sample.weight > 0.0
-                && sample.sumwt_factor.is_finite()
-                && sample.sumwt_factor > 0.0
-                && sample.visibility.re.is_finite()
-                && sample.visibility.im.is_finite()
-                && sample.u_lambda.is_finite()
-                && sample.v_lambda.is_finite()
-                && sample.w_lambda.is_finite())
-            {
-                skipped_samples.push(WProjectSkippedSample {
-                    batch_index,
-                    sample_index,
-                    u_lambda: sample.u_lambda,
-                    v_lambda: sample.v_lambda,
-                    w_lambda: sample.w_lambda,
-                    weight: sample.weight,
-                    sumwt_factor: sample.sumwt_factor,
-                    reason: WProjectSkipReason::InvalidInput,
-                });
-                continue;
-            }
-            max_abs_w_lambda = max_abs_w_lambda.max(sample.w_lambda.abs());
-            raw_samples.push(sample);
         }
     }
+    (raw_sample_count, max_abs_w_lambda)
+}
 
-    (raw_samples, skipped_samples, max_abs_w_lambda)
+fn raw_w_project_sample_is_valid(sample: RawWProjectSample) -> bool {
+    sample.weight.is_finite()
+        && sample.weight > 0.0
+        && sample.sumwt_factor.is_finite()
+        && sample.sumwt_factor > 0.0
+        && sample.visibility.re.is_finite()
+        && sample.visibility.im.is_finite()
+        && sample.u_lambda.is_finite()
+        && sample.v_lambda.is_finite()
+        && sample.w_lambda.is_finite()
+}
+
+fn w_project_skipped_sample(
+    sample: RawWProjectSample,
+    reason: WProjectSkipReason,
+) -> WProjectSkippedSample {
+    WProjectSkippedSample {
+        batch_index: sample.batch_index,
+        sample_index: sample.sample_index,
+        u_lambda: sample.u_lambda,
+        v_lambda: sample.v_lambda,
+        w_lambda: sample.w_lambda,
+        weight: sample.weight,
+        sumwt_factor: sample.sumwt_factor,
+        reason,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

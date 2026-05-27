@@ -6,7 +6,7 @@ use casa_imaging::{Deconvolver, WTermMode, WeightingMode};
 use crate::{
     CleanMaskMode, CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
     can_plan_standard_mfs_acceleration, needs_single_field_primary_beam_products,
-    standard_mfs_auto_grid_threads,
+    standard_mfs_auto_grid_threads, standard_mfs_wproject_auto_grid_threads,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +145,9 @@ pub(crate) fn build_single_plane_execution_plan(
         && matches!(projection, SinglePlaneProjectionPlan::Standard)
         && matches!(
             deconvolver,
-            SinglePlaneDeconvolverPlan::SingleTerm | SinglePlaneDeconvolverPlan::Multiscale
+            SinglePlaneDeconvolverPlan::SingleTerm
+                | SinglePlaneDeconvolverPlan::Multiscale
+                | SinglePlaneDeconvolverPlan::Mtmfs
         );
 
     SinglePlaneExecutionPlan {
@@ -228,16 +230,38 @@ fn cpu_multi_worker_eligibility(
             StandardMfsAccelerationPolicy::Cpu => 1,
             StandardMfsAccelerationPolicy::Auto
             | StandardMfsAccelerationPolicy::MultiCpu
-            | StandardMfsAccelerationPolicy::Metal => standard_mfs_auto_grid_threads(),
+            | StandardMfsAccelerationPolicy::Metal => {
+                if let Some(override_workers) =
+                    single_plane_grid_threads_override(config.standard_mfs_grid_threads.as_deref())
+                {
+                    override_workers
+                } else if matches!(config.w_term_mode, WTermMode::WProject) {
+                    standard_mfs_wproject_auto_grid_threads()
+                } else {
+                    standard_mfs_auto_grid_threads()
+                }
+            }
         };
         if workers > 1 {
-            BackendEligibility::eligible(format!("standard-mfs-fixed-tile-workers-{workers}"))
+            if matches!(config.w_term_mode, WTermMode::WProject) {
+                BackendEligibility::eligible(format!("wproject-streaming-workers-{workers}"))
+            } else {
+                BackendEligibility::eligible(format!("standard-mfs-fixed-tile-workers-{workers}"))
+            }
         } else {
             BackendEligibility::ineligible("standard-mfs-policy-selected-single-worker")
         }
     } else {
         BackendEligibility::ineligible(shared_strategy_gap_reason(config))
     }
+}
+
+fn single_plane_grid_threads_override(value: Option<&str>) -> Option<usize> {
+    let value = value?.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    value.parse::<usize>().ok().filter(|threads| *threads > 0)
 }
 
 fn gpu_metal_eligibility(
@@ -257,7 +281,13 @@ fn gpu_metal_eligibility(
         return BackendEligibility::ineligible("standard-mfs-policy-disabled-metal");
     }
     if casa_imaging::standard_mfs_metal_device_available() {
-        BackendEligibility::eligible("standard-mfs-grouped-metal")
+        if matches!(config.w_term_mode, WTermMode::WProject) {
+            BackendEligibility::eligible("wproject-metal-kernel")
+        } else if config.deconvolver == Deconvolver::Mtmfs {
+            BackendEligibility::eligible("mtmfs-metal-sample-cache")
+        } else {
+            BackendEligibility::eligible("standard-mfs-grouped-metal")
+        }
     } else {
         BackendEligibility::ineligible("metal-device-unavailable")
     }
@@ -267,12 +297,8 @@ fn shared_strategy_gap_reason(config: &CliConfig) -> String {
     if !matches!(config.spectral_mode, SpectralMode::Mfs) {
         return "shared-strategy-not-yet-adapted-to-spectral-mode".to_string();
     }
-    if config.use_pointing || matches!(config.w_term_mode, WTermMode::WProject | WTermMode::Direct)
-    {
+    if config.use_pointing || matches!(config.w_term_mode, WTermMode::Direct) {
         return "shared-strategy-not-yet-adapted-to-projection-family".to_string();
-    }
-    if config.deconvolver == Deconvolver::Mtmfs {
-        return "shared-strategy-not-yet-adapted-to-mtmfs".to_string();
     }
     if config.save_model != SaveModelMode::None {
         return "savemodel-requires-traced-path".to_string();
@@ -353,9 +379,33 @@ mod tests {
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
         assert_eq!(plan.projection, SinglePlaneProjectionPlan::WProjection);
-        assert_eq!(
-            plan.cpu_multi_worker.reason,
-            "shared-strategy-not-yet-adapted-to-projection-family"
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("wproject-streaming")
+        );
+    }
+
+    #[test]
+    fn mtmfs_standard_mfs_plan_uses_shared_acceleration_controls() {
+        let config = parse([
+            "--gridder",
+            "standard",
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.deconvolver, SinglePlaneDeconvolverPlan::Mtmfs);
+        assert!(plan.standard_mfs_regression_sentinel);
+        assert!(plan.cpu_multi_worker.reason.starts_with("standard-mfs"));
+        assert_ne!(
+            plan.gpu_metal.reason,
+            "shared-strategy-not-yet-adapted-to-mtmfs"
         );
     }
 }

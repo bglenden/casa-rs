@@ -102,6 +102,7 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         gridder="wproject",
         use_pointing=True,
         niter=100,
+        hogbom_iteration_mode="casa_inclusive",
         threshold_jy=0.001,
         write_pb=True,
         pbcor=True,
@@ -130,6 +131,7 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["w_term_mode"] == "wproject"
     assert request["use_pointing"] is True
     assert request["niter"] == 100
+    assert request["hogbom_iteration_mode"] == "casa_inclusive"
     assert request["threshold_jy"] == 0.001
     assert request["write_pb"] is True
     assert request["pbcor"] is True
@@ -155,6 +157,22 @@ def test_wrapper_encodes_briggs_bandwidth_taper(tmp_path: Path) -> None:
 
     request = result["result"]["request"]
     assert request["weighting"] == {"kind": "briggs_bw_taper", "robust": -0.5}
+
+
+def test_wrapper_accepts_casa_hogbom_alias(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "casars-imager", version="ok")
+
+    result = imager.mfs(
+        "twhya_calibrated.ms",
+        "products/twhya",
+        image_size=128,
+        cell_arcsec=0.1,
+        hogbom_iteration_mode="casa",
+        binary=binary,
+    )
+
+    request = result["result"]["request"]
+    assert request["hogbom_iteration_mode"] == "casa_inclusive"
 
 
 def test_wrapper_rejects_unimplemented_gridder_mode(tmp_path: Path) -> None:

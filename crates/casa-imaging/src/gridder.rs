@@ -2434,6 +2434,10 @@ impl WProjector {
         self.sampling
     }
 
+    pub(crate) fn grid_shape(&self) -> [usize; 2] {
+        self.grid_shape
+    }
+
     pub(crate) fn plane_count(&self) -> usize {
         self.kernels.len()
     }
@@ -2444,6 +2448,27 @@ impl WProjector {
 
     pub(crate) fn kernel_support(&self, plane_index: usize) -> usize {
         self.kernels[plane_index].support
+    }
+
+    pub(crate) fn kernel_weight_width(&self) -> usize {
+        self.kernels
+            .first()
+            .map(|kernel| kernel.weights.dim().0)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn flattened_kernel_weights(&self) -> Vec<Complex32> {
+        let width = self.kernel_weight_width();
+        let mut weights = Vec::with_capacity(
+            self.kernels
+                .len()
+                .saturating_mul(width)
+                .saturating_mul(width),
+        );
+        for kernel in &self.kernels {
+            weights.extend(kernel.weights.iter().copied());
+        }
+        weights
     }
 
     pub(crate) fn kernel_integral(&self, plane_index: usize) -> f32 {
@@ -2475,6 +2500,31 @@ impl WProjector {
                     cwt = cwt.conj();
                 }
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
+            }
+        }
+    }
+
+    pub(crate) fn grid_sample_planned_pair(
+        &self,
+        first_grid: &mut Array2<Complex32>,
+        first_value: Complex32,
+        second_grid: &mut Array2<Complex32>,
+        second_value: Complex32,
+        plan: &WProjectSamplePlan,
+    ) {
+        let kernel = &self.kernels[plan.plane_index];
+        let support = kernel.support as isize;
+        for iy in -support..=support {
+            let kernel_y = (iy * self.sampling as isize + plan.off_y).unsigned_abs();
+            for ix in -support..=support {
+                let kernel_x = (ix * self.sampling as isize + plan.off_x).unsigned_abs();
+                let mut cwt = kernel.weights[(kernel_x, kernel_y)];
+                if plan.conjugate_kernel {
+                    cwt = cwt.conj();
+                }
+                let cell = ((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize);
+                first_grid[cell] += first_value * cwt;
+                second_grid[cell] += second_value * cwt;
             }
         }
     }

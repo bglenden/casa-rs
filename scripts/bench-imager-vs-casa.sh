@@ -55,6 +55,8 @@ max_psf_fraction="${IMAGER_BENCH_MAX_PSFFRACTION:-0.8}"
 weighting="${IMAGER_BENCH_WEIGHTING:-natural}"
 robust="${IMAGER_BENCH_ROBUST:-0.5}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
+standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
+hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
@@ -69,8 +71,8 @@ ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
 tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
 phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
 
-if [[ "$wterm" != "none" ]]; then
-  echo "error: scripts/bench-imager-vs-casa.sh only supports IMAGER_BENCH_WTERM=none for Rust-vs-CASA comparisons" >&2
+if [[ "$wterm" != "none" && ! ( "$gridder" == "wproject" && "$wterm" == "wproject" ) ]]; then
+  echo "error: scripts/bench-imager-vs-casa.sh supports IMAGER_BENCH_WTERM=none, or wproject with gridder=wproject" >&2
   exit 2
 fi
 
@@ -79,14 +81,26 @@ if [[ "$specmode" != "mfs" && "$specmode" != "cube" ]]; then
   exit 2
 fi
 
-if [[ "$gridder" != "standard" && "$gridder" != "mosaic" ]]; then
-  echo "error: IMAGER_BENCH_GRIDDER must be standard or mosaic" >&2
+if [[ "$gridder" != "standard" && "$gridder" != "mosaic" && "$gridder" != "wproject" ]]; then
+  echo "error: IMAGER_BENCH_GRIDDER must be standard, mosaic, or wproject" >&2
   exit 2
 fi
 
 if [[ "$interpolation" != "nearest" && "$interpolation" != "linear" ]]; then
   echo "error: IMAGER_BENCH_INTERPOLATION must be nearest or linear" >&2
   exit 2
+fi
+
+case "$hogbom_iteration_mode" in
+  strict|casa|casa-inclusive|casa_inclusive)
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_HOGBOM_ITERATION_MODE must be strict or casa" >&2
+    exit 2
+    ;;
+esac
+if [[ "$hogbom_iteration_mode" == "casa_inclusive" ]]; then
+  hogbom_iteration_mode="casa"
 fi
 
 if [[ "$ms_staging" != "copy" && "$ms_staging" != "direct" ]]; then
@@ -160,7 +174,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging phase_probe=$phase_probe_enabled"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging phase_probe=$phase_probe_enabled"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -214,6 +228,8 @@ for run in $(seq 1 "$repeats"); do
       --weighting "$weighting" \
       --robust "$robust" \
       --deconvolver "$deconvolver" \
+      --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --scales "$scales" \
       --niter "$niter" \
@@ -249,6 +265,8 @@ for run in $(seq 1 "$repeats"); do
       --weighting "$weighting" \
       --robust "$robust" \
       --deconvolver "$deconvolver" \
+      --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --niter "$niter" \
       --gain "$gain" \
@@ -292,6 +310,8 @@ if [[ -n "$scales" ]]; then
     --weighting "$weighting" \
     --robust "$robust" \
     --deconvolver "$deconvolver" \
+    --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
     --scales "$scales" \
     --imsize "$imsize" \
@@ -324,6 +344,8 @@ else
     --weighting "$weighting" \
     --robust "$robust" \
     --deconvolver "$deconvolver" \
+    --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
     --imsize "$imsize" \
     --cell-arcsec "$cell_arcsec" \

@@ -1,7 +1,7 @@
 {
-  "id": "wave3-standard-mfs-single-term-heavy-wave2",
+  "id": "wave3-standard-mfs-clark-heavy-wave2",
   "mode_id": "standard-mfs-single-term",
-  "description": "Wave 3 #276 heavy regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
+  "description": "Wave 3 #276 Clark-clean regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
   "dataset": {
     "key": "wave1-vla-single-medium",
     "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
@@ -19,8 +19,7 @@
     "cell_arcsec": 0.25,
     "weighting": "briggs",
     "robust": 0.5,
-    "deconvolver": "hogbom",
-    "hogbom_iteration_mode": "casa",
+    "deconvolver": "clark",
     "nterms": 1,
     "niter": 500,
     "gain": 0.1,
@@ -29,7 +28,7 @@
   },
   "run": {
     "repeats": 1,
-    "run_label": "wave3-heavy-wave2-regression",
+    "run_label": "wave3-clark-heavy-wave2-regression",
     "storage_label": "external-ssd-wave1",
     "ms_staging": "direct",
     "phase_probe": "0",
@@ -52,6 +51,6 @@
       ".psf",
       ".model"
     ],
-    "max_elements_per_product": 1000000
+    "max_elements_per_product": 2000000
   }
 }

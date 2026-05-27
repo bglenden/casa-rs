@@ -2487,7 +2487,6 @@ fn can_run_standard_mfs_dirty_streaming(
     ms_count == 1
         && matches!(config.spectral_mode, SpectralMode::Mfs)
         && !config.use_pointing
-        && config.deconvolver != Deconvolver::Mtmfs
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
         && config.phasecenter.is_none()
         && config.save_model == SaveModelMode::None
@@ -2496,7 +2495,7 @@ fn can_run_standard_mfs_dirty_streaming(
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && matches!(config.weighting, WeightingMode::Natural)
-        && matches!(config.w_term_mode, WTermMode::None)
+        && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
         && !needs_single_field_primary_beam_products(config)
         && (config.dirty_only || config.niter == 0)
 }
@@ -5255,13 +5254,18 @@ fn apply_standard_mfs_runtime_plan_locked(
     env_lock: MutexGuard<'static, ()>,
 ) -> StandardMfsRuntimePlanGuard {
     let eligible = can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
-    let auto_threads = standard_mfs_auto_grid_threads();
     let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
+    let wproject_acceleration = matches!(config.w_term_mode, WTermMode::WProject);
+    let auto_threads = if wproject_acceleration {
+        standard_mfs_wproject_auto_grid_threads()
+    } else {
+        standard_mfs_auto_grid_threads()
+    };
     let auto_metal = eligible
         && cfg!(target_os = "macos")
         && metal_device_available
-        && !config.dirty_only
-        && config.niter > 0;
+        && !wproject_acceleration
+        && (!config.dirty_only && config.niter > 0);
     let auto_multi_cpu = eligible && auto_threads > 1;
 
     let mut guard = StandardMfsRuntimePlanGuard::new(env_lock);
@@ -5269,11 +5273,15 @@ fn apply_standard_mfs_runtime_plan_locked(
     let (backend, backend_source) = choose_standard_mfs_runtime_value(
         config.standard_mfs_backend.as_deref(),
         "CASA_RS_STANDARD_MFS_BACKEND",
-        match config.standard_mfs_acceleration {
-            StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("fixed_tile"),
-            StandardMfsAccelerationPolicy::Cpu => Some("cpu"),
-            StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
-                Some("fixed_tile")
+        if wproject_acceleration {
+            Some("cpu")
+        } else {
+            match config.standard_mfs_acceleration {
+                StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("fixed_tile"),
+                StandardMfsAccelerationPolicy::Cpu => Some("cpu"),
+                StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
+                    Some("fixed_tile")
+                }
             }
         },
         config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
@@ -5363,8 +5371,21 @@ fn apply_standard_mfs_runtime_plan_locked(
         guard.set("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE", value);
     }
 
+    let mtmfs_metal_backend =
+        if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
+            "metal-sample-cache"
+        } else {
+            "not_applicable"
+        };
+    let mtmfs_metal_input_cache =
+        if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
+            "planned"
+        } else {
+            "not_applicable"
+        };
+
     eprintln!(
-        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={}",
+        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         eligible,
         auto_multi_cpu,
@@ -5382,6 +5403,8 @@ fn apply_standard_mfs_runtime_plan_locked(
         initial_dirty_backend_source.label(),
         metal_cache.as_deref().unwrap_or("planner"),
         metal_cache_source.label(),
+        mtmfs_metal_backend,
+        mtmfs_metal_input_cache,
     );
 
     guard
@@ -5395,14 +5418,13 @@ fn can_plan_standard_mfs_acceleration(
     ms_count == 1
         && matches!(config.spectral_mode, SpectralMode::Mfs)
         && !config.use_pointing
-        && config.deconvolver != Deconvolver::Mtmfs
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
         && config.phasecenter.is_none()
         && config.save_model == SaveModelMode::None
         && config.outlier_file.is_none()
         && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
-        && matches!(config.w_term_mode, WTermMode::None)
+        && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
         && !needs_single_field_primary_beam_products(config)
 }
 
@@ -5410,6 +5432,15 @@ fn standard_mfs_auto_grid_threads() -> usize {
     std::thread::available_parallelism()
         .map_or(1, |value| value.get())
         .clamp(1, 4)
+}
+
+fn standard_mfs_wproject_auto_grid_threads() -> usize {
+    let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
+    if hardware_threads >= 4 {
+        hardware_threads.saturating_add(2).clamp(1, 12)
+    } else {
+        hardware_threads
+    }
 }
 
 fn choose_standard_mfs_runtime_value(
@@ -6868,7 +6899,9 @@ fn merge_two_prepared_inputs(
     match (left, right) {
         (PreparedInput::Mfs(mut left), PreparedInput::Mfs(right)) => {
             ensure_same_phase_center(&left.phase_center, &right.phase_center)?;
-            if left.freq_ref != right.freq_ref {
+            let can_merge_by_sample_frequencies = !left.sample_frequency_batches_hz.is_empty()
+                && !right.sample_frequency_batches_hz.is_empty();
+            if left.freq_ref != right.freq_ref && !can_merge_by_sample_frequencies {
                 return Err(format!(
                     "multi-MS MFS inputs use different frequency frames: {:?} versus {:?}",
                     left.freq_ref, right.freq_ref
@@ -11690,7 +11723,6 @@ fn can_prepare_standard_mfs_without_trace(
 ) -> bool {
     matches!(config.spectral_mode, SpectralMode::Mfs)
         && !config.use_pointing
-        && config.deconvolver != Deconvolver::Mtmfs
         && selection.phase_center.field_id.is_some()
         && selection
             .selected_rows
@@ -13226,6 +13258,7 @@ enum PreparedState {
         plane_stokes: PlaneStokes,
         corr_index: usize,
         batch: VisibilityBatch,
+        sample_frequency_hz: Vec<f64>,
     },
     ExplicitCube {
         plane_stokes: PlaneStokes,
@@ -13245,6 +13278,7 @@ enum PreparedState {
         transform: PairCollapseTransform,
         pair: (usize, usize),
         batch: VisibilityBatch,
+        sample_frequency_hz: Vec<f64>,
     },
     PairedCube {
         plane_stokes: PlaneStokes,
@@ -13557,6 +13591,7 @@ impl PreparedSelection {
                     plane_stokes,
                     corr_index,
                     batch: empty_visibility_batch(max_samples),
+                    sample_frequency_hz: Vec::with_capacity(max_samples),
                 }
             } else {
                 let (pair, transform) = derive_stokes_pair_selection(plane_stokes, corr_types)?;
@@ -13573,6 +13608,7 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
+                        sample_frequency_hz: Vec::with_capacity(max_samples),
                     }
                 }
             }
@@ -13591,6 +13627,7 @@ impl PreparedSelection {
                     transform,
                     pair,
                     batch: empty_visibility_batch(max_samples),
+                    sample_frequency_hz: Vec::with_capacity(max_samples),
                 }
             }
         };
@@ -13634,19 +13671,29 @@ impl PreparedSelection {
         let sample_capacity = row_count.saturating_mul(self.source_channel_frequencies_hz.len());
         match (&mut self.state, &mut self.trace_state) {
             (
-                PreparedState::ExplicitMfs { batch, .. },
+                PreparedState::ExplicitMfs {
+                    batch,
+                    sample_frequency_hz,
+                    ..
+                },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
+                sample_frequency_hz.reserve(sample_capacity);
                 if self.trace_enabled {
                     samples.reserve(sample_capacity);
                 }
             }
             (
-                PreparedState::CollapsedMfs { batch, .. },
+                PreparedState::CollapsedMfs {
+                    batch,
+                    sample_frequency_hz,
+                    ..
+                },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
+                sample_frequency_hz.reserve(sample_capacity);
                 if self.trace_enabled {
                     samples.reserve(sample_capacity);
                 }
@@ -13843,6 +13890,7 @@ impl PreparedSelection {
                             plane_stokes,
                             corr_index,
                             batch: empty_visibility_batch(max_samples),
+                            sample_frequency_hz: Vec::with_capacity(max_samples),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata => {
                             PreparedState::ExplicitCube {
@@ -13878,6 +13926,7 @@ impl PreparedSelection {
                             transform,
                             pair,
                             batch: empty_visibility_batch(max_samples),
+                            sample_frequency_hz: Vec::with_capacity(max_samples),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
                             PreparedState::PairedCube {
@@ -13933,6 +13982,7 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
+                        sample_frequency_hz: Vec::with_capacity(max_samples),
                     },
                     SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
                         PreparedState::PairedCube {
@@ -14056,6 +14106,7 @@ impl PreparedSelection {
                     plane_stokes: PlaneStokes::I,
                     corr_index: 0,
                     batch: empty_visibility_batch(0),
+                    sample_frequency_hz: Vec::new(),
                 },
                 trace_state: PreparedTraceState::ExplicitMfs {
                     samples: Vec::new(),
@@ -14330,7 +14381,10 @@ impl PreparedSelection {
         match (&mut self.state, &mut self.trace_state) {
             (
                 PreparedState::ExplicitMfs {
-                    corr_index, batch, ..
+                    corr_index,
+                    batch,
+                    sample_frequency_hz,
+                    ..
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
@@ -14363,6 +14417,7 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(1.0);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
+                    sample_frequency_hz.push(imaging_frequency_hz);
                     if trace_enabled {
                         samples.push(PreparedVisibilitySampleTrace {
                             row_index: selected_row.row_index,
@@ -14675,6 +14730,7 @@ impl PreparedSelection {
                     transform: pair_transform,
                     pair,
                     batch,
+                    sample_frequency_hz,
                 },
                 PreparedTraceState::PairedMfs { .. },
             ) => {
@@ -14707,6 +14763,7 @@ impl PreparedSelection {
                                     data_2d.get_local(pair.0, local_channel, channel_index)?;
                                 let second_visibility =
                                     data_2d.get_local(pair.1, local_channel, channel_index)?;
+                                let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                                 let visibility = phase_rotate_visibility(
                                     collapse_paired_visibility(
                                         first_visibility,
@@ -14714,7 +14771,7 @@ impl PreparedSelection {
                                         *pair_transform,
                                     ),
                                     transform.phase_shift_m,
-                                    frequency_hz * mfs_frequency_scale,
+                                    imaging_frequency_hz,
                                 );
                                 if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                                     continue;
@@ -14727,6 +14784,7 @@ impl PreparedSelection {
                                 batch.sumwt_factor.push(sumwt_factor);
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(visibility);
+                                sample_frequency_hz.push(imaging_frequency_hz);
                             }
                         }
                     }
@@ -14783,6 +14841,7 @@ impl PreparedSelection {
                         batch.sumwt_factor.push(sumwt_factor);
                         batch.gridable.push(is_cross);
                         batch.visibility.push(visibility);
+                        sample_frequency_hz.push(imaging_frequency_hz);
                     }
                 }
             }
@@ -17135,6 +17194,7 @@ impl PreparedSelection {
             PreparedState::ExplicitMfs {
                 plane_stokes,
                 batch,
+                sample_frequency_hz,
                 ..
             } => Ok(PreparedInput::Mfs(PlaneInput {
                 phase_center,
@@ -17145,7 +17205,10 @@ impl PreparedSelection {
                     .or(Some(selected_frequency_edge_range_hz)),
                 plane_stokes,
                 batches: chunk_visibility_batch(batch, max_batch_size),
-                sample_frequency_batches_hz: Vec::new(),
+                sample_frequency_batches_hz: chunk_sample_frequencies_hz(
+                    sample_frequency_hz,
+                    max_batch_size,
+                ),
                 gridder_mode: GridderMode::Standard,
             })),
             PreparedState::PairedMfs {
@@ -17172,6 +17235,7 @@ impl PreparedSelection {
             PreparedState::CollapsedMfs {
                 plane_stokes,
                 batch,
+                sample_frequency_hz,
                 ..
             } => Ok(PreparedInput::Mfs(PlaneInput {
                 phase_center,
@@ -17182,7 +17246,10 @@ impl PreparedSelection {
                     .or(Some(selected_frequency_edge_range_hz)),
                 plane_stokes,
                 batches: chunk_visibility_batch(batch, max_batch_size),
-                sample_frequency_batches_hz: Vec::new(),
+                sample_frequency_batches_hz: chunk_sample_frequencies_hz(
+                    sample_frequency_hz,
+                    max_batch_size,
+                ),
                 gridder_mode: GridderMode::Standard,
             })),
             _ => Err("internal error: fast trace-free prepare requires MFS state".to_string()),
@@ -20483,6 +20550,24 @@ fn chunk_sample_frequencies_hz_from_samples(
     batches
 }
 
+fn chunk_sample_frequencies_hz(
+    sample_frequency_hz: Vec<f64>,
+    max_batch_size: usize,
+) -> Vec<Vec<f64>> {
+    let max_batch_size = max_batch_size.max(1);
+    if sample_frequency_hz.len() <= max_batch_size {
+        return vec![sample_frequency_hz];
+    }
+    let mut batches = Vec::new();
+    let mut start = 0usize;
+    while start < sample_frequency_hz.len() {
+        let end = (start + max_batch_size).min(sample_frequency_hz.len());
+        batches.push(sample_frequency_hz[start..end].to_vec());
+        start = end;
+    }
+    batches
+}
+
 fn chunk_visibility_metadata_batches(
     samples: &[PreparedVisibilitySampleTrace],
     beam_frequencies_hz: &[f64],
@@ -22418,7 +22503,7 @@ Options:
   --minpsffraction VALUE    lower PSF-fraction clamp (default 0.05)
   --maxpsffraction VALUE    upper PSF-fraction clamp (default 0.8)
   --hogbom-iteration-mode MODE
-                            strict or casa; casa mirrors CASA's inclusive hclean loop
+                            strict or casa; strict is the corrected default, casa mirrors CASA's inclusive hclean loop
   --casa-hogbom-iterations  alias for --hogbom-iteration-mode casa
   --usemask MODE            user or auto-multithresh
   --sidelobethreshold VALUE auto-multithresh sidelobe factor (default 3.0)
@@ -22651,6 +22736,71 @@ mod tests {
     }
 
     #[test]
+    fn mtmfs_auto_runtime_planner_selects_metal_when_available() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--deconvolver"),
+            OsString::from("mtmfs"),
+            OsString::from("--nterms"),
+            OsString::from("2"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse MTMFS config");
+
+        {
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("fixed_tile")
+            );
+            #[cfg(target_os = "macos")]
+            {
+                if casa_imaging::standard_mfs_metal_device_available() {
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                } else {
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+            }
+        }
+    }
+
+    #[test]
     fn standard_mfs_runtime_planner_cpu_policy_overrides_acceleration_env() {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
@@ -22875,6 +23025,7 @@ mod tests {
             "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
             "metal-row-run-grouped",
         );
+        let _initial_backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
         let _grouped_cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
         let _routed_cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_ROUTED_REPLAY_CACHE");
         let mut config =

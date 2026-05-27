@@ -18,6 +18,7 @@ StrPath: TypeAlias = str | PathLike[str]
 TaskResult: TypeAlias = dict[str, Any]
 SpectralMode: TypeAlias = Literal["mfs", "cube", "cubedata"]
 Deconvolver: TypeAlias = Literal["hogbom", "mtmfs", "clark", "multiscale"]
+HogbomIterationMode: TypeAlias = Literal["strict", "casa", "casa_inclusive"]
 RestoringBeamMode: TypeAlias = Literal["per_plane", "common"]
 WTermMode: TypeAlias = Literal["none", "direct", "wproject"]
 GridderMode: TypeAlias = Literal[
@@ -77,6 +78,7 @@ def mfs(
     deconvolver: Deconvolver = "hogbom",
     nterms: int = 1,
     niter: int = 0,
+    hogbom_iteration_mode: HogbomIterationMode = "strict",
     gain: float = 0.1,
     threshold_jy: float = 0.0,
     nsigma: float = 0.0,
@@ -129,6 +131,7 @@ def mfs(
         "deconvolver": deconvolver,
         "nterms": nterms,
         "niter": niter,
+        "hogbom_iteration_mode": _hogbom_iteration_mode_request(hogbom_iteration_mode),
         "gain": gain,
         "threshold_jy": threshold_jy,
         "nsigma": nsigma,
@@ -157,6 +160,14 @@ def _weighting_request(weighting: str, robust: float) -> dict[str, Any]:
     if weighting == "briggsbwtaper":
         return {"kind": "briggs_bw_taper", "robust": robust}
     raise ValueError("weighting must be 'natural', 'uniform', 'briggs', or 'briggsbwtaper'")
+
+
+def _hogbom_iteration_mode_request(mode: HogbomIterationMode) -> str:
+    if mode == "strict":
+        return "strict"
+    if mode in {"casa", "casa_inclusive"}:
+        return "casa_inclusive"
+    raise ValueError("hogbom_iteration_mode must be 'strict', 'casa', or 'casa_inclusive'")
 
 
 def _gridder_w_term_mode(gridder: GridderMode) -> WTermMode:
