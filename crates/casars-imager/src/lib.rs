@@ -5264,8 +5264,7 @@ fn apply_standard_mfs_runtime_plan_locked(
     let auto_metal = eligible
         && cfg!(target_os = "macos")
         && metal_device_available
-        && !wproject_acceleration
-        && (!config.dirty_only && config.niter > 0);
+        && (wproject_acceleration || (!config.dirty_only && config.niter > 0));
     let auto_multi_cpu = eligible && auto_threads > 1;
 
     let mut guard = StandardMfsRuntimePlanGuard::new(env_lock);
@@ -22795,6 +22794,68 @@ mod tests {
             #[cfg(not(target_os = "macos"))]
             {
                 assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn wproject_auto_runtime_planner_selects_grouped_metal_dirty_when_available() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("wproject"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--dirty-only"),
+        ])
+        .expect("parse W-projection dirty config");
+
+        {
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+            assert!(
+                env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .is_some_and(|threads| threads >= 1)
+            );
+            #[cfg(target_os = "macos")]
+            {
+                if casa_imaging::standard_mfs_metal_device_available() {
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                } else {
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
                 assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
             }
         }

@@ -1,7 +1,7 @@
 {
-  "id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+  "id": "wave3-wprojection-single-plane-heavy-wave1-medium-multicpu",
   "mode_id": "wprojection-single-plane",
-  "description": "Wave 3 #279 W-projection dirty auto-default row on the Wave 1 32 GiB VLA medium MS, 64 channels, 512 image, Briggs.",
+  "description": "Wave 3 #279 W-projection dirty explicit multi-worker CPU row on the Wave 1 32 GiB VLA medium MS, 64 channels, 512 image, Briggs.",
   "dataset": {
     "key": "wave1-vla-single-medium",
     "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
@@ -24,15 +24,15 @@
     "hogbom_iteration_mode": "casa",
     "nterms": 1,
     "niter": 0,
-    "standard_mfs_acceleration": "auto"
+    "standard_mfs_acceleration": "multi-cpu"
   },
   "run": {
     "repeats": 1,
-    "run_label": "wave3-wprojection-auto-default",
+    "run_label": "wave3-wprojection-multicpu",
     "storage_label": "external-ssd-wave1",
     "ms_staging": "direct",
     "phase_probe": "0",
-    "evidence_role": "after_auto_default"
+    "evidence_role": "after_multi_worker_cpu"
   },
   "review": {
     "required_reviewer": "Brian",

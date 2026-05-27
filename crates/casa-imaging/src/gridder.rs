@@ -2272,6 +2272,8 @@ pub(crate) struct WProjector {
     sampling: usize,
     w_scale: f64,
     kernels: Vec<WProjectKernel>,
+    normalization_offset_radius: isize,
+    normalization_by_plane_offset: Vec<f32>,
 }
 
 impl WProjector {
@@ -2381,6 +2383,24 @@ impl WProjector {
         for kernel in &mut kernels {
             kernel.weights.mapv_inplace(|value| value / pb_sum);
         }
+        let normalization_offset_radius = (sampling as isize + 1) / 2;
+        let normalization_axis_len = (2 * normalization_offset_radius + 1) as usize;
+        let mut normalization_by_plane_offset = Vec::with_capacity(
+            kernels
+                .len()
+                .saturating_mul(normalization_axis_len)
+                .saturating_mul(normalization_axis_len),
+        );
+        for kernel in &kernels {
+            for off_x in -normalization_offset_radius..=normalization_offset_radius {
+                for off_y in -normalization_offset_radius..=normalization_offset_radius {
+                    normalization_by_plane_offset.push(
+                        compute_w_project_sample_normalization(kernel, sampling, off_x, off_y)
+                            .unwrap_or(0.0),
+                    );
+                }
+            }
+        }
 
         Ok(Self {
             grid_shape,
@@ -2389,6 +2409,8 @@ impl WProjector {
             sampling,
             w_scale,
             kernels,
+            normalization_offset_radius,
+            normalization_by_plane_offset,
         })
     }
 
@@ -2418,7 +2440,7 @@ impl WProjector {
         {
             return None;
         }
-        let normalization = self.sample_normalization(kernel, off_x, off_y)?;
+        let normalization = self.sample_normalization(plane_index, off_x, off_y)?;
         Some(WProjectSamplePlan {
             loc_x,
             loc_y,
@@ -2562,24 +2584,46 @@ impl WProjector {
             .clamp(0.0, (self.kernels.len() - 1) as f64) as usize
     }
 
-    fn sample_normalization(
-        &self,
-        kernel: &WProjectKernel,
-        off_x: isize,
-        off_y: isize,
-    ) -> Option<f32> {
-        let support = kernel.support as isize;
-        let mut normalization = 0.0f32;
-        for iy in -support..=support {
-            let kernel_y = (iy * self.sampling as isize + off_y).unsigned_abs();
-            for ix in -support..=support {
-                let kernel_x = (ix * self.sampling as isize + off_x).unsigned_abs();
-                let value = *kernel.weights.get((kernel_x, kernel_y))?;
-                normalization += value.re;
-            }
+    fn sample_normalization(&self, plane_index: usize, off_x: isize, off_y: isize) -> Option<f32> {
+        if off_x.abs() <= self.normalization_offset_radius
+            && off_y.abs() <= self.normalization_offset_radius
+        {
+            let axis_len = (2 * self.normalization_offset_radius + 1) as usize;
+            let offset_x = (off_x + self.normalization_offset_radius) as usize;
+            let offset_y = (off_y + self.normalization_offset_radius) as usize;
+            let index = plane_index
+                .checked_mul(axis_len)?
+                .checked_mul(axis_len)?
+                .checked_add(offset_x.checked_mul(axis_len)?)?
+                .checked_add(offset_y)?;
+            return self.normalization_by_plane_offset.get(index).copied();
         }
-        Some(normalization)
+        compute_w_project_sample_normalization(
+            &self.kernels[plane_index],
+            self.sampling,
+            off_x,
+            off_y,
+        )
     }
+}
+
+fn compute_w_project_sample_normalization(
+    kernel: &WProjectKernel,
+    sampling: usize,
+    off_x: isize,
+    off_y: isize,
+) -> Option<f32> {
+    let support = kernel.support as isize;
+    let mut normalization = 0.0f32;
+    for iy in -support..=support {
+        let kernel_y = (iy * sampling as isize + off_y).unsigned_abs();
+        for ix in -support..=support {
+            let kernel_x = (ix * sampling as isize + off_x).unsigned_abs();
+            let value = *kernel.weights.get((kernel_x, kernel_y))?;
+            normalization += value.re;
+        }
+    }
+    Some(normalization)
 }
 
 pub(crate) fn choose_w_project_plane_count(
@@ -2987,7 +3031,9 @@ mod tests {
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
 
-    use super::{DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder};
+    use super::{
+        DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder, WProjector,
+    };
     use crate::{
         ImageGeometry,
         fft::{centered_fft2, centered_ifft2},
@@ -3255,6 +3301,36 @@ mod tests {
         let expected_x = geometry.image_shape[0] / 2 + 6;
         let expected_y = geometry.image_shape[1] / 2;
         assert_peak_within_tolerance(peak, (expected_x, expected_y), 2);
+    }
+
+    #[test]
+    fn w_project_sample_normalization_uses_cached_plane_offset_value() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [
+                (0.25f64 / 3600.0).to_radians(),
+                (0.25f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let projector = WProjector::new(geometry, &gridder, 20_000.0, Some(8)).unwrap();
+        let plan = projector
+            .plan_sample(12_000.25, -9_000.75, -4_000.0)
+            .expect("wproject sample should plan inside the grid");
+
+        let cached = projector
+            .sample_normalization(plan.plane_index, plan.off_x, plan.off_y)
+            .expect("cached normalization");
+        let direct = super::compute_w_project_sample_normalization(
+            &projector.kernels[plan.plane_index],
+            projector.sampling,
+            plan.off_x,
+            plan.off_y,
+        )
+        .expect("direct normalization");
+
+        assert!((cached - direct).abs() <= f32::EPSILON);
+        assert_eq!(cached, plan.normalization);
     }
 
     #[test]

@@ -11128,6 +11128,92 @@ struct WProjectPreparedData {
     gridded_samples: usize,
 }
 
+struct WProjectMetalPreparedData {
+    requested_plane_count: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+    normalization_sumwt: f32,
+    reported_sumwt: f32,
+    gridded_samples: usize,
+}
+
+struct WProjectMetalPreparedLocal {
+    sample_start: usize,
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+    worker_elapsed: Duration,
+}
+
+fn log_w_project_prepare_profile(mode: &str, prepared: &WProjectPreparedData, elapsed: Duration) {
+    if !profile::standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    let [grid_width, grid_height] = prepared.projector.grid_shape();
+    eprintln!(
+        "wproject_prepare mode={} samples={} skipped={} grid={}x{} planes={} requested_planes={:?} max_abs_w_lambda={:.6e} kernel_width={} sampling={} elapsed_ms={:.3}",
+        mode,
+        prepared.samples.len(),
+        prepared.skipped_samples.len(),
+        grid_width,
+        grid_height,
+        prepared.projector.plane_count(),
+        prepared.requested_plane_count,
+        prepared.max_abs_w_lambda,
+        prepared.projector.kernel_weight_width(),
+        prepared.projector.sampling(),
+        profile::millis(elapsed),
+    );
+}
+
+fn log_w_project_metal_prepare_profile(
+    mode: &str,
+    prepared: &WProjectMetalPreparedData,
+    elapsed: Duration,
+) {
+    if !profile::standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    let [grid_width, grid_height] = prepared.projector.grid_shape();
+    let atomic_updates = prepared.tap_visits.saturating_mul(match mode {
+        "dirty" => 4,
+        "psf" => 2,
+        "residual" => 2,
+        _ => 0,
+    });
+    let avg_taps_per_sample = prepared.tap_visits as f64 / prepared.samples.len().max(1) as f64;
+    let grouped_sample_ratio =
+        prepared.samples.len() as f64 / prepared.gridded_samples.max(1) as f64;
+    eprintln!(
+        "wproject_metal_prepare mode={} samples={} gridded_samples={} grouped_sample_ratio={:.6} skipped={} grid={}x{} planes={} requested_planes={:?} max_abs_w_lambda={:.6e} kernel_width={} sampling={} max_support={} avg_taps_per_sample={:.3} tap_visits={} atomic_updates={} elapsed_ms={:.3}",
+        mode,
+        prepared.samples.len(),
+        prepared.gridded_samples,
+        grouped_sample_ratio,
+        prepared.skipped_samples,
+        grid_width,
+        grid_height,
+        prepared.projector.plane_count(),
+        prepared.requested_plane_count,
+        prepared.max_abs_w_lambda,
+        prepared.projector.kernel_weight_width(),
+        prepared.projector.sampling(),
+        prepared.max_support,
+        avg_taps_per_sample,
+        prepared.tap_visits,
+        atomic_updates,
+        profile::millis(elapsed),
+    );
+}
+
 fn compute_psf_w_project(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -11146,8 +11232,10 @@ fn compute_psf_w_project(
     }
     let prepare_started = Instant::now();
     let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let prepare_elapsed = prepare_started.elapsed();
+    log_w_project_prepare_profile("psf", &prepared, prepare_elapsed);
     let mut timings = PsfComputationTimings {
-        grid: prepare_started.elapsed(),
+        grid: prepare_elapsed,
         ..PsfComputationTimings::default()
     };
     let [grid_nx, grid_ny] = gridder.grid_shape();
@@ -11211,9 +11299,11 @@ fn compute_dirty_psf_and_residual_w_project(
         );
     }
     let prepare_started = Instant::now();
-    let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let prepared = prepare_w_project_metal_data(geometry, batches, gridder, w_project_planes)?;
+    let prepare_elapsed = prepare_started.elapsed();
+    log_w_project_metal_prepare_profile("dirty", &prepared, prepare_elapsed);
     let mut timings = PsfComputationTimings {
-        grid: prepare_started.elapsed(),
+        grid: prepare_elapsed,
         ..PsfComputationTimings::default()
     };
     let [grid_nx, grid_ny] = gridder.grid_shape();
@@ -11222,9 +11312,17 @@ fn compute_dirty_psf_and_residual_w_project(
 
     let grid_started = Instant::now();
     if w_project_initial_dirty_metal_backend_enabled() {
-        accumulate_w_project_dirty_grids_metal(&prepared, &mut psf_grid, &mut residual_grid)?;
+        accumulate_w_project_grid_metal_samples(
+            &prepared.projector,
+            &prepared.samples,
+            Duration::ZERO,
+            None,
+            &mut psf_grid,
+            &mut residual_grid,
+            W_PROJECT_METAL_MODE_DIRTY,
+        )?;
     } else {
-        accumulate_w_project_dirty_grids(&prepared, &mut psf_grid, &mut residual_grid)?;
+        unreachable!("wproject dirty Metal path should have returned streaming CPU earlier");
     }
     let grid_elapsed = grid_started.elapsed();
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
@@ -11271,7 +11369,7 @@ fn compute_dirty_psf_and_residual_w_project(
             reported_sumwt: prepared.reported_sumwt,
             psf_peak,
             gridded_samples: prepared.gridded_samples,
-            skipped_samples: prepared.skipped_samples.len(),
+            skipped_samples: prepared.skipped_samples,
         },
         residual,
     ))
@@ -11434,9 +11532,11 @@ fn compute_residual_w_project(
         );
     }
     let prepare_started = Instant::now();
-    let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let prepared = prepare_w_project_metal_data(geometry, batches, gridder, w_project_planes)?;
+    let prepare_elapsed = prepare_started.elapsed();
+    log_w_project_metal_prepare_profile("residual", &prepared, prepare_elapsed);
     let mut timings = ResidualComputationTimings {
-        degrid_grid: prepare_started.elapsed(),
+        degrid_grid: prepare_elapsed,
         ..ResidualComputationTimings::default()
     };
     let model_nonzero = model.iter().any(|value| value.abs() > 0.0);
@@ -11452,15 +11552,20 @@ fn compute_residual_w_project(
     };
 
     let degrid_started = Instant::now();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
     let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
     if w_project_residual_metal_backend_enabled() {
-        accumulate_w_project_residual_grid_metal(
-            &prepared,
+        accumulate_w_project_grid_metal_samples(
+            &prepared.projector,
+            &prepared.samples,
+            Duration::ZERO,
             model_grid.as_ref(),
+            &mut psf_grid,
             &mut residual_grid,
+            W_PROJECT_METAL_MODE_RESIDUAL,
         )?;
     } else {
-        accumulate_w_project_residual_grid(&prepared, model_grid.as_ref(), &mut residual_grid)?;
+        unreachable!("wproject residual Metal path should have returned streaming CPU earlier");
     }
     timings.degrid_grid += degrid_started.elapsed();
 
@@ -11553,6 +11658,7 @@ fn accumulate_w_project_psf_grid_streaming(
     }
     let [nx, ny] = projector.grid_shape();
     let local_results = accumulate_w_project_streaming_parallel(
+        "wproject_psf",
         batches,
         thread_count,
         || {
@@ -11572,10 +11678,16 @@ fn accumulate_w_project_psf_grid_streaming(
         },
     )?;
     let mut accumulation = WProjectGridAccumulation::default();
+    let merge_started = Instant::now();
     for (local_accumulation, (local_psf_grid, _)) in &local_results {
         accumulation.add(*local_accumulation);
         add_complex32_grid(psf_grid, local_psf_grid);
     }
+    log_w_project_streaming_merge_profile(
+        "wproject_psf",
+        local_results.len(),
+        merge_started.elapsed(),
+    );
     Ok(accumulation)
 }
 
@@ -11597,6 +11709,7 @@ fn accumulate_w_project_dirty_grids_streaming(
     }
     let [nx, ny] = projector.grid_shape();
     let local_results = accumulate_w_project_streaming_parallel(
+        "wproject_dirty",
         batches,
         thread_count,
         || {
@@ -11617,11 +11730,17 @@ fn accumulate_w_project_dirty_grids_streaming(
         },
     )?;
     let mut accumulation = WProjectGridAccumulation::default();
+    let merge_started = Instant::now();
     for (local_accumulation, (local_psf_grid, local_residual_grid)) in &local_results {
         accumulation.add(*local_accumulation);
         add_complex32_grid(psf_grid, local_psf_grid);
         add_complex32_grid(residual_grid, local_residual_grid);
     }
+    log_w_project_streaming_merge_profile(
+        "wproject_dirty",
+        local_results.len(),
+        merge_started.elapsed(),
+    );
     Ok(accumulation)
 }
 
@@ -11643,6 +11762,7 @@ fn accumulate_w_project_residual_grid_streaming(
     }
     let [nx, ny] = projector.grid_shape();
     let local_results = accumulate_w_project_streaming_parallel(
+        "wproject_residual",
         batches,
         thread_count,
         || {
@@ -11663,14 +11783,21 @@ fn accumulate_w_project_residual_grid_streaming(
         },
     )?;
     let mut accumulation = WProjectGridAccumulation::default();
+    let merge_started = Instant::now();
     for (local_accumulation, (_, local_residual_grid)) in &local_results {
         accumulation.add(*local_accumulation);
         add_complex32_grid(residual_grid, local_residual_grid);
     }
+    log_w_project_streaming_merge_profile(
+        "wproject_residual",
+        local_results.len(),
+        merge_started.elapsed(),
+    );
     Ok(accumulation)
 }
 
 fn accumulate_w_project_streaming_parallel<S, I, F>(
+    stage_name: &'static str,
     batches: &[VisibilityBatch],
     thread_count: usize,
     init_state: I,
@@ -11681,6 +11808,8 @@ where
     I: Fn() -> S + Copy + Send + Sync,
     F: Fn(&VisibilityBatch, usize, usize, &mut S) -> WProjectGridAccumulation + Copy + Send + Sync,
 {
+    let profile_detail = profile::standard_mfs_profile_detail_enabled();
+    let stage_started = Instant::now();
     let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
     let chunk_len = input_sample_count.div_ceil(thread_count);
     let mut local_results = Vec::with_capacity(thread_count);
@@ -11693,6 +11822,7 @@ where
                 continue;
             }
             handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
                 let mut state = init_state();
                 let mut accumulation = WProjectGridAccumulation::default();
                 let mut global_sample_offset = 0usize;
@@ -11717,7 +11847,13 @@ where
                         ));
                     }
                 }
-                (accumulation, state)
+                (
+                    chunk_index,
+                    sample_end - sample_start,
+                    worker_started.elapsed(),
+                    accumulation,
+                    state,
+                )
             }));
         }
         for handle in handles {
@@ -11727,7 +11863,88 @@ where
         }
         Ok::<(), ImagingError>(())
     })?;
-    Ok(local_results)
+    local_results.sort_by_key(|(worker_index, _, _, _, _)| *worker_index);
+    if profile_detail {
+        log_w_project_streaming_parallel_profile(
+            stage_name,
+            thread_count,
+            chunk_len,
+            input_sample_count,
+            &local_results,
+            stage_started.elapsed(),
+        );
+    }
+    Ok(local_results
+        .into_iter()
+        .map(|(_, _, _, accumulation, state)| (accumulation, state))
+        .collect())
+}
+
+fn log_w_project_streaming_parallel_profile<S>(
+    stage_name: &str,
+    requested_threads: usize,
+    chunk_len: usize,
+    samples_total: usize,
+    local_results: &[(usize, usize, Duration, WProjectGridAccumulation, S)],
+    stage_elapsed: Duration,
+) {
+    if local_results.is_empty() {
+        return;
+    }
+    let mut worker_times = local_results
+        .iter()
+        .map(|(_, _, elapsed, _, _)| profile::millis(*elapsed))
+        .collect::<Vec<_>>();
+    worker_times.sort_by(|a, b| a.total_cmp(b));
+    let min_ms = worker_times[0];
+    let p50_ms = worker_times[worker_times.len() / 2];
+    let max_ms = worker_times[worker_times.len() - 1];
+    let samples_min = local_results
+        .iter()
+        .map(|(_, samples, _, _, _)| *samples)
+        .min()
+        .unwrap_or(0);
+    let samples_max = local_results
+        .iter()
+        .map(|(_, samples, _, _, _)| *samples)
+        .max()
+        .unwrap_or(0);
+    eprintln!(
+        "wproject_streaming_stage stage={} requested_threads={} actual_threads={} chunk_len={} samples_total={} samples_per_worker_min={} samples_per_worker_max={} worker_compute_min_ms={:.3} worker_compute_p50_ms={:.3} worker_compute_max_ms={:.3} stage_total_ms={:.3}",
+        stage_name,
+        requested_threads,
+        local_results.len(),
+        chunk_len,
+        samples_total,
+        samples_min,
+        samples_max,
+        min_ms,
+        p50_ms,
+        max_ms,
+        profile::millis(stage_elapsed),
+    );
+    for (worker_index, samples, elapsed, accumulation, _) in local_results {
+        eprintln!(
+            "wproject_streaming_worker stage={} worker_index={} samples={} gridded_samples={} skipped_samples={} worker_compute_ms={:.3}",
+            stage_name,
+            worker_index,
+            samples,
+            accumulation.gridded_samples,
+            accumulation.skipped_samples,
+            profile::millis(*elapsed),
+        );
+    }
+}
+
+fn log_w_project_streaming_merge_profile(stage_name: &str, grid_count: usize, elapsed: Duration) {
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "wproject_streaming_merge stage={} local_grid_count={} merge_ms={:.3}",
+            stage_name,
+            grid_count,
+            profile::millis(elapsed),
+        );
+    }
 }
 
 fn accumulate_w_project_psf_grid_streaming_serial(
@@ -11962,146 +12179,40 @@ fn accumulate_w_project_psf_grid(
     Ok(())
 }
 
-fn accumulate_w_project_dirty_grids(
-    prepared: &WProjectPreparedData,
-    psf_grid: &mut Array2<Complex32>,
-    residual_grid: &mut Array2<Complex32>,
-) -> Result<(), ImagingError> {
-    let samples = &prepared.samples;
-    let thread_count = w_project_grid_threads(samples.len());
-    if thread_count <= 1 || samples.len() < 10_000 {
-        for sample in samples {
-            let psf_weight = Complex32::new(sample.weight, 0.0);
-            let residual = sample.visibility * sample.weight;
-            prepared.projector.grid_sample_planned_pair(
-                psf_grid,
-                psf_weight,
-                residual_grid,
-                residual,
-                &sample.positive_plan,
-            );
-        }
-        return Ok(());
-    }
-
-    let [nx, ny] = prepared.projector.grid_shape();
-    let chunk_len = samples.len().div_ceil(thread_count);
-    let mut local_grids = Vec::with_capacity(thread_count);
-    thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(thread_count);
-        for chunk in samples.chunks(chunk_len) {
-            handles.push(scope.spawn(move || {
-                let mut local_psf_grid = Array2::<Complex32>::zeros((nx, ny));
-                let mut local_residual_grid = Array2::<Complex32>::zeros((nx, ny));
-                for sample in chunk {
-                    let psf_weight = Complex32::new(sample.weight, 0.0);
-                    let residual = sample.visibility * sample.weight;
-                    prepared.projector.grid_sample_planned_pair(
-                        &mut local_psf_grid,
-                        psf_weight,
-                        &mut local_residual_grid,
-                        residual,
-                        &sample.positive_plan,
-                    );
-                }
-                (local_psf_grid, local_residual_grid)
-            }));
-        }
-        for handle in handles {
-            local_grids.push(handle.join().map_err(|_| {
-                ImagingError::Unsupported("wproject dirty grid worker panicked".to_string())
-            })?);
-        }
-        Ok::<(), ImagingError>(())
-    })?;
-    for (local_psf_grid, local_residual_grid) in &local_grids {
-        add_complex32_grid(psf_grid, local_psf_grid);
-        add_complex32_grid(residual_grid, local_residual_grid);
-    }
-    Ok(())
-}
-
-fn accumulate_w_project_residual_grid(
-    prepared: &WProjectPreparedData,
-    model_grid: Option<&Array2<Complex32>>,
-    residual_grid: &mut Array2<Complex32>,
-) -> Result<(), ImagingError> {
-    let samples = &prepared.samples;
-    let thread_count = w_project_grid_threads(samples.len());
-    if thread_count <= 1 || samples.len() < 10_000 {
-        for sample in samples {
-            accumulate_w_project_residual_sample(prepared, model_grid, sample, residual_grid);
-        }
-        return Ok(());
-    }
-
-    let [nx, ny] = prepared.projector.grid_shape();
-    let chunk_len = samples.len().div_ceil(thread_count);
-    let mut local_grids = Vec::with_capacity(thread_count);
-    thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(thread_count);
-        for chunk in samples.chunks(chunk_len) {
-            handles.push(scope.spawn(move || {
-                let mut local_grid = Array2::<Complex32>::zeros((nx, ny));
-                for sample in chunk {
-                    accumulate_w_project_residual_sample(
-                        prepared,
-                        model_grid,
-                        sample,
-                        &mut local_grid,
-                    );
-                }
-                local_grid
-            }));
-        }
-        for handle in handles {
-            local_grids.push(handle.join().map_err(|_| {
-                ImagingError::Unsupported("wproject residual grid worker panicked".to_string())
-            })?);
-        }
-        Ok::<(), ImagingError>(())
-    })?;
-    for local_grid in &local_grids {
-        add_complex32_grid(residual_grid, local_grid);
-    }
-    Ok(())
-}
-
-fn accumulate_w_project_residual_sample(
-    prepared: &WProjectPreparedData,
-    model_grid: Option<&Array2<Complex32>>,
-    sample: &WProjectPreparedSample,
-    residual_grid: &mut Array2<Complex32>,
-) {
-    let predicted = model_grid.as_ref().map_or_else(
-        || Complex32::new(0.0, 0.0),
-        |grid| {
-            prepared
-                .projector
-                .degrid_sample_planned(grid, &sample.positive_plan)
-        },
-    );
-    let residual = (sample.visibility - predicted) * sample.weight;
-    prepared
-        .projector
-        .grid_sample_planned(residual_grid, &sample.positive_plan, residual);
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct WProjectMetalSample {
-    loc_x: u32,
-    loc_y: u32,
-    plane_index: u32,
-    support: u32,
-    off_x: i32,
-    off_y: i32,
-    conjugate_kernel: u32,
-    _pad0: u32,
+    loc: u32,
+    plane_support_offsets: u32,
     weight: f32,
     visibility_re: f32,
     visibility_im: f32,
-    _pad1: f32,
+}
+
+impl WProjectMetalSample {
+    fn support(self) -> u16 {
+        ((self.plane_support_offsets >> 10) & 0x1f) as u16
+    }
+
+    fn has_same_plan(self, other: Self) -> bool {
+        self.loc == other.loc && self.plane_support_offsets == other.plane_support_offsets
+    }
+
+    fn merge_weighted_visibility(&mut self, other: Self) -> bool {
+        if !self.has_same_plan(other) {
+            return false;
+        }
+        let total_weight = self.weight + other.weight;
+        if !(total_weight.is_finite() && total_weight > 0.0) {
+            return false;
+        }
+        self.visibility_re =
+            (self.visibility_re * self.weight + other.visibility_re * other.weight) / total_weight;
+        self.visibility_im =
+            (self.visibility_im * self.weight + other.visibility_im * other.weight) / total_weight;
+        self.weight = total_weight;
+        true
+    }
 }
 
 #[repr(C)]
@@ -12121,66 +12232,111 @@ struct WProjectMetalParams {
     sampling: u32,
     mode: u32,
     model_present: u32,
+    partial_grid_count: u32,
+    partial_chunk_len: u32,
     _pad0: u32,
 }
 
 const W_PROJECT_METAL_MODE_PSF: u32 = 0;
-const W_PROJECT_METAL_MODE_DIRTY: u32 = 1;
 const W_PROJECT_METAL_MODE_RESIDUAL: u32 = 2;
+const W_PROJECT_METAL_MODE_DIRTY: u32 = 1;
+const W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES: usize = 256 * 1024 * 1024;
+const W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 8_000_000;
+
+fn w_project_metal_dirty_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
+    let bytes_per_partial_grid = cell_count
+        .checked_mul(std::mem::size_of::<f32>())
+        .and_then(|bytes| bytes.checked_mul(4))
+        .unwrap_or(usize::MAX);
+    let max_by_memory = if bytes_per_partial_grid == 0 {
+        1
+    } else {
+        (W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES / bytes_per_partial_grid).max(1)
+    };
+    sample_count
+        .div_ceil(W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID)
+        .clamp(1, max_by_memory.min(32))
+}
+
+fn w_project_metal_sample_from_plan(
+    projector: &WProjector,
+    plan: &WProjectSamplePlan,
+    weight: f32,
+    visibility: Complex32,
+) -> Result<WProjectMetalSample, ImagingError> {
+    let support = projector.kernel_support(plan.plane_index);
+    let loc_x = u16::try_from(plan.loc_x).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal sample x coordinate exceeds u16".to_string())
+    })?;
+    let loc_y = u16::try_from(plan.loc_y).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal sample y coordinate exceeds u16".to_string())
+    })?;
+    let plane_index = u16::try_from(plan.plane_index).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal plane index exceeds u16".to_string())
+    })?;
+    if plane_index > 0x03ff {
+        return Err(ImagingError::InvalidRequest(
+            "wproject Metal compact sample plane index exceeds 10 bits".to_string(),
+        ));
+    }
+    let support = u8::try_from(support).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal support exceeds u8".to_string())
+    })?;
+    if support > 0x1f {
+        return Err(ImagingError::InvalidRequest(
+            "wproject Metal compact sample support exceeds 5 bits".to_string(),
+        ));
+    }
+    let off_x = i8::try_from(plan.off_x).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal x subpixel offset exceeds i8".to_string())
+    })?;
+    let off_y = i8::try_from(plan.off_y).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal y subpixel offset exceeds i8".to_string())
+    })?;
+    Ok(WProjectMetalSample {
+        loc: u32::from(loc_x) | (u32::from(loc_y) << 16),
+        plane_support_offsets: u32::from(plane_index)
+            | (u32::from(support) << 10)
+            | (u32::from(plan.conjugate_kernel) << 15)
+            | (u32::from((i16::from(off_x) + 128) as u8) << 16)
+            | (u32::from((i16::from(off_y) + 128) as u8) << 24),
+        weight,
+        visibility_re: visibility.re,
+        visibility_im: visibility.im,
+    })
+}
+
+fn push_w_project_metal_sample(
+    samples: &mut Vec<WProjectMetalSample>,
+    sample: WProjectMetalSample,
+) -> bool {
+    if let Some(last) = samples.last_mut()
+        && last.merge_weighted_visibility(sample)
+    {
+        return false;
+    }
+    samples.push(sample);
+    true
+}
 
 fn w_project_metal_samples(
     prepared: &WProjectPreparedData,
 ) -> Result<Vec<WProjectMetalSample>, ImagingError> {
-    prepared
-        .samples
-        .iter()
-        .map(|sample| {
-            let support = prepared
-                .projector
-                .kernel_support(sample.positive_plan.plane_index);
-            Ok(WProjectMetalSample {
-                loc_x: u32::try_from(sample.positive_plan.loc_x).map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "wproject Metal sample x coordinate is negative".to_string(),
-                    )
-                })?,
-                loc_y: u32::try_from(sample.positive_plan.loc_y).map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "wproject Metal sample y coordinate is negative".to_string(),
-                    )
-                })?,
-                plane_index: u32::try_from(sample.positive_plan.plane_index).map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "wproject Metal plane index exceeds u32".to_string(),
-                    )
-                })?,
-                support: u32::try_from(support).map_err(|_| {
-                    ImagingError::InvalidRequest("wproject Metal support exceeds u32".to_string())
-                })?,
-                off_x: i32::try_from(sample.positive_plan.off_x).map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "wproject Metal x subpixel offset exceeds i32".to_string(),
-                    )
-                })?,
-                off_y: i32::try_from(sample.positive_plan.off_y).map_err(|_| {
-                    ImagingError::InvalidRequest(
-                        "wproject Metal y subpixel offset exceeds i32".to_string(),
-                    )
-                })?,
-                conjugate_kernel: u32::from(sample.positive_plan.conjugate_kernel),
-                _pad0: 0,
-                weight: sample.weight,
-                visibility_re: sample.visibility.re,
-                visibility_im: sample.visibility.im,
-                _pad1: 0.0,
-            })
-        })
-        .collect()
+    let mut samples = Vec::with_capacity(prepared.samples.len());
+    for sample in &prepared.samples {
+        let metal_sample = w_project_metal_sample_from_plan(
+            &prepared.projector,
+            &sample.positive_plan,
+            sample.weight,
+            sample.visibility,
+        )?;
+        push_w_project_metal_sample(&mut samples, metal_sample);
+    }
+    Ok(samples)
 }
 
-fn w_project_metal_kernel_weights(prepared: &WProjectPreparedData) -> Vec<WProjectMetalComplex> {
-    prepared
-        .projector
+fn w_project_metal_kernel_weights(projector: &WProjector) -> Vec<WProjectMetalComplex> {
+    projector
         .flattened_kernel_weights()
         .into_iter()
         .map(|value| WProjectMetalComplex {
@@ -12216,54 +12372,15 @@ fn accumulate_w_project_psf_grid_metal(
     ))
 }
 
-#[cfg(target_os = "macos")]
-fn accumulate_w_project_dirty_grids_metal(
-    prepared: &WProjectPreparedData,
-    psf_grid: &mut Array2<Complex32>,
-    residual_grid: &mut Array2<Complex32>,
-) -> Result<(), ImagingError> {
-    accumulate_w_project_grid_metal(
-        prepared,
-        None,
-        psf_grid,
-        residual_grid,
-        W_PROJECT_METAL_MODE_DIRTY,
-    )
-}
-
 #[cfg(not(target_os = "macos"))]
-fn accumulate_w_project_dirty_grids_metal(
-    _prepared: &WProjectPreparedData,
+fn accumulate_w_project_grid_metal_samples(
+    _projector: &WProjector,
+    _samples: &[WProjectMetalSample],
+    _sample_pack_elapsed: Duration,
+    _model_grid: Option<&Array2<Complex32>>,
     _psf_grid: &mut Array2<Complex32>,
     _residual_grid: &mut Array2<Complex32>,
-) -> Result<(), ImagingError> {
-    Err(ImagingError::Unsupported(
-        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
-            .to_string(),
-    ))
-}
-
-#[cfg(target_os = "macos")]
-fn accumulate_w_project_residual_grid_metal(
-    prepared: &WProjectPreparedData,
-    model_grid: Option<&Array2<Complex32>>,
-    residual_grid: &mut Array2<Complex32>,
-) -> Result<(), ImagingError> {
-    let mut psf_grid = Array2::<Complex32>::zeros(residual_grid.raw_dim());
-    accumulate_w_project_grid_metal(
-        prepared,
-        model_grid,
-        &mut psf_grid,
-        residual_grid,
-        W_PROJECT_METAL_MODE_RESIDUAL,
-    )
-}
-
-#[cfg(not(target_os = "macos"))]
-fn accumulate_w_project_residual_grid_metal(
-    _prepared: &WProjectPreparedData,
-    _model_grid: Option<&Array2<Complex32>>,
-    _residual_grid: &mut Array2<Complex32>,
+    _mode: u32,
 ) -> Result<(), ImagingError> {
     Err(ImagingError::Unsupported(
         "wproject backend 'metal' requires macOS Metal and is not available on this platform"
@@ -12279,6 +12396,30 @@ fn accumulate_w_project_grid_metal(
     residual_grid: &mut Array2<Complex32>,
     mode: u32,
 ) -> Result<(), ImagingError> {
+    let sample_pack_started = Instant::now();
+    let samples = w_project_metal_samples(prepared)?;
+    let sample_pack_elapsed = sample_pack_started.elapsed();
+    accumulate_w_project_grid_metal_samples(
+        &prepared.projector,
+        &samples,
+        sample_pack_elapsed,
+        model_grid,
+        psf_grid,
+        residual_grid,
+        mode,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_grid_metal_samples(
+    projector: &WProjector,
+    samples: &[WProjectMetalSample],
+    sample_pack_elapsed: Duration,
+    model_grid: Option<&Array2<Complex32>>,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+    mode: u32,
+) -> Result<(), ImagingError> {
     use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
 
     use objc2_metal::{
@@ -12287,16 +12428,27 @@ fn accumulate_w_project_grid_metal(
         MTLLibrary, MTLResourceOptions, MTLSize,
     };
 
-    let [grid_width, grid_height] = prepared.projector.grid_shape();
+    let profile_detail = profile::standard_mfs_profile_detail_enabled();
+    let total_started = Instant::now();
+    let [grid_width, grid_height] = projector.grid_shape();
     let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
         ImagingError::InvalidRequest("wproject Metal grid is too large".to_string())
     })?;
-    let samples = w_project_metal_samples(prepared)?;
     if samples.is_empty() {
         return Err(ImagingError::NoUsableSamples);
     }
-    let kernel_weights = w_project_metal_kernel_weights(prepared);
-    let kernel_width = prepared.projector.kernel_weight_width();
+    let partial_grid_count = if mode == W_PROJECT_METAL_MODE_DIRTY {
+        w_project_metal_dirty_partial_grid_count(samples.len(), cell_count)
+    } else {
+        1
+    };
+    let partial_chunk_len = samples.len().div_ceil(partial_grid_count);
+    let sample_buffer_bytes = mem::size_of_val(samples);
+    let kernel_pack_started = Instant::now();
+    let kernel_weights = w_project_metal_kernel_weights(projector);
+    let kernel_pack_elapsed = kernel_pack_started.elapsed();
+    let kernel_buffer_bytes = mem::size_of_val(kernel_weights.as_slice());
+    let kernel_width = projector.kernel_weight_width();
     let params = WProjectMetalParams {
         sample_count: u32::try_from(samples.len()).map_err(|_| {
             ImagingError::InvalidRequest("wproject Metal sample count exceeds u32".to_string())
@@ -12310,14 +12462,25 @@ fn accumulate_w_project_grid_metal(
         kernel_width: u32::try_from(kernel_width).map_err(|_| {
             ImagingError::InvalidRequest("wproject Metal kernel width exceeds u32".to_string())
         })?,
-        sampling: u32::try_from(prepared.projector.sampling()).map_err(|_| {
+        sampling: u32::try_from(projector.sampling()).map_err(|_| {
             ImagingError::InvalidRequest("wproject Metal sampling exceeds u32".to_string())
         })?,
         mode,
         model_present: u32::from(model_grid.is_some()),
+        partial_grid_count: u32::try_from(partial_grid_count).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "wproject Metal partial grid count exceeds u32".to_string(),
+            )
+        })?,
+        partial_chunk_len: u32::try_from(partial_chunk_len).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "wproject Metal partial grid chunk length exceeds u32".to_string(),
+            )
+        })?,
         _pad0: 0,
     };
 
+    let device_queue_started = Instant::now();
     let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
         ImagingError::Unsupported(
             "wproject backend 'metal' could not find a default Metal device".to_string(),
@@ -12328,6 +12491,8 @@ fn accumulate_w_project_grid_metal(
             "wproject backend 'metal' could not create a Metal command queue".to_string(),
         )
     })?;
+    let device_queue_elapsed = device_queue_started.elapsed();
+    let shader_compile_started = Instant::now();
     let source = objc2_foundation::NSString::from_str(W_PROJECT_METAL_SHADER);
     let library = device
         .newLibraryWithSource_options_error(&source, None)
@@ -12336,7 +12501,15 @@ fn accumulate_w_project_grid_metal(
                 "wproject backend 'metal' failed to compile shader: {error:?}"
             ))
         })?;
-    let function_name = objc2_foundation::NSString::from_str("wproject_grid_samples");
+    let shader_compile_elapsed = shader_compile_started.elapsed();
+    let pipeline_started = Instant::now();
+    let use_dirty_partial_grids = mode == W_PROJECT_METAL_MODE_DIRTY && partial_grid_count > 1;
+    let entry_point = match (mode, use_dirty_partial_grids) {
+        (W_PROJECT_METAL_MODE_DIRTY, true) => "wproject_grid_dirty_chunked_samples",
+        (W_PROJECT_METAL_MODE_DIRTY, false) => "wproject_grid_dirty_samples",
+        _ => "wproject_grid_samples",
+    };
+    let function_name = objc2_foundation::NSString::from_str(entry_point);
     let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
         ImagingError::Unsupported(
             "wproject backend 'metal' shader entry point was not found".to_string(),
@@ -12349,33 +12522,68 @@ fn accumulate_w_project_grid_metal(
                 "wproject backend 'metal' failed to create pipeline: {error:?}"
             ))
         })?;
+    let pipeline_elapsed = pipeline_started.elapsed();
+    let reduce_pipeline = if use_dirty_partial_grids {
+        let reduce_function_name =
+            objc2_foundation::NSString::from_str("wproject_reduce_dirty_chunked_grids");
+        let reduce_function = library
+            .newFunctionWithName(&reduce_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' reduction shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        Some(
+            device
+                .newComputePipelineStateWithFunction_error(&reduce_function)
+                .map_err(|error| {
+                    ImagingError::Unsupported(format!(
+                        "wproject backend 'metal' failed to create reduction pipeline: {error:?}"
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
     let storage_options = MTLResourceOptions::StorageModeShared;
 
+    let buffer_alloc_started = Instant::now();
     let sample_buffer = unsafe {
-        let byte_len = mem::size_of_val(samples.as_slice());
         let pointer =
             NonNull::new(samples.as_ptr().cast::<c_void>() as *mut c_void).ok_or_else(|| {
                 ImagingError::InvalidRequest("wproject Metal sample pointer was null".to_string())
             })?;
         device
-            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                sample_buffer_bytes,
+                storage_options,
+                None,
+            )
             .ok_or_else(|| {
                 ImagingError::Unsupported(
-                    "wproject backend 'metal' could not allocate sample buffer".to_string(),
+                    "wproject backend 'metal' could not wrap sample buffer without copying"
+                        .to_string(),
                 )
             })?
     };
     let kernel_buffer = unsafe {
-        let byte_len = mem::size_of_val(kernel_weights.as_slice());
         let pointer = NonNull::new(kernel_weights.as_ptr().cast::<c_void>() as *mut c_void)
             .ok_or_else(|| {
                 ImagingError::InvalidRequest("wproject Metal kernel pointer was null".to_string())
             })?;
         device
-            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                kernel_buffer_bytes,
+                storage_options,
+                None,
+            )
             .ok_or_else(|| {
                 ImagingError::Unsupported(
-                    "wproject backend 'metal' could not allocate kernel buffer".to_string(),
+                    "wproject backend 'metal' could not wrap kernel buffer without copying"
+                        .to_string(),
                 )
             })?
     };
@@ -12394,6 +12602,8 @@ fn accumulate_w_project_grid_metal(
                 )
             })?
     };
+    let buffer_alloc_pre_model_elapsed = buffer_alloc_started.elapsed();
+    let model_pack_started = Instant::now();
     let model_values = if let Some(model_grid) = model_grid {
         model_grid
             .iter()
@@ -12405,25 +12615,42 @@ fn accumulate_w_project_grid_metal(
     } else {
         vec![WProjectMetalComplex { re: 0.0, im: 0.0 }]
     };
+    let model_pack_elapsed = model_pack_started.elapsed();
+    let model_buffer_bytes = mem::size_of_val(model_values.as_slice());
+    let model_buffer_started = Instant::now();
     let model_buffer = unsafe {
-        let byte_len = mem::size_of_val(model_values.as_slice());
         let pointer = NonNull::new(model_values.as_ptr().cast::<c_void>() as *mut c_void)
             .ok_or_else(|| {
                 ImagingError::InvalidRequest("wproject Metal model pointer was null".to_string())
             })?;
         device
-            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                model_buffer_bytes,
+                storage_options,
+                None,
+            )
             .ok_or_else(|| {
                 ImagingError::Unsupported(
-                    "wproject backend 'metal' could not allocate model buffer".to_string(),
+                    "wproject backend 'metal' could not wrap model buffer without copying"
+                        .to_string(),
                 )
             })?
     };
+    let model_buffer_elapsed = model_buffer_started.elapsed();
     let output_bytes = cell_count
         .checked_mul(mem::size_of::<u32>())
         .ok_or_else(|| {
             ImagingError::InvalidRequest("wproject Metal output grid is too large".to_string())
         })?;
+    let partial_output_bytes = output_bytes
+        .checked_mul(partial_grid_count)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "wproject Metal partial output grid is too large".to_string(),
+            )
+        })?;
+    let output_alloc_started = Instant::now();
     let psf_re = device
         .newBufferWithLength_options(output_bytes, storage_options)
         .ok_or_else(|| {
@@ -12452,21 +12679,98 @@ fn accumulate_w_project_grid_metal(
                 "wproject backend 'metal' could not allocate residual imag buffer".to_string(),
             )
         })?;
+    let partial_psf_re = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial PSF real buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_psf_im = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial PSF imag buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_residual_re = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial residual real buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_residual_im = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial residual imag buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let output_alloc_elapsed = output_alloc_started.elapsed();
+    let accum_psf_re = partial_psf_re.as_ref().unwrap_or(&psf_re);
+    let accum_psf_im = partial_psf_im.as_ref().unwrap_or(&psf_im);
+    let accum_residual_re = partial_residual_re.as_ref().unwrap_or(&residual_re);
+    let accum_residual_im = partial_residual_im.as_ref().unwrap_or(&residual_im);
+    let accum_output_bytes = if use_dirty_partial_grids {
+        partial_output_bytes
+    } else {
+        output_bytes
+    };
+    let zero_outputs_started = Instant::now();
     unsafe {
-        ptr::write_bytes(psf_re.contents().as_ptr().cast::<u8>(), 0, output_bytes);
-        ptr::write_bytes(psf_im.contents().as_ptr().cast::<u8>(), 0, output_bytes);
         ptr::write_bytes(
-            residual_re.contents().as_ptr().cast::<u8>(),
+            accum_psf_re.contents().as_ptr().cast::<u8>(),
             0,
-            output_bytes,
+            accum_output_bytes,
         );
         ptr::write_bytes(
-            residual_im.contents().as_ptr().cast::<u8>(),
+            accum_psf_im.contents().as_ptr().cast::<u8>(),
             0,
-            output_bytes,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_residual_re.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_residual_im.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
         );
     }
+    let zero_outputs_elapsed = zero_outputs_started.elapsed();
 
+    let encode_started = Instant::now();
     let command_buffer = queue.commandBuffer().ok_or_else(|| {
         ImagingError::Unsupported(
             "wproject backend 'metal' could not create a command buffer".to_string(),
@@ -12482,10 +12786,10 @@ fn accumulate_w_project_grid_metal(
         encoder.setBuffer_offset_atIndex(Some(&sample_buffer), 0, 0);
         encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
         encoder.setBuffer_offset_atIndex(Some(&model_buffer), 0, 2);
-        encoder.setBuffer_offset_atIndex(Some(&psf_re), 0, 3);
-        encoder.setBuffer_offset_atIndex(Some(&psf_im), 0, 4);
-        encoder.setBuffer_offset_atIndex(Some(&residual_re), 0, 5);
-        encoder.setBuffer_offset_atIndex(Some(&residual_im), 0, 6);
+        encoder.setBuffer_offset_atIndex(Some(accum_psf_re), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(accum_psf_im), 0, 4);
+        encoder.setBuffer_offset_atIndex(Some(accum_residual_re), 0, 5);
+        encoder.setBuffer_offset_atIndex(Some(accum_residual_im), 0, 6);
         encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 7);
     }
     let thread_count = samples.len();
@@ -12505,8 +12809,11 @@ fn accumulate_w_project_grid_metal(
         },
     );
     encoder.endEncoding();
+    let encode_elapsed = encode_started.elapsed();
+    let dispatch_wait_started = Instant::now();
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
+    let dispatch_wait_elapsed = dispatch_wait_started.elapsed();
     if command_buffer.status() == MTLCommandBufferStatus::Error {
         let message = command_buffer
             .error()
@@ -12516,18 +12823,89 @@ fn accumulate_w_project_grid_metal(
             "wproject backend 'metal' command failed: {message}"
         )));
     }
+    let mut reduce_wait_elapsed = Duration::ZERO;
+    if use_dirty_partial_grids {
+        let reduce_started = Instant::now();
+        let reduce_command_buffer = queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not create a reduction command buffer".to_string(),
+            )
+        })?;
+        let reduce_encoder = reduce_command_buffer
+            .computeCommandEncoder()
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not create a reduction compute encoder"
+                        .to_string(),
+                )
+            })?;
+        reduce_encoder
+            .setComputePipelineState(reduce_pipeline.as_ref().expect("reduction pipeline"));
+        unsafe {
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_psf_re), 0, 0);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_psf_im), 0, 1);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_residual_re), 0, 2);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_residual_im), 0, 3);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&psf_re), 0, 4);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&psf_im), 0, 5);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&residual_re), 0, 6);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&residual_im), 0, 7);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 8);
+        }
+        let reduce_thread_count = cell_count;
+        let reduce_thread_width = reduce_pipeline
+            .as_ref()
+            .expect("reduction pipeline")
+            .threadExecutionWidth()
+            .max(1);
+        let reduce_max_threads = reduce_pipeline
+            .as_ref()
+            .expect("reduction pipeline")
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let reduce_threads_per_group = reduce_thread_width
+            .min(reduce_max_threads)
+            .min(reduce_thread_count)
+            .max(1);
+        reduce_encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: reduce_thread_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: reduce_threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        reduce_encoder.endEncoding();
+        reduce_command_buffer.commit();
+        reduce_command_buffer.waitUntilCompleted();
+        reduce_wait_elapsed = reduce_started.elapsed();
+        if reduce_command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = reduce_command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "wproject backend 'metal' reduction command failed: {message}"
+            )));
+        }
+    }
 
+    let readback_started = Instant::now();
     let psf_re_values =
-        unsafe { slice::from_raw_parts(psf_re.contents().as_ptr().cast::<u32>(), cell_count) };
+        unsafe { slice::from_raw_parts(psf_re.contents().as_ptr().cast::<f32>(), cell_count) };
     let psf_im_values =
-        unsafe { slice::from_raw_parts(psf_im.contents().as_ptr().cast::<u32>(), cell_count) };
+        unsafe { slice::from_raw_parts(psf_im.contents().as_ptr().cast::<f32>(), cell_count) };
     let residual_re_values =
-        unsafe { slice::from_raw_parts(residual_re.contents().as_ptr().cast::<u32>(), cell_count) };
+        unsafe { slice::from_raw_parts(residual_re.contents().as_ptr().cast::<f32>(), cell_count) };
     let residual_im_values =
-        unsafe { slice::from_raw_parts(residual_im.contents().as_ptr().cast::<u32>(), cell_count) };
+        unsafe { slice::from_raw_parts(residual_im.contents().as_ptr().cast::<f32>(), cell_count) };
     for (
-        (((psf_cell, &psf_re_bits), &psf_im_bits), residual_cell),
-        (&residual_re_bits, &residual_im_bits),
+        (((psf_cell, &psf_re_value), &psf_im_value), residual_cell),
+        (&residual_re_value, &residual_im_value),
     ) in psf_grid
         .as_slice_memory_order_mut()
         .expect("wproject PSF grid should be contiguous")
@@ -12542,23 +12920,51 @@ fn accumulate_w_project_grid_metal(
         )
         .zip(residual_re_values.iter().zip(residual_im_values))
     {
-        *psf_cell = Complex32::new(f32::from_bits(psf_re_bits), f32::from_bits(psf_im_bits));
-        *residual_cell = Complex32::new(
-            f32::from_bits(residual_re_bits),
-            f32::from_bits(residual_im_bits),
-        );
+        *psf_cell = Complex32::new(psf_re_value, psf_im_value);
+        *residual_cell = Complex32::new(residual_re_value, residual_im_value);
     }
+    let readback_elapsed = readback_started.elapsed();
 
-    if profile::standard_mfs_profile_detail_enabled() {
+    if profile_detail {
+        let buffer_alloc_copy_elapsed =
+            buffer_alloc_pre_model_elapsed + model_buffer_elapsed + output_alloc_elapsed;
         eprintln!(
-            "wproject_metal_grid mode={} samples={} grid={}x{} planes={} kernel_width={} sampling={}",
+            "wproject_metal_grid mode={} entry={} samples={} grid={}x{} planes={} kernel_width={} sampling={} partial_grids={} partial_chunk_len={} sample_bytes={} kernel_bytes={} model_bytes={} output_bytes={} partial_output_bytes={} thread_width={} max_threads={} threads_per_group={} sample_pack_ms={:.3} kernel_pack_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_alloc_copy_ms={:.3} model_pack_ms={:.3} zero_outputs_ms={:.3} encode_ms={:.3} dispatch_wait_ms={:.3} reduce_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
             mode,
+            entry_point,
             samples.len(),
             grid_width,
             grid_height,
-            prepared.projector.plane_count(),
+            projector.plane_count(),
             kernel_width,
-            prepared.projector.sampling(),
+            projector.sampling(),
+            partial_grid_count,
+            partial_chunk_len,
+            sample_buffer_bytes,
+            kernel_buffer_bytes,
+            model_buffer_bytes,
+            output_bytes * 4,
+            if use_dirty_partial_grids {
+                partial_output_bytes * 4
+            } else {
+                0
+            },
+            thread_width,
+            max_threads,
+            threads_per_group,
+            profile::millis(sample_pack_elapsed),
+            profile::millis(kernel_pack_elapsed),
+            profile::millis(device_queue_elapsed),
+            profile::millis(shader_compile_elapsed),
+            profile::millis(pipeline_elapsed),
+            profile::millis(buffer_alloc_copy_elapsed),
+            profile::millis(model_pack_elapsed),
+            profile::millis(zero_outputs_elapsed),
+            profile::millis(encode_elapsed),
+            profile::millis(dispatch_wait_elapsed),
+            profile::millis(reduce_wait_elapsed),
+            profile::millis(readback_elapsed),
+            profile::millis(total_started.elapsed()),
         );
     }
     Ok(())
@@ -12570,18 +12976,11 @@ const W_PROJECT_METAL_SHADER: &str = r#"
 using namespace metal;
 
 struct WProjectSample {
-    uint loc_x;
-    uint loc_y;
-    uint plane_index;
-    uint support;
-    int off_x;
-    int off_y;
-    uint conjugate_kernel;
-    uint _pad0;
+    uint loc;
+    uint plane_support_offsets;
     float weight;
     float visibility_re;
     float visibility_im;
-    float _pad1;
 };
 
 struct WProjectParams {
@@ -12592,33 +12991,51 @@ struct WProjectParams {
     uint sampling;
     uint mode;
     uint model_present;
+    uint partial_grid_count;
+    uint partial_chunk_len;
     uint _pad0;
 };
 
-static inline void atomic_add_float(device atomic_uint *address, float value) {
-    uint old_bits = atomic_load_explicit(address, memory_order_relaxed);
-    while (true) {
-        float old_value = as_type<float>(old_bits);
-        uint new_bits = as_type<uint>(old_value + value);
-        if (atomic_compare_exchange_weak_explicit(
-                address,
-                &old_bits,
-                new_bits,
-                memory_order_relaxed,
-                memory_order_relaxed)) {
-            return;
-        }
-    }
+static inline void atomic_add_float(device atomic_float *address, float value) {
+    atomic_fetch_add_explicit(address, value, memory_order_relaxed);
+}
+
+static inline uint sample_loc_x(WProjectSample sample) {
+    return sample.loc & 0xffffu;
+}
+
+static inline uint sample_loc_y(WProjectSample sample) {
+    return sample.loc >> 16;
+}
+
+static inline uint sample_plane_index(WProjectSample sample) {
+    return sample.plane_support_offsets & 0x3ffu;
+}
+
+static inline int sample_support(WProjectSample sample) {
+    return int((sample.plane_support_offsets >> 10) & 0x1fu);
+}
+
+static inline int sample_off_x(WProjectSample sample) {
+    return int((sample.plane_support_offsets >> 16) & 0xffu) - 128;
+}
+
+static inline int sample_off_y(WProjectSample sample) {
+    return int((sample.plane_support_offsets >> 24) & 0xffu) - 128;
+}
+
+static inline bool sample_conjugate_kernel(WProjectSample sample) {
+    return (sample.plane_support_offsets & (1u << 15)) != 0u;
 }
 
 kernel void wproject_grid_samples(
     device const WProjectSample *samples [[buffer(0)]],
     device const float2 *kernels [[buffer(1)]],
     device const float2 *model [[buffer(2)]],
-    device atomic_uint *psf_re [[buffer(3)]],
-    device atomic_uint *psf_im [[buffer(4)]],
-    device atomic_uint *residual_re [[buffer(5)]],
-    device atomic_uint *residual_im [[buffer(6)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
     constant WProjectParams &params [[buffer(7)]],
     uint sample_index [[thread_position_in_grid]]
 ) {
@@ -12626,22 +13043,22 @@ kernel void wproject_grid_samples(
         return;
     }
     const WProjectSample sample = samples[sample_index];
-    const int support = int(sample.support);
+    const int support = sample_support(sample);
     const uint plane_offset =
-        sample.plane_index * params.kernel_width * params.kernel_width;
+        sample_plane_index(sample) * params.kernel_width * params.kernel_width;
 
     float predicted_re = 0.0f;
     float predicted_im = 0.0f;
     const bool needs_model = params.mode == 2u && params.model_present != 0u;
     if (needs_model) {
         for (int iy = -support; iy <= support; ++iy) {
-            const uint kernel_y = uint(abs(iy * int(params.sampling) + sample.off_y));
-            const uint grid_y = sample.loc_y + uint(iy);
+            const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+            const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
             for (int ix = -support; ix <= support; ++ix) {
-                const uint kernel_x = uint(abs(ix * int(params.sampling) + sample.off_x));
-                const uint grid_x = sample.loc_x + uint(ix);
+                const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+                const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
                 float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
-                if (sample.conjugate_kernel != 0u) {
+                if (sample_conjugate_kernel(sample)) {
                     cwt.y = -cwt.y;
                 }
                 const float2 cell = model[grid_x * params.grid_height + grid_y];
@@ -12656,13 +13073,13 @@ kernel void wproject_grid_samples(
     const float residual_value_re = sample.visibility_re - predicted_re;
     const float residual_value_im = sample.visibility_im - predicted_im;
     for (int iy = -support; iy <= support; ++iy) {
-        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample.off_y));
-        const uint grid_y = sample.loc_y + uint(iy);
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+        const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
         for (int ix = -support; ix <= support; ++ix) {
-            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample.off_x));
-            const uint grid_x = sample.loc_x + uint(ix);
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+            const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
             float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
-            if (sample.conjugate_kernel != 0u) {
+            if (sample_conjugate_kernel(sample)) {
                 cwt.y = -cwt.y;
             }
             const uint cell = grid_x * params.grid_height + grid_y;
@@ -12680,6 +13097,129 @@ kernel void wproject_grid_samples(
             }
         }
     }
+}
+
+kernel void wproject_grid_dirty_samples(
+    device const WProjectSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant WProjectParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const WProjectSample sample = samples[sample_index];
+    const int support = sample_support(sample);
+    const uint plane_offset =
+        sample_plane_index(sample) * params.kernel_width * params.kernel_width;
+    for (int iy = -support; iy <= support; ++iy) {
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+        const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
+        for (int ix = -support; ix <= support; ++ix) {
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+            const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
+            float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+            if (sample_conjugate_kernel(sample)) {
+                cwt.y = -cwt.y;
+            }
+            const uint cell = grid_x * params.grid_height + grid_y;
+            atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+            atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            atomic_add_float(
+                &residual_re[cell],
+                sample.weight * (sample.visibility_re * cwt.x - sample.visibility_im * cwt.y)
+            );
+            atomic_add_float(
+                &residual_im[cell],
+                sample.weight * (sample.visibility_re * cwt.y + sample.visibility_im * cwt.x)
+            );
+        }
+    }
+}
+
+kernel void wproject_grid_dirty_chunked_samples(
+    device const WProjectSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant WProjectParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const WProjectSample sample = samples[sample_index];
+    const int support = sample_support(sample);
+    const uint plane_offset =
+        sample_plane_index(sample) * params.kernel_width * params.kernel_width;
+    const uint partial_grid_index = min(
+        sample_index / max(params.partial_chunk_len, 1u),
+        params.partial_grid_count - 1u
+    );
+    const uint partial_grid_offset = partial_grid_index * params.grid_width * params.grid_height;
+    for (int iy = -support; iy <= support; ++iy) {
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+        const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
+        for (int ix = -support; ix <= support; ++ix) {
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+            const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
+            float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+            if (sample_conjugate_kernel(sample)) {
+                cwt.y = -cwt.y;
+            }
+            const uint cell = partial_grid_offset + grid_x * params.grid_height + grid_y;
+            atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+            atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            atomic_add_float(
+                &residual_re[cell],
+                sample.weight * (sample.visibility_re * cwt.x - sample.visibility_im * cwt.y)
+            );
+            atomic_add_float(
+                &residual_im[cell],
+                sample.weight * (sample.visibility_re * cwt.y + sample.visibility_im * cwt.x)
+            );
+        }
+    }
+}
+
+kernel void wproject_reduce_dirty_chunked_grids(
+    device const float *partial_psf_re [[buffer(0)]],
+    device const float *partial_psf_im [[buffer(1)]],
+    device const float *partial_residual_re [[buffer(2)]],
+    device const float *partial_residual_im [[buffer(3)]],
+    device float *psf_re [[buffer(4)]],
+    device float *psf_im [[buffer(5)]],
+    device float *residual_re [[buffer(6)]],
+    device float *residual_im [[buffer(7)]],
+    constant WProjectParams &params [[buffer(8)]],
+    uint cell [[thread_position_in_grid]]
+) {
+    const uint cell_count = params.grid_width * params.grid_height;
+    if (cell >= cell_count) {
+        return;
+    }
+
+    float sum_psf_re = 0.0f;
+    float sum_psf_im = 0.0f;
+    float sum_residual_re = 0.0f;
+    float sum_residual_im = 0.0f;
+    for (uint partial = 0; partial < params.partial_grid_count; ++partial) {
+        const uint index = partial * cell_count + cell;
+        sum_psf_re += partial_psf_re[index];
+        sum_psf_im += partial_psf_im[index];
+        sum_residual_re += partial_residual_re[index];
+        sum_residual_im += partial_residual_im[index];
+    }
+    psf_re[cell] = sum_psf_re;
+    psf_im[cell] = sum_psf_im;
+    residual_re[cell] = sum_residual_re;
+    residual_im[cell] = sum_residual_im;
 }
 "#;
 
@@ -12713,6 +13253,246 @@ fn prepare_w_project_data(
         projector,
         batches,
         raw_sample_count,
+    )
+}
+
+fn prepare_w_project_metal_data(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let thread_count = w_project_grid_threads(input_sample_count);
+    if thread_count > 1 && raw_sample_count >= 10_000 {
+        return prepare_w_project_metal_data_parallel(
+            w_project_planes,
+            max_abs_w_lambda,
+            projector,
+            batches,
+            raw_sample_count,
+            input_sample_count,
+            thread_count,
+        );
+    }
+    prepare_w_project_metal_data_serial(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        batches,
+        raw_sample_count,
+    )
+}
+
+fn prepare_w_project_metal_data_serial(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    let mut samples = Vec::with_capacity(raw_sample_count);
+    let mut skipped_samples = 0usize;
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut max_support = 0u16;
+    let mut tap_visits = 0usize;
+
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for sample_index in 0..batch.len() {
+            accumulate_w_project_metal_prepared_sample(
+                &projector,
+                batch,
+                batch_index,
+                sample_index,
+                &mut samples,
+                &mut skipped_samples,
+                &mut normalization_sumwt,
+                &mut reported_sumwt,
+                &mut gridded_samples,
+                &mut max_support,
+                &mut tap_visits,
+            )?;
+        }
+    }
+
+    finish_w_project_metal_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+        max_support,
+        tap_visits,
+    )
+}
+
+fn prepare_w_project_metal_data_parallel(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+    input_sample_count: usize,
+    thread_count: usize,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            let projector = &projector;
+            handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
+                let mut samples =
+                    Vec::<WProjectMetalSample>::with_capacity(sample_end - sample_start);
+                let mut skipped_samples = 0usize;
+                let mut normalization_sumwt = 0.0f64;
+                let mut reported_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut max_support = 0u16;
+                let mut tap_visits = 0usize;
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulate_w_project_metal_prepared_sample(
+                            projector,
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut samples,
+                            &mut skipped_samples,
+                            &mut normalization_sumwt,
+                            &mut reported_sumwt,
+                            &mut gridded_samples,
+                            &mut max_support,
+                            &mut tap_visits,
+                        )?;
+                    }
+                }
+                Ok::<_, ImagingError>(WProjectMetalPreparedLocal {
+                    sample_start,
+                    samples,
+                    skipped_samples,
+                    normalization_sumwt,
+                    reported_sumwt,
+                    gridded_samples,
+                    max_support,
+                    tap_visits,
+                    worker_elapsed: worker_started.elapsed(),
+                })
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported(
+                    "wproject Metal sample planning worker panicked".to_string(),
+                )
+            })??);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    local_results.sort_by_key(|local| local.sample_start);
+
+    let local_sample_count = local_results
+        .iter()
+        .map(|local| local.samples.len())
+        .sum::<usize>();
+    let merge_started = Instant::now();
+    let mut samples = Vec::<WProjectMetalSample>::with_capacity(local_sample_count);
+    let mut skipped_samples = 0usize;
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut max_support = 0u16;
+    let mut tap_visits = 0usize;
+    let mut boundary_merges = 0usize;
+    let mut worker_elapsed = Vec::with_capacity(local_results.len());
+    for mut local in local_results {
+        worker_elapsed.push(local.worker_elapsed);
+        skipped_samples += local.skipped_samples;
+        normalization_sumwt += local.normalization_sumwt;
+        reported_sumwt += local.reported_sumwt;
+        gridded_samples += local.gridded_samples;
+        max_support = max_support.max(local.max_support);
+        tap_visits += local.tap_visits;
+        if local.samples.is_empty() {
+            continue;
+        }
+        if let Some(last) = samples.last_mut()
+            && last.merge_weighted_visibility(local.samples[0])
+        {
+            let axis = usize::from(local.samples[0].support()) * 2 + 1;
+            tap_visits = tap_visits.saturating_sub(axis * axis);
+            boundary_merges += 1;
+            samples.extend_from_slice(&local.samples[1..]);
+            continue;
+        }
+        samples.append(&mut local.samples);
+    }
+    let merge_elapsed = merge_started.elapsed();
+    if profile::standard_mfs_profile_detail_enabled() {
+        worker_elapsed.sort();
+        let worker_min = worker_elapsed.first().copied().unwrap_or(Duration::ZERO);
+        let worker_p50 = worker_elapsed
+            .get(worker_elapsed.len().saturating_sub(1) / 2)
+            .copied()
+            .unwrap_or(Duration::ZERO);
+        let worker_max = worker_elapsed.last().copied().unwrap_or(Duration::ZERO);
+        eprintln!(
+            "wproject_metal_prepare_parallel requested_threads={} actual_threads={} chunk_len={} input_samples={} raw_samples={} local_grouped_samples={} final_grouped_samples={} boundary_merges={} final_capacity={} worker_compute_min_ms={:.3} worker_compute_p50_ms={:.3} worker_compute_max_ms={:.3} merge_ms={:.3}",
+            thread_count,
+            worker_elapsed.len(),
+            chunk_len,
+            input_sample_count,
+            raw_sample_count,
+            local_sample_count,
+            samples.len(),
+            boundary_merges,
+            samples.capacity(),
+            profile::millis(worker_min),
+            profile::millis(worker_p50),
+            profile::millis(worker_max),
+            profile::millis(merge_elapsed),
+        );
+    }
+
+    finish_w_project_metal_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+        max_support,
+        tap_visits,
     )
 }
 
@@ -12924,6 +13704,57 @@ fn accumulate_w_project_prepared_sample(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn accumulate_w_project_metal_prepared_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    samples: &mut Vec<WProjectMetalSample>,
+    skipped_samples: &mut usize,
+    normalization_sumwt: &mut f64,
+    reported_sumwt: &mut f64,
+    gridded_samples: &mut usize,
+    max_support: &mut u16,
+    tap_visits: &mut usize,
+) -> Result<(), ImagingError> {
+    let sample = RawWProjectSample {
+        batch_index,
+        sample_index,
+        u_lambda: batch.u_lambda[sample_index],
+        v_lambda: batch.v_lambda[sample_index],
+        w_lambda: batch.w_lambda[sample_index],
+        weight: batch.weight[sample_index],
+        visibility: batch.visibility[sample_index],
+        sumwt_factor: batch.sumwt_factor[sample_index],
+    };
+    if !batch.gridable[sample_index] || !raw_w_project_sample_is_valid(sample) {
+        *skipped_samples += 1;
+        return Ok(());
+    }
+    let Some(positive_plan) =
+        projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+    else {
+        *skipped_samples += 1;
+        return Ok(());
+    };
+    *normalization_sumwt += 2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
+    *reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
+    *gridded_samples += 1;
+    let metal_sample = w_project_metal_sample_from_plan(
+        projector,
+        &positive_plan,
+        sample.weight,
+        sample.visibility,
+    )?;
+    *max_support = (*max_support).max(metal_sample.support());
+    if push_w_project_metal_sample(samples, metal_sample) {
+        let axis = usize::from(metal_sample.support()) * 2 + 1;
+        *tap_visits += axis * axis;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn finish_w_project_prepared_data(
     w_project_planes: Option<usize>,
     max_abs_w_lambda: f64,
@@ -12945,6 +13776,37 @@ fn finish_w_project_prepared_data(
         projector,
         samples,
         skipped_samples,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt: reported_sumwt as f32,
+        gridded_samples,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_w_project_metal_prepared_data(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    if samples.is_empty() || normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    Ok(WProjectMetalPreparedData {
+        requested_plane_count: w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        max_support,
+        tap_visits,
         normalization_sumwt: normalization_sumwt as f32,
         reported_sumwt: reported_sumwt as f32,
         gridded_samples,
@@ -13652,6 +14514,7 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::Complex32;
     use serial_test::serial;
+    use std::time::Duration;
 
     #[cfg(target_os = "macos")]
     use super::compute_dirty_psf_and_residual_standard_metal;
@@ -13664,9 +14527,10 @@ mod tests {
         StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
         StandardMfsExecutionConfig, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
         StandardMfsPlannedWeightedSample, StandardMfsWeightedSample, VisibilityBatch,
-        VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-        add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
-        build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
+        VisibilityMetadataBatch, WProjectMetalSample, WProjectSkipReason, WTermMode,
+        WeightDensityMode, WeightingMode, add_shifted_kernel, apply_chauvenet_clipping,
+        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
+        build_multiscale_scale_masks, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
@@ -13693,6 +14557,214 @@ mod tests {
         assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
         assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    fn wproject_metal_sample_contract_stays_compact() {
+        assert_eq!(std::mem::size_of::<WProjectMetalSample>(), 20);
+        let sample = WProjectMetalSample {
+            loc: 0,
+            plane_support_offsets: 17 | (23 << 10),
+            weight: 1.0,
+            visibility_re: 0.0,
+            visibility_im: 0.0,
+        };
+        assert_eq!(sample.support(), 23);
+    }
+
+    #[test]
+    fn wproject_metal_sample_merges_adjacent_matching_plans() {
+        let mut samples = Vec::new();
+        let first = WProjectMetalSample {
+            loc: 42,
+            plane_support_offsets: 3 | (4 << 10),
+            weight: 2.0,
+            visibility_re: 1.0,
+            visibility_im: 3.0,
+        };
+        let second = WProjectMetalSample {
+            loc: 42,
+            plane_support_offsets: 3 | (4 << 10),
+            weight: 6.0,
+            visibility_re: 5.0,
+            visibility_im: 7.0,
+        };
+
+        assert!(super::push_w_project_metal_sample(&mut samples, first));
+        assert!(!super::push_w_project_metal_sample(&mut samples, second));
+
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].weight, 8.0);
+        assert_eq!(samples[0].visibility_re, 4.0);
+        assert_eq!(samples[0].visibility_im, 6.0);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn wproject_metal_dirty_grouped_weighted_samples_match_cpu_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let mut batch = point_source_visibilities_with_w_term(
+            &[
+                (12.25, -8.5, 100.0),
+                (12.25, -8.5, 100.0),
+                (-18.0, 10.0, -80.0),
+                (-18.0, 10.0, -80.0),
+            ],
+            4.0e-3,
+            [64, 64],
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5];
+        batch.sumwt_factor = batch.weight.clone();
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        let batches = vec![batch];
+
+        let cpu_prepared =
+            super::prepare_w_project_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        let metal_prepared =
+            super::prepare_w_project_metal_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        assert_eq!(cpu_prepared.gridded_samples, 4);
+        assert_eq!(metal_prepared.gridded_samples, 4);
+        assert_eq!(metal_prepared.samples.len(), 2);
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut cpu_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut cpu_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        super::accumulate_w_project_dirty_grids_streaming(
+            &batches,
+            &cpu_prepared.projector,
+            &mut cpu_psf_grid,
+            &mut cpu_residual_grid,
+        )
+        .unwrap();
+
+        let mut metal_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut metal_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        match super::accumulate_w_project_grid_metal_samples(
+            &metal_prepared.projector,
+            &metal_prepared.samples,
+            Duration::ZERO,
+            None,
+            &mut metal_psf_grid,
+            &mut metal_residual_grid,
+            super::W_PROJECT_METAL_MODE_DIRTY,
+        ) {
+            Ok(()) => {}
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("could not find a default Metal device") =>
+            {
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+
+        let max_psf_delta = metal_psf_grid
+            .iter()
+            .zip(cpu_psf_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f32, f32::max);
+        let max_residual_delta = metal_residual_grid
+            .iter()
+            .zip(cpu_residual_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f32, f32::max);
+        assert!(max_psf_delta < 1.0e-4, "max PSF delta {max_psf_delta}");
+        assert!(
+            max_residual_delta < 1.0e-4,
+            "max residual delta {max_residual_delta}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn wproject_metal_residual_grouped_weighted_samples_match_cpu_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let mut batch = point_source_visibilities_with_w_term(
+            &[
+                (12.25, -8.5, 100.0),
+                (12.25, -8.5, 100.0),
+                (-18.0, 10.0, -80.0),
+                (-18.0, 10.0, -80.0),
+            ],
+            4.0e-3,
+            [64, 64],
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5];
+        batch.sumwt_factor = batch.weight.clone();
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        let batches = vec![batch];
+
+        let cpu_prepared =
+            super::prepare_w_project_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        let metal_prepared =
+            super::prepare_w_project_metal_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        assert_eq!(metal_prepared.samples.len(), 2);
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut model_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        model_grid[(31, 29)] = Complex32::new(0.25, -0.125);
+        model_grid[(47, 42)] = Complex32::new(-0.0625, 0.5);
+
+        let mut cpu_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        super::accumulate_w_project_residual_grid_streaming(
+            &batches,
+            &cpu_prepared.projector,
+            Some(&model_grid),
+            &mut cpu_residual_grid,
+        )
+        .unwrap();
+
+        let mut metal_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut metal_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        match super::accumulate_w_project_grid_metal_samples(
+            &metal_prepared.projector,
+            &metal_prepared.samples,
+            Duration::ZERO,
+            Some(&model_grid),
+            &mut metal_psf_grid,
+            &mut metal_residual_grid,
+            super::W_PROJECT_METAL_MODE_RESIDUAL,
+        ) {
+            Ok(()) => {}
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("could not find a default Metal device") =>
+            {
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+
+        let max_psf_value = metal_psf_grid
+            .iter()
+            .map(|value| value.norm())
+            .fold(0.0f32, f32::max);
+        let max_residual_delta = metal_residual_grid
+            .iter()
+            .zip(cpu_residual_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f32, f32::max);
+        assert_eq!(max_psf_value, 0.0);
+        assert!(
+            max_residual_delta < 1.0e-4,
+            "max residual delta {max_residual_delta}"
+        );
     }
 
     #[test]
