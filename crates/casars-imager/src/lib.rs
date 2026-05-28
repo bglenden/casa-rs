@@ -12056,6 +12056,12 @@ fn prepare_plane_input_inner(
         return Ok((prepared_input, None, stage_timings));
     }
 
+    validate_retained_visibility_materialization(
+        materialization_mode_label(config, &selection),
+        active_selected_rows.len(),
+        retained_materialization_channel_count(&table_values, channel_read_range),
+    )?;
+
     let selected_row_indices = active_selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -12586,6 +12592,67 @@ fn can_finish_mfs_mosaic_without_trace(
                 .selected_rows
                 .iter()
                 .any(|row| Some(row.field_id) != selection.phase_center.field_id))
+}
+
+fn materialization_mode_label(config: &CliConfig, selection: &SelectedRowsContext) -> &'static str {
+    let inferred_mosaic = selection_uses_mosaic_projection(config, selection);
+    match (
+        config.spectral_mode,
+        config.force_standard_gridder,
+        config.w_term_mode,
+        config.deconvolver,
+    ) {
+        (SpectralMode::Mfs, false, WTermMode::None, Deconvolver::Mtmfs) => "MT-MFS",
+        (SpectralMode::Mfs, false, WTermMode::None, _) if inferred_mosaic => "mosaic MFS",
+        (SpectralMode::Mfs, _, WTermMode::None, _) => "standard MFS",
+        (SpectralMode::Mfs, _, WTermMode::Direct | WTermMode::WProject, _) => "W-projection MFS",
+        (SpectralMode::Cube, false, WTermMode::None, _) if inferred_mosaic => "mosaic cube",
+        (SpectralMode::Cube, _, _, _) => "cube",
+        (SpectralMode::Cubedata, false, WTermMode::None, _) if inferred_mosaic => "mosaic cubedata",
+        (SpectralMode::Cubedata, _, _, _) => "cubedata",
+    }
+}
+
+fn selection_uses_mosaic_projection(config: &CliConfig, selection: &SelectedRowsContext) -> bool {
+    config.use_pointing
+        || selection.phase_center.field_id.is_none()
+        || selection
+            .selected_rows
+            .iter()
+            .any(|row| Some(row.field_id) != selection.phase_center.field_id)
+}
+
+fn retained_materialization_channel_count(
+    table_values: &PreparedSelectionTableValues,
+    channel_read_range: Option<SelectedChannelReadRange>,
+) -> usize {
+    channel_read_range
+        .map(|range| range.count)
+        .unwrap_or_else(|| table_values.spw_freqs_hz.len())
+        .max(1)
+}
+
+fn validate_retained_visibility_materialization(
+    mode_label: &'static str,
+    active_row_count: usize,
+    selected_channel_count: usize,
+) -> Result<(), String> {
+    let selected_channel_count = selected_channel_count.max(1);
+    let retained_visibility_bytes = active_row_count
+        .saturating_mul(selected_channel_count)
+        .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
+    let target = standard_mfs_memory_target();
+    if retained_visibility_bytes <= target.target_bytes {
+        return Ok(());
+    }
+    Err(format!(
+        "{mode_label} would require full visibility materialization of an estimated \
+         {retained_visibility_bytes} bytes for {active_row_count} active rows and \
+         {selected_channel_count} selected channels, exceeding the active memory target \
+         {} bytes (source={}). This workload must use a bounded row-block streaming \
+         execution path; full materialization is disabled by default.",
+        target.target_bytes, target.source
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24713,6 +24780,59 @@ mod tests {
         assert!(
             error.contains("fixed-tile non-streaming prepare would retain"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn retained_visibility_materialization_guard_rejects_full_channel_stress_rows() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
+
+        let error = validate_retained_visibility_materialization("mosaic MFS", 6_060_670, 1024)
+            .expect_err("full-channel retained prepare should exceed the memory target");
+
+        assert!(
+            error.contains("mosaic MFS would require full visibility materialization"),
+            "{error}"
+        );
+        assert!(
+            error.contains("bounded row-block streaming execution path"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn retained_visibility_materialization_guard_allows_small_rows() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
+
+        validate_retained_visibility_materialization("MFS", 1024, 16)
+            .expect("small retained prepare should fit the memory target");
+    }
+
+    #[test]
+    fn retained_materialization_channel_count_uses_source_read_width() {
+        let table_values = PreparedSelectionTableValues {
+            spw_id: 0,
+            spw_freqs_hz: vec![1.0; 1024],
+            spw_widths_hz: vec![1.0; 1024],
+            freq_ref: FrequencyRef::LSRK,
+            corr_types: vec![5],
+        };
+
+        assert_eq!(
+            retained_materialization_channel_count(&table_values, None),
+            1024
+        );
+        assert_eq!(
+            retained_materialization_channel_count(
+                &table_values,
+                Some(SelectedChannelReadRange {
+                    start: 32,
+                    count: 8,
+                }),
+            ),
+            8,
         );
     }
 
