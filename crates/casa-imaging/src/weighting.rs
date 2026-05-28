@@ -900,7 +900,6 @@ fn build_density_grid(
     let sample_count = batches.iter().map(VisibilityBatch::len).sum::<usize>();
     let requested_threads = standard_mfs_worker_threads();
     let thread_count = requested_threads
-        .min(batches.len())
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
         .max(1);
     if thread_count > 1 && sample_count >= 100_000 {
@@ -977,6 +976,46 @@ fn accumulate_density_grid_serial(
     stats
 }
 
+fn accumulate_density_grid_sample_range_serial(
+    batch: &VisibilityBatch,
+    sample_range: std::ops::Range<usize>,
+    gridder: &StandardGridder,
+    mirror_hermitian: bool,
+    convention: DensityCellConvention,
+    density_grid: &mut Array2<f32>,
+    collect_stats: bool,
+) -> WeightingWorkStats {
+    let mut stats = WeightingWorkStats::default();
+    for index in sample_range {
+        let weight = batch.weight[index];
+        if !(weight.is_finite() && weight > 0.0) {
+            if collect_stats {
+                stats.skipped_invalid_weight += 1;
+            }
+            continue;
+        }
+        let hits = accumulate_density_sample_serial(
+            gridder,
+            mirror_hermitian,
+            convention,
+            density_grid,
+            batch.u_lambda[index],
+            batch.v_lambda[index],
+            weight,
+        );
+        if !collect_stats {
+            continue;
+        }
+        if hits > 0 {
+            stats.accepted_samples += 1;
+            stats.density_cell_hits += hits;
+        } else {
+            stats.skipped_out_of_grid += 1;
+        }
+    }
+    stats
+}
+
 #[inline]
 fn accumulate_density_sample_serial(
     gridder: &StandardGridder,
@@ -1012,13 +1051,24 @@ fn build_density_grid_parallel(
 ) -> Array2<f32> {
     let requested_threads = standard_mfs_worker_threads();
     let [nx, ny] = gridder.density_grid_shape();
-    let chunk_len = batches.len().div_ceil(thread_count);
+    if batches.len() == 1 {
+        return build_density_grid_parallel_single_batch(
+            &batches[0],
+            gridder,
+            mirror_hermitian,
+            convention,
+            thread_count,
+            requested_threads,
+        );
+    }
+    let actual_threads = thread_count.min(batches.len()).max(1);
+    let chunk_len = batches.len().div_ceil(actual_threads);
     let stage_started = profile::maybe_profile_now();
     let collect_stats = profile::standard_mfs_profile_detail_enabled();
-    let mut local_grids = Vec::with_capacity(thread_count);
+    let mut local_grids = Vec::with_capacity(actual_threads);
     let join_started = profile::maybe_profile_now();
     thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(thread_count);
+        let mut handles = Vec::with_capacity(actual_threads);
         for chunk in batches.chunks(chunk_len) {
             let worker_samples = visibility_sample_count(chunk);
             handles.push(scope.spawn(move || {
@@ -1063,6 +1113,113 @@ fn build_density_grid_parallel(
         chunking: "batch",
         chunk_len,
         samples_total: visibility_sample_count(batches),
+        samples_per_worker: local_grids
+            .iter()
+            .map(|(worker_samples, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: nx
+            .saturating_mul(ny)
+            .saturating_mul(std::mem::size_of::<f32>()),
+        local_grid_count: 1,
+        local_alloc_zero_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (worker_samples, stats, _, alloc_elapsed, compute_elapsed)) in
+        local_grids.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "weighting_density",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: stats.accepted_samples,
+            finite_visibility_samples: 0,
+            nonfinite_visibility_samples: 0,
+            skipped_not_gridable: 0,
+            skipped_invalid_weight: stats.skipped_invalid_weight,
+            skipped_invalid_sumwt: 0,
+            skipped_invalid_density: stats.skipped_invalid_density,
+            skipped_out_of_grid: stats.skipped_out_of_grid,
+            degrid_tap_visits: 0,
+            grid_tap_visits: 0,
+            density_cell_hits: stats.density_cell_hits,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
+    }
+    density_grid
+}
+
+fn build_density_grid_parallel_single_batch(
+    batch: &VisibilityBatch,
+    gridder: &StandardGridder,
+    mirror_hermitian: bool,
+    convention: DensityCellConvention,
+    thread_count: usize,
+    requested_threads: usize,
+) -> Array2<f32> {
+    let [nx, ny] = gridder.density_grid_shape();
+    let actual_threads = thread_count.min(batch.len()).max(1);
+    let chunk_len = batch.len().div_ceil(actual_threads);
+    let stage_started = profile::maybe_profile_now();
+    let collect_stats = profile::standard_mfs_profile_detail_enabled();
+    let mut local_grids = Vec::with_capacity(actual_threads);
+    let join_started = profile::maybe_profile_now();
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(actual_threads);
+        for start in (0..batch.len()).step_by(chunk_len) {
+            let end = (start + chunk_len).min(batch.len());
+            handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
+                let mut density_grid = Array2::<f32>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let stats = accumulate_density_grid_sample_range_serial(
+                    batch,
+                    start..end,
+                    gridder,
+                    mirror_hermitian,
+                    convention,
+                    &mut density_grid,
+                    collect_stats,
+                );
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    end - start,
+                    stats,
+                    density_grid,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().expect("density worker panicked"));
+        }
+    });
+    let join_elapsed = profile::elapsed_since(join_started);
+
+    let mut density_grid = Array2::<f32>::zeros((nx, ny));
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_grid, _, _) in &local_grids {
+        add_f32_grid(&mut density_grid, local_grid);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "weighting_density",
+        requested_threads,
+        actual_threads: local_grids.len(),
+        chunking: "sample-range",
+        chunk_len,
+        samples_total: batch.len(),
         samples_per_worker: local_grids
             .iter()
             .map(|(worker_samples, _, _, _, _)| *worker_samples)

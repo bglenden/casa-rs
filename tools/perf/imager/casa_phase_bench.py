@@ -64,6 +64,8 @@ def main() -> None:
     threshold_jy = env_str("CASA_RS_BENCH_THRESHOLD_JY")
     nsigma = env_float("CASA_RS_BENCH_NSIGMA")
     psfcutoff = env_float("CASA_RS_BENCH_PSFCUTOFF")
+    pblimit = env_float("CASA_RS_BENCH_PBLIMIT")
+    pbcor = env_str("CASA_RS_BENCH_PBCOR").lower() in ("1", "true", "yes", "on")
     cycleniter = env_int("CASA_RS_BENCH_MINOR_CYCLE_LENGTH")
     cyclefactor = env_float("CASA_RS_BENCH_CYCLEFACTOR")
     minpsffraction = env_float("CASA_RS_BENCH_MIN_PSFFRACTION")
@@ -146,6 +148,8 @@ def main() -> None:
                     savemodel="none",
                     parallel=False,
                     psfcutoff=psfcutoff,
+                    pblimit=pblimit,
+                    pbcor=pbcor,
                 )
                 if specmode == "cube":
                     parameter_kwargs.update(

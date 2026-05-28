@@ -312,6 +312,9 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
                 "deconvolver": "mtmfs",
                 "hogbom_iteration_mode": "casa",
                 "nterms": 2,
+                "pblimit": 0.17,
+                "write_pb": True,
+                "pbcor": True,
             },
         }
 
@@ -332,6 +335,9 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
         self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
         self.assertEqual("casa", plan["command"]["env"]["IMAGER_BENCH_HOGBOM_ITERATION_MODE"])
+        self.assertEqual("0.17", plan["command"]["env"]["IMAGER_BENCH_PBLIMIT"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_WRITE_PB"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PBCOR"])
         self.assertEqual("casa", plan["mode"]["hogbom_iteration_mode"])
         self.assertEqual(2, plan["mode"]["nterms"])
 

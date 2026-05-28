@@ -5,8 +5,9 @@ use casa_imaging::{Deconvolver, WTermMode, WeightingMode};
 
 use crate::{
     CleanMaskMode, CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
-    can_plan_standard_mfs_acceleration, needs_single_field_primary_beam_products,
-    standard_mfs_auto_grid_threads, standard_mfs_wproject_auto_grid_threads,
+    can_plan_mosaic_mfs_acceleration, can_plan_standard_mfs_acceleration,
+    needs_single_field_primary_beam_products, standard_mfs_auto_grid_threads,
+    standard_mfs_wproject_auto_grid_threads,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +141,7 @@ pub(crate) fn build_single_plane_execution_plan(
     let primary_beam_products = needs_single_field_primary_beam_products(config);
     let standard_mfs_eligible =
         can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
+    let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
     let one_output_channel = spectral.is_one_output_channel();
     let standard_mfs_regression_sentinel = matches!(spectral, SinglePlaneSpectralPlan::Mfs)
         && matches!(projection, SinglePlaneProjectionPlan::Standard)
@@ -160,9 +162,15 @@ pub(crate) fn build_single_plane_execution_plan(
         cpu_multi_worker: cpu_multi_worker_eligibility(
             config,
             standard_mfs_eligible,
+            mosaic_mfs_eligible,
             one_output_channel,
         ),
-        gpu_metal: gpu_metal_eligibility(config, standard_mfs_eligible, one_output_channel),
+        gpu_metal: gpu_metal_eligibility(
+            config,
+            standard_mfs_eligible,
+            mosaic_mfs_eligible,
+            one_output_channel,
+        ),
         standard_mfs_regression_sentinel,
     }
 }
@@ -193,6 +201,14 @@ fn projection_plan(config: &CliConfig, force_standard_gridder: bool) -> SinglePl
     if config.use_pointing || needs_single_field_primary_beam_products(config) {
         return SinglePlaneProjectionPlan::Mosaic;
     }
+    if !force_standard_gridder
+        && !config.force_standard_gridder
+        && (config.field_ids.as_ref().is_some_and(|ids| ids.len() > 1)
+            || config.phasecenter_field.is_some()
+            || config.phasecenter.is_some())
+    {
+        return SinglePlaneProjectionPlan::Mosaic;
+    }
     if force_standard_gridder || config.force_standard_gridder {
         SinglePlaneProjectionPlan::Standard
     } else {
@@ -220,12 +236,13 @@ fn weighting_label(weighting: &WeightingMode) -> &'static str {
 fn cpu_multi_worker_eligibility(
     config: &CliConfig,
     standard_mfs_eligible: bool,
+    mosaic_mfs_eligible: bool,
     one_output_channel: bool,
 ) -> BackendEligibility {
     if !one_output_channel {
         return BackendEligibility::ineligible("not-one-output-channel");
     }
-    if standard_mfs_eligible {
+    if standard_mfs_eligible || mosaic_mfs_eligible {
         let workers = match config.standard_mfs_acceleration {
             StandardMfsAccelerationPolicy::Cpu => 1,
             StandardMfsAccelerationPolicy::Auto
@@ -243,7 +260,9 @@ fn cpu_multi_worker_eligibility(
             }
         };
         if workers > 1 {
-            if matches!(config.w_term_mode, WTermMode::WProject) {
+            if mosaic_mfs_eligible {
+                BackendEligibility::eligible(format!("mosaic-sample-range-workers-{workers}"))
+            } else if matches!(config.w_term_mode, WTermMode::WProject) {
                 BackendEligibility::eligible(format!("wproject-streaming-workers-{workers}"))
             } else {
                 BackendEligibility::eligible(format!("standard-mfs-fixed-tile-workers-{workers}"))
@@ -267,12 +286,13 @@ fn single_plane_grid_threads_override(value: Option<&str>) -> Option<usize> {
 fn gpu_metal_eligibility(
     config: &CliConfig,
     standard_mfs_eligible: bool,
+    mosaic_mfs_eligible: bool,
     one_output_channel: bool,
 ) -> BackendEligibility {
     if !one_output_channel {
         return BackendEligibility::ineligible("not-one-output-channel");
     }
-    if !standard_mfs_eligible {
+    if !(standard_mfs_eligible || mosaic_mfs_eligible) {
         return BackendEligibility::ineligible(shared_strategy_gap_reason(config));
     }
     if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Cpu
@@ -281,7 +301,9 @@ fn gpu_metal_eligibility(
         return BackendEligibility::ineligible("standard-mfs-policy-disabled-metal");
     }
     if casa_imaging::standard_mfs_metal_device_available() {
-        if matches!(config.w_term_mode, WTermMode::WProject) {
+        if mosaic_mfs_eligible {
+            BackendEligibility::eligible("mosaic-screen-projector-metal")
+        } else if matches!(config.w_term_mode, WTermMode::WProject) {
             BackendEligibility::eligible("wproject-metal-kernel")
         } else if config.deconvolver == Deconvolver::Mtmfs {
             BackendEligibility::eligible("mtmfs-metal-sample-cache")
@@ -406,6 +428,37 @@ mod tests {
         assert_ne!(
             plan.gpu_metal.reason,
             "shared-strategy-not-yet-adapted-to-mtmfs"
+        );
+    }
+
+    #[test]
+    fn mosaic_mfs_plan_reports_sample_range_and_metal_eligibility() {
+        let config = parse([
+            "--gridder",
+            "mosaic",
+            "--field",
+            "0,1,2",
+            "--phasecenter-field",
+            "0",
+            "--deconvolver",
+            "multiscale",
+            "--scales",
+            "0,5,15",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::Mfs);
+        assert_eq!(plan.projection, SinglePlaneProjectionPlan::Mosaic);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("mosaic-sample-range-workers")
+        );
+        assert!(
+            plan.gpu_metal.reason == "mosaic-screen-projector-metal"
+                || plan.gpu_metal.reason == "metal-device-unavailable"
         );
     }
 }

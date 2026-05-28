@@ -5253,7 +5253,10 @@ fn apply_standard_mfs_runtime_plan_locked(
     ms_count: usize,
     env_lock: MutexGuard<'static, ()>,
 ) -> StandardMfsRuntimePlanGuard {
-    let eligible = can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
+    let standard_mfs_eligible =
+        can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
+    let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
+    let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
     let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
     let wproject_acceleration = matches!(config.w_term_mode, WTermMode::WProject);
     let auto_threads = if wproject_acceleration {
@@ -5274,6 +5277,13 @@ fn apply_standard_mfs_runtime_plan_locked(
         "CASA_RS_STANDARD_MFS_BACKEND",
         if wproject_acceleration {
             Some("cpu")
+        } else if mosaic_mfs_eligible {
+            match config.standard_mfs_acceleration {
+                StandardMfsAccelerationPolicy::Cpu
+                | StandardMfsAccelerationPolicy::Auto
+                | StandardMfsAccelerationPolicy::MultiCpu
+                | StandardMfsAccelerationPolicy::Metal => Some("cpu"),
+            }
         } else {
             match config.standard_mfs_acceleration {
                 StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("fixed_tile"),
@@ -5310,11 +5320,16 @@ fn apply_standard_mfs_runtime_plan_locked(
         config.standard_mfs_tile_anchor.as_deref(),
         "CASA_RS_STANDARD_MFS_TILE_ANCHOR",
         match config.standard_mfs_acceleration {
-            StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("center_quadrants"),
+            StandardMfsAccelerationPolicy::Auto => {
+                (auto_multi_cpu && !mosaic_mfs_eligible).then_some("center_quadrants")
+            }
             StandardMfsAccelerationPolicy::Cpu => None,
-            StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
+            StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal
+                if !mosaic_mfs_eligible =>
+            {
                 Some("center_quadrants")
             }
+            StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => None,
         },
         config.standard_mfs_acceleration != StandardMfsAccelerationPolicy::Auto,
     );
@@ -5405,6 +5420,24 @@ fn apply_standard_mfs_runtime_plan_locked(
         mtmfs_metal_backend,
         mtmfs_metal_input_cache,
     );
+    if mosaic_mfs_eligible {
+        eprintln!(
+            "mosaic_mfs_runtime_plan cpu_strategy={} grid_threads={} gpu_strategy={} initial_dirty_backend={} residual_backend={}",
+            if grid_threads.as_deref().unwrap_or("1") == "1" {
+                "serial"
+            } else {
+                "sample-range-full-grid"
+            },
+            grid_threads.as_deref().unwrap_or("1"),
+            if auto_metal || metal_policy {
+                "screen-projector-metal"
+            } else {
+                "disabled"
+            },
+            initial_dirty_backend.as_deref().unwrap_or("cpu"),
+            residual_backend.as_deref().unwrap_or("cpu"),
+        );
+    }
 
     guard
 }
@@ -5425,6 +5458,22 @@ fn can_plan_standard_mfs_acceleration(
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
         && !needs_single_field_primary_beam_products(config)
+}
+
+fn can_plan_mosaic_mfs_acceleration(config: &CliConfig, ms_count: usize) -> bool {
+    ms_count == 1
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.force_standard_gridder
+        && matches!(config.w_term_mode, WTermMode::None)
+        && config.save_model == SaveModelMode::None
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
+        && config.uv_taper.is_none()
+        && (config.use_pointing
+            || needs_single_field_primary_beam_products(config)
+            || config.field_ids.as_ref().is_some_and(|ids| ids.len() > 1)
+            || config.phasecenter_field.is_some()
+            || config.phasecenter.is_some())
 }
 
 fn standard_mfs_auto_grid_threads() -> usize {
@@ -11502,6 +11551,17 @@ fn prepare_plane_input_inner(
         stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let channel_read_range = if matches!(config.spectral_mode, SpectralMode::Mfs) {
+        selected_channel_read_range_for_standard_mfs(config, &table_values)?
+    } else {
+        None
+    };
 
     let fast_standard_mfs =
         !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
@@ -11533,14 +11593,32 @@ fn prepare_plane_input_inner(
         .map(|selected_row| selected_row.row_index)
         .collect::<Vec<_>>();
     let stage_started_at = Instant::now();
-    let data_column = SelectedMainDataSource::load(ms, data_column_kind, &selected_row_indices)?;
+    let data_column = match channel_read_range {
+        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+            ms,
+            data_column_kind,
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainDataSource::load(ms, data_column_kind, &selected_row_indices)?,
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/load_data_column",
         stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let flag_column = SelectedMainArrayColumn::load(ms, "FLAG", &selected_row_indices)?;
+    let flag_column = match channel_read_range {
+        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+            ms,
+            "FLAG",
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainArrayColumn::load(ms, "FLAG", &selected_row_indices)?,
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_column",
         stage_started_at.elapsed(),
@@ -11556,7 +11634,16 @@ fn prepare_plane_input_inner(
     let stage_started_at = Instant::now();
     let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
         .ok()
-        .map(|_| SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", &selected_row_indices))
+        .map(|_| match channel_read_range {
+            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                ms,
+                "WEIGHT_SPECTRUM",
+                &selected_row_indices,
+                range.start,
+                range.count,
+            ),
+            None => SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", &selected_row_indices),
+        })
         .transpose()?;
     maybe_log_frontend_progress(
         "prepare_plane_input/load_weight_spectrum_column",
@@ -11611,8 +11698,14 @@ fn prepare_plane_input_inner(
         && !config.use_pointing
         && config.phasecenter_field.is_none()
         && config.phasecenter.is_none();
+    let trace_free_mfs_mosaic = !force_trace
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !fast_standard_mfs
+        && can_finish_mfs_mosaic_without_trace(config, &selection);
     let build_trace = force_trace
-        || (matches!(config.spectral_mode, SpectralMode::Mfs) && !fast_standard_mfs)
+        || (matches!(config.spectral_mode, SpectralMode::Mfs)
+            && !fast_standard_mfs
+            && !trace_free_mfs_mosaic)
         || (config.spectral_mode.is_cube_like() && !trace_free_cube);
     let mut prepared = PreparedSelection::new(
         config,
@@ -11623,6 +11716,7 @@ fn prepare_plane_input_inner(
         selection.phase_center.clone(),
         cube_context,
         build_trace,
+        trace_free_mfs_mosaic,
     );
     if let Some(init_error) = prepared.initialization_error.take() {
         return Err(init_error);
@@ -11689,6 +11783,20 @@ fn prepare_plane_input_inner(
             PreparePlaneInputStageTimings::default(),
         ));
     }
+    if trace_free_mfs_mosaic {
+        let stage_started_at = Instant::now();
+        let prepared_input = prepared.finish_mfs_mosaic_without_trace(ms)?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/finish_mfs_mosaic_without_trace",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        return Ok((
+            prepared_input,
+            None,
+            PreparePlaneInputStageTimings::default(),
+        ));
+    }
     let selected_row_traces = selection
         .selected_rows
         .iter()
@@ -11727,6 +11835,20 @@ fn can_prepare_standard_mfs_without_trace(
             .selected_rows
             .iter()
             .all(|row| Some(row.field_id) == selection.phase_center.field_id)
+}
+
+fn can_finish_mfs_mosaic_without_trace(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+) -> bool {
+    matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.force_standard_gridder
+        && (config.use_pointing
+            || selection.phase_center.field_id.is_none()
+            || selection
+                .selected_rows
+                .iter()
+                .any(|row| Some(row.field_id) != selection.phase_center.field_id))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13258,6 +13380,7 @@ enum PreparedState {
         corr_index: usize,
         batch: VisibilityBatch,
         sample_frequency_hz: Vec<f64>,
+        mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
     },
     ExplicitCube {
         plane_stokes: PlaneStokes,
@@ -13278,6 +13401,7 @@ enum PreparedState {
         pair: (usize, usize),
         batch: VisibilityBatch,
         sample_frequency_hz: Vec<f64>,
+        mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
     },
     PairedCube {
         plane_stokes: PlaneStokes,
@@ -13297,6 +13421,42 @@ enum PreparedState {
     },
 }
 
+#[derive(Debug, Clone, Default)]
+struct MfsMosaicMetadataAccumulator {
+    sample_pointing_direction_rad: Vec<[f64; 2]>,
+    sample_spw_ids: Vec<usize>,
+    selected_antenna_ids: BTreeSet<i32>,
+}
+
+impl MfsMosaicMetadataAccumulator {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            sample_pointing_direction_rad: Vec::with_capacity(capacity),
+            sample_spw_ids: Vec::with_capacity(capacity),
+            selected_antenna_ids: BTreeSet::new(),
+        }
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.sample_pointing_direction_rad.reserve(additional);
+        self.sample_spw_ids.reserve(additional);
+    }
+
+    fn push_sample(
+        &mut self,
+        pointing_direction_rad: [f64; 2],
+        spw_id: usize,
+        antenna1_id: i32,
+        antenna2_id: i32,
+    ) {
+        self.sample_pointing_direction_rad
+            .push(pointing_direction_rad);
+        self.sample_spw_ids.push(spw_id);
+        self.selected_antenna_ids.insert(antenna1_id);
+        self.selected_antenna_ids.insert(antenna2_id);
+    }
+}
+
 fn row_imaging_transform(
     row: usize,
     row_field_id: usize,
@@ -13311,7 +13471,6 @@ fn row_imaging_transform(
             phase_shift_m: 0.0,
         });
     }
-
     let imaging_transform = if let Some(phase_center_field_id) = phase_center.field_id {
         reproject_row_uvw_m(
             row,
@@ -13591,6 +13750,7 @@ impl PreparedSelection {
                     corr_index,
                     batch: empty_visibility_batch(max_samples),
                     sample_frequency_hz: Vec::with_capacity(max_samples),
+                    mosaic_metadata: None,
                 }
             } else {
                 let (pair, transform) = derive_stokes_pair_selection(plane_stokes, corr_types)?;
@@ -13608,6 +13768,7 @@ impl PreparedSelection {
                         pair,
                         batch: empty_visibility_batch(max_samples),
                         sample_frequency_hz: Vec::with_capacity(max_samples),
+                        mosaic_metadata: None,
                     }
                 }
             }
@@ -13627,6 +13788,7 @@ impl PreparedSelection {
                     pair,
                     batch: empty_visibility_batch(max_samples),
                     sample_frequency_hz: Vec::with_capacity(max_samples),
+                    mosaic_metadata: None,
                 }
             }
         };
@@ -13673,12 +13835,16 @@ impl PreparedSelection {
                 PreparedState::ExplicitMfs {
                     batch,
                     sample_frequency_hz,
+                    mosaic_metadata,
                     ..
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
                 sample_frequency_hz.reserve(sample_capacity);
+                if let Some(metadata) = mosaic_metadata {
+                    metadata.reserve(sample_capacity);
+                }
                 if self.trace_enabled {
                     samples.reserve(sample_capacity);
                 }
@@ -13687,12 +13853,16 @@ impl PreparedSelection {
                 PreparedState::CollapsedMfs {
                     batch,
                     sample_frequency_hz,
+                    mosaic_metadata,
                     ..
                 },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
                 sample_frequency_hz.reserve(sample_capacity);
+                if let Some(metadata) = mosaic_metadata {
+                    metadata.reserve(sample_capacity);
+                }
                 if self.trace_enabled {
                     samples.reserve(sample_capacity);
                 }
@@ -13720,6 +13890,7 @@ impl PreparedSelection {
         phase_center: PhaseCenter,
         cube_context: Option<CubeSetupContext<'_>>,
         trace_enabled: bool,
+        trace_free_mfs_mosaic: bool,
     ) -> Self {
         let result = (|| -> Result<Self, String> {
             let (spw_id, polarization_id) = ddid_info
@@ -13890,6 +14061,8 @@ impl PreparedSelection {
                             corr_index,
                             batch: empty_visibility_batch(max_samples),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
+                            mosaic_metadata: trace_free_mfs_mosaic
+                                .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata => {
                             PreparedState::ExplicitCube {
@@ -13926,6 +14099,8 @@ impl PreparedSelection {
                             pair,
                             batch: empty_visibility_batch(max_samples),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
+                            mosaic_metadata: trace_free_mfs_mosaic
+                                .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
                             PreparedState::PairedCube {
@@ -13982,6 +14157,8 @@ impl PreparedSelection {
                         pair,
                         batch: empty_visibility_batch(max_samples),
                         sample_frequency_hz: Vec::with_capacity(max_samples),
+                        mosaic_metadata: trace_free_mfs_mosaic
+                            .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
                     },
                     SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
                         PreparedState::PairedCube {
@@ -14106,6 +14283,7 @@ impl PreparedSelection {
                     corr_index: 0,
                     batch: empty_visibility_batch(0),
                     sample_frequency_hz: Vec::new(),
+                    mosaic_metadata: None,
                 },
                 trace_state: PreparedTraceState::ExplicitMfs {
                     samples: Vec::new(),
@@ -14383,6 +14561,7 @@ impl PreparedSelection {
                     corr_index,
                     batch,
                     sample_frequency_hz,
+                    mosaic_metadata,
                     ..
                 },
                 PreparedTraceState::ExplicitMfs { samples },
@@ -14417,6 +14596,14 @@ impl PreparedSelection {
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
                     sample_frequency_hz.push(imaging_frequency_hz);
+                    if let Some(metadata) = mosaic_metadata {
+                        metadata.push_sample(
+                            baseline_pointing_direction_rad,
+                            selected_row.spw_id,
+                            antenna1_id,
+                            antenna2_id,
+                        );
+                    }
                     if trace_enabled {
                         samples.push(PreparedVisibilitySampleTrace {
                             row_index: selected_row.row_index,
@@ -14730,6 +14917,7 @@ impl PreparedSelection {
                     pair,
                     batch,
                     sample_frequency_hz,
+                    mosaic_metadata,
                 },
                 PreparedTraceState::PairedMfs { .. },
             ) => {
@@ -14784,6 +14972,14 @@ impl PreparedSelection {
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(visibility);
                                 sample_frequency_hz.push(imaging_frequency_hz);
+                                if let Some(metadata) = mosaic_metadata {
+                                    metadata.push_sample(
+                                        baseline_pointing_direction_rad,
+                                        selected_row.spw_id,
+                                        antenna1_id,
+                                        antenna2_id,
+                                    );
+                                }
                             }
                         }
                     }
@@ -14841,6 +15037,14 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
+                        if let Some(metadata) = mosaic_metadata {
+                            metadata.push_sample(
+                                baseline_pointing_direction_rad,
+                                selected_row.spw_id,
+                                antenna1_id,
+                                antenna2_id,
+                            );
+                        }
                     }
                 }
             }
@@ -17158,6 +17362,109 @@ impl PreparedSelection {
 
     fn finish_standard_mfs_without_trace(self) -> Result<PreparedInput, String> {
         self.finish_standard_mfs_without_trace_with_batch_size(DEFAULT_BATCH_SIZE)
+    }
+
+    fn finish_mfs_mosaic_without_trace(self, ms: &MeasurementSet) -> Result<PreparedInput, String> {
+        let PreparedSelection {
+            initialization_error: _,
+            source_channel_indices: _,
+            source_channel_frequencies_hz: _,
+            source_channel_widths_hz: _,
+            selected_frequency_range_hz,
+            selected_frequency_edge_range_hz,
+            reffreq_hz: _,
+            freq_ref,
+            cube_spectral_setup: _,
+            cube_row_spectral_cache: _,
+            cube_row_source_frequency_cache: _,
+            mfs_frequency_scale_cache: _,
+            mfs_channel_lambda_scale_cache: _,
+            mfs_output_frequency_edge_range_hz,
+            casa_cube_grid_interpolation: _,
+            casa_cube_briggs_preweighting: _,
+            use_density_batches: _,
+            use_model_interpolation_batches: _,
+            mosaic_pb_limit,
+            phase_center,
+            state,
+            trace_state: _,
+            trace_enabled: _,
+        } = self;
+        let phase_center_direction_rad = phase_center.angles_rad;
+        match state {
+            PreparedState::ExplicitMfs {
+                plane_stokes,
+                batch,
+                sample_frequency_hz,
+                mosaic_metadata: Some(mosaic_metadata),
+                ..
+            } => {
+                let selected_frequency_range_hz =
+                    frequency_range_hz(&sample_frequency_hz).unwrap_or(selected_frequency_range_hz);
+                let reffreq_hz =
+                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+                let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
+                    ms,
+                    phase_center_direction_rad,
+                    mosaic_pb_limit,
+                    &sample_frequency_hz,
+                    &mosaic_metadata,
+                )?;
+                Ok(PreparedInput::Mfs(PlaneInput {
+                    phase_center,
+                    freq_ref,
+                    reffreq_hz,
+                    selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
+                        .or(Some(selected_frequency_edge_range_hz)),
+                    plane_stokes,
+                    batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                    sample_frequency_batches_hz: chunk_sample_frequencies_hz(
+                        sample_frequency_hz,
+                        DEFAULT_BATCH_SIZE,
+                    ),
+                    gridder_mode,
+                }))
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                batch,
+                sample_frequency_hz,
+                mosaic_metadata: Some(mosaic_metadata),
+                ..
+            } => {
+                let selected_frequency_range_hz =
+                    frequency_range_hz(&sample_frequency_hz).unwrap_or(selected_frequency_range_hz);
+                let reffreq_hz =
+                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+                let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
+                    ms,
+                    phase_center_direction_rad,
+                    mosaic_pb_limit,
+                    &sample_frequency_hz,
+                    &mosaic_metadata,
+                )?;
+                Ok(PreparedInput::Mfs(PlaneInput {
+                    phase_center,
+                    freq_ref,
+                    reffreq_hz,
+                    selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
+                        .or(Some(selected_frequency_edge_range_hz)),
+                    plane_stokes,
+                    batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                    sample_frequency_batches_hz: chunk_sample_frequencies_hz(
+                        sample_frequency_hz,
+                        DEFAULT_BATCH_SIZE,
+                    ),
+                    gridder_mode,
+                }))
+            }
+            _ => Err(
+                "internal error: trace-free mosaic prepare requires MFS mosaic metadata"
+                    .to_string(),
+            ),
+        }
     }
 
     fn finish_standard_mfs_without_trace_with_batch_size(
@@ -20610,6 +20917,77 @@ fn chunk_visibility_metadata_batches(
     batches
 }
 
+fn build_mfs_mosaic_gridder_mode_without_trace(
+    ms: &MeasurementSet,
+    phase_center_direction_rad: [f64; 2],
+    mosaic_pb_limit: f32,
+    sample_frequency_hz: &[f64],
+    metadata: &MfsMosaicMetadataAccumulator,
+) -> Result<GridderMode, String> {
+    if sample_frequency_hz.len() != metadata.sample_pointing_direction_rad.len()
+        || sample_frequency_hz.len() != metadata.sample_spw_ids.len()
+    {
+        return Err(format!(
+            "internal error: MFS mosaic metadata length mismatch: frequencies={} pointings={} spws={}",
+            sample_frequency_hz.len(),
+            metadata.sample_pointing_direction_rad.len(),
+            metadata.sample_spw_ids.len()
+        ));
+    }
+    let primary_beam_model =
+        infer_primary_beam_model_for_antennas(ms, metadata.selected_antenna_ids.iter().copied())?;
+    let beam_frequencies_hz = infer_mosaic_beam_frequencies_hz_from_spw_ids(
+        ms,
+        sample_frequency_hz,
+        &metadata.sample_spw_ids,
+    )?;
+    Ok(GridderMode::Mosaic(MosaicGridderConfig {
+        phase_center_direction_rad,
+        primary_beam_model,
+        pb_limit: mosaic_pb_limit,
+        metadata_batches: chunk_mfs_mosaic_metadata_batches(
+            sample_frequency_hz,
+            &beam_frequencies_hz,
+            &metadata.sample_pointing_direction_rad,
+            primary_beam_model,
+            DEFAULT_BATCH_SIZE,
+        ),
+    }))
+}
+
+fn chunk_mfs_mosaic_metadata_batches(
+    sample_frequency_hz: &[f64],
+    beam_frequencies_hz: &[f64],
+    pointing_direction_rad: &[[f64; 2]],
+    primary_beam_model: PrimaryBeamModel,
+    max_batch_size: usize,
+) -> Vec<VisibilityMetadataBatch> {
+    debug_assert_eq!(beam_frequencies_hz.len(), sample_frequency_hz.len());
+    debug_assert_eq!(pointing_direction_rad.len(), sample_frequency_hz.len());
+    let max_batch_size = max_batch_size.max(1);
+    let mut batches = Vec::new();
+    let mut start = 0usize;
+    while start < sample_frequency_hz.len() {
+        let end = (start + max_batch_size).min(sample_frequency_hz.len());
+        batches.push(VisibilityMetadataBatch {
+            sample_frequency_hz: sample_frequency_hz[start..end].to_vec(),
+            beam_frequency_hz: beam_frequencies_hz[start..end].to_vec(),
+            primary_beam_model,
+            pointing_direction_rad: pointing_direction_rad[start..end].to_vec(),
+        });
+        start = end;
+    }
+    if batches.is_empty() {
+        batches.push(VisibilityMetadataBatch {
+            sample_frequency_hz: Vec::new(),
+            beam_frequency_hz: Vec::new(),
+            primary_beam_model,
+            pointing_direction_rad: Vec::new(),
+        });
+    }
+    batches
+}
+
 fn infer_mosaic_beam_frequencies_hz(
     ms: &MeasurementSet,
     samples: &[PreparedVisibilitySampleTrace],
@@ -20642,6 +21020,58 @@ fn infer_mosaic_beam_frequencies_hz(
             .collect::<Vec<_>>();
         let spw_beam_frequencies_hz = casa_simplepb_beam_frequencies_for_samples(
             &sample_frequencies_hz,
+            &spw_frequencies_hz,
+            &spw_widths_hz,
+        );
+        for (sample_index, beam_frequency_hz) in
+            sample_indices.into_iter().zip(spw_beam_frequencies_hz)
+        {
+            beam_frequencies_hz[sample_index] = beam_frequency_hz;
+        }
+    }
+    Ok(beam_frequencies_hz)
+}
+
+fn infer_mosaic_beam_frequencies_hz_from_spw_ids(
+    ms: &MeasurementSet,
+    sample_frequencies_hz: &[f64],
+    sample_spw_ids: &[usize],
+) -> Result<Vec<f64>, String> {
+    if sample_frequencies_hz.len() != sample_spw_ids.len() {
+        return Err(format!(
+            "internal error: mosaic sample frequency/SPW length mismatch: {} versus {}",
+            sample_frequencies_hz.len(),
+            sample_spw_ids.len()
+        ));
+    }
+    if sample_frequencies_hz.is_empty() {
+        return Ok(Vec::new());
+    }
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW for mosaic PB channels: {error}"))?;
+    let mut sample_indices_by_spw = BTreeMap::<usize, Vec<usize>>::new();
+    for (sample_index, spw_id) in sample_spw_ids.iter().copied().enumerate() {
+        sample_indices_by_spw
+            .entry(spw_id)
+            .or_default()
+            .push(sample_index);
+    }
+
+    let mut beam_frequencies_hz = vec![0.0; sample_frequencies_hz.len()];
+    for (spw_id, sample_indices) in sample_indices_by_spw {
+        let spw_frequencies_hz = spectral_window
+            .chan_freq(spw_id)
+            .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_FREQ row {spw_id}: {error}"))?;
+        let spw_widths_hz = spectral_window
+            .chan_width(spw_id)
+            .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_WIDTH row {spw_id}: {error}"))?;
+        let spw_sample_frequencies_hz = sample_indices
+            .iter()
+            .map(|sample_index| sample_frequencies_hz[*sample_index])
+            .collect::<Vec<_>>();
+        let spw_beam_frequencies_hz = casa_simplepb_beam_frequencies_for_samples(
+            &spw_sample_frequencies_hz,
             &spw_frequencies_hz,
             &spw_widths_hz,
         );
@@ -20805,6 +21235,18 @@ fn infer_primary_beam_model(
     ms: &MeasurementSet,
     samples: &[PreparedVisibilitySampleTrace],
 ) -> Result<PrimaryBeamModel, String> {
+    infer_primary_beam_model_for_antennas(
+        ms,
+        samples
+            .iter()
+            .flat_map(|sample| [sample.antenna1_id, sample.antenna2_id]),
+    )
+}
+
+fn infer_primary_beam_model_for_antennas(
+    ms: &MeasurementSet,
+    selected_antenna_ids: impl IntoIterator<Item = i32>,
+) -> Result<PrimaryBeamModel, String> {
     let observation = ms
         .observation()
         .map_err(|error| format!("open OBSERVATION: {error}"))?;
@@ -20828,9 +21270,8 @@ fn infer_primary_beam_model(
             antenna_diameters.push(diameter_m);
         }
     }
-    let selected_diameters = samples
-        .iter()
-        .flat_map(|sample| [sample.antenna1_id, sample.antenna2_id])
+    let selected_diameters = selected_antenna_ids
+        .into_iter()
         .filter_map(|antenna_id| {
             usize::try_from(antenna_id)
                 .ok()
@@ -30823,6 +31264,7 @@ deconvolver=mtmfs
                 derived_engine: &engine,
             }),
             true,
+            false,
         );
         assert!(
             prepared.initialization_error.is_none(),
@@ -32353,6 +32795,7 @@ deconvolver=mtmfs
                 derived_engine: &engine,
             }),
             true,
+            false,
         );
         assert!(
             prepared.initialization_error.is_none(),
@@ -32537,6 +32980,7 @@ deconvolver=mtmfs
                 derived_engine: &engine,
             }),
             true,
+            false,
         );
         assert!(
             prepared.initialization_error.is_none(),

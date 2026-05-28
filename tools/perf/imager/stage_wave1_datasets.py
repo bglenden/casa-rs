@@ -352,13 +352,13 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "mode": "clean" if is_clean else "dirty",
             "specmode": specmode,
             "gridder": gridder,
-            "field": "" if gridder == "mosaic" else "0",
+            "field": mosaic_field_selector(dataset) if gridder == "mosaic" else "0",
             "phasecenter_field": 0 if gridder == "mosaic" else None,
             "spw": "0",
             "channel_start": 0,
             "channel_count": channels,
             "imsize": int(dataset["shape"]["image_pixels"]),
-            "cell_arcsec": 0.1 if dataset["instrument"] == "alma" else 0.5,
+            "cell_arcsec": workload_cell_arcsec(dataset["instrument"]),
             "weighting": "briggs" if is_clean else "natural",
             "robust": 0.5,
             "deconvolver": deconvolver,
@@ -375,6 +375,15 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
         },
         "comparison": {"products": comparison_products_for_mode(is_clean, is_mtmfs)},
     }
+
+
+def mosaic_field_selector(dataset: dict[str, Any]) -> str:
+    pointing_count = int(dataset["shape"].get("pointing_count", 1))
+    return ",".join(str(field_id) for field_id in range(pointing_count))
+
+
+def workload_cell_arcsec(instrument: str) -> float:
+    return 0.08 if instrument == "alma" else 0.35
 
 
 def comparison_products_for_mode(is_clean: bool, is_mtmfs: bool) -> list[str]:

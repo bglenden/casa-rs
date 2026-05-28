@@ -66,6 +66,9 @@ gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
+pblimit="${IMAGER_BENCH_PBLIMIT:-0.2}"
+write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
+pbcor="${IMAGER_BENCH_PBCOR:-0}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
 ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
 tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
@@ -117,6 +120,32 @@ case "$phase_probe" in
     ;;
   *)
     echo "error: IMAGER_BENCH_PHASE_PROBE must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+
+case "$write_pb" in
+  1|true|TRUE|yes|YES|on|ON)
+    write_pb_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    write_pb_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_WRITE_PB must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+
+case "$pbcor" in
+  1|true|TRUE|yes|YES|on|ON)
+    pbcor_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    pbcor_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_PBCOR must be 0/1, true/false, yes/no, or on/off" >&2
     exit 2
     ;;
 esac
@@ -174,7 +203,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging phase_probe=$phase_probe_enabled"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -193,6 +222,13 @@ if [[ -n "$keep_output_root" ]]; then
 else
   rust_keep_prefix=""
   casa_keep_prefix=""
+fi
+rust_pb_flags=(--pblimit "$pblimit")
+if [[ "$write_pb_enabled" == "1" ]]; then
+  rust_pb_flags+=(--write-pb)
+fi
+if [[ "$pbcor_enabled" == "1" ]]; then
+  rust_pb_flags+=(--pbcor)
 fi
 
 echo "Rust release CLI timings (seconds):"
@@ -237,6 +273,7 @@ for run in $(seq 1 "$repeats"); do
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
+      "${rust_pb_flags[@]}" \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
       --minpsffraction "$min_psf_fraction" \
@@ -273,6 +310,7 @@ for run in $(seq 1 "$repeats"); do
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
+      "${rust_pb_flags[@]}" \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
       --minpsffraction "$min_psf_fraction" \
@@ -321,6 +359,7 @@ if [[ -n "$scales" ]]; then
     --threshold-jy "$threshold_jy" \
     --nsigma "$nsigma" \
     --psfcutoff "$psfcutoff" \
+    "${rust_pb_flags[@]}" \
     --minor-cycle-length "$minor_cycle_length" \
     --cyclefactor "$cyclefactor" \
     --minpsffraction "$min_psf_fraction" \
@@ -354,6 +393,7 @@ else
     --threshold-jy "$threshold_jy" \
     --nsigma "$nsigma" \
     --psfcutoff "$psfcutoff" \
+    "${rust_pb_flags[@]}" \
     --minor-cycle-length "$minor_cycle_length" \
     --cyclefactor "$cyclefactor" \
     --minpsffraction "$min_psf_fraction" \
@@ -387,6 +427,8 @@ gain = float(os.environ["CASA_RS_BENCH_GAIN"])
 threshold_jy = os.environ["CASA_RS_BENCH_THRESHOLD_JY"]
 nsigma = float(os.environ["CASA_RS_BENCH_NSIGMA"])
 psfcutoff = float(os.environ["CASA_RS_BENCH_PSFCUTOFF"])
+pblimit = float(os.environ["CASA_RS_BENCH_PBLIMIT"])
+pbcor = os.environ["CASA_RS_BENCH_PBCOR"].lower() in ("1", "true", "yes", "on")
 cycleniter = int(os.environ["CASA_RS_BENCH_MINOR_CYCLE_LENGTH"])
 cyclefactor = float(os.environ["CASA_RS_BENCH_CYCLEFACTOR"])
 minpsffraction = float(os.environ["CASA_RS_BENCH_MIN_PSFFRACTION"])
@@ -441,7 +483,8 @@ with tempfile.TemporaryDirectory() as td:
             restart=True,
             interactive=False,
             parallel=False,
-            pbcor=False,
+            pblimit=pblimit,
+            pbcor=pbcor,
             usemask="user",
             mask="",
             savemodel="none",
@@ -491,6 +534,8 @@ CASA_RS_BENCH_GAIN="$gain" \
 CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
 CASA_RS_BENCH_NSIGMA="$nsigma" \
 CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
+CASA_RS_BENCH_PBLIMIT="$pblimit" \
+CASA_RS_BENCH_PBCOR="$pbcor_enabled" \
 CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
 CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
 CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
@@ -531,6 +576,8 @@ if [[ "$phase_probe_enabled" == "1" ]]; then
   CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
   CASA_RS_BENCH_NSIGMA="$nsigma" \
   CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
+  CASA_RS_BENCH_PBLIMIT="$pblimit" \
+  CASA_RS_BENCH_PBCOR="$pbcor_enabled" \
   CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
   CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
   CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \

@@ -249,6 +249,9 @@ def build_plan(
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
         "IMAGER_BENCH_NSIGMA": str(float_value(imaging, "nsigma", 0.0)),
         "IMAGER_BENCH_PSFCUTOFF": str(float_value(imaging, "psfcutoff", 0.35)),
+        "IMAGER_BENCH_PBLIMIT": str(float_value(imaging, "pblimit", 0.2)),
+        "IMAGER_BENCH_WRITE_PB": boolean_env_value(imaging, "write_pb", False),
+        "IMAGER_BENCH_PBCOR": boolean_env_value(imaging, "pbcor", False),
         "IMAGER_BENCH_MINOR_CYCLE_LENGTH": str(
             int_value(imaging, "minor_cycle_length", 2)
         ),
@@ -992,6 +995,17 @@ def float_value(obj: dict[str, Any], key: str, default: float) -> float:
     if not isinstance(value, (int, float)):
         raise HarnessError(f"{key!r} must be numeric")
     return float(value)
+
+
+def boolean_env_value(obj: dict[str, Any], key: str, default: bool) -> str:
+    value = obj.get(key, default)
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in SUPPORTED_BOOLEAN_FLAGS:
+            return "1" if normalized in {"1", "true", "yes", "on"} else "0"
+    raise HarnessError(f"{key!r} must be a boolean")
 
 
 def enum_value(obj: dict[str, Any], key: str, allowed: set[str]) -> str:

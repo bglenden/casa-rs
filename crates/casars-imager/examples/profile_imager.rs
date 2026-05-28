@@ -49,6 +49,9 @@ struct Options {
     threshold_jy: f32,
     nsigma: f32,
     psf_cutoff: f32,
+    mosaic_pb_limit: f32,
+    pbcor: bool,
+    write_pb: bool,
     minor_cycle_length: usize,
     cyclefactor: f32,
     min_psf_fraction: f32,
@@ -370,9 +373,9 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         threshold_jy: options.threshold_jy,
         nsigma: options.nsigma,
         psf_cutoff: options.psf_cutoff,
-        mosaic_pb_limit: 0.1,
-        pbcor: false,
-        write_pb: false,
+        mosaic_pb_limit: options.mosaic_pb_limit,
+        pbcor: options.pbcor,
+        write_pb: options.write_pb,
         minor_cycle_length: options.minor_cycle_length,
         cyclefactor: options.cyclefactor,
         min_psf_fraction: options.min_psf_fraction,
@@ -525,6 +528,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut threshold_jy = 0.0f32;
     let mut nsigma = 0.0f32;
     let mut psf_cutoff = 0.35f32;
+    let mut mosaic_pb_limit = 0.2f32;
+    let mut pbcor = false;
+    let mut write_pb = false;
     let mut minor_cycle_length = 2usize;
     let mut cyclefactor = 1.0f32;
     let mut min_psf_fraction = 0.1f32;
@@ -593,6 +599,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--threshold-jy" => threshold_jy = parse_next(&mut args, "--threshold-jy")?,
             "--nsigma" => nsigma = parse_next(&mut args, "--nsigma")?,
             "--psfcutoff" => psf_cutoff = parse_next(&mut args, "--psfcutoff")?,
+            "--pblimit" => mosaic_pb_limit = parse_next(&mut args, "--pblimit")?,
+            "--pbcor" => {
+                pbcor = true;
+                write_pb = true;
+            }
+            "--write-pb" => write_pb = true,
             "--minor-cycle-length" => {
                 minor_cycle_length = parse_next(&mut args, "--minor-cycle-length")?
             }
@@ -666,6 +678,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         threshold_jy,
         nsigma,
         psf_cutoff,
+        mosaic_pb_limit,
+        pbcor,
+        write_pb,
         minor_cycle_length,
         cyclefactor,
         min_psf_fraction,
@@ -856,6 +871,9 @@ Options:
   --threshold-jy VALUE
   --nsigma VALUE
   --psfcutoff VALUE
+  --pblimit VALUE
+  --write-pb
+  --pbcor
   --minor-cycle-length N
   --cycleniter N
   --cyclefactor VALUE

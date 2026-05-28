@@ -1,0 +1,70 @@
+{
+  "id": "wave3-mosaic-mfs-alma-small-correctness-auto",
+  "mode_id": "mosaic-mfs-one-channel",
+  "description": "Wave 3 #280 generated ALMA mosaic MFS clean correctness row using all seven mosaic fields and the model-matched 0.08 arcsec cell.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-small",
+    "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 8,
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "multiscale",
+    "scales": [
+      0,
+      5,
+      15
+    ],
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 25,
+    "minor_cycle_length": 25,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "auto"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "wave3-mosaic-correctness-auto",
+    "storage_label": "external-ssd-wave1-small",
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "evidence_role": "correctness_probe"
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ]
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".model",
+      ".psf",
+      ".weight",
+      ".sumwt",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}

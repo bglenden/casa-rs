@@ -1820,6 +1820,13 @@ pub(crate) struct ScreenProjector {
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
+pub(crate) struct ScreenProjectorCompactKernel {
+    pub(crate) values: Vec<Complex32>,
+    pub(crate) tap_width: usize,
+    pub(crate) offset_count: usize,
+    pub(crate) offset_bias: usize,
+}
+
 impl ScreenProjector {
     pub(crate) fn support(&self) -> usize {
         self.support
@@ -1831,6 +1838,40 @@ impl ScreenProjector {
 
     pub(crate) fn normalization_sum(&self) -> Complex32 {
         self.normalization_sum
+    }
+
+    pub(crate) fn kernel_weight_width(&self) -> usize {
+        self.phased_kernel_weights.dim().0
+    }
+
+    pub(crate) fn compact_phased_kernel_weights(&self) -> ScreenProjectorCompactKernel {
+        let support = self.support as isize;
+        let tap_width = self.support * 2 + 1;
+        let offset_bias = self.sampling;
+        let offset_count = offset_bias * 2 + 1;
+        let mut values =
+            Vec::<Complex32>::with_capacity(offset_count * offset_count * tap_width * tap_width);
+        for off_y in -(offset_bias as isize)..=(offset_bias as isize) {
+            for off_x in -(offset_bias as isize)..=(offset_bias as isize) {
+                for iy in -support..=support {
+                    let kernel_y = (self.kernel_center as isize
+                        + iy * self.sampling as isize
+                        + off_y) as usize;
+                    for ix in -support..=support {
+                        let kernel_x = (self.kernel_center as isize
+                            + ix * self.sampling as isize
+                            + off_x) as usize;
+                        values.push(self.phased_kernel_weights[(kernel_x, kernel_y)]);
+                    }
+                }
+            }
+        }
+        ScreenProjectorCompactKernel {
+            values,
+            tap_width,
+            offset_count,
+            offset_bias,
+        }
     }
 
     #[allow(dead_code)]
@@ -2805,7 +2846,7 @@ pub(crate) fn hetarray_screen_conv_size_for_support(
     pb_support_pixels: usize,
 ) -> usize {
     let image_max = geometry.nx().max(geometry.ny());
-    let support = (image_max / 10).max(pb_support_pixels).min(image_max);
+    let support = image_max.max(pb_support_pixels);
     let mut conv_size = support.max(64);
     while conv_size % 2 != 0 || !is_casa_composite_len(conv_size) {
         conv_size += 1;
@@ -3214,23 +3255,23 @@ mod tests {
     }
 
     #[test]
-    fn hetarray_screen_size_follows_casa_support_scale() {
+    fn hetarray_screen_size_keeps_at_least_image_sampling() {
         let geometry = ImageGeometry {
             image_shape: [800, 800],
             cell_size_rad: [1.0e-6, 1.0e-6],
         };
-        assert_eq!(super::hetarray_screen_conv_size(geometry), 80);
+        assert_eq!(super::hetarray_screen_conv_size(geometry), 800);
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 224),
-            240
+            800
         );
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 524),
-            528
+            800
         );
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 1040),
-            800
+            1072
         );
         assert_eq!(
             super::hetarray_screen_conv_size(ImageGeometry {
