@@ -8416,6 +8416,211 @@ impl SelectedMainDataSource {
     }
 }
 
+#[derive(Debug)]
+struct PlaneInputColumnBundle {
+    data_column: SelectedMainDataSource,
+    flag_column: SelectedMainArrayColumn,
+    weight_column: SelectedMainArrayColumn,
+    weight_spectrum: Option<SelectedMainArrayColumn>,
+    selected_uvw: SelectedMainArrayColumn,
+    timings: PlaneInputColumnReadTimings,
+}
+
+#[derive(Debug, Default)]
+struct PlaneInputColumnReadTimings {
+    data_column: Duration,
+    flag_column: Duration,
+    weight_column: Duration,
+    weight_spectrum: Duration,
+    uvw_column: Duration,
+    wall: Duration,
+    parallel: bool,
+}
+
+fn load_selected_plane_input_columns(
+    ms: &MeasurementSet,
+    data_column_kind: VisibilityDataColumn,
+    selected_row_indices: &[usize],
+    channel_read_range: Option<SelectedChannelReadRange>,
+) -> Result<PlaneInputColumnBundle, String> {
+    let started = Instant::now();
+    let has_weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).is_ok();
+    if ms_imaging_read_parallel_columns_enabled() {
+        let mut timings = PlaneInputColumnReadTimings {
+            parallel: true,
+            ..Default::default()
+        };
+        let (data_column, flag_column, weight_column, weight_spectrum, selected_uvw) =
+            thread::scope(|scope| {
+                let data_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = match channel_read_range {
+                        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+                            ms,
+                            data_column_kind,
+                            selected_row_indices,
+                            range.start,
+                            range.count,
+                        )?,
+                        None => SelectedMainDataSource::load(
+                            ms,
+                            data_column_kind,
+                            selected_row_indices,
+                        )?,
+                    };
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let flag_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = match channel_read_range {
+                        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                            ms,
+                            "FLAG",
+                            selected_row_indices,
+                            range.start,
+                            range.count,
+                        )?,
+                        None => SelectedMainArrayColumn::load(ms, "FLAG", selected_row_indices)?,
+                    };
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let weight_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = SelectedMainArrayColumn::load(ms, "WEIGHT", selected_row_indices)?;
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let uvw_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = SelectedMainArrayColumn::load(ms, "UVW", selected_row_indices)?;
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let weight_spectrum_handle = has_weight_spectrum.then(|| {
+                    scope.spawn(|| {
+                        let started = Instant::now();
+                        let column = match channel_read_range {
+                            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                                ms,
+                                "WEIGHT_SPECTRUM",
+                                selected_row_indices,
+                                range.start,
+                                range.count,
+                            )?,
+                            None => SelectedMainArrayColumn::load(
+                                ms,
+                                "WEIGHT_SPECTRUM",
+                                selected_row_indices,
+                            )?,
+                        };
+                        Ok::<_, String>((column, started.elapsed()))
+                    })
+                });
+
+                let (data_column, elapsed) = data_handle
+                    .join()
+                    .map_err(|_| "DATA column reader panicked".to_string())??;
+                timings.data_column = elapsed;
+                let (flag_column, elapsed) = flag_handle
+                    .join()
+                    .map_err(|_| "FLAG column reader panicked".to_string())??;
+                timings.flag_column = elapsed;
+                let (weight_column, elapsed) = weight_handle
+                    .join()
+                    .map_err(|_| "WEIGHT column reader panicked".to_string())??;
+                timings.weight_column = elapsed;
+                let weight_spectrum = match weight_spectrum_handle {
+                    Some(handle) => {
+                        let (column, elapsed) = handle
+                            .join()
+                            .map_err(|_| "WEIGHT_SPECTRUM column reader panicked".to_string())??;
+                        timings.weight_spectrum = elapsed;
+                        Some(column)
+                    }
+                    None => None,
+                };
+                let (selected_uvw, elapsed) = uvw_handle
+                    .join()
+                    .map_err(|_| "UVW column reader panicked".to_string())??;
+                timings.uvw_column = elapsed;
+                Ok::<_, String>((
+                    data_column,
+                    flag_column,
+                    weight_column,
+                    weight_spectrum,
+                    selected_uvw,
+                ))
+            })?;
+        timings.wall = started.elapsed();
+        return Ok(PlaneInputColumnBundle {
+            data_column,
+            flag_column,
+            weight_column,
+            weight_spectrum,
+            selected_uvw,
+            timings,
+        });
+    }
+
+    let mut timings = PlaneInputColumnReadTimings::default();
+    let stage_started_at = Instant::now();
+    let data_column = match channel_read_range {
+        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+            ms,
+            data_column_kind,
+            selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainDataSource::load(ms, data_column_kind, selected_row_indices)?,
+    };
+    timings.data_column = stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let flag_column = match channel_read_range {
+        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+            ms,
+            "FLAG",
+            selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainArrayColumn::load(ms, "FLAG", selected_row_indices)?,
+    };
+    timings.flag_column = stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let weight_column = SelectedMainArrayColumn::load(ms, "WEIGHT", selected_row_indices)?;
+    timings.weight_column = stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let weight_spectrum = has_weight_spectrum
+        .then(|| match channel_read_range {
+            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                ms,
+                "WEIGHT_SPECTRUM",
+                selected_row_indices,
+                range.start,
+                range.count,
+            ),
+            None => SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", selected_row_indices),
+        })
+        .transpose()?;
+    timings.weight_spectrum = stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", selected_row_indices)?;
+    timings.uvw_column = stage_started_at.elapsed();
+    timings.wall = started.elapsed();
+
+    Ok(PlaneInputColumnBundle {
+        data_column,
+        flag_column,
+        weight_column,
+        weight_spectrum,
+        selected_uvw,
+        timings,
+    })
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct MsImagingChannelAxis {
@@ -9681,6 +9886,29 @@ fn build_prepared_geometry_rows(
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
+    build_prepared_geometry_rows_from_selected_uvw(
+        ms,
+        selected_rows,
+        phase_center,
+        columns,
+        derived_engine,
+        reprojection_mode,
+        &selected_uvw,
+        geometry_started_at,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_prepared_geometry_rows_from_selected_uvw(
+    ms: &MeasurementSet,
+    selected_rows: &[SelectedMainRow],
+    phase_center: &PhaseCenter,
+    columns: &PreparedGeometryColumnCache,
+    derived_engine: Option<&MsCalEngine>,
+    reprojection_mode: UvwReprojectionMode,
+    selected_uvw: &SelectedMainArrayColumn,
+    geometry_started_at: Instant,
+) -> Result<Vec<PreparedGeometryRow>, String> {
     let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
@@ -11715,73 +11943,73 @@ fn prepare_plane_input_inner(
         .map(|selected_row| selected_row.row_index)
         .collect::<Vec<_>>();
     let stage_started_at = Instant::now();
-    let data_column = match channel_read_range {
-        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
-            ms,
-            data_column_kind,
-            &selected_row_indices,
-            range.start,
-            range.count,
-        )?,
-        None => SelectedMainDataSource::load(ms, data_column_kind, &selected_row_indices)?,
-    };
+    let PlaneInputColumnBundle {
+        data_column,
+        flag_column,
+        weight_column,
+        weight_spectrum,
+        selected_uvw,
+        timings: column_timings,
+    } = load_selected_plane_input_columns(
+        ms,
+        data_column_kind,
+        &selected_row_indices,
+        channel_read_range,
+    )?;
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "plane_input_column_read parallel={} wall_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} uvw_ms={:.3}",
+            column_timings.parallel,
+            duration_ms(column_timings.wall),
+            duration_ms(column_timings.data_column),
+            duration_ms(column_timings.flag_column),
+            duration_ms(column_timings.weight_column),
+            duration_ms(column_timings.weight_spectrum),
+            duration_ms(column_timings.uvw_column),
+        );
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/load_data_column",
-        stage_started_at.elapsed(),
+        column_timings.data_column,
         prepare_started_at.elapsed(),
     );
-    let stage_started_at = Instant::now();
-    let flag_column = match channel_read_range {
-        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-            ms,
-            "FLAG",
-            &selected_row_indices,
-            range.start,
-            range.count,
-        )?,
-        None => SelectedMainArrayColumn::load(ms, "FLAG", &selected_row_indices)?,
-    };
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_column",
-        stage_started_at.elapsed(),
+        column_timings.flag_column,
         prepare_started_at.elapsed(),
     );
-    let stage_started_at = Instant::now();
-    let weight_column = SelectedMainArrayColumn::load(ms, "WEIGHT", &selected_row_indices)?;
     maybe_log_frontend_progress(
         "prepare_plane_input/load_weight_column",
-        stage_started_at.elapsed(),
+        column_timings.weight_column,
         prepare_started_at.elapsed(),
     );
-    let stage_started_at = Instant::now();
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
-        .ok()
-        .map(|_| match channel_read_range {
-            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                ms,
-                "WEIGHT_SPECTRUM",
-                &selected_row_indices,
-                range.start,
-                range.count,
-            ),
-            None => SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", &selected_row_indices),
-        })
-        .transpose()?;
     maybe_log_frontend_progress(
         "prepare_plane_input/load_weight_spectrum_column",
+        column_timings.weight_spectrum,
+        prepare_started_at.elapsed(),
+    );
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_uvw_column",
+        column_timings.uvw_column,
+        prepare_started_at.elapsed(),
+    );
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_column_bundle",
         stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
 
     let stage_started_at = Instant::now();
     let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
-    let geometry_rows = build_prepared_geometry_rows(
+    let geometry_rows = build_prepared_geometry_rows_from_selected_uvw(
         ms,
         &active_selected_rows,
         &selection.phase_center,
         &geometry_columns,
         derived_engine.as_ref(),
         uvw_reprojection_mode_for_selection(config, &selection),
+        &selected_uvw,
+        stage_started_at,
     )?;
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows",
