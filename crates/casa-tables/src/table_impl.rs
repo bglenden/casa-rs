@@ -767,6 +767,88 @@ impl TableImpl {
         Ok(Some(values))
     }
 
+    pub(crate) fn scalar_columns_owned(
+        &self,
+        columns: &[&str],
+    ) -> Result<Option<std::collections::HashMap<String, Vec<Option<ScalarValue>>>>, TableError>
+    {
+        if columns.is_empty() {
+            return Ok(Some(std::collections::HashMap::new()));
+        }
+
+        if let Some(loaded) = self.loaded_rows.get() {
+            let mut values_by_column = std::collections::HashMap::with_capacity(columns.len());
+            for &column in columns {
+                let values = loaded
+                    .rows
+                    .iter()
+                    .map(|row| match row.get(column) {
+                        Some(Value::Scalar(scalar)) => Some(scalar.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                values_by_column.insert(column.to_string(), values);
+            }
+            return Ok(Some(values_by_column));
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+
+        let mut profiler = StorageProfiler::start(format!(
+            "table_impl::load_scalar_columns_now path={} columns={columns:?}",
+            source.path.display()
+        ));
+        let requested = columns
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let snapshot = CompositeStorage
+            .load_named_scalar_columns_with_row_hint(
+                &source.path,
+                &requested,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load scalar columns {:?} for table {}: {err}",
+                    columns,
+                    source.path.display()
+                ))
+            })?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "storage_load_complete",
+                Some(format!(
+                    "row_count_hint={} requested_columns={} loaded_columns={}",
+                    source.row_count_hint,
+                    columns.len(),
+                    snapshot.columns.len(),
+                )),
+            );
+        }
+        let mut values_by_column = snapshot.columns;
+        for &column in columns {
+            let values = values_by_column
+                .entry(column.to_string())
+                .or_insert_with(|| vec![None; source.row_count_hint]);
+            if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
+                for (&row_index, value) in overrides {
+                    if let Some(cell) = values.get_mut(row_index) {
+                        *cell = Some(value.clone());
+                    }
+                }
+            }
+            if let Some(cached_column) = self.loaded_scalar_columns.get(column)
+                && cached_column.get().is_none()
+            {
+                let _ = cached_column.set(values.clone());
+            }
+        }
+        Ok(Some(values_by_column))
+    }
+
     pub(crate) fn scalar_cells_owned_for_rows(
         &self,
         row_indices: &[usize],

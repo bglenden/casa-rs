@@ -1061,6 +1061,38 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn load_named_scalar_columns_with_row_hint(
+        &self,
+        table_path: &Path,
+        columns: &HashSet<&str>,
+        row_hint: Option<u64>,
+    ) -> Result<ScalarColumnSnapshot, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => self.load_plain_scalar_columns_filtered(
+                table_path,
+                &table_dat,
+                row_hint,
+                Some(columns),
+            ),
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
+                let mut scalar_columns = scalar_columns_from_snapshot(&snapshot);
+                scalar_columns
+                    .columns
+                    .retain(|name, _| columns.contains(name.as_str()));
+                Ok(scalar_columns)
+            }
+        }
+    }
+
     pub(crate) fn load_scalar_column_with_row_hint(
         &self,
         table_path: &Path,
@@ -1700,7 +1732,7 @@ impl CompositeStorage {
                         &data_path,
                         &dm.data,
                         &table_dat.table_desc.columns,
-                        &bound_cols,
+                        &all_bound_cols,
                         nrrow,
                         &mut columns,
                     )?;
@@ -1713,7 +1745,7 @@ impl CompositeStorage {
                         &data_path,
                         &dm.data,
                         &table_dat.table_desc.columns,
-                        &bound_cols,
+                        &all_bound_cols,
                         nrrow,
                         &mut columns,
                     )?;
@@ -1732,6 +1764,10 @@ impl CompositeStorage {
                     return Err(StorageError::UnsupportedDataManager(other.to_string()));
                 }
             }
+        }
+
+        if let Some(requested) = requested_columns {
+            columns.retain(|name, _| requested.contains(name.as_str()));
         }
 
         Ok(ScalarColumnSnapshot {

@@ -9171,8 +9171,9 @@ struct PreparedGeometryColumnCache {
 impl PreparedGeometryColumnCache {
     fn load(ms: &MeasurementSet, use_pointing: bool) -> Result<Self, String> {
         let geometry_started_at = Instant::now();
-        let antenna1 = load_i32_main_column_owned(ms, "ANTENNA1")?;
-        let antenna2 = load_i32_main_column_owned(ms, "ANTENNA2")?;
+        let antenna_columns = load_main_scalar_columns_owned(ms, &["ANTENNA1", "ANTENNA2"])?;
+        let antenna1 = required_i32_main_column_from_map(ms, &antenna_columns, "ANTENNA1")?;
+        let antenna2 = required_i32_main_column_from_map(ms, &antenna_columns, "ANTENNA2")?;
         maybe_log_frontend_progress(
             "prepare_plane_input/build_prepared_geometry_rows/load_antenna_ids",
             geometry_started_at.elapsed(),
@@ -9289,8 +9290,19 @@ fn select_main_rows(
         || config.w_term_mode != WTermMode::None
         || selection_may_require_phase_reprojection(config)
         || needs_pointing_times;
-    let field_values = load_i32_main_column_owned(ms, "FIELD_ID")?;
-    let ddid_values = load_i32_main_column_owned(ms, "DATA_DESC_ID")?;
+    let mut selection_scalar_names = vec![
+        "FIELD_ID",
+        "DATA_DESC_ID",
+        "FLAG_ROW",
+        "ANTENNA1",
+        "ANTENNA2",
+    ];
+    if needs_row_times {
+        selection_scalar_names.push("TIME");
+    }
+    let selection_scalars = load_main_scalar_columns_owned(ms, &selection_scalar_names)?;
+    let field_values = required_i32_main_column_from_map(ms, &selection_scalars, "FIELD_ID")?;
+    let ddid_values = required_i32_main_column_from_map(ms, &selection_scalars, "DATA_DESC_ID")?;
     maybe_log_frontend_progress(
         "prepare_plane_input/select_main_rows/load_scalar_columns",
         select_started_at.elapsed(),
@@ -9298,7 +9310,11 @@ fn select_main_rows(
     );
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
     let time_values = if needs_row_times {
-        Some(load_f64_main_column_owned(ms, "TIME")?)
+        Some(required_f64_main_column_from_map(
+            ms,
+            &selection_scalars,
+            "TIME",
+        )?)
     } else {
         None
     };
@@ -9435,28 +9451,82 @@ fn load_i32_main_column_owned(
         .collect()
 }
 
-fn load_f64_main_column_owned(
+fn load_main_scalar_columns_owned(
     ms: &MeasurementSet,
-    column_name: &'static str,
-) -> Result<Vec<f64>, String> {
+    column_names: &[&'static str],
+) -> Result<HashMap<String, Vec<Option<ScalarValue>>>, String> {
     let values = ms
         .main_table()
-        .column_accessor(column_name)
-        .and_then(|column| column.scalar_cells_owned())
-        .map_err(|error| format!("load {column_name} column: {error}"))?;
-    if values.len() != ms.main_table().row_count() {
+        .scalar_columns_owned(column_names)
+        .map_err(|error| format!("load scalar columns {column_names:?}: {error}"))?;
+    let row_count = ms.main_table().row_count();
+    for &column_name in column_names {
+        let Some(column_values) = values.get(column_name) else {
+            return Err(format!("scalar column {column_name} was not loaded"));
+        };
+        if column_values.len() != row_count {
+            return Err(format!(
+                "{column_name} length {} does not match MAIN row count {}",
+                column_values.len(),
+                row_count
+            ));
+        }
+    }
+    Ok(values)
+}
+
+fn required_i32_main_column_from_map(
+    ms: &MeasurementSet,
+    columns: &HashMap<String, Vec<Option<ScalarValue>>>,
+    column_name: &'static str,
+) -> Result<Vec<i32>, String> {
+    let row_count = ms.main_table().row_count();
+    let values = columns
+        .get(column_name)
+        .ok_or_else(|| format!("scalar column {column_name} was not loaded"))?;
+    if values.len() != row_count {
         return Err(format!(
             "{column_name} length {} does not match MAIN row count {}",
             values.len(),
-            ms.main_table().row_count()
+            row_count
         ));
     }
     values
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(row, value)| match value {
-            Some(ScalarValue::Float64(value)) => Ok(value),
-            Some(ScalarValue::Float32(value)) => Ok(value as f64),
+            Some(ScalarValue::Int32(value)) => Ok(*value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Int32, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
+}
+
+fn required_f64_main_column_from_map(
+    ms: &MeasurementSet,
+    columns: &HashMap<String, Vec<Option<ScalarValue>>>,
+    column_name: &'static str,
+) -> Result<Vec<f64>, String> {
+    let row_count = ms.main_table().row_count();
+    let values = columns
+        .get(column_name)
+        .ok_or_else(|| format!("scalar column {column_name} was not loaded"))?;
+    if values.len() != row_count {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            row_count
+        ));
+    }
+    values
+        .iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Float64(value)) => Ok(*value),
+            Some(ScalarValue::Float32(value)) => Ok(*value as f64),
             Some(other) => Err(format!(
                 "{column_name} row {row} must be Float64, found {:?}",
                 other.primitive_type()
