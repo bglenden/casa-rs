@@ -28,11 +28,12 @@ use casa_imaging::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest, CubeImagingDiagnostics,
     CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
-    ImageGeometry, ImagingDiagnostics, ImagingError, ImagingRequest, ImagingResult,
-    ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
-    PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
-    StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
+    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry,
+    ImagingDiagnostics, ImagingError, ImagingRequest, ImagingResult, ImagingStageTimings,
+    MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes,
+    PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode, StandardMfsDirtyAccumulator,
+    StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
     StandardMfsMetalGroupedInputCachePrefill, StandardMfsModelPredictor,
     StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBuilder,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
@@ -40,10 +41,10 @@ use casa_imaging::{
     StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
     StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization,
     StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-    estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
-    run_cube, run_imaging, run_imaging_owned_with_execution_config, run_mtmfs,
-    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
+    VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
+    WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
+    restore_standard_mfs_model, run_cube, run_imaging, run_imaging_owned_with_execution_config,
+    run_mtmfs, run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
     run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
@@ -7267,19 +7268,42 @@ fn merge_gridder_modes(
                     "multi-MS mosaic inputs resolved to incompatible gridder metadata".to_string(),
                 );
             }
-            if left.metadata_batches.len() != left_batch_count {
+            let left_uses_grouped = !left.grouped_metadata_batches.is_empty();
+            let right_uses_grouped = !right.grouped_metadata_batches.is_empty();
+            if left_uses_grouped != right_uses_grouped {
+                return Err(
+                    "multi-MS mosaic inputs resolved to mixed expanded and grouped metadata"
+                        .to_string(),
+                );
+            }
+            let left_metadata_count = if left_uses_grouped {
+                left.grouped_metadata_batches.len()
+            } else {
+                left.metadata_batches.len()
+            };
+            let right_metadata_count = if right_uses_grouped {
+                right.grouped_metadata_batches.len()
+            } else {
+                right.metadata_batches.len()
+            };
+            if left_metadata_count != left_batch_count {
                 return Err(format!(
                     "left mosaic metadata batch count {} does not match visibility batch count {left_batch_count}",
-                    left.metadata_batches.len()
+                    left_metadata_count
                 ));
             }
-            if right.metadata_batches.len() != right_batch_count {
+            if right_metadata_count != right_batch_count {
                 return Err(format!(
                     "right mosaic metadata batch count {} does not match visibility batch count {right_batch_count}",
-                    right.metadata_batches.len()
+                    right_metadata_count
                 ));
             }
-            left.metadata_batches.extend(right.metadata_batches);
+            if left_uses_grouped {
+                left.grouped_metadata_batches
+                    .extend(right.grouped_metadata_batches);
+            } else {
+                left.metadata_batches.extend(right.metadata_batches);
+            }
             Ok(GridderMode::Mosaic(left))
         }
         (GridderMode::Standard, GridderMode::Mosaic(_))
@@ -13526,22 +13550,24 @@ enum PreparedState {
 
 #[derive(Debug, Clone, Default)]
 struct MfsMosaicMetadataAccumulator {
-    sample_pointing_direction_rad: Vec<[f64; 2]>,
+    sample_pointing_ids: Vec<usize>,
     sample_spw_ids: Vec<usize>,
+    pointing_direction_by_id: BTreeMap<usize, [f64; 2]>,
     selected_antenna_ids: BTreeSet<i32>,
 }
 
 impl MfsMosaicMetadataAccumulator {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            sample_pointing_direction_rad: Vec::with_capacity(capacity),
+            sample_pointing_ids: Vec::with_capacity(capacity),
             sample_spw_ids: Vec::with_capacity(capacity),
+            pointing_direction_by_id: BTreeMap::new(),
             selected_antenna_ids: BTreeSet::new(),
         }
     }
 
     fn reserve(&mut self, additional: usize) {
-        self.sample_pointing_direction_rad.reserve(additional);
+        self.sample_pointing_ids.reserve(additional);
         self.sample_spw_ids.reserve(additional);
     }
 
@@ -13550,9 +13576,11 @@ impl MfsMosaicMetadataAccumulator {
         self.selected_antenna_ids.insert(antenna2_id);
     }
 
-    fn push_sample(&mut self, pointing_direction_rad: [f64; 2], spw_id: usize) {
-        self.sample_pointing_direction_rad
-            .push(pointing_direction_rad);
+    fn push_sample(&mut self, pointing_id: usize, pointing_direction_rad: [f64; 2], spw_id: usize) {
+        self.pointing_direction_by_id
+            .entry(pointing_id)
+            .or_insert(pointing_direction_rad);
+        self.sample_pointing_ids.push(pointing_id);
         self.sample_spw_ids.push(spw_id);
     }
 }
@@ -14702,7 +14730,11 @@ impl PreparedSelection {
                             metadata.record_selected_antennas(antenna1_id, antenna2_id);
                             recorded_mosaic_antennas = true;
                         }
-                        metadata.push_sample(baseline_pointing_direction_rad, selected_row.spw_id);
+                        metadata.push_sample(
+                            selected_row.field_id,
+                            baseline_pointing_direction_rad,
+                            selected_row.spw_id,
+                        );
                     }
                     if trace_enabled {
                         samples.push(PreparedVisibilitySampleTrace {
@@ -15079,6 +15111,7 @@ impl PreparedSelection {
                                         recorded_mosaic_antennas = true;
                                     }
                                     metadata.push_sample(
+                                        selected_row.field_id,
                                         baseline_pointing_direction_rad,
                                         selected_row.spw_id,
                                     );
@@ -15145,8 +15178,11 @@ impl PreparedSelection {
                                 metadata.record_selected_antennas(antenna1_id, antenna2_id);
                                 recorded_mosaic_antennas = true;
                             }
-                            metadata
-                                .push_sample(baseline_pointing_direction_rad, selected_row.spw_id);
+                            metadata.push_sample(
+                                selected_row.field_id,
+                                baseline_pointing_direction_rad,
+                                selected_row.spw_id,
+                            );
                         }
                     }
                 }
@@ -21026,13 +21062,13 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
     metadata: &MfsMosaicMetadataAccumulator,
     max_batch_size: usize,
 ) -> Result<GridderMode, String> {
-    if sample_frequency_hz.len() != metadata.sample_pointing_direction_rad.len()
+    if sample_frequency_hz.len() != metadata.sample_pointing_ids.len()
         || sample_frequency_hz.len() != metadata.sample_spw_ids.len()
     {
         return Err(format!(
             "internal error: MFS mosaic metadata length mismatch: frequencies={} pointings={} spws={}",
             sample_frequency_hz.len(),
-            metadata.sample_pointing_direction_rad.len(),
+            metadata.sample_pointing_ids.len(),
             metadata.sample_spw_ids.len()
         ));
     }
@@ -21056,16 +21092,18 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
         sample_frequency_hz,
         &metadata.sample_spw_ids,
         &beam_frequency_by_spw_freq,
-        &metadata.sample_pointing_direction_rad,
+        &metadata.sample_pointing_ids,
+        &metadata.pointing_direction_by_id,
         primary_beam_model,
         max_batch_size,
-    );
+    )?;
     let chunk_elapsed = chunk_started.map_or(Duration::ZERO, |started| started.elapsed());
     if profile_detail {
         eprintln!(
-            "mosaic_prepare_gridder_mode samples={} selected_antennas={} beam_frequency_lookup_entries={} max_batch_size={} metadata_batches={} primary_beam_ms={:.3} beam_frequency_ms={:.3} metadata_chunk_ms={:.3} total_ms={:.3}",
+            "mosaic_prepare_gridder_mode samples={} selected_antennas={} unique_pointings={} beam_frequency_lookup_entries={} max_batch_size={} metadata_batches={} primary_beam_ms={:.3} beam_frequency_ms={:.3} metadata_chunk_ms={:.3} total_ms={:.3}",
             sample_frequency_hz.len(),
             metadata.selected_antenna_ids.len(),
+            metadata.pointing_direction_by_id.len(),
             beam_frequency_by_spw_freq.len(),
             max_batch_size,
             metadata_batches.len(),
@@ -21082,7 +21120,8 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
         phase_center_direction_rad,
         primary_beam_model,
         pb_limit: mosaic_pb_limit,
-        metadata_batches,
+        metadata_batches: Vec::new(),
+        grouped_metadata_batches: metadata_batches,
     }))
 }
 
@@ -21090,44 +21129,75 @@ fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
     sample_frequency_hz: &[f64],
     sample_spw_ids: &[usize],
     beam_frequency_by_spw_freq: &HashMap<(usize, u64), f64>,
-    pointing_direction_rad: &[[f64; 2]],
+    sample_pointing_ids: &[usize],
+    pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
     primary_beam_model: PrimaryBeamModel,
     max_batch_size: usize,
-) -> Vec<VisibilityMetadataBatch> {
+) -> Result<Vec<GroupedVisibilityMetadataBatch>, String> {
     debug_assert_eq!(sample_spw_ids.len(), sample_frequency_hz.len());
-    debug_assert_eq!(pointing_direction_rad.len(), sample_frequency_hz.len());
+    debug_assert_eq!(sample_pointing_ids.len(), sample_frequency_hz.len());
     let max_batch_size = max_batch_size.max(1);
     let mut batches = Vec::new();
     let mut start = 0usize;
     while start < sample_frequency_hz.len() {
         let end = (start + max_batch_size).min(sample_frequency_hz.len());
-        let mut beam_frequency_hz = Vec::with_capacity(end - start);
+        let mut group_index_by_key = BTreeMap::<(usize, u64), usize>::new();
+        let mut groups = Vec::<GroupedVisibilityMetadata>::new();
         for sample_index in start..end {
             let sample_frequency_hz = sample_frequency_hz[sample_index];
-            beam_frequency_hz.push(
-                beam_frequency_by_spw_freq
-                    .get(&(sample_spw_ids[sample_index], sample_frequency_hz.to_bits()))
-                    .copied()
-                    .unwrap_or(sample_frequency_hz),
-            );
+            let beam_frequency_hz = beam_frequency_by_spw_freq
+                .get(&(sample_spw_ids[sample_index], sample_frequency_hz.to_bits()))
+                .copied()
+                .unwrap_or(sample_frequency_hz);
+            let pointing_id = sample_pointing_ids[sample_index];
+            let pointing_direction_rad = pointing_direction_by_id
+                .get(&pointing_id)
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "internal error: missing mosaic pointing direction for id {pointing_id}"
+                    )
+                })?;
+            let key = (pointing_id, beam_frequency_hz.to_bits());
+            let group_index = match group_index_by_key.get(&key).copied() {
+                Some(index) => index,
+                None => {
+                    let index = groups.len();
+                    group_index_by_key.insert(key, index);
+                    groups.push(GroupedVisibilityMetadata {
+                        beam_frequency_hz,
+                        primary_beam_model,
+                        pointing_direction_rad,
+                        sample_ranges: Vec::new(),
+                    });
+                    index
+                }
+            };
+            let local_index = sample_index - start;
+            let group = &mut groups[group_index];
+            match group.sample_ranges.last_mut() {
+                Some(range) if range.end == local_index => {
+                    range.end += 1;
+                }
+                _ => group.sample_ranges.push(VisibilitySampleRange {
+                    start: local_index,
+                    end: local_index + 1,
+                }),
+            }
         }
-        batches.push(VisibilityMetadataBatch {
-            sample_frequency_hz: sample_frequency_hz[start..end].to_vec(),
-            beam_frequency_hz,
-            primary_beam_model,
-            pointing_direction_rad: pointing_direction_rad[start..end].to_vec(),
+        batches.push(GroupedVisibilityMetadataBatch {
+            sample_count: end - start,
+            groups,
         });
         start = end;
     }
     if batches.is_empty() {
-        batches.push(VisibilityMetadataBatch {
-            sample_frequency_hz: Vec::new(),
-            beam_frequency_hz: Vec::new(),
-            primary_beam_model,
-            pointing_direction_rad: Vec::new(),
+        batches.push(GroupedVisibilityMetadataBatch {
+            sample_count: 0,
+            groups: Vec::new(),
         });
     }
-    batches
+    Ok(batches)
 }
 
 fn infer_mosaic_beam_frequencies_hz(
@@ -21534,6 +21604,7 @@ fn infer_mfs_gridder_mode(
             primary_beam_model,
             DEFAULT_BATCH_SIZE,
         ),
+        grouped_metadata_batches: Vec::new(),
     }))
 }
 
@@ -23905,6 +23976,7 @@ mod tests {
                 },
                 pointing_direction_rad: vec![[1.0, 0.5]],
             }],
+            grouped_metadata_batches: Vec::new(),
         })
     }
 

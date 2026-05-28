@@ -115,19 +115,19 @@ pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest, CubeImagingDiagnostics,
     CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
-    ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingStageTimings,
-    MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch,
-    PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
-    ResidualSampleDiagnostics, RestoringBeamMode, StandardMfsPairCollapseTransform,
-    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics,
-    WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode,
-    WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
+    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry,
+    ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingStageTimings, MinorCycleTrace,
+    MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch, PlaneStokes,
+    PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics, ResidualSampleDiagnostics,
+    RestoringBeamMode, StandardMfsPairCollapseTransform, StandardMfsPlannedWeightedSample,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsRoutableSample, StandardMfsRoutedSample,
+    StandardMfsRoutedSampleRunBlock, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsRoutedVisibilityRunBlock,
+    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
+    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
+    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
 
 /// FFT-backed predictor for a standard MFS component model.
@@ -4407,11 +4407,20 @@ fn run_mosaic_dirty_imaging(
     let trace_enabled = mosaic_trace_enabled();
     let cell_trace_targets = mosaic_cell_trace_targets();
     let group_started = Instant::now();
-    let groups = build_mosaic_pointing_groups(
-        &weighted_batches,
-        &config.metadata_batches,
-        trace_enabled && !cell_trace_targets.is_empty(),
-    )?;
+    let retain_sample_frequency_hz = trace_enabled && !cell_trace_targets.is_empty();
+    let groups = if config.grouped_metadata_batches.is_empty() {
+        build_mosaic_pointing_groups(
+            &weighted_batches,
+            &config.metadata_batches,
+            retain_sample_frequency_hz,
+        )?
+    } else {
+        build_mosaic_pointing_groups_from_grouped(
+            &weighted_batches,
+            &config.grouped_metadata_batches,
+            retain_sample_frequency_hz,
+        )?
+    };
     let group_elapsed = group_started.elapsed();
     if groups.is_empty() {
         return Err(ImagingError::NoUsableSamples);
@@ -4425,11 +4434,12 @@ fn run_mosaic_dirty_imaging(
                 .collect::<Vec<_>>(),
         );
         eprintln!(
-            "mosaic_dirty_setup weighting_ms={:.3} build_groups_ms={:.3} input_batches={} metadata_batches={} groups={} grouped_samples={} group_samples_min={} group_samples_p50={} group_samples_max={}",
+            "mosaic_dirty_setup weighting_ms={:.3} build_groups_ms={:.3} input_batches={} metadata_batches={} grouped_metadata_batches={} groups={} grouped_samples={} group_samples_min={} group_samples_p50={} group_samples_max={}",
             profile::millis(weighting_elapsed),
             profile::millis(group_elapsed),
             weighted_batches.len(),
             config.metadata_batches.len(),
+            config.grouped_metadata_batches.len(),
             groups.len(),
             group_samples,
             group_min,
@@ -5131,6 +5141,72 @@ fn build_mosaic_pointing_groups(
                 entry
                     .sample_frequency_hz
                     .push(metadata.sample_frequency_hz[sample_index]);
+            }
+        }
+    }
+    Ok(groups)
+}
+
+fn build_mosaic_pointing_groups_from_grouped(
+    batches: &[VisibilityBatch],
+    metadata_batches: &[GroupedVisibilityMetadataBatch],
+    retain_sample_frequency_hz: bool,
+) -> Result<Vec<MosaicPointingGroup>, ImagingError> {
+    if retain_sample_frequency_hz {
+        return Err(ImagingError::InvalidRequest(
+            "grouped mosaic metadata does not carry per-sample frequencies needed for cell trace"
+                .to_string(),
+        ));
+    }
+    let mut group_indices = BTreeMap::<(u64, u64, u64, (u8, u64, u64)), usize>::new();
+    let mut groups = Vec::<MosaicPointingGroup>::new();
+    for (batch, metadata) in batches.iter().zip(metadata_batches.iter()) {
+        for metadata_group in &metadata.groups {
+            let pointing_direction_rad = metadata_group.pointing_direction_rad;
+            let frequency_hz = metadata_group.beam_frequency_hz;
+            let key = (
+                pointing_direction_rad[0].to_bits(),
+                pointing_direction_rad[1].to_bits(),
+                frequency_hz.to_bits(),
+                primary_beam_model_key(metadata_group.primary_beam_model),
+            );
+            let group_index = match group_indices.get(&key).copied() {
+                Some(index) => index,
+                None => {
+                    let index = groups.len();
+                    group_indices.insert(key, index);
+                    groups.push(MosaicPointingGroup {
+                        pointing_direction_rad,
+                        frequency_hz,
+                        primary_beam_model: metadata_group.primary_beam_model,
+                        batch: VisibilityBatch {
+                            u_lambda: Vec::new(),
+                            v_lambda: Vec::new(),
+                            w_lambda: Vec::new(),
+                            weight: Vec::new(),
+                            sumwt_factor: Vec::new(),
+                            gridable: Vec::new(),
+                            visibility: Vec::new(),
+                        },
+                        sample_frequency_hz: Vec::new(),
+                    });
+                    index
+                }
+            };
+            let entry = &mut groups[group_index];
+            for range in &metadata_group.sample_ranges {
+                for sample_index in range.start..range.end {
+                    entry.batch.u_lambda.push(batch.u_lambda[sample_index]);
+                    entry.batch.v_lambda.push(batch.v_lambda[sample_index]);
+                    entry.batch.w_lambda.push(batch.w_lambda[sample_index]);
+                    entry.batch.weight.push(batch.weight[sample_index]);
+                    entry
+                        .batch
+                        .sumwt_factor
+                        .push(batch.sumwt_factor[sample_index]);
+                    entry.batch.gridable.push(batch.gridable[sample_index]);
+                    entry.batch.visibility.push(batch.visibility[sample_index]);
+                }
             }
         }
     }
@@ -5853,31 +5929,51 @@ fn apply_mosaic_weighting(
     if request.weighting == WeightingMode::Natural {
         return apply_weighting(request, gridder);
     }
-    if request.visibility_batches.len() != config.metadata_batches.len() {
-        return Err(ImagingError::InvalidRequest(
-            "mosaic metadata batch count does not match visibility batch count".to_string(),
-        ));
-    }
-
     let mut grouped = BTreeMap::<(u64, u64), Vec<(usize, usize)>>::new();
-    for (batch_index, (batch, metadata)) in request
-        .visibility_batches
-        .iter()
-        .zip(config.metadata_batches.iter())
-        .enumerate()
-    {
-        if batch.len() != metadata.pointing_direction_rad.len() {
+    if !config.grouped_metadata_batches.is_empty() {
+        if request.visibility_batches.len() != config.grouped_metadata_batches.len() {
             return Err(ImagingError::InvalidRequest(
-                "mosaic metadata sample count does not match visibility batch sample count"
+                "grouped mosaic metadata batch count does not match visibility batch count"
                     .to_string(),
             ));
         }
-        for sample_index in 0..batch.len() {
-            let pointing = metadata.pointing_direction_rad[sample_index];
-            grouped
-                .entry((pointing[0].to_bits(), pointing[1].to_bits()))
-                .or_default()
-                .push((batch_index, sample_index));
+        for (batch_index, metadata) in config.grouped_metadata_batches.iter().enumerate() {
+            for group in &metadata.groups {
+                let pointing = group.pointing_direction_rad;
+                let entry = grouped
+                    .entry((pointing[0].to_bits(), pointing[1].to_bits()))
+                    .or_default();
+                for range in &group.sample_ranges {
+                    entry.extend(
+                        (range.start..range.end).map(|sample_index| (batch_index, sample_index)),
+                    );
+                }
+            }
+        }
+    } else if request.visibility_batches.len() != config.metadata_batches.len() {
+        return Err(ImagingError::InvalidRequest(
+            "mosaic metadata batch count does not match visibility batch count".to_string(),
+        ));
+    } else {
+        for (batch_index, (batch, metadata)) in request
+            .visibility_batches
+            .iter()
+            .zip(config.metadata_batches.iter())
+            .enumerate()
+        {
+            if batch.len() != metadata.pointing_direction_rad.len() {
+                return Err(ImagingError::InvalidRequest(
+                    "mosaic metadata sample count does not match visibility batch sample count"
+                        .to_string(),
+                ));
+            }
+            for sample_index in 0..batch.len() {
+                let pointing = metadata.pointing_direction_rad[sample_index];
+                grouped
+                    .entry((pointing[0].to_bits(), pointing[1].to_bits()))
+                    .or_default()
+                    .push((batch_index, sample_index));
+            }
         }
     }
 
@@ -17779,6 +17875,7 @@ mod tests {
             },
             pb_limit: 0.1,
             metadata_batches: vec![metadata],
+            grouped_metadata_batches: Vec::new(),
         });
         let request = |niter| ImagingRequest {
             geometry,
