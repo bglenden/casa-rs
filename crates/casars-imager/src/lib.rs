@@ -982,7 +982,7 @@ pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> R
         &polarization,
     )?;
     let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
-    let flag_row = load_bool_main_column_owned(&ms, "FLAG_ROW")?;
+    let flag_row = selection.flag_row.as_slice();
     let active_selected_rows = selection
         .selected_rows
         .iter()
@@ -1164,7 +1164,7 @@ pub fn export_standard_mfs_metal_fixture_from_config(
             "Metal fixture export requires trace-free standard-MFS preparation".to_string(),
         );
     }
-    let flag_row = load_bool_main_column_owned(&ms, "FLAG_ROW")?;
+    let flag_row = selection.flag_row.as_slice();
     let active_selected_rows = selection
         .selected_rows
         .iter()
@@ -1232,7 +1232,7 @@ pub fn export_standard_mfs_metal_fixture_from_config(
         data_column,
         &selection,
         &table_values,
-        &flag_row,
+        flag_row,
         first_rows,
         derived_engine.as_ref(),
         channel_read_range,
@@ -1266,7 +1266,7 @@ pub fn export_standard_mfs_metal_fixture_from_config(
             data_column,
             &selection,
             &table_values,
-            &flag_row,
+            flag_row,
             &active_selected_rows[first_rows_len..],
             derived_engine.as_ref(),
             channel_read_range,
@@ -2559,8 +2559,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         );
     }
 
-    let stage_started_at = Instant::now();
-    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    let flag_row = selection.flag_row.as_slice();
     let active_selected_rows = selection
         .selected_rows
         .iter()
@@ -2578,7 +2577,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     }
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_row_column",
-        stage_started_at.elapsed(),
+        Duration::ZERO,
         prepare_started_at.elapsed(),
     );
 
@@ -2644,7 +2643,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         data_column,
         &selection,
         &table_values,
-        &flag_row,
+        flag_row,
         first_rows,
         derived_engine.as_ref(),
         channel_read_range,
@@ -2808,7 +2807,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 data_column,
                 &selection,
                 &table_values,
-                &flag_row,
+                flag_row,
                 &active_selected_rows[first_rows_len..],
                 derived_engine.as_ref(),
                 channel_read_range,
@@ -3192,7 +3191,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 data_column,
                 &selection,
                 &table_values,
-                &flag_row,
+                flag_row,
                 stream_rows,
                 derived_engine.as_ref(),
                 channel_read_range,
@@ -3339,11 +3338,10 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         );
     }
 
-    let stage_started_at = Instant::now();
-    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    let flag_row = selection.flag_row.as_slice();
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_row_column",
-        stage_started_at.elapsed(),
+        Duration::ZERO,
         prepare_started_at.elapsed(),
     );
     let active_selected_rows = selection
@@ -3483,7 +3481,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             config,
             &table_values,
             &selection.phase_center,
-            &flag_row,
+            flag_row,
             processing_buffer,
             derived_engine.as_ref(),
             &mut accumulate_timings,
@@ -9545,6 +9543,7 @@ struct SelectedRowsContext {
     reference_row_time_mjd_sec: Option<f64>,
     time_bounds_mjd_sec: Option<[f64; 2]>,
     needs_geometry_engine: bool,
+    flag_row: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -9619,13 +9618,14 @@ fn select_main_rows(
         || config.w_term_mode != WTermMode::None
         || selection_may_require_phase_reprojection(config)
         || needs_pointing_times;
-    let mut selection_scalar_names = vec!["FIELD_ID", "DATA_DESC_ID"];
+    let mut selection_scalar_names = vec!["FIELD_ID", "DATA_DESC_ID", "FLAG_ROW"];
     if needs_row_times {
         selection_scalar_names.push("TIME");
     }
     let selection_scalars = load_main_scalar_columns_owned(ms, &selection_scalar_names)?;
     let field_values = required_i32_main_column_from_map(ms, &selection_scalars, "FIELD_ID")?;
     let ddid_values = required_i32_main_column_from_map(ms, &selection_scalars, "DATA_DESC_ID")?;
+    let flag_row = required_bool_main_column_from_map(ms, &selection_scalars, "FLAG_ROW")?;
     maybe_log_frontend_progress(
         "prepare_plane_input/select_main_rows/load_scalar_columns",
         select_started_at.elapsed(),
@@ -9741,6 +9741,7 @@ fn select_main_rows(
         reference_row_time_mjd_sec,
         time_bounds_mjd_sec,
         needs_geometry_engine,
+        flag_row,
     })
 }
 
@@ -9828,6 +9829,36 @@ fn required_i32_main_column_from_map(
         .collect()
 }
 
+fn required_bool_main_column_from_map(
+    ms: &MeasurementSet,
+    columns: &HashMap<String, Vec<Option<ScalarValue>>>,
+    column_name: &'static str,
+) -> Result<Vec<bool>, String> {
+    let row_count = ms.main_table().row_count();
+    let values = columns
+        .get(column_name)
+        .ok_or_else(|| format!("scalar column {column_name} was not loaded"))?;
+    if values.len() != row_count {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            row_count
+        ));
+    }
+    values
+        .iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Bool(value)) => Ok(*value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Bool, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
+}
+
 fn load_selected_i32_main_column(
     ms: &MeasurementSet,
     column_name: &'static str,
@@ -9883,36 +9914,6 @@ fn required_f64_main_column_from_map(
             Some(ScalarValue::Float32(value)) => Ok(*value as f64),
             Some(other) => Err(format!(
                 "{column_name} row {row} must be Float64, found {:?}",
-                other.primitive_type()
-            )),
-            None => Err(format!("{column_name} row {row} is missing")),
-        })
-        .collect()
-}
-
-fn load_bool_main_column_owned(
-    ms: &MeasurementSet,
-    column_name: &'static str,
-) -> Result<Vec<bool>, String> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)
-        .and_then(|column| column.scalar_cells_owned())
-        .map_err(|error| format!("load {column_name} column: {error}"))?;
-    if values.len() != ms.main_table().row_count() {
-        return Err(format!(
-            "{column_name} length {} does not match MAIN row count {}",
-            values.len(),
-            ms.main_table().row_count()
-        ));
-    }
-    values
-        .into_iter()
-        .enumerate()
-        .map(|(row, value)| match value {
-            Some(ScalarValue::Bool(value)) => Ok(value),
-            Some(other) => Err(format!(
-                "{column_name} row {row} must be Bool, found {:?}",
                 other.primitive_type()
             )),
             None => Err(format!("{column_name} row {row} is missing")),
@@ -11932,11 +11933,10 @@ fn prepare_plane_input_inner(
         prepare_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
-    let stage_started_at = Instant::now();
-    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    let flag_row = selection.flag_row.as_slice();
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_row_column",
-        stage_started_at.elapsed(),
+        Duration::ZERO,
         prepare_started_at.elapsed(),
     );
     let rows_skipped_by_flag_row = selection
@@ -12043,7 +12043,7 @@ fn prepare_plane_input_inner(
             &ddid_info,
             &spectral_window,
             &polarization,
-            &flag_row,
+            flag_row,
             &active_selected_rows,
             derived_engine.as_ref(),
             prepare_started_at,
@@ -12211,7 +12211,7 @@ fn prepare_plane_input_inner(
             &geometry_rows,
             &data_column,
             &flag_column,
-            &flag_row,
+            flag_row,
             &weight_column,
             weight_spectrum.as_ref(),
             derived_engine.as_ref(),
@@ -12254,7 +12254,7 @@ fn prepare_plane_input_inner(
             row,
             &data_column,
             &flag_column,
-            &flag_row,
+            flag_row,
             &weight_column,
             weight_spectrum.as_ref(),
             derived_engine.as_ref(),
