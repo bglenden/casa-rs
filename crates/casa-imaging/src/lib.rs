@@ -4355,7 +4355,7 @@ struct MosaicMetalParams {
 
 const MOSAIC_METAL_MODE_DIRTY: u32 = 1;
 const MOSAIC_METAL_MODE_RESIDUAL: u32 = 2;
-const MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES: usize = 128 * 1024 * 1024;
+const MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES: usize = 64 * 1024 * 1024;
 const MOSAIC_METAL_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 25_000;
 
 fn mosaic_metal_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
@@ -16712,11 +16712,16 @@ mod tests {
 
     #[test]
     fn mosaic_metal_partial_grid_count_limits_temporary_grid_residency() {
+        let medium_cell_count = 1024 * 1024;
         let cell_count = 1280 * 1280;
 
         assert_eq!(
+            super::mosaic_metal_partial_grid_count(939_214, medium_cell_count),
+            4
+        );
+        assert_eq!(
             super::mosaic_metal_partial_grid_count(1_005_222, cell_count),
-            5
+            2
         );
         assert_eq!(super::mosaic_metal_partial_grid_count(10, cell_count), 1);
     }
