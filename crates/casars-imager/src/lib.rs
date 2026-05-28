@@ -44,13 +44,15 @@ use casa_imaging::{
     VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
     WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
     restore_standard_mfs_model, run_cube, run_imaging, run_imaging_owned_with_execution_config,
-    run_mtmfs, run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
+    run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
     run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan, trace_weighting,
 };
+use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock};
 use casa_ms::MeasurementSet;
 #[cfg(test)]
 use casa_ms::columns::time_columns::TimeColumn;
@@ -2117,6 +2119,15 @@ fn run_single_image_from_config_with_gridder_override(
             total_start,
         );
     }
+    if can_run_mfs_mosaic_from_single_plane_stream(config, force_standard_gridder, ms_paths.len()) {
+        return run_mfs_mosaic_from_single_plane_stream_open_ms(
+            &ms,
+            config,
+            data_column,
+            open_measurement_set,
+            total_start,
+        );
+    }
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
         let (prepared, trace) =
@@ -2499,6 +2510,408 @@ fn can_run_standard_mfs_dirty_streaming(
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
         && !needs_single_field_primary_beam_products(config)
         && (config.dirty_only || config.niter == 0)
+}
+
+fn can_run_mfs_mosaic_from_single_plane_stream(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && !force_standard_gridder
+        && can_plan_mosaic_mfs_acceleration(config, ms_count)
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask != CleanMaskMode::AutoMultiThreshold
+        && config.uv_taper.is_none()
+        && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
+        && matches!(config.w_term_mode, WTermMode::None)
+        && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
+        && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
+}
+
+const SINGLE_PLANE_STREAMING_MAX_SOURCE_ROWS: usize = 4096;
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_mfs_mosaic_source_row_block_plane(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    _table_values: &PreparedSelectionTableValues,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    row_chunk: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<PlaneInput, String> {
+    let stage_started_at = Instant::now();
+    let processing_buffer = get_ms_values_into_processing_buffer(
+        ms,
+        data_column_kind,
+        selection,
+        row_chunk,
+        derived_engine,
+        uvw_reprojection_mode_for_selection(config, selection),
+        channel_read_range,
+        geometry_columns,
+        prepare_started_at,
+        None,
+    )?;
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let mut prepared = PreparedSelection::new(
+        config,
+        selection.selected_ddid,
+        ddid_info,
+        spectral_window,
+        polarization,
+        selection.phase_center.clone(),
+        None,
+        false,
+        true,
+    );
+    if let Some(init_error) = prepared.initialization_error.take() {
+        return Err(init_error);
+    }
+    for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
+        prepared.accumulate_row(
+            row,
+            &processing_buffer.data_column,
+            &processing_buffer.flag_column,
+            flag_row,
+            &processing_buffer.weight_column,
+            processing_buffer.weight_spectrum.as_ref(),
+            derived_engine,
+            row_slot,
+            accumulate_timings,
+        )?;
+    }
+    let prepared_input = prepared.finish_mfs_mosaic_without_trace(ms)?;
+    prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
+    let PreparedInput::Mfs(plane) = prepared_input else {
+        return Err("internal error: MFS mosaic source block produced cube input".to_string());
+    };
+    Ok(plane)
+}
+
+fn run_mfs_mosaic_from_single_plane_stream_open_ms(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: if config.dirty_only { 0 } else { config.niter },
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        config.use_mask == CleanMaskMode::User,
+    )?;
+
+    let prepare_started_at = Instant::now();
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(ms, config, &ddid_info)?;
+    if !can_finish_mfs_mosaic_without_trace(config, &selection) {
+        return Err(
+            "internal error: streaming mosaic MFS selected for an ineligible row selection"
+                .to_string(),
+        );
+    }
+    let flag_row = selection.flag_row.as_slice();
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active MFS mosaic rows".to_string());
+    }
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let derived_engine =
+        if selection.needs_geometry_engine || selected_freq_ref != FrequencyRef::LSRK {
+            Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+        } else {
+            None
+        };
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let selected_channel_count =
+        selected_channel_count_estimate_from_table_values(config, &table_values);
+    let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
+    let strategy =
+        standard_mfs_memory_plan(config, selected_channel_count, active_selected_rows.len());
+    validate_standard_mfs_memory_plan(&strategy)?;
+    let row_block_rows = strategy
+        .row_block_rows
+        .clamp(1, SINGLE_PLANE_STREAMING_MAX_SOURCE_ROWS);
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_selected_rows.len(),
+        0,
+        0,
+        "mfs_mosaic_single_plane_stream",
+    );
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mfs_mosaic_single_plane_stream rows_total={} selected_channels={} row_block_rows={} row_block_rows_cap={}",
+            active_selected_rows.len(),
+            selected_channel_count,
+            row_block_rows,
+            SINGLE_PLANE_STREAMING_MAX_SOURCE_ROWS,
+        );
+    }
+
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+
+    let first_rows_len = row_block_rows.min(active_selected_rows.len());
+    let first_plane = prepare_mfs_mosaic_source_row_block_plane(
+        ms,
+        config,
+        data_column,
+        &selection,
+        &table_values,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        flag_row,
+        &active_selected_rows[..first_rows_len],
+        derived_engine.as_ref(),
+        channel_read_range,
+        &geometry_columns,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+    )?;
+    let phase_center = first_plane.phase_center.clone();
+    let prepared_freq_ref = first_plane.freq_ref;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: Vec::new(),
+        gridder_mode: first_plane.gridder_mode.clone(),
+        plane_stokes: first_plane.plane_stokes,
+        weighting: config.weighting,
+        reffreq_hz: first_plane.reffreq_hz,
+        selected_frequency_range_hz: first_plane.selected_frequency_range_hz,
+        deconvolver: config.deconvolver,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        clean,
+        clean_mask: clean_mask.clone(),
+        initial_model: None,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+    let prepare_plane_time = prepare_started_at.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+
+    let run_started_at = Instant::now();
+    let mut replay_invocation = 0usize;
+    let result = run_mosaic_mfs_from_single_plane_stream(request, |consumer| {
+        let replay_started = Instant::now();
+        let ordinal = replay_invocation;
+        replay_invocation += 1;
+        let mut block_count = 0usize;
+        let mut sample_count = 0usize;
+        for row_chunk in active_selected_rows.chunks(row_block_rows) {
+            let plane = prepare_mfs_mosaic_source_row_block_plane(
+                ms,
+                config,
+                data_column,
+                &selection,
+                &table_values,
+                &ddid_info,
+                &spectral_window,
+                &polarization,
+                flag_row,
+                row_chunk,
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+            )
+            .map_err(ImagingError::InvalidRequest)?;
+            let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
+                return Err(ImagingError::InvalidRequest(
+                    "streaming MFS mosaic row block produced standard gridder metadata"
+                        .to_string(),
+                ));
+            };
+            for (batch, metadata) in plane
+                .batches
+                .into_iter()
+                .zip(mosaic.grouped_metadata_batches.into_iter())
+            {
+                sample_count += batch.len();
+                consumer(SinglePlaneVisibilityBlock {
+                    visibility: batch,
+                    gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
+                })?;
+            }
+            block_count += 1;
+            if frontend_progress_enabled() {
+                eprintln!(
+                    "frontend stage=run_imaging/mfs_mosaic_stream_replay invocation={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                    ordinal,
+                    (block_count * row_block_rows).min(active_selected_rows.len()),
+                    active_selected_rows.len(),
+                    block_count,
+                    sample_count,
+                    replay_started.elapsed().as_secs_f64(),
+                );
+            }
+        }
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mfs_mosaic_stream_replay invocation={} blocks={} samples={} elapsed_ms={:.3}",
+                ordinal,
+                block_count,
+                sample_count,
+                duration_ms(replay_started.elapsed()),
+            );
+        }
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
+    let run_imaging_time = run_started_at.elapsed();
+    accumulate_timings.log(prepare_started_at.elapsed());
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let run_result = RunProducts::Mfs(result);
+    let stage_start = Instant::now();
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: prepared_freq_ref,
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        spectral_delta_hz: run_result.spectral_delta_hz(),
+        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+    });
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    let effective_clean_mask = clean_mask.map(EffectiveCleanMask::Plane);
+    write_products(
+        config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
 }
 
 fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
@@ -12055,6 +12468,36 @@ fn prepare_plane_input_inner(
         );
         return Ok((prepared_input, None, stage_timings));
     }
+    let trace_free_mfs_mosaic = !force_trace
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !fast_standard_mfs
+        && can_finish_mfs_mosaic_without_trace(config, &selection);
+    if trace_free_mfs_mosaic {
+        let stage_started_at = Instant::now();
+        let (prepared_input, stage_timings) =
+            prepare_mfs_mosaic_without_trace_in_source_row_blocks(
+                ms,
+                config,
+                data_column_kind,
+                &selection,
+                &table_values,
+                &ddid_info,
+                &spectral_window,
+                &polarization,
+                flag_row,
+                &active_selected_rows,
+                derived_engine.as_ref(),
+                channel_read_range,
+                prepare_started_at,
+                rows_skipped_by_flag_row,
+            )?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/finish_mfs_mosaic_source_row_blocks",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        return Ok((prepared_input, None, stage_timings));
+    }
 
     validate_retained_visibility_materialization(
         materialization_mode_label(config, &selection),
@@ -12197,10 +12640,6 @@ fn prepare_plane_input_inner(
         && !config.use_pointing
         && config.phasecenter_field.is_none()
         && config.phasecenter.is_none();
-    let trace_free_mfs_mosaic = !force_trace
-        && matches!(config.spectral_mode, SpectralMode::Mfs)
-        && !fast_standard_mfs
-        && can_finish_mfs_mosaic_without_trace(config, &selection);
     let build_trace = force_trace
         || (matches!(config.spectral_mode, SpectralMode::Mfs)
             && !fast_standard_mfs
@@ -12510,6 +12949,206 @@ fn prepare_mfs_mosaic_without_trace_in_row_chunks(
         prepare_started_at.elapsed(),
     );
     Ok(Some(prepared_input))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    prepare_started_at: Instant,
+    rows_skipped_by_flag_row: usize,
+) -> Result<(PreparedInput, PreparePlaneInputStageTimings), String> {
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active MFS mosaic rows".to_string());
+    }
+    let selected_channel_count =
+        retained_materialization_channel_count(table_values, channel_read_range);
+    let memory_plan =
+        standard_mfs_memory_plan(config, selected_channel_count, active_selected_rows.len());
+    let row_block_rows = memory_plan.row_block_rows.max(1);
+    validate_retained_mfs_mosaic_imaging_samples(
+        active_selected_rows.len(),
+        selected_channel_count,
+    )?;
+    log_standard_mfs_memory_plan_actual(
+        &memory_plan,
+        active_selected_rows.len(),
+        0,
+        0,
+        "mfs_mosaic_source_row_blocks",
+    );
+
+    let geometry_columns_started = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns_elapsed = geometry_columns_started.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input/mfs_mosaic_source_row_blocks/load_geometry_columns",
+        geometry_columns_elapsed,
+        prepare_started_at.elapsed(),
+    );
+
+    let mut inputs = Vec::<PreparedInput>::new();
+    let mut stage_timings = PreparePlaneInputStageTimings::default();
+    let mut combined_accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row,
+        ..Default::default()
+    };
+    let mut combined_read_timings = GetMsValuesTimings::default();
+    let mut rows_done = 0usize;
+    let mut collapsed_samples = 0usize;
+    let started = Instant::now();
+
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let mut read_timings = GetMsValuesTimings::default();
+        let processing_buffer = get_ms_values_into_processing_buffer(
+            ms,
+            data_column_kind,
+            selection,
+            row_chunk,
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
+            &geometry_columns,
+            prepare_started_at,
+            Some(&mut read_timings),
+        )?;
+        let read_elapsed = stage_started_at.elapsed();
+        stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
+        combined_read_timings += read_timings;
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = combined_accumulate_timings;
+        let mut prepared = PreparedSelection::new(
+            config,
+            selection.selected_ddid,
+            ddid_info,
+            spectral_window,
+            polarization,
+            selection.phase_center.clone(),
+            None,
+            false,
+            true,
+        );
+        if let Some(init_error) = prepared.initialization_error.take() {
+            return Err(init_error);
+        }
+        for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
+            prepared.accumulate_row(
+                row,
+                &processing_buffer.data_column,
+                &processing_buffer.flag_column,
+                flag_row,
+                &processing_buffer.weight_column,
+                processing_buffer.weight_spectrum.as_ref(),
+                derived_engine,
+                row_slot,
+                &mut combined_accumulate_timings,
+            )?;
+        }
+        let prepared_input = prepared.finish_mfs_mosaic_without_trace(ms)?;
+        collapsed_samples += prepared_input_visibility_sample_count(&prepared_input);
+        inputs.push(prepared_input);
+        let prepare_elapsed = stage_started_at.elapsed();
+        stage_timings.prepare_processing_buffer += prepare_elapsed;
+        rows_done += row_chunk.len();
+
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/mfs_mosaic_source_row_block rows_done={} rows_total={} source_channels={} collapsed_samples={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
+                rows_done,
+                active_selected_rows.len(),
+                selected_channel_count,
+                collapsed_samples,
+                duration_ms(read_elapsed),
+                duration_ms(prepare_elapsed),
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+        if standard_mfs_profile_detail_enabled() {
+            let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
+            eprintln!(
+                "mfs_mosaic_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
+                row_chunk.len(),
+                selected_channel_count,
+                duration_ms(read_timings.data_column),
+                duration_ms(read_timings.flag_column),
+                duration_ms(read_timings.weight_column),
+                duration_ms(read_timings.weight_spectrum),
+                duration_ms(read_timings.geometry_rows),
+                duration_ms(block_timings.adapt_samples),
+                duration_ms(read_elapsed),
+                duration_ms(prepare_elapsed),
+            );
+        }
+    }
+
+    let merge_started = Instant::now();
+    let prepared_input = merge_mfs_mosaic_prepared_inputs(inputs)?;
+    let merge_elapsed = merge_started.elapsed();
+    combined_accumulate_timings.log(prepare_started_at.elapsed());
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "mfs_mosaic_source_row_blocks rows_total={} row_block_rows={} row_block_rows_source={} source_channels={} collapsed_samples={} blocks={} geometry_columns_ms={:.3} read_wall_ms={:.3} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} read_geometry_ms={:.3} prepare_ms={:.3} merge_ms={:.3} wall_ms={:.3}",
+            active_selected_rows.len(),
+            row_block_rows,
+            memory_plan.row_block_rows_source,
+            selected_channel_count,
+            collapsed_samples,
+            active_selected_rows.len().div_ceil(row_block_rows),
+            duration_ms(geometry_columns_elapsed),
+            duration_ms(stage_timings.get_ms_values_into_processing_buffer),
+            duration_ms(combined_read_timings.data_column),
+            duration_ms(combined_read_timings.flag_column),
+            duration_ms(combined_read_timings.weight_column),
+            duration_ms(combined_read_timings.weight_spectrum),
+            duration_ms(combined_read_timings.geometry_rows),
+            duration_ms(stage_timings.prepare_processing_buffer),
+            duration_ms(merge_elapsed),
+            duration_ms(started.elapsed()),
+        );
+    }
+    Ok((prepared_input, stage_timings))
+}
+
+fn validate_retained_mfs_mosaic_imaging_samples(
+    active_row_count: usize,
+    selected_channel_count: usize,
+) -> Result<(), String> {
+    let selected_channel_count = selected_channel_count.max(1);
+    let retained_visibility_bytes = active_row_count
+        .saturating_mul(selected_channel_count)
+        .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
+    let target = standard_mfs_memory_target();
+    if retained_visibility_bytes <= target.target_bytes {
+        return Ok(());
+    }
+    Err(format!(
+        "mosaic MFS can now read source visibility columns in bounded row blocks, but this \
+         workload still requires retained gridding/deconvolution over an estimated \
+         {retained_visibility_bytes} bytes of one-plane imaging samples for {active_row_count} \
+         active rows and {selected_channel_count} selected channels, exceeding the active \
+         memory target {} bytes (source={}). Wave 3 issue #288 tracks the required bounded \
+         streaming mosaic weighting, gridding, and residual-refresh execution path.",
+        target.target_bytes, target.source
+    ))
+}
+
+fn prepared_input_visibility_sample_count(input: &PreparedInput) -> usize {
+    match input {
+        PreparedInput::Mfs(plane) => plane.batches.iter().map(|batch| batch.len()).sum(),
+        PreparedInput::Cube(_) => 0,
+    }
 }
 
 fn merge_mfs_mosaic_prepared_inputs(inputs: Vec<PreparedInput>) -> Result<PreparedInput, String> {
