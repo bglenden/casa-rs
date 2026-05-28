@@ -11557,6 +11557,34 @@ fn prepare_plane_input_inner(
         &spectral_window,
         &polarization,
     )?;
+    if frontend_progress_enabled() || standard_mfs_profile_detail_enabled() {
+        let selected_channel_count =
+            selected_channel_count_estimate_from_table_values(config, &table_values);
+        let total_rows = flag_row.len();
+        let total_channels = table_values.spw_freqs_hz.len();
+        let selected_visibility_samples = active_selected_rows
+            .len()
+            .saturating_mul(selected_channel_count);
+        let full_row_channel_samples = active_selected_rows.len().saturating_mul(total_channels);
+        eprintln!(
+            "frontend stage=prepare_plane_input/data_coverage total_rows={} selected_rows={} active_selected_rows={} selected_ddid={} spw_id={} spw_channels={} selected_channels={} corr_count={} selected_row_channel_samples={} full_active_row_channel_samples={} selected_channel_fraction={:.6}",
+            total_rows,
+            selection.selected_rows.len(),
+            active_selected_rows.len(),
+            selection.selected_ddid,
+            table_values.spw_id,
+            total_channels,
+            selected_channel_count,
+            table_values.corr_types.len(),
+            selected_visibility_samples,
+            full_row_channel_samples,
+            if total_channels == 0 {
+                0.0
+            } else {
+                selected_channel_count as f64 / total_channels as f64
+            },
+        );
+    }
     let channel_read_range = if matches!(config.spectral_mode, SpectralMode::Mfs) {
         selected_channel_read_range_for_standard_mfs(config, &table_values)?
     } else {
@@ -11726,6 +11754,11 @@ fn prepare_plane_input_inner(
         rows_skipped_by_flag_row,
         ..Default::default()
     };
+    let progress_interval = geometry_rows
+        .len()
+        .checked_div(100)
+        .unwrap_or(0)
+        .clamp(1_000, 100_000);
     for (row_slot, row) in geometry_rows.iter().enumerate() {
         prepared.accumulate_row(
             row,
@@ -11739,7 +11772,7 @@ fn prepare_plane_input_inner(
             &mut accumulate_timings,
         )?;
         if frontend_progress_enabled()
-            && (row_slot + 1 == geometry_rows.len() || (row_slot + 1) % 1_000 == 0)
+            && (row_slot + 1 == geometry_rows.len() || (row_slot + 1) % progress_interval == 0)
         {
             eprintln!(
                 "frontend stage=prepare_plane_input/accumulate_rows/progress rows_done={} rows_total={} total_elapsed_s={:.3}",
