@@ -12057,6 +12057,31 @@ fn prepare_plane_input_inner(
             && !fast_standard_mfs
             && !trace_free_mfs_mosaic)
         || (config.spectral_mode.is_cube_like() && !trace_free_cube);
+    if trace_free_mfs_mosaic {
+        if let Some(prepared_input) = prepare_mfs_mosaic_without_trace_in_row_chunks(
+            ms,
+            config,
+            &selection,
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            &geometry_rows,
+            &data_column,
+            &flag_column,
+            &flag_row,
+            &weight_column,
+            weight_spectrum.as_ref(),
+            derived_engine.as_ref(),
+            rows_skipped_by_flag_row,
+            prepare_started_at,
+        )? {
+            return Ok((
+                prepared_input,
+                None,
+                PreparePlaneInputStageTimings::default(),
+            ));
+        }
+    }
     let mut prepared = PreparedSelection::new(
         config,
         selection.selected_ddid,
@@ -12177,6 +12202,211 @@ fn prepare_plane_input_inner(
                 PreparePlaneInputStageTimings::default(),
             )
         })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_mfs_mosaic_without_trace_in_row_chunks(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    geometry_rows: &[PreparedGeometryRow],
+    data_column: &SelectedMainDataSource,
+    flag_column: &SelectedMainArrayColumn,
+    flag_row: &[bool],
+    weight_column: &SelectedMainArrayColumn,
+    weight_spectrum: Option<&SelectedMainArrayColumn>,
+    derived_engine: Option<&MsCalEngine>,
+    rows_skipped_by_flag_row: usize,
+    prepare_started_at: Instant,
+) -> Result<Option<PreparedInput>, String> {
+    let thread_count = standard_mfs_density_prepare_threads(geometry_rows.len());
+    if thread_count <= 1 || geometry_rows.len() < 2 {
+        return Ok(None);
+    }
+    let started = Instant::now();
+    let chunk_len = geometry_rows.len().div_ceil(thread_count).max(1);
+    let mut frequency_prepared = PreparedSelection::new(
+        config,
+        selection.selected_ddid,
+        ddid_info,
+        spectral_window,
+        polarization,
+        selection.phase_center.clone(),
+        None,
+        false,
+        true,
+    );
+    if let Some(init_error) = frequency_prepared.initialization_error.take() {
+        return Err(init_error);
+    }
+    let mut row_frequency_scales = Vec::with_capacity(geometry_rows.len());
+    for row in geometry_rows {
+        row_frequency_scales.push(
+            frequency_prepared
+                .mfs_imaging_frequency_scale_for_row(&row.selected_row, derived_engine)?,
+        );
+    }
+    let mfs_frequency_edge_range_hz = frequency_prepared
+        .mfs_imaging_frequency_edge_range_for_row(&geometry_rows[0].selected_row, derived_engine)?;
+    let worker_results = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for (chunk_index, row_chunk) in geometry_rows.chunks(chunk_len).enumerate() {
+            let row_offset = chunk_index * chunk_len;
+            let scale_chunk = &row_frequency_scales[row_offset..row_offset + row_chunk.len()];
+            handles.push(scope.spawn(move || {
+                let mut prepared = PreparedSelection::new(
+                    config,
+                    selection.selected_ddid,
+                    ddid_info,
+                    spectral_window,
+                    polarization,
+                    selection.phase_center.clone(),
+                    None,
+                    false,
+                    true,
+                );
+                if let Some(init_error) = prepared.initialization_error.take() {
+                    return Err(init_error);
+                }
+                let mut timings = AccumulateRowTimings::default();
+                for ((local_slot, row), &mfs_frequency_scale) in
+                    row_chunk.iter().enumerate().zip(scale_chunk.iter())
+                {
+                    prepared.accumulate_row_with_mfs_frequency_scale(
+                        row,
+                        data_column,
+                        flag_column,
+                        flag_row,
+                        weight_column,
+                        weight_spectrum,
+                        None,
+                        row_offset + local_slot,
+                        &mut timings,
+                        Some(mfs_frequency_scale),
+                        Some(mfs_frequency_edge_range_hz),
+                    )?;
+                }
+                let prepared_input = prepared.finish_mfs_mosaic_without_trace(ms)?;
+                Ok::<_, String>((chunk_index, row_chunk.len(), timings, prepared_input))
+            }));
+        }
+
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            results.push(
+                handle
+                    .join()
+                    .map_err(|_| "MFS mosaic prepare worker panicked".to_string())??,
+            );
+        }
+        Ok::<_, String>(results)
+    })?;
+
+    let mut worker_results = worker_results;
+    worker_results.sort_by_key(|(chunk_index, _, _, _)| *chunk_index);
+    let actual_threads = worker_results.len();
+    let worker_rows_min = worker_results
+        .iter()
+        .map(|(_, rows, _, _)| *rows)
+        .min()
+        .unwrap_or(0);
+    let worker_rows_max = worker_results
+        .iter()
+        .map(|(_, rows, _, _)| *rows)
+        .max()
+        .unwrap_or(0);
+    let mut combined_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row,
+        ..Default::default()
+    };
+    let mut inputs = Vec::with_capacity(worker_results.len());
+    for (_, _, timings, prepared_input) in worker_results {
+        combined_timings += timings;
+        inputs.push(prepared_input);
+    }
+    let prepared_input = merge_mfs_mosaic_prepared_inputs(inputs)?;
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "mfs_mosaic_prepare_parallel requested_threads={} actual_threads={} chunk_len={} rows_total={} worker_rows_min={} worker_rows_max={} wall_ms={:.3}",
+            thread_count,
+            actual_threads,
+            chunk_len,
+            geometry_rows.len(),
+            worker_rows_min,
+            worker_rows_max,
+            duration_ms(started.elapsed()),
+        );
+    }
+    combined_timings.log(prepare_started_at.elapsed());
+    maybe_log_frontend_progress(
+        "prepare_plane_input/accumulate_rows",
+        started.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    maybe_log_frontend_progress(
+        "prepare_plane_input/finish_mfs_mosaic_without_trace",
+        started.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    Ok(Some(prepared_input))
+}
+
+fn merge_mfs_mosaic_prepared_inputs(inputs: Vec<PreparedInput>) -> Result<PreparedInput, String> {
+    let mut inputs = inputs.into_iter();
+    let Some(first) = inputs.next() else {
+        return Err("internal error: no MFS mosaic prepare chunks to merge".to_string());
+    };
+    let PreparedInput::Mfs(mut merged_plane) = first else {
+        return Err("internal error: MFS mosaic chunk produced cube input".to_string());
+    };
+    let mut merged_mosaic = match merged_plane.gridder_mode {
+        GridderMode::Mosaic(config) => config,
+        GridderMode::Standard => {
+            return Err("internal error: MFS mosaic chunk produced standard gridder".to_string());
+        }
+    };
+    for input in inputs {
+        let PreparedInput::Mfs(mut plane) = input else {
+            return Err("internal error: MFS mosaic chunk produced cube input".to_string());
+        };
+        if plane.plane_stokes != merged_plane.plane_stokes
+            || plane.freq_ref != merged_plane.freq_ref
+            || plane.phase_center.field_id != merged_plane.phase_center.field_id
+            || plane.phase_center.reference != merged_plane.phase_center.reference
+            || plane.phase_center.angles_rad != merged_plane.phase_center.angles_rad
+        {
+            return Err("internal error: incompatible MFS mosaic chunks".to_string());
+        }
+        merged_plane.batches.append(&mut plane.batches);
+        merged_plane
+            .sample_frequency_batches_hz
+            .append(&mut plane.sample_frequency_batches_hz);
+        let mut mosaic = match plane.gridder_mode {
+            GridderMode::Mosaic(config) => config,
+            GridderMode::Standard => {
+                return Err(
+                    "internal error: MFS mosaic chunk produced standard gridder".to_string()
+                );
+            }
+        };
+        if mosaic.phase_center_direction_rad != merged_mosaic.phase_center_direction_rad
+            || mosaic.primary_beam_model != merged_mosaic.primary_beam_model
+            || mosaic.pb_limit != merged_mosaic.pb_limit
+        {
+            return Err("internal error: incompatible MFS mosaic gridder chunks".to_string());
+        }
+        merged_mosaic
+            .metadata_batches
+            .append(&mut mosaic.metadata_batches);
+        merged_mosaic
+            .grouped_metadata_batches
+            .append(&mut mosaic.grouped_metadata_batches);
+    }
+    merged_plane.gridder_mode = GridderMode::Mosaic(merged_mosaic);
+    Ok(PreparedInput::Mfs(merged_plane))
 }
 
 fn can_prepare_standard_mfs_without_trace(
@@ -14665,6 +14895,36 @@ impl PreparedSelection {
         row_slot: usize,
         timings: &mut AccumulateRowTimings,
     ) -> Result<(), String> {
+        self.accumulate_row_with_mfs_frequency_scale(
+            geometry_row,
+            data_column,
+            flag_column,
+            flag_row,
+            weight_column,
+            weight_spectrum,
+            derived_engine,
+            row_slot,
+            timings,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_row_with_mfs_frequency_scale(
+        &mut self,
+        geometry_row: &PreparedGeometryRow,
+        data_column: &SelectedMainDataSource,
+        flag_column: &SelectedMainArrayColumn,
+        flag_row: &[bool],
+        weight_column: &SelectedMainArrayColumn,
+        weight_spectrum: Option<&SelectedMainArrayColumn>,
+        derived_engine: Option<&MsCalEngine>,
+        row_slot: usize,
+        timings: &mut AccumulateRowTimings,
+        precomputed_mfs_frequency_scale: Option<f64>,
+        precomputed_mfs_frequency_edge_range_hz: Option<[f64; 2]>,
+    ) -> Result<(), String> {
         timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
@@ -14862,11 +15122,19 @@ impl PreparedSelection {
                 | PreparedState::PairedMfs { .. }
                 | PreparedState::CollapsedMfs { .. }
         ) {
-            let scale = self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+            let scale = match precomputed_mfs_frequency_scale {
+                Some(scale) => scale,
+                None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
+            };
             if self.mfs_output_frequency_edge_range_hz.is_none() {
-                self.mfs_output_frequency_edge_range_hz = Some(
-                    self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?,
-                );
+                self.mfs_output_frequency_edge_range_hz =
+                    Some(match precomputed_mfs_frequency_edge_range_hz {
+                        Some(range) => range,
+                        None => self.mfs_imaging_frequency_edge_range_for_row(
+                            selected_row,
+                            derived_engine,
+                        )?,
+                    });
             }
             scale
         } else {
