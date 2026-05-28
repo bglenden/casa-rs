@@ -13576,10 +13576,13 @@ impl MfsMosaicMetadataAccumulator {
         self.selected_antenna_ids.insert(antenna2_id);
     }
 
-    fn push_sample(&mut self, pointing_id: usize, pointing_direction_rad: [f64; 2], spw_id: usize) {
+    fn record_pointing_direction(&mut self, pointing_id: usize, pointing_direction_rad: [f64; 2]) {
         self.pointing_direction_by_id
             .entry(pointing_id)
             .or_insert(pointing_direction_rad);
+    }
+
+    fn push_sample(&mut self, pointing_id: usize, spw_id: usize) {
         self.sample_pointing_ids.push(pointing_id);
         self.sample_spw_ids.push(spw_id);
     }
@@ -14728,13 +14731,13 @@ impl PreparedSelection {
                     if let Some(metadata) = mosaic_metadata {
                         if !recorded_mosaic_antennas {
                             metadata.record_selected_antennas(antenna1_id, antenna2_id);
+                            metadata.record_pointing_direction(
+                                selected_row.field_id,
+                                baseline_pointing_direction_rad,
+                            );
                             recorded_mosaic_antennas = true;
                         }
-                        metadata.push_sample(
-                            selected_row.field_id,
-                            baseline_pointing_direction_rad,
-                            selected_row.spw_id,
-                        );
+                        metadata.push_sample(selected_row.field_id, selected_row.spw_id);
                     }
                     if trace_enabled {
                         samples.push(PreparedVisibilitySampleTrace {
@@ -15108,13 +15111,14 @@ impl PreparedSelection {
                                 if let Some(metadata) = mosaic_metadata {
                                     if !recorded_mosaic_antennas {
                                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
+                                        metadata.record_pointing_direction(
+                                            selected_row.field_id,
+                                            baseline_pointing_direction_rad,
+                                        );
                                         recorded_mosaic_antennas = true;
                                     }
-                                    metadata.push_sample(
-                                        selected_row.field_id,
-                                        baseline_pointing_direction_rad,
-                                        selected_row.spw_id,
-                                    );
+                                    metadata
+                                        .push_sample(selected_row.field_id, selected_row.spw_id);
                                 }
                             }
                         }
@@ -15176,13 +15180,13 @@ impl PreparedSelection {
                         if let Some(metadata) = mosaic_metadata {
                             if !recorded_mosaic_antennas {
                                 metadata.record_selected_antennas(antenna1_id, antenna2_id);
+                                metadata.record_pointing_direction(
+                                    selected_row.field_id,
+                                    baseline_pointing_direction_rad,
+                                );
                                 recorded_mosaic_antennas = true;
                             }
-                            metadata.push_sample(
-                                selected_row.field_id,
-                                baseline_pointing_direction_rad,
-                                selected_row.spw_id,
-                            );
+                            metadata.push_sample(selected_row.field_id, selected_row.spw_id);
                         }
                     }
                 }
