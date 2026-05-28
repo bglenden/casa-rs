@@ -17436,12 +17436,14 @@ impl PreparedSelection {
                     frequency_range_hz(&sample_frequency_hz).unwrap_or(selected_frequency_range_hz);
                 let reffreq_hz =
                     0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+                let mosaic_batch_size = batch.len().max(1);
                 let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
                     ms,
                     phase_center_direction_rad,
                     mosaic_pb_limit,
                     &sample_frequency_hz,
                     &mosaic_metadata,
+                    mosaic_batch_size,
                 )?;
                 Ok(PreparedInput::Mfs(PlaneInput {
                     phase_center,
@@ -17451,11 +17453,8 @@ impl PreparedSelection {
                     spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
                         .or(Some(selected_frequency_edge_range_hz)),
                     plane_stokes,
-                    batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
-                    sample_frequency_batches_hz: chunk_sample_frequencies_hz(
-                        sample_frequency_hz,
-                        DEFAULT_BATCH_SIZE,
-                    ),
+                    batches: vec![batch],
+                    sample_frequency_batches_hz: vec![sample_frequency_hz],
                     gridder_mode,
                 }))
             }
@@ -17470,12 +17469,14 @@ impl PreparedSelection {
                     frequency_range_hz(&sample_frequency_hz).unwrap_or(selected_frequency_range_hz);
                 let reffreq_hz =
                     0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+                let mosaic_batch_size = batch.len().max(1);
                 let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
                     ms,
                     phase_center_direction_rad,
                     mosaic_pb_limit,
                     &sample_frequency_hz,
                     &mosaic_metadata,
+                    mosaic_batch_size,
                 )?;
                 Ok(PreparedInput::Mfs(PlaneInput {
                     phase_center,
@@ -17485,11 +17486,8 @@ impl PreparedSelection {
                     spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
                         .or(Some(selected_frequency_edge_range_hz)),
                     plane_stokes,
-                    batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
-                    sample_frequency_batches_hz: chunk_sample_frequencies_hz(
-                        sample_frequency_hz,
-                        DEFAULT_BATCH_SIZE,
-                    ),
+                    batches: vec![batch],
+                    sample_frequency_batches_hz: vec![sample_frequency_hz],
                     gridder_mode,
                 }))
             }
@@ -20956,6 +20954,7 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
     mosaic_pb_limit: f32,
     sample_frequency_hz: &[f64],
     metadata: &MfsMosaicMetadataAccumulator,
+    max_batch_size: usize,
 ) -> Result<GridderMode, String> {
     if sample_frequency_hz.len() != metadata.sample_pointing_direction_rad.len()
         || sample_frequency_hz.len() != metadata.sample_spw_ids.len()
@@ -20983,7 +20982,7 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
             &beam_frequencies_hz,
             &metadata.sample_pointing_direction_rad,
             primary_beam_model,
-            DEFAULT_BATCH_SIZE,
+            max_batch_size,
         ),
     }))
 }
@@ -21031,38 +21030,46 @@ fn infer_mosaic_beam_frequencies_hz(
     let spectral_window = ms
         .spectral_window()
         .map_err(|error| format!("open SPECTRAL_WINDOW for mosaic PB channels: {error}"))?;
-    let mut sample_indices_by_spw = BTreeMap::<usize, Vec<usize>>::new();
-    for (sample_index, sample) in samples.iter().enumerate() {
-        sample_indices_by_spw
-            .entry(sample.spw_id)
-            .or_default()
-            .push(sample_index);
+    let mut frequency_bits_by_spw = BTreeMap::<usize, BTreeSet<u64>>::new();
+    for sample in samples {
+        if sample.output_frequency_hz.is_finite() && sample.output_frequency_hz > 0.0 {
+            frequency_bits_by_spw
+                .entry(sample.spw_id)
+                .or_default()
+                .insert(sample.output_frequency_hz.to_bits());
+        }
     }
 
-    let mut beam_frequencies_hz = vec![0.0; samples.len()];
-    for (spw_id, sample_indices) in sample_indices_by_spw {
+    let mut beam_frequency_by_spw_freq = HashMap::<(usize, u64), f64>::new();
+    for (spw_id, frequency_bits) in frequency_bits_by_spw {
         let spw_frequencies_hz = spectral_window
             .chan_freq(spw_id)
             .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_FREQ row {spw_id}: {error}"))?;
         let spw_widths_hz = spectral_window
             .chan_width(spw_id)
             .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_WIDTH row {spw_id}: {error}"))?;
-        let sample_frequencies_hz = sample_indices
-            .iter()
-            .map(|sample_index| samples[*sample_index].output_frequency_hz)
+        let unique_frequencies_hz = frequency_bits
+            .into_iter()
+            .map(f64::from_bits)
             .collect::<Vec<_>>();
-        let spw_beam_frequencies_hz = casa_simplepb_beam_frequencies_for_samples(
-            &sample_frequencies_hz,
+        let spw_beam_frequency_by_freq = casa_simplepb_beam_frequency_lookup_for_unique_samples(
+            &unique_frequencies_hz,
             &spw_frequencies_hz,
             &spw_widths_hz,
         );
-        for (sample_index, beam_frequency_hz) in
-            sample_indices.into_iter().zip(spw_beam_frequencies_hz)
-        {
-            beam_frequencies_hz[sample_index] = beam_frequency_hz;
+        for (frequency_bits, beam_frequency_hz) in spw_beam_frequency_by_freq {
+            beam_frequency_by_spw_freq.insert((spw_id, frequency_bits), beam_frequency_hz);
         }
     }
-    Ok(beam_frequencies_hz)
+    Ok(samples
+        .iter()
+        .map(|sample| {
+            beam_frequency_by_spw_freq
+                .get(&(sample.spw_id, sample.output_frequency_hz.to_bits()))
+                .copied()
+                .unwrap_or(sample.output_frequency_hz)
+        })
+        .collect())
 }
 
 fn infer_mosaic_beam_frequencies_hz_from_spw_ids(
@@ -21083,47 +21090,78 @@ fn infer_mosaic_beam_frequencies_hz_from_spw_ids(
     let spectral_window = ms
         .spectral_window()
         .map_err(|error| format!("open SPECTRAL_WINDOW for mosaic PB channels: {error}"))?;
-    let mut sample_indices_by_spw = BTreeMap::<usize, Vec<usize>>::new();
-    for (sample_index, spw_id) in sample_spw_ids.iter().copied().enumerate() {
-        sample_indices_by_spw
-            .entry(spw_id)
-            .or_default()
-            .push(sample_index);
+    let mut frequency_bits_by_spw = BTreeMap::<usize, BTreeSet<u64>>::new();
+    for (&sample_frequency_hz, spw_id) in sample_frequencies_hz.iter().zip(sample_spw_ids.iter()) {
+        if sample_frequency_hz.is_finite() && sample_frequency_hz > 0.0 {
+            frequency_bits_by_spw
+                .entry(*spw_id)
+                .or_default()
+                .insert(sample_frequency_hz.to_bits());
+        }
     }
 
-    let mut beam_frequencies_hz = vec![0.0; sample_frequencies_hz.len()];
-    for (spw_id, sample_indices) in sample_indices_by_spw {
+    let mut beam_frequency_by_spw_freq = HashMap::<(usize, u64), f64>::new();
+    for (spw_id, frequency_bits) in frequency_bits_by_spw {
         let spw_frequencies_hz = spectral_window
             .chan_freq(spw_id)
             .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_FREQ row {spw_id}: {error}"))?;
         let spw_widths_hz = spectral_window
             .chan_width(spw_id)
             .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_WIDTH row {spw_id}: {error}"))?;
-        let spw_sample_frequencies_hz = sample_indices
-            .iter()
-            .map(|sample_index| sample_frequencies_hz[*sample_index])
+        let unique_frequencies_hz = frequency_bits
+            .into_iter()
+            .map(f64::from_bits)
             .collect::<Vec<_>>();
-        let spw_beam_frequencies_hz = casa_simplepb_beam_frequencies_for_samples(
-            &spw_sample_frequencies_hz,
+        let spw_beam_frequency_by_freq = casa_simplepb_beam_frequency_lookup_for_unique_samples(
+            &unique_frequencies_hz,
             &spw_frequencies_hz,
             &spw_widths_hz,
         );
-        for (sample_index, beam_frequency_hz) in
-            sample_indices.into_iter().zip(spw_beam_frequencies_hz)
-        {
-            beam_frequencies_hz[sample_index] = beam_frequency_hz;
+        for (frequency_bits, beam_frequency_hz) in spw_beam_frequency_by_freq {
+            beam_frequency_by_spw_freq.insert((spw_id, frequency_bits), beam_frequency_hz);
         }
     }
-    Ok(beam_frequencies_hz)
+    Ok(sample_frequencies_hz
+        .iter()
+        .zip(sample_spw_ids.iter())
+        .map(|(&sample_frequency_hz, spw_id)| {
+            beam_frequency_by_spw_freq
+                .get(&(*spw_id, sample_frequency_hz.to_bits()))
+                .copied()
+                .unwrap_or(sample_frequency_hz)
+        })
+        .collect())
 }
 
+#[cfg(test)]
 fn casa_simplepb_beam_frequencies_for_samples(
     sample_frequencies_hz: &[f64],
     spw_frequencies_hz: &[f64],
     spw_widths_hz: &[f64],
 ) -> Vec<f64> {
+    let beam_frequency_by_sample_frequency = casa_simplepb_beam_frequency_lookup_for_unique_samples(
+        sample_frequencies_hz,
+        spw_frequencies_hz,
+        spw_widths_hz,
+    );
+    sample_frequencies_hz
+        .iter()
+        .map(|sample_frequency_hz| {
+            beam_frequency_by_sample_frequency
+                .get(&sample_frequency_hz.to_bits())
+                .copied()
+                .unwrap_or(*sample_frequency_hz)
+        })
+        .collect()
+}
+
+fn casa_simplepb_beam_frequency_lookup_for_unique_samples(
+    sample_frequencies_hz: &[f64],
+    spw_frequencies_hz: &[f64],
+    spw_widths_hz: &[f64],
+) -> HashMap<u64, f64> {
     if sample_frequencies_hz.is_empty() {
-        return Vec::new();
+        return HashMap::new();
     }
     let useful_beam_frequencies_hz = casa_simplepb_useful_beam_frequencies(
         sample_frequencies_hz,
@@ -21132,8 +21170,10 @@ fn casa_simplepb_beam_frequencies_for_samples(
     );
     sample_frequencies_hz
         .iter()
+        .copied()
+        .filter(|sample_frequency_hz| sample_frequency_hz.is_finite() && *sample_frequency_hz > 0.0)
         .map(|sample_frequency_hz| {
-            useful_beam_frequencies_hz
+            let beam_frequency_hz = useful_beam_frequencies_hz
                 .iter()
                 .copied()
                 .min_by(|left, right| {
@@ -21142,7 +21182,8 @@ fn casa_simplepb_beam_frequencies_for_samples(
                         .partial_cmp(&(sample_frequency_hz - *right).abs())
                         .expect("beam frequency deltas should be finite")
                 })
-                .unwrap_or(*sample_frequency_hz)
+                .unwrap_or(sample_frequency_hz);
+            (sample_frequency_hz.to_bits(), beam_frequency_hz)
         })
         .collect()
 }
