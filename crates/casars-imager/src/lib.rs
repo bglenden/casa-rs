@@ -8423,6 +8423,8 @@ struct PlaneInputColumnBundle {
     weight_column: SelectedMainArrayColumn,
     weight_spectrum: Option<SelectedMainArrayColumn>,
     selected_uvw: SelectedMainArrayColumn,
+    selected_antenna1: Vec<i32>,
+    selected_antenna2: Vec<i32>,
     timings: PlaneInputColumnReadTimings,
 }
 
@@ -8433,6 +8435,7 @@ struct PlaneInputColumnReadTimings {
     weight_column: Duration,
     weight_spectrum: Duration,
     uvw_column: Duration,
+    antenna_columns: Duration,
     wall: Duration,
     parallel: bool,
 }
@@ -8450,7 +8453,7 @@ fn load_selected_plane_input_columns(
             parallel: true,
             ..Default::default()
         };
-        let (data_column, flag_column, weight_column, weight_spectrum, selected_uvw) =
+        let (data_column, flag_column, weight_column, weight_spectrum, selected_uvw, antennas) =
             thread::scope(|scope| {
                 let data_handle = scope.spawn(|| {
                     let started = Instant::now();
@@ -8493,6 +8496,14 @@ fn load_selected_plane_input_columns(
                     let started = Instant::now();
                     let column = SelectedMainArrayColumn::load(ms, "UVW", selected_row_indices)?;
                     Ok::<_, String>((column, started.elapsed()))
+                });
+                let antenna_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let antenna1 =
+                        load_selected_i32_main_column(ms, "ANTENNA1", selected_row_indices)?;
+                    let antenna2 =
+                        load_selected_i32_main_column(ms, "ANTENNA2", selected_row_indices)?;
+                    Ok::<_, String>(((antenna1, antenna2), started.elapsed()))
                 });
                 let weight_spectrum_handle = has_weight_spectrum.then(|| {
                     scope.spawn(|| {
@@ -8541,14 +8552,20 @@ fn load_selected_plane_input_columns(
                     .join()
                     .map_err(|_| "UVW column reader panicked".to_string())??;
                 timings.uvw_column = elapsed;
+                let (antennas, elapsed) = antenna_handle
+                    .join()
+                    .map_err(|_| "ANTENNA column reader panicked".to_string())??;
+                timings.antenna_columns = elapsed;
                 Ok::<_, String>((
                     data_column,
                     flag_column,
                     weight_column,
                     weight_spectrum,
                     selected_uvw,
+                    antennas,
                 ))
             })?;
+        let (selected_antenna1, selected_antenna2) = antennas;
         timings.wall = started.elapsed();
         return Ok(PlaneInputColumnBundle {
             data_column,
@@ -8556,6 +8573,8 @@ fn load_selected_plane_input_columns(
             weight_column,
             weight_spectrum,
             selected_uvw,
+            selected_antenna1,
+            selected_antenna2,
             timings,
         });
     }
@@ -8609,6 +8628,11 @@ fn load_selected_plane_input_columns(
     let stage_started_at = Instant::now();
     let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", selected_row_indices)?;
     timings.uvw_column = stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let selected_antenna1 = load_selected_i32_main_column(ms, "ANTENNA1", selected_row_indices)?;
+    let selected_antenna2 = load_selected_i32_main_column(ms, "ANTENNA2", selected_row_indices)?;
+    timings.antenna_columns = stage_started_at.elapsed();
     timings.wall = started.elapsed();
 
     Ok(PlaneInputColumnBundle {
@@ -8617,6 +8641,8 @@ fn load_selected_plane_input_columns(
         weight_column,
         weight_spectrum,
         selected_uvw,
+        selected_antenna1,
+        selected_antenna2,
         timings,
     })
 }
@@ -9075,14 +9101,7 @@ fn read_ms_imaging_essentials_block(
     let mut rows = Vec::with_capacity(row_chunk.len());
     for (row_slot, selected_row) in row_chunk.iter().enumerate() {
         let row_index = selected_row.row_index;
-        let antenna1_id = *geometry_columns
-            .antenna1
-            .get(row_index)
-            .ok_or_else(|| format!("read ANTENNA1 row {row_index}: row is out of bounds"))?;
-        let antenna2_id = *geometry_columns
-            .antenna2
-            .get(row_index)
-            .ok_or_else(|| format!("read ANTENNA2 row {row_index}: row is out of bounds"))?;
+        let (antenna1_id, antenna2_id) = geometry_columns.antennas.get(row_index, row_slot)?;
         let raw_uvw_m = extract_uvw_from_array(
             &take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?,
             row_index,
@@ -9390,9 +9409,44 @@ impl PointingDirectionResolver {
     }
 }
 
+enum PreparedGeometryAntennaColumns {
+    Full {
+        antenna1: Vec<i32>,
+        antenna2: Vec<i32>,
+    },
+    Selected {
+        antenna1: Vec<i32>,
+        antenna2: Vec<i32>,
+    },
+}
+
+impl PreparedGeometryAntennaColumns {
+    fn get(&self, row: usize, row_slot: usize) -> Result<(i32, i32), String> {
+        match self {
+            Self::Full { antenna1, antenna2 } => {
+                let antenna1_id = *antenna1
+                    .get(row)
+                    .ok_or_else(|| format!("read ANTENNA1 row {row}: row is out of bounds"))?;
+                let antenna2_id = *antenna2
+                    .get(row)
+                    .ok_or_else(|| format!("read ANTENNA2 row {row}: row is out of bounds"))?;
+                Ok((antenna1_id, antenna2_id))
+            }
+            Self::Selected { antenna1, antenna2 } => {
+                let antenna1_id = *antenna1.get(row_slot).ok_or_else(|| {
+                    format!("read selected ANTENNA1 slot {row_slot}: row is out of bounds")
+                })?;
+                let antenna2_id = *antenna2.get(row_slot).ok_or_else(|| {
+                    format!("read selected ANTENNA2 slot {row_slot}: row is out of bounds")
+                })?;
+                Ok((antenna1_id, antenna2_id))
+            }
+        }
+    }
+}
+
 struct PreparedGeometryColumnCache {
-    antenna1: Vec<i32>,
-    antenna2: Vec<i32>,
+    antennas: PreparedGeometryAntennaColumns,
     pointing_ids: Option<Vec<Option<i32>>>,
     pointing_resolver: Option<PointingDirectionResolver>,
 }
@@ -9429,8 +9483,44 @@ impl PreparedGeometryColumnCache {
             geometry_started_at.elapsed(),
         );
         Ok(Self {
-            antenna1,
-            antenna2,
+            antennas: PreparedGeometryAntennaColumns::Full { antenna1, antenna2 },
+            pointing_ids,
+            pointing_resolver,
+        })
+    }
+
+    fn from_selected_antennas(
+        ms: &MeasurementSet,
+        selected_antenna1: Vec<i32>,
+        selected_antenna2: Vec<i32>,
+        use_pointing: bool,
+    ) -> Result<Self, String> {
+        let geometry_started_at = Instant::now();
+        let pointing_ids = if use_pointing {
+            load_optional_i32_main_column(ms, "POINTING_ID")?
+        } else {
+            None
+        };
+        maybe_log_frontend_progress(
+            "prepare_plane_input/build_prepared_geometry_rows/load_pointing_ids",
+            geometry_started_at.elapsed(),
+            geometry_started_at.elapsed(),
+        );
+        let pointing_resolver = if use_pointing {
+            PointingDirectionResolver::new(ms)?
+        } else {
+            None
+        };
+        maybe_log_frontend_progress(
+            "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
+            geometry_started_at.elapsed(),
+            geometry_started_at.elapsed(),
+        );
+        Ok(Self {
+            antennas: PreparedGeometryAntennaColumns::Selected {
+                antenna1: selected_antenna1,
+                antenna2: selected_antenna2,
+            },
             pointing_ids,
             pointing_resolver,
         })
@@ -9734,6 +9824,37 @@ fn required_i32_main_column_from_map(
         .collect()
 }
 
+fn load_selected_i32_main_column(
+    ms: &MeasurementSet,
+    column_name: &'static str,
+    selected_row_indices: &[usize],
+) -> Result<Vec<i32>, String> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.scalar_cells_owned_for_rows(selected_row_indices))
+        .map_err(|error| format!("load selected {column_name} column: {error}"))?;
+    if values.len() != selected_row_indices.len() {
+        return Err(format!(
+            "selected {column_name} length {} does not match selected row count {}",
+            values.len(),
+            selected_row_indices.len()
+        ));
+    }
+    values
+        .into_iter()
+        .zip(selected_row_indices.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ScalarValue::Int32(value)) => Ok(value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Int32, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
+}
+
 fn required_f64_main_column_from_map(
     ms: &MeasurementSet,
     columns: &HashMap<String, Vec<Option<ScalarValue>>>,
@@ -9913,14 +10034,7 @@ fn build_prepared_geometry_rows_from_selected_uvw(
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
-        let antenna1_id = *columns
-            .antenna1
-            .get(row)
-            .ok_or_else(|| format!("read ANTENNA1 row {row}: row is out of bounds"))?;
-        let antenna2_id = *columns
-            .antenna2
-            .get(row)
-            .ok_or_else(|| format!("read ANTENNA2 row {row}: row is out of bounds"))?;
+        let (antenna1_id, antenna2_id) = columns.antennas.get(row, row_slot)?;
         let is_cross = antenna1_id != antenna2_id;
         let raw_uvw_m = extract_uvw_from_array(selected_uvw.get(row_slot)?, row)?;
         let transform = row_imaging_transform(
@@ -11949,6 +12063,8 @@ fn prepare_plane_input_inner(
         weight_column,
         weight_spectrum,
         selected_uvw,
+        selected_antenna1,
+        selected_antenna2,
         timings: column_timings,
     } = load_selected_plane_input_columns(
         ms,
@@ -11958,7 +12074,7 @@ fn prepare_plane_input_inner(
     )?;
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "plane_input_column_read parallel={} wall_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} uvw_ms={:.3}",
+            "plane_input_column_read parallel={} wall_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} uvw_ms={:.3} antenna_ms={:.3}",
             column_timings.parallel,
             duration_ms(column_timings.wall),
             duration_ms(column_timings.data_column),
@@ -11966,6 +12082,7 @@ fn prepare_plane_input_inner(
             duration_ms(column_timings.weight_column),
             duration_ms(column_timings.weight_spectrum),
             duration_ms(column_timings.uvw_column),
+            duration_ms(column_timings.antenna_columns),
         );
     }
     maybe_log_frontend_progress(
@@ -11994,13 +12111,23 @@ fn prepare_plane_input_inner(
         prepare_started_at.elapsed(),
     );
     maybe_log_frontend_progress(
+        "prepare_plane_input/load_antenna_columns",
+        column_timings.antenna_columns,
+        prepare_started_at.elapsed(),
+    );
+    maybe_log_frontend_progress(
         "prepare_plane_input/load_column_bundle",
         stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
 
     let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns = PreparedGeometryColumnCache::from_selected_antennas(
+        ms,
+        selected_antenna1,
+        selected_antenna2,
+        config.use_pointing,
+    )?;
     let geometry_columns_elapsed = stage_started_at.elapsed();
     let geometry_rows_started_at = Instant::now();
     let geometry_rows = build_prepared_geometry_rows_from_selected_uvw(
