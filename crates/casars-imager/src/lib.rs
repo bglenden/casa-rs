@@ -9619,13 +9619,7 @@ fn select_main_rows(
         || config.w_term_mode != WTermMode::None
         || selection_may_require_phase_reprojection(config)
         || needs_pointing_times;
-    let mut selection_scalar_names = vec![
-        "FIELD_ID",
-        "DATA_DESC_ID",
-        "FLAG_ROW",
-        "ANTENNA1",
-        "ANTENNA2",
-    ];
+    let mut selection_scalar_names = vec!["FIELD_ID", "DATA_DESC_ID"];
     if needs_row_times {
         selection_scalar_names.push("TIME");
     }
