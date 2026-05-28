@@ -40,6 +40,7 @@ mod weighting;
 use std::{
     env,
     fs::OpenOptions,
+    hash::{BuildHasherDefault, Hasher},
     io::Write,
     thread,
     time::{Duration, Instant},
@@ -4316,6 +4317,71 @@ struct MosaicMetalSampleAccumulator {
     weighted_visibility_im: f64,
 }
 
+#[derive(Default)]
+struct MosaicMetalSampleHasher(u64);
+
+impl Hasher for MosaicMetalSampleHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = 0u64;
+            for (shift, byte) in chunk.iter().enumerate() {
+                word |= u64::from(*byte) << (shift * 8);
+            }
+            self.write_u64(word);
+        }
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = self.0.rotate_left(5) ^ value.wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    fn write_i8(&mut self, value: i8) {
+        self.write_u64(value as u8 as u64);
+    }
+
+    fn write_i16(&mut self, value: i16) {
+        self.write_u64(value as u16 as u64);
+    }
+
+    fn write_i32(&mut self, value: i32) {
+        self.write_u64(value as u32 as u64);
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.write_u64(value as u64);
+    }
+
+    fn write_isize(&mut self, value: isize) {
+        self.write_u64(value as u64);
+    }
+}
+
+type MosaicMetalSampleHashMap = HashMap<
+    MosaicMetalSampleKey,
+    MosaicMetalSampleAccumulator,
+    BuildHasherDefault<MosaicMetalSampleHasher>,
+>;
+
 struct MosaicMetalPreparedGroup {
     samples: Vec<MosaicMetalSample>,
     group_weight_grid_sum: f64,
@@ -4357,7 +4423,7 @@ impl MosaicMetalSampleKey {
 }
 
 fn push_mosaic_metal_sample_aggregate(
-    aggregates: &mut HashMap<MosaicMetalSampleKey, MosaicMetalSampleAccumulator>,
+    aggregates: &mut MosaicMetalSampleHashMap,
     sample: MosaicMetalSample,
 ) {
     let weight = f64::from(sample.weight);
@@ -4374,7 +4440,7 @@ fn push_mosaic_metal_sample_aggregate(
 }
 
 fn finish_mosaic_metal_sample_aggregates(
-    aggregates: HashMap<MosaicMetalSampleKey, MosaicMetalSampleAccumulator>,
+    aggregates: MosaicMetalSampleHashMap,
 ) -> Vec<MosaicMetalSample> {
     let mut grouped = aggregates.into_iter().collect::<Vec<_>>();
     grouped.sort_unstable_by_key(|(key, _)| *key);
@@ -5588,8 +5654,9 @@ fn collect_mosaic_metal_samples(
     projector: &ScreenProjector,
 ) -> Result<MosaicMetalPreparedGroup, ImagingError> {
     let started = Instant::now();
-    let mut samples = HashMap::<MosaicMetalSampleKey, MosaicMetalSampleAccumulator>::with_capacity(
+    let mut samples = MosaicMetalSampleHashMap::with_capacity_and_hasher(
         group.batch.len().min(1_048_576),
+        BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
     );
     let mut group_weight_grid_sum = 0.0f64;
     let mut reported_sumwt = 0.0f64;
@@ -16937,7 +17004,7 @@ mod tests {
             visibility_im: 17.0,
             ..first
         };
-        let mut samples = std::collections::HashMap::new();
+        let mut samples = super::MosaicMetalSampleHashMap::default();
         super::push_mosaic_metal_sample_aggregate(&mut samples, different_plan);
         super::push_mosaic_metal_sample_aggregate(&mut samples, second);
         super::push_mosaic_metal_sample_aggregate(&mut samples, first);
