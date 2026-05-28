@@ -10,6 +10,8 @@ use crate::schema::{ColumnType, TableSchema};
 use crate::storage::{CompositeStorage, StorageProfiler};
 use crate::table::TableError;
 
+type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
+
 #[derive(Debug, Clone)]
 struct LazyRowsSource {
     path: PathBuf,
@@ -770,10 +772,9 @@ impl TableImpl {
     pub(crate) fn scalar_columns_owned(
         &self,
         columns: &[&str],
-    ) -> Result<Option<std::collections::HashMap<String, Vec<Option<ScalarValue>>>>, TableError>
-    {
+    ) -> Result<Option<ScalarColumnValueMap>, TableError> {
         if columns.is_empty() {
-            return Ok(Some(std::collections::HashMap::new()));
+            return Ok(Some(HashMap::new()));
         }
 
         if let Some(loaded) = self.loaded_rows.get() {
