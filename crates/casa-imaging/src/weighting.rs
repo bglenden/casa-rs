@@ -682,6 +682,82 @@ pub(crate) fn apply_weighting_with_density_source(
     }
 }
 
+pub(crate) fn apply_weighting_to_owned_batches_by_sample_groups(
+    weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    fractional_bandwidth: f64,
+    mut target_batches: Vec<VisibilityBatch>,
+    sample_groups: &[Vec<(usize, usize)>],
+    gridder: &StandardGridder,
+) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
+    match weighting {
+        WeightingMode::Natural => return Ok(apply_optional_uv_taper(target_batches, uv_taper)),
+        WeightingMode::Uniform
+        | WeightingMode::Briggs { .. }
+        | WeightingMode::BriggsBwTaper { .. } => {}
+    }
+
+    let density_convention = density_cell_convention(weighting, weight_density_mode);
+    let density_build_convention = density_build_cell_convention(weighting, weight_density_mode);
+    let mirror_hermitian = density_includes_conjugates(density_build_convention);
+    let trace_weighting = trace_weighting_enabled();
+
+    for positions in sample_groups {
+        let density = build_density_grid_for_positions(
+            &target_batches,
+            positions,
+            gridder,
+            mirror_hermitian,
+            density_build_convention,
+        )?;
+        let mode = match weighting {
+            WeightingMode::Uniform => DensityReweightMode::Uniform,
+            WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
+                let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
+                let sumlocwt = density
+                    .iter()
+                    .filter(|value| **value > 0.0)
+                    .map(|value| f64::from(*value) * f64::from(*value))
+                    .sum::<f64>();
+                let f2 = if sumlocwt > 0.0 && density_weight_sum > 0.0 {
+                    (5.0f64 * 10f64.powf(-(robust as f64))).powi(2)
+                        / (sumlocwt / density_weight_sum)
+                } else {
+                    0.0
+                } as f32;
+                if trace_weighting {
+                    let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
+                    let density_max = density
+                        .iter()
+                        .copied()
+                        .fold(0.0f32, |acc, value| acc.max(value));
+                    eprintln!(
+                        "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={density_weight_sum:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                    );
+                }
+                DensityReweightMode::Briggs {
+                    f2,
+                    use_bandwidth_taper: matches!(weighting, WeightingMode::BriggsBwTaper { .. }),
+                    fractional_bandwidth,
+                }
+            }
+            WeightingMode::Natural => unreachable!("natural weighting returned above"),
+        };
+        reweight_positions_in_place(
+            &mut target_batches,
+            positions,
+            gridder,
+            &density,
+            density_convention,
+            trace_weighting,
+            mode,
+        )?;
+    }
+
+    Ok(apply_optional_uv_taper(target_batches, uv_taper))
+}
+
 pub(crate) fn trace_weighting_with_density_source(
     weighting: WeightingMode,
     weight_density_mode: WeightDensityMode,
@@ -931,6 +1007,43 @@ fn build_density_grid_serial(
         false,
     );
     density_grid
+}
+
+fn build_density_grid_for_positions(
+    batches: &[VisibilityBatch],
+    positions: &[(usize, usize)],
+    gridder: &StandardGridder,
+    mirror_hermitian: bool,
+    convention: DensityCellConvention,
+) -> Result<Array2<f32>, crate::ImagingError> {
+    let [nx, ny] = gridder.density_grid_shape();
+    let mut density_grid = Array2::<f32>::zeros((nx, ny));
+    for &(batch_index, sample_index) in positions {
+        let batch = batches.get(batch_index).ok_or_else(|| {
+            crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample group references an unknown batch".to_string(),
+            )
+        })?;
+        if sample_index >= batch.len() {
+            return Err(crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample group references an unknown sample".to_string(),
+            ));
+        }
+        let weight = batch.weight[sample_index];
+        if !(weight.is_finite() && weight > 0.0) {
+            continue;
+        }
+        accumulate_density_sample_serial(
+            gridder,
+            mirror_hermitian,
+            convention,
+            &mut density_grid,
+            batch.u_lambda[sample_index],
+            batch.v_lambda[sample_index],
+            weight,
+        );
+    }
+    Ok(density_grid)
 }
 
 fn accumulate_density_grid_serial(
@@ -1457,6 +1570,68 @@ fn reweight_owned_batches(
     batches
 }
 
+fn reweight_positions_in_place(
+    batches: &mut [VisibilityBatch],
+    positions: &[(usize, usize)],
+    gridder: &StandardGridder,
+    density: &Array2<f32>,
+    convention: DensityCellConvention,
+    trace_weighting: bool,
+    mode: DensityReweightMode,
+) -> Result<(), crate::ImagingError> {
+    for &(batch_index, sample_index) in positions {
+        let batch = batches.get_mut(batch_index).ok_or_else(|| {
+            crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample group references an unknown batch".to_string(),
+            )
+        })?;
+        if sample_index >= batch.len() {
+            return Err(crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample group references an unknown sample".to_string(),
+            ));
+        }
+        let weight = batch.weight[sample_index];
+        let u_lambda = batch.u_lambda[sample_index];
+        let v_lambda = batch.v_lambda[sample_index];
+        let Some(cell_density) =
+            gridder.density_at_with_convention(density, u_lambda, v_lambda, convention)
+        else {
+            batch.weight[sample_index] = 0.0;
+            continue;
+        };
+        if !(weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0) {
+            batch.weight[sample_index] = 0.0;
+            if trace_weighting {
+                trace_weighting_sample(
+                    sample_index,
+                    u_lambda,
+                    v_lambda,
+                    weight,
+                    cell_density,
+                    0.0,
+                    gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention),
+                );
+            }
+            continue;
+        }
+        let output_weight =
+            reweight_density_sample(weight, cell_density, u_lambda, v_lambda, gridder, mode);
+        if trace_weighting {
+            trace_weighting_sample(
+                sample_index,
+                u_lambda,
+                v_lambda,
+                weight,
+                cell_density,
+                output_weight,
+                gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention),
+            );
+        }
+        batch.weight[sample_index] = output_weight;
+    }
+    Ok(())
+}
+
 fn reweight_density_sample(
     weight: f32,
     cell_density: f32,
@@ -1930,6 +2105,74 @@ mod tests {
         .unwrap();
 
         assert_eq!(owned, borrowed);
+    }
+
+    #[test]
+    fn grouped_owned_weighting_matches_manual_group_batches() {
+        let request = request_for(WeightingMode::Briggs { robust: 0.5 });
+        let gridder = StandardGridder::new(request.geometry).unwrap();
+        let sample_groups = vec![vec![(0, 0), (0, 1), (0, 2), (0, 3)], vec![(0, 4)]];
+
+        let grouped = apply_weighting_to_owned_batches_by_sample_groups(
+            request.weighting,
+            WeightDensityMode::Combined,
+            None,
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
+            request.visibility_batches.clone(),
+            &sample_groups,
+            &gridder,
+        )
+        .unwrap();
+
+        let mut manual = request.visibility_batches.clone();
+        for positions in sample_groups {
+            let source = &request.visibility_batches[0];
+            let group_batch = VisibilityBatch {
+                u_lambda: positions
+                    .iter()
+                    .map(|&(_, index)| source.u_lambda[index])
+                    .collect(),
+                v_lambda: positions
+                    .iter()
+                    .map(|&(_, index)| source.v_lambda[index])
+                    .collect(),
+                w_lambda: positions
+                    .iter()
+                    .map(|&(_, index)| source.w_lambda[index])
+                    .collect(),
+                weight: positions
+                    .iter()
+                    .map(|&(_, index)| source.weight[index])
+                    .collect(),
+                sumwt_factor: positions
+                    .iter()
+                    .map(|&(_, index)| source.sumwt_factor[index])
+                    .collect(),
+                gridable: positions
+                    .iter()
+                    .map(|&(_, index)| source.gridable[index])
+                    .collect(),
+                visibility: positions
+                    .iter()
+                    .map(|&(_, index)| source.visibility[index])
+                    .collect(),
+            };
+            let weighted_group = apply_weighting_with_density_source(
+                request.weighting,
+                WeightDensityMode::Combined,
+                None,
+                fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
+                std::slice::from_ref(&group_batch),
+                std::slice::from_ref(&group_batch),
+                &gridder,
+            )
+            .unwrap();
+            for (group_index, &(_, sample_index)) in positions.iter().enumerate() {
+                manual[0].weight[sample_index] = weighted_group[0].weight[group_index];
+            }
+        }
+
+        assert_eq!(grouped, manual);
     }
 
     #[test]

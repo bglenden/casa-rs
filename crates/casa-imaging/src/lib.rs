@@ -73,7 +73,8 @@ use gridder::{
 };
 pub use weighting::StandardMfsStreamingWeightingPlan;
 use weighting::{
-    apply_weighting, apply_weighting_to_owned_batches, apply_weighting_with_density_source,
+    apply_weighting, apply_weighting_to_owned_batches,
+    apply_weighting_to_owned_batches_by_sample_groups, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
@@ -4400,11 +4401,35 @@ fn run_mosaic_dirty_imaging(
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
     let weighted_batches = apply_mosaic_weighting(request, config, &gridder)?;
-    stage_timings.weighting += weighting_started.elapsed();
+    let weighting_elapsed = weighting_started.elapsed();
+    stage_timings.weighting += weighting_elapsed;
     let conv_sampling = mosaic_projector_sampling(request.geometry);
+    let group_started = Instant::now();
     let groups = build_mosaic_pointing_groups(&weighted_batches, &config.metadata_batches)?;
+    let group_elapsed = group_started.elapsed();
     if groups.is_empty() {
         return Err(ImagingError::NoUsableSamples);
+    }
+    if profile::standard_mfs_profile_detail_enabled() {
+        let group_samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+        let (group_min, group_p50, group_max) = profile::min_p50_max_usize(
+            &groups
+                .iter()
+                .map(|group| group.batch.len())
+                .collect::<Vec<_>>(),
+        );
+        eprintln!(
+            "mosaic_dirty_setup weighting_ms={:.3} build_groups_ms={:.3} input_batches={} metadata_batches={} groups={} grouped_samples={} group_samples_min={} group_samples_p50={} group_samples_max={}",
+            profile::millis(weighting_elapsed),
+            profile::millis(group_elapsed),
+            weighted_batches.len(),
+            config.metadata_batches.len(),
+            groups.len(),
+            group_samples,
+            group_min,
+            group_p50,
+            group_max,
+        );
     }
 
     let [nx, ny] = request.geometry.image_shape;
@@ -4426,7 +4451,15 @@ fn run_mosaic_dirty_imaging(
     let trace_enabled = mosaic_trace_enabled();
     let cell_trace_targets = mosaic_cell_trace_targets();
 
+    let weight_image_started = Instant::now();
     let pb_weight_image = build_mosaic_weight_image(request.geometry, config, &groups)?;
+    let weight_image_elapsed = weight_image_started.elapsed();
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "mosaic_dirty_setup weight_image_ms={:.3}",
+            profile::millis(weight_image_elapsed),
+        );
+    }
 
     let mosaic_parallel_threads = mosaic_parallel_thread_count(groups.len());
     let mosaic_metal_group_cache = if !trace_enabled
@@ -5807,7 +5840,7 @@ fn apply_mosaic_weighting(
         ));
     }
 
-    let mut grouped = BTreeMap::<(u64, u64), (Vec<(usize, usize)>, VisibilityBatch)>::new();
+    let mut grouped = BTreeMap::<(u64, u64), Vec<(usize, usize)>>::new();
     for (batch_index, (batch, metadata)) in request
         .visibility_batches
         .iter()
@@ -5822,59 +5855,29 @@ fn apply_mosaic_weighting(
         }
         for sample_index in 0..batch.len() {
             let pointing = metadata.pointing_direction_rad[sample_index];
-            let entry = grouped
+            grouped
                 .entry((pointing[0].to_bits(), pointing[1].to_bits()))
-                .or_insert_with(|| {
-                    (
-                        Vec::new(),
-                        VisibilityBatch {
-                            u_lambda: Vec::new(),
-                            v_lambda: Vec::new(),
-                            w_lambda: Vec::new(),
-                            weight: Vec::new(),
-                            sumwt_factor: Vec::new(),
-                            gridable: Vec::new(),
-                            visibility: Vec::new(),
-                        },
-                    )
-                });
-            entry.0.push((batch_index, sample_index));
-            entry.1.u_lambda.push(batch.u_lambda[sample_index]);
-            entry.1.v_lambda.push(batch.v_lambda[sample_index]);
-            entry.1.w_lambda.push(batch.w_lambda[sample_index]);
-            entry.1.weight.push(batch.weight[sample_index]);
-            entry.1.sumwt_factor.push(batch.sumwt_factor[sample_index]);
-            entry.1.gridable.push(batch.gridable[sample_index]);
-            entry.1.visibility.push(batch.visibility[sample_index]);
+                .or_default()
+                .push((batch_index, sample_index));
         }
     }
 
-    let mut weighted_batches = request.visibility_batches.clone();
     let fractional_bandwidth =
         fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz);
     let density_mode = match request.weighting {
         WeightingMode::BriggsBwTaper { .. } => WeightDensityMode::PerPlane,
         _ => WeightDensityMode::Combined,
     };
-    for (_pointing, (positions, group_batch)) in grouped {
-        let weighted_group = apply_weighting_with_density_source(
-            request.weighting,
-            density_mode,
-            None,
-            fractional_bandwidth,
-            std::slice::from_ref(&group_batch),
-            std::slice::from_ref(&group_batch),
-            gridder,
-        )?;
-        let weighted_group = &weighted_group[0];
-        for (group_index, (batch_index, sample_index)) in positions.into_iter().enumerate() {
-            weighted_batches[batch_index].weight[sample_index] = weighted_group.weight[group_index];
-            weighted_batches[batch_index].sumwt_factor[sample_index] =
-                weighted_group.sumwt_factor[group_index];
-        }
-    }
-
-    Ok(weighted_batches)
+    let sample_groups = grouped.into_values().collect::<Vec<_>>();
+    apply_weighting_to_owned_batches_by_sample_groups(
+        request.weighting,
+        density_mode,
+        None,
+        fractional_bandwidth,
+        request.visibility_batches.clone(),
+        &sample_groups,
+        gridder,
+    )
 }
 
 fn append_mosaic_trace(line: String) {
