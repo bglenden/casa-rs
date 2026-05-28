@@ -4563,11 +4563,13 @@ fn run_mosaic_dirty_imaging(
                 conv_sampling,
                 4,
             )?;
-            let weight_plan = weight_projector.plan_sample(0.0, 0.0).ok_or_else(|| {
-                ImagingError::Normalization(
-                    "mosaic weight projector failed to plan the centered kernel".to_string(),
-                )
-            })?;
+            let weight_plan = weight_projector
+                .plan_sample_for_grid(0.0, 0.0)
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "mosaic weight projector failed to plan the centered kernel".to_string(),
+                    )
+                })?;
             let mut group_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
             let mut group_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
             stage_timings.psf_grid += projector_started.elapsed();
@@ -4622,10 +4624,18 @@ fn run_mosaic_dirty_imaging(
                     continue;
                 }
                 let grid_weight = weight * sumwt_factor;
-                let Some(plan) = projector.plan_sample(
-                    group.batch.u_lambda[sample_index],
-                    group.batch.v_lambda[sample_index],
-                ) else {
+                let plan = if trace_enabled {
+                    projector.plan_sample(
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                    )
+                } else {
+                    projector.plan_sample_for_grid(
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                    )
+                };
+                let Some(plan) = plan else {
                     skipped_samples += 1;
                     continue;
                 };
@@ -5291,11 +5301,13 @@ fn compute_mosaic_dirty_group_contribution(
         4,
         true,
     )?;
-    let weight_plan = weight_projector.plan_sample(0.0, 0.0).ok_or_else(|| {
-        ImagingError::Normalization(
-            "mosaic weight projector failed to plan the centered kernel".to_string(),
-        )
-    })?;
+    let weight_plan = weight_projector
+        .plan_sample_for_grid(0.0, 0.0)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "mosaic weight projector failed to plan the centered kernel".to_string(),
+            )
+        })?;
     let actual_threads = mosaic_parallel_thread_count(group.batch.len()).min(thread_count);
     if mosaic_initial_dirty_metal_backend_enabled() && group.batch.len() >= 10_000 {
         return compute_mosaic_dirty_group_contribution_metal(
@@ -5341,7 +5353,7 @@ fn compute_mosaic_dirty_group_contribution(
             continue;
         }
         let grid_weight = weight * sumwt_factor;
-        let Some(plan) = projector.plan_sample(
+        let Some(plan) = projector.plan_sample_for_grid(
             group.batch.u_lambda[sample_index],
             group.batch.v_lambda[sample_index],
         ) else {
@@ -5470,7 +5482,7 @@ fn collect_mosaic_metal_samples(
             continue;
         }
         let grid_weight = weight * sumwt_factor;
-        let Some(plan) = projector.plan_sample(
+        let Some(plan) = projector.plan_sample_for_grid(
             group.batch.u_lambda[sample_index],
             group.batch.v_lambda[sample_index],
         ) else {
@@ -5713,7 +5725,7 @@ fn compute_mosaic_dirty_group_contribution_sample_ranges(
                         continue;
                     }
                     let grid_weight = weight * sumwt_factor;
-                    let Some(plan) = projector.plan_sample(
+                    let Some(plan) = projector.plan_sample_for_grid(
                         group.batch.u_lambda[sample_index],
                         group.batch.v_lambda[sample_index],
                     ) else {
@@ -6492,7 +6504,7 @@ fn compute_mosaic_residual_group_contribution(
         {
             continue;
         }
-        let Some(plan) = projector.plan_sample(
+        let Some(plan) = projector.plan_sample_for_grid(
             group.batch.u_lambda[sample_index],
             group.batch.v_lambda[sample_index],
         ) else {
@@ -6558,7 +6570,7 @@ fn compute_mosaic_residual_group_grid_sample_ranges(
                     {
                         continue;
                     }
-                    let Some(plan) = projector.plan_sample(
+                    let Some(plan) = projector.plan_sample_for_grid(
                         group.batch.u_lambda[sample_index],
                         group.batch.v_lambda[sample_index],
                     ) else {

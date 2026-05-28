@@ -2075,6 +2075,23 @@ impl ScreenProjector {
         u_lambda: f64,
         v_lambda: f64,
     ) -> Option<ScreenProjectSamplePlan> {
+        self.plan_sample_internal(u_lambda, v_lambda, true)
+    }
+
+    pub(crate) fn plan_sample_for_grid(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<ScreenProjectSamplePlan> {
+        self.plan_sample_internal(u_lambda, v_lambda, false)
+    }
+
+    fn plan_sample_internal(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+        compute_normalization: bool,
+    ) -> Option<ScreenProjectSamplePlan> {
         let pos_x = u_lambda / self.du_lambda + self.grid_shape[0] as f64 / 2.0;
         let pos_y = -v_lambda / self.dv_lambda + self.grid_shape[1] as f64 / 2.0;
         if !(pos_x.is_finite() && pos_y.is_finite()) {
@@ -2099,8 +2116,11 @@ impl ScreenProjector {
         if min_ix > max_ix || min_iy > max_iy {
             return None;
         }
-        let normalization =
-            self.sample_normalization(off_x, off_y, min_ix, max_ix, min_iy, max_iy)?;
+        let normalization = if compute_normalization {
+            self.sample_normalization(off_x, off_y, min_ix, max_ix, min_iy, max_iy)?
+        } else {
+            0.0
+        };
         Some(ScreenProjectSamplePlan {
             loc_x,
             loc_y,
@@ -3342,6 +3362,42 @@ mod tests {
         let expected_x = geometry.image_shape[0] / 2 + 6;
         let expected_y = geometry.image_shape[1] / 2;
         assert_peak_within_tolerance(peak, (expected_x, expected_y), 2);
+    }
+
+    #[test]
+    fn screen_projector_grid_plan_skips_trace_only_normalization() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [
+                (1.0f64 / 3600.0).to_radians(),
+                (1.0f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new(geometry).expect("gridder");
+        let projector = ScreenProjector::from_screen(geometry, &gridder, 4, |l, m| {
+            let radius_sq = l * l + m * m;
+            Complex32::new((-0.5 * radius_sq / 1.0e-10).exp() as f32, 0.0)
+        })
+        .expect("screen projector");
+
+        let traced = projector
+            .plan_sample(12.25, -7.5)
+            .expect("normalized sample plan");
+        let gridding = projector
+            .plan_sample_for_grid(12.25, -7.5)
+            .expect("gridding sample plan");
+
+        assert_eq!(gridding.loc_x, traced.loc_x);
+        assert_eq!(gridding.loc_y, traced.loc_y);
+        assert_eq!(gridding.off_x, traced.off_x);
+        assert_eq!(gridding.off_y, traced.off_y);
+        assert_eq!(gridding.min_ix, traced.min_ix);
+        assert_eq!(gridding.max_ix, traced.max_ix);
+        assert_eq!(gridding.min_iy, traced.min_iy);
+        assert_eq!(gridding.max_iy, traced.max_iy);
+        assert_eq!(gridding.center_in_bounds, traced.center_in_bounds);
+        assert!(traced.normalization > 0.0);
+        assert_eq!(gridding.normalization, 0.0);
     }
 
     #[test]
