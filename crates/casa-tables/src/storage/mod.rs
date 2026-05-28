@@ -38,12 +38,13 @@ use crate::schema::{SchemaError, TableSchema};
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
-    IsmColumnResult, read_ism_file, read_ism_scalar_column, read_ism_scalar_column_rows,
-    write_ism_file, write_ism_file_indexed, write_ism_file_scalar_columns,
+    IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_scalar_column,
+    read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
+    write_ism_file_scalar_columns,
 };
 use self::standard_stman::{
-    read_ssm_array_column_rows, read_ssm_file, read_ssm_scalar_column_rows, write_ssm_file,
-    write_ssm_file_indexed, write_ssm_file_scalar_columns,
+    read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns, read_ssm_scalar_column_rows,
+    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_columns,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -1733,6 +1734,7 @@ impl CompositeStorage {
                         &dm.data,
                         &table_dat.table_desc.columns,
                         &all_bound_cols,
+                        requested_columns,
                         nrrow,
                         &mut columns,
                     )?;
@@ -1746,6 +1748,7 @@ impl CompositeStorage {
                         &dm.data,
                         &table_dat.table_desc.columns,
                         &all_bound_cols,
+                        requested_columns,
                         nrrow,
                         &mut columns,
                     )?;
@@ -3303,17 +3306,24 @@ fn collect_ssm_scalar_columns(
     dm_blob: &[u8],
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    requested_columns: Option<&HashSet<&str>>,
     nrrow: usize,
     columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
 ) -> Result<(), StorageError> {
-    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+    let col_descs: Vec<(usize, &table_control::ColumnDescContents)> = bound_cols
         .iter()
-        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .enumerate()
+        .filter_map(|(dm_col_idx, (desc_idx, plain_col))| {
+            requested_columns
+                .is_none_or(|requested| requested.contains(plain_col.original_name.as_str()))
+                .then_some((dm_col_idx, &all_col_descs[*desc_idx]))
+        })
         .collect();
-    let ssm_columns = read_ssm_file(data_path, dm_blob, &col_descs, nrrow)?;
+    let ssm_columns = read_ssm_file_columns(data_path, dm_blob, &col_descs, nrrow)?;
     for (col_name, col_result) in &ssm_columns {
         let col_desc = col_descs
             .iter()
+            .map(|(_, col_desc)| *col_desc)
             .find(|c| c.col_name == *col_name)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
@@ -3334,17 +3344,25 @@ fn collect_ism_scalar_columns(
     dm_blob: &[u8],
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    requested_columns: Option<&HashSet<&str>>,
     nrrow: usize,
     columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
 ) -> Result<(), StorageError> {
-    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+    let col_descs: Vec<(usize, &table_control::ColumnDescContents)> = bound_cols
         .iter()
-        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .enumerate()
+        .filter_map(|(dm_col_idx, (desc_idx, plain_col))| {
+            requested_columns
+                .is_none_or(|requested| requested.contains(plain_col.original_name.as_str()))
+                .then_some((dm_col_idx, &all_col_descs[*desc_idx]))
+        })
         .collect();
-    let ism_columns = read_ism_file(data_path, dm_blob, &col_descs, nrrow)?;
+    let ism_columns =
+        read_ism_file_columns(data_path, dm_blob, &col_descs, bound_cols.len(), nrrow)?;
     for (col_name, col_result) in &ism_columns {
         let col_desc = col_descs
             .iter()
+            .map(|(_, col_desc)| *col_desc)
             .find(|c| c.col_name == *col_name)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(

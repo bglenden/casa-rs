@@ -873,6 +873,17 @@ pub(crate) fn read_ism_file(
     col_descs: &[&ColumnDescContents],
     nrrow: usize,
 ) -> Result<Vec<(String, IsmColumnResult)>, StorageError> {
+    let columns = col_descs.iter().copied().enumerate().collect::<Vec<_>>();
+    read_ism_file_columns(file_path, dm_blob, &columns, col_descs.len(), nrrow)
+}
+
+pub(crate) fn read_ism_file_columns(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[(usize, &ColumnDescContents)],
+    total_column_count: usize,
+    nrrow: usize,
+) -> Result<Vec<(String, IsmColumnResult)>, StorageError> {
     let mut file = File::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
@@ -882,7 +893,7 @@ pub(crate) fn read_ism_file(
     // Pre-compute column info
     let col_info: Vec<(CasacoreDataType, usize, bool, bool)> = col_descs
         .iter()
-        .map(|c| {
+        .map(|(_, c)| {
             let scalar_dt =
                 CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
             let nrelem = if c.is_array && !c.shape.is_empty() {
@@ -899,7 +910,7 @@ pub(crate) fn read_ism_file(
         })
         .collect::<Result<_, StorageError>>()?;
 
-    let mut array_reader = if col_descs.iter().any(|col_desc| {
+    let mut array_reader = if col_descs.iter().any(|(_, col_desc)| {
         col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty()
     }) {
         let array_path = PathBuf::from(format!("{}i", file_path.display()));
@@ -917,7 +928,7 @@ pub(crate) fn read_ism_file(
         (0..ncol).map(|_| Vec::with_capacity(nrrow)).collect();
     let mut indirect_columns: Vec<Option<Vec<Option<casa_types::Value>>>> = col_descs
         .iter()
-        .map(|col_desc| {
+        .map(|(_, col_desc)| {
             (col_desc.is_array && (col_desc.option & 1) == 0 && col_desc.shape.is_empty())
                 .then(|| Vec::with_capacity(nrrow))
         })
@@ -937,31 +948,31 @@ pub(crate) fn read_ism_file(
         // Load bucket (cache for repeated access)
         if last_bucket_nr != Some(bucket_nr) {
             let raw = read_ism_bucket(&mut file, &header, bucket_nr)?;
-            cached_bucket = Some(parse_ism_bucket(&raw, ncol, be)?);
+            cached_bucket = Some(parse_ism_bucket(&raw, total_column_count, be)?);
             last_bucket_nr = Some(bucket_nr);
         }
         let bucket = cached_bucket.as_ref().unwrap();
 
         // For each column, expand the interval values
-        for (col_idx, col_desc) in col_descs.iter().enumerate() {
-            let (dt, nrelem, is_direct_fixed_array, is_indirect_array) = col_info[col_idx];
+        for (out_col_idx, &(source_col_idx, col_desc)) in col_descs.iter().enumerate() {
+            let (dt, nrelem, is_direct_fixed_array, is_indirect_array) = col_info[out_col_idx];
 
-            if col_idx >= bucket.col_indices.len() {
+            if source_col_idx >= bucket.col_indices.len() {
                 // Column not in this bucket — fill with defaults
                 for _ in 0..rows_in_bucket {
                     if is_indirect_array {
-                        indirect_columns[col_idx]
+                        indirect_columns[out_col_idx]
                             .as_mut()
                             .expect("indirect ISM column storage")
                             .push(None);
                     } else {
-                        flat_columns[col_idx].push(default_value(dt, false, col_desc));
+                        flat_columns[out_col_idx].push(default_value(dt, false, col_desc));
                     }
                 }
                 continue;
             }
 
-            let col_index = &bucket.col_indices[col_idx];
+            let col_index = &bucket.col_indices[source_col_idx];
 
             // Expand each row in this bucket's interval
             for rel_row in 0..rows_in_bucket {
@@ -984,7 +995,7 @@ pub(crate) fn read_ism_file(
                         .as_mut()
                         .expect("indirect ISM array reader")
                         .read_array_at(offset, dt)?;
-                    indirect_columns[col_idx]
+                    indirect_columns[out_col_idx]
                         .as_mut()
                         .expect("indirect ISM column storage")
                         .push(value);
@@ -994,7 +1005,7 @@ pub(crate) fn read_ism_file(
                     } else {
                         read_scalar_at(&bucket.data, data_offset, dt, be)?
                     };
-                    flat_columns[col_idx].push(value);
+                    flat_columns[out_col_idx].push(value);
                 }
             }
         }
@@ -1002,7 +1013,7 @@ pub(crate) fn read_ism_file(
 
     // Convert per-column results into the shared storage-layer form.
     let mut result = Vec::with_capacity(ncol);
-    for (col_idx, col_desc) in col_descs.iter().enumerate() {
+    for (col_idx, &(_, col_desc)) in col_descs.iter().enumerate() {
         let (dt, _nrelem, is_direct_fixed_array, is_indirect_array) = col_info[col_idx];
         if is_indirect_array {
             result.push((
