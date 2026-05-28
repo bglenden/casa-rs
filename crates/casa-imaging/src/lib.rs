@@ -4238,6 +4238,36 @@ fn append_visibility_batch_range(
     Ok(())
 }
 
+struct MosaicGroupedRangeSpec {
+    pointing_direction_rad: [f64; 2],
+    frequency_hz: f64,
+    primary_beam_model: PrimaryBeamModel,
+    sample_count: usize,
+    ranges: Vec<VisibilitySampleRangeRef>,
+}
+
+fn materialize_mosaic_grouped_range_spec(
+    batches: &[VisibilityBatch],
+    spec: &MosaicGroupedRangeSpec,
+) -> Result<MosaicPointingGroup, ImagingError> {
+    let mut group = MosaicPointingGroup {
+        pointing_direction_rad: spec.pointing_direction_rad,
+        frequency_hz: spec.frequency_hz,
+        primary_beam_model: spec.primary_beam_model,
+        batch: empty_visibility_batch_with_capacity(spec.sample_count),
+        sample_frequency_hz: Vec::new(),
+    };
+    for range_ref in &spec.ranges {
+        let Some(batch) = batches.get(range_ref.batch_index) else {
+            return Err(ImagingError::InvalidRequest(
+                "grouped mosaic metadata references an unknown visibility batch".to_string(),
+            ));
+        };
+        append_visibility_batch_range(&mut group.batch, batch, range_ref.range)?;
+    }
+    Ok(group)
+}
+
 struct MosaicDirtyGroupContribution {
     psf_grid: Array2<Complex64>,
     residual_grid: Array2<Complex64>,
@@ -5264,9 +5294,10 @@ fn build_mosaic_pointing_groups_from_grouped(
         ));
     }
     type MosaicGroupKey = (u64, u64, u64, (u8, u64, u64));
-    type MosaicGroupSpec = ([f64; 2], f64, PrimaryBeamModel, usize);
-    let mut specs = BTreeMap::<MosaicGroupKey, MosaicGroupSpec>::new();
-    for metadata in metadata_batches {
+    let profile_started = profile::standard_mfs_profile_detail_enabled().then(Instant::now);
+    let spec_started = profile::standard_mfs_profile_detail_enabled().then(Instant::now);
+    let mut specs = BTreeMap::<MosaicGroupKey, MosaicGroupedRangeSpec>::new();
+    for (batch_index, metadata) in metadata_batches.iter().enumerate() {
         for metadata_group in &metadata.groups {
             let pointing_direction_rad = metadata_group.pointing_direction_rad;
             let frequency_hz = metadata_group.beam_frequency_hz;
@@ -5281,50 +5312,75 @@ fn build_mosaic_pointing_groups_from_grouped(
                 .iter()
                 .map(|range| range.end.saturating_sub(range.start))
                 .sum::<usize>();
-            specs
-                .entry(key)
-                .and_modify(|spec| spec.3 += sample_count)
-                .or_insert((
-                    pointing_direction_rad,
-                    frequency_hz,
-                    metadata_group.primary_beam_model,
-                    sample_count,
-                ));
-        }
-    }
-    let mut group_indices = BTreeMap::<(u64, u64, u64, (u8, u64, u64)), usize>::new();
-    let mut groups = Vec::<MosaicPointingGroup>::with_capacity(specs.len());
-    for (key, (pointing_direction_rad, frequency_hz, primary_beam_model, sample_count)) in specs {
-        let index = groups.len();
-        group_indices.insert(key, index);
-        groups.push(MosaicPointingGroup {
-            pointing_direction_rad,
-            frequency_hz,
-            primary_beam_model,
-            batch: empty_visibility_batch_with_capacity(sample_count),
-            sample_frequency_hz: Vec::new(),
-        });
-    }
-    for (batch, metadata) in batches.iter().zip(metadata_batches.iter()) {
-        for metadata_group in &metadata.groups {
-            let pointing_direction_rad = metadata_group.pointing_direction_rad;
-            let frequency_hz = metadata_group.beam_frequency_hz;
-            let key = (
-                pointing_direction_rad[0].to_bits(),
-                pointing_direction_rad[1].to_bits(),
-                frequency_hz.to_bits(),
-                primary_beam_model_key(metadata_group.primary_beam_model),
+            let spec = specs.entry(key).or_insert_with(|| MosaicGroupedRangeSpec {
+                pointing_direction_rad,
+                frequency_hz,
+                primary_beam_model: metadata_group.primary_beam_model,
+                sample_count: 0,
+                ranges: Vec::new(),
+            });
+            spec.sample_count += sample_count;
+            spec.ranges.extend(
+                metadata_group
+                    .sample_ranges
+                    .iter()
+                    .copied()
+                    .map(|range| VisibilitySampleRangeRef { batch_index, range }),
             );
-            let group_index = group_indices.get(&key).copied().ok_or_else(|| {
-                ImagingError::InvalidRequest(
-                    "grouped mosaic metadata references an unregistered pointing group".to_string(),
-                )
-            })?;
-            let entry = &mut groups[group_index];
-            for range in &metadata_group.sample_ranges {
-                append_visibility_batch_range(&mut entry.batch, batch, *range)?;
-            }
         }
+    }
+    let spec_elapsed = spec_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let specs = specs.into_values().collect::<Vec<_>>();
+    let materialize_started = profile::standard_mfs_profile_detail_enabled().then(Instant::now);
+    let thread_count = mosaic_parallel_thread_count(specs.len());
+    let groups = if thread_count <= 1 || specs.len() < 2 {
+        specs
+            .iter()
+            .map(|spec| materialize_mosaic_grouped_range_spec(batches, spec))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let chunk_len = specs.len().div_ceil(thread_count);
+        let mut worker_results = Vec::<(usize, Vec<MosaicPointingGroup>)>::new();
+        thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for (chunk_index, chunk) in specs.chunks(chunk_len).enumerate() {
+                handles.push(scope.spawn(move || {
+                    let groups = chunk
+                        .iter()
+                        .map(|spec| materialize_mosaic_grouped_range_spec(batches, spec))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok::<_, ImagingError>((chunk_index, groups))
+                }));
+            }
+            for handle in handles {
+                worker_results.push(handle.join().map_err(|_| {
+                    ImagingError::Unsupported(
+                        "grouped mosaic materialization worker panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<(), ImagingError>(())
+        })?;
+        worker_results.sort_by_key(|(chunk_index, _)| *chunk_index);
+        worker_results
+            .into_iter()
+            .flat_map(|(_, groups)| groups)
+            .collect()
+    };
+    let materialize_elapsed =
+        materialize_started.map_or(Duration::ZERO, |started| started.elapsed());
+    if profile::standard_mfs_profile_detail_enabled() {
+        let total_ranges = specs.iter().map(|spec| spec.ranges.len()).sum::<usize>();
+        eprintln!(
+            "mosaic_grouped_materialize specs={} ranges={} requested_threads={} actual_threads={} spec_ms={:.3} materialize_ms={:.3} total_ms={:.3}",
+            specs.len(),
+            total_ranges,
+            standard_mfs_grid_threads(),
+            thread_count.min(specs.len()).max(1),
+            profile::millis(spec_elapsed),
+            profile::millis(materialize_elapsed),
+            profile::millis(profile_started.map_or(Duration::ZERO, |started| started.elapsed())),
+        );
     }
     Ok(groups)
 }
