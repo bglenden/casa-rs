@@ -13545,18 +13545,15 @@ impl MfsMosaicMetadataAccumulator {
         self.sample_spw_ids.reserve(additional);
     }
 
-    fn push_sample(
-        &mut self,
-        pointing_direction_rad: [f64; 2],
-        spw_id: usize,
-        antenna1_id: i32,
-        antenna2_id: i32,
-    ) {
+    fn record_selected_antennas(&mut self, antenna1_id: i32, antenna2_id: i32) {
+        self.selected_antenna_ids.insert(antenna1_id);
+        self.selected_antenna_ids.insert(antenna2_id);
+    }
+
+    fn push_sample(&mut self, pointing_direction_rad: [f64; 2], spw_id: usize) {
         self.sample_pointing_direction_rad
             .push(pointing_direction_rad);
         self.sample_spw_ids.push(spw_id);
-        self.selected_antenna_ids.insert(antenna1_id);
-        self.selected_antenna_ids.insert(antenna2_id);
     }
 }
 
@@ -14669,6 +14666,7 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
+                let mut recorded_mosaic_antennas = false;
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -14700,12 +14698,11 @@ impl PreparedSelection {
                     batch.visibility.push(visibility);
                     sample_frequency_hz.push(imaging_frequency_hz);
                     if let Some(metadata) = mosaic_metadata {
-                        metadata.push_sample(
-                            baseline_pointing_direction_rad,
-                            selected_row.spw_id,
-                            antenna1_id,
-                            antenna2_id,
-                        );
+                        if !recorded_mosaic_antennas {
+                            metadata.record_selected_antennas(antenna1_id, antenna2_id);
+                            recorded_mosaic_antennas = true;
+                        }
+                        metadata.push_sample(baseline_pointing_direction_rad, selected_row.spw_id);
                     }
                     if trace_enabled {
                         samples.push(PreparedVisibilitySampleTrace {
@@ -15025,6 +15022,7 @@ impl PreparedSelection {
                 PreparedTraceState::PairedMfs { .. },
             ) => {
                 let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                let mut recorded_mosaic_antennas = false;
                 if let Some((first_weight, second_weight)) =
                     weights.channel_invariant_pair_weights(pair.0, pair.1)?
                 {
@@ -15076,11 +15074,13 @@ impl PreparedSelection {
                                 batch.visibility.push(visibility);
                                 sample_frequency_hz.push(imaging_frequency_hz);
                                 if let Some(metadata) = mosaic_metadata {
+                                    if !recorded_mosaic_antennas {
+                                        metadata.record_selected_antennas(antenna1_id, antenna2_id);
+                                        recorded_mosaic_antennas = true;
+                                    }
                                     metadata.push_sample(
                                         baseline_pointing_direction_rad,
                                         selected_row.spw_id,
-                                        antenna1_id,
-                                        antenna2_id,
                                     );
                                 }
                             }
@@ -15141,12 +15141,12 @@ impl PreparedSelection {
                         batch.visibility.push(visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
                         if let Some(metadata) = mosaic_metadata {
-                            metadata.push_sample(
-                                baseline_pointing_direction_rad,
-                                selected_row.spw_id,
-                                antenna1_id,
-                                antenna2_id,
-                            );
+                            if !recorded_mosaic_antennas {
+                                metadata.record_selected_antennas(antenna1_id, antenna2_id);
+                                recorded_mosaic_antennas = true;
+                            }
+                            metadata
+                                .push_sample(baseline_pointing_direction_rad, selected_row.spw_id);
                         }
                     }
                 }
