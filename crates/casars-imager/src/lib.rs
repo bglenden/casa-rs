@@ -24036,7 +24036,6 @@ mod tests {
     use std::fs;
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
 
     use casa_coordinates::Coordinate;
     use casa_images::PagedImage;
@@ -24060,8 +24059,6 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct EnvGuard {
         name: &'static str,
@@ -24150,7 +24147,6 @@ mod tests {
 
     #[test]
     fn standard_mfs_runtime_planner_defaults_to_fixed_tile_multi_cpu() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
             .expect("standard MFS runtime env lock");
@@ -24219,7 +24215,6 @@ mod tests {
 
     #[test]
     fn mosaic_mfs_multi_cpu_runtime_planner_caps_default_threads() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
             .expect("standard MFS runtime env lock");
@@ -24275,7 +24270,6 @@ mod tests {
 
     #[test]
     fn mtmfs_auto_runtime_planner_selects_metal_when_available() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
             .expect("standard MFS runtime env lock");
@@ -24340,7 +24334,6 @@ mod tests {
 
     #[test]
     fn wproject_auto_runtime_planner_selects_grouped_metal_dirty_when_available() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
             .expect("standard MFS runtime env lock");
@@ -24402,7 +24395,6 @@ mod tests {
 
     #[test]
     fn standard_mfs_runtime_planner_cpu_policy_overrides_acceleration_env() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
             .expect("standard MFS runtime env lock");
@@ -24465,7 +24457,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_target_uses_explicit_override() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "123");
 
         let target = standard_mfs_memory_target();
@@ -24476,7 +24468,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_target_defaults_to_system_half_or_fallback() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::unset("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB");
 
         let target = standard_mfs_memory_target();
@@ -24495,7 +24487,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
         let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
         let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
@@ -24527,7 +24519,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_respects_fixed_tile_overrides() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
         let _tile_edge = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_EDGE", "64");
         let _tile_anchor = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_ANCHOR", "zero");
@@ -24551,7 +24543,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_selects_tile_edge_from_memory_target() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
         let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
         let _tile_resident = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB");
@@ -24574,7 +24566,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_supports_center_quadrant_tiles() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
         let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
@@ -24598,7 +24590,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_rejects_plan_over_target() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "1");
         let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
@@ -24619,7 +24611,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_reserves_grouped_metal_input_cache_when_selected() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "16384");
         let _residual_backend = EnvGuard::set(
             "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
@@ -24650,7 +24642,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_enables_transient_routed_cache_for_metal_initial_dirty() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "16384");
         let _residual_backend = EnvGuard::set(
             "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
@@ -24682,7 +24674,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_keeps_replay_cache_opt_in() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "16384");
         let _residual_backend = EnvGuard::set(
             "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND",
@@ -24710,7 +24702,7 @@ mod tests {
 
     #[test]
     fn standard_mfs_retained_prepare_guard_rejects_over_target_fixed_tile_shape() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
         let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
         let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
