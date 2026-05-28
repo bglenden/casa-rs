@@ -21658,6 +21658,27 @@ fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
     debug_assert_eq!(sample_spw_ids.len(), sample_frequency_hz.len());
     debug_assert_eq!(sample_pointing_ids.len(), sample_frequency_hz.len());
     let max_batch_size = max_batch_size.max(1);
+    if sample_frequency_hz
+        .iter()
+        .all(|frequency| frequency.is_finite() && *frequency > 0.0)
+    {
+        let constant_beam_frequency_by_spw =
+            constant_beam_frequency_by_spw(beam_frequency_by_spw_freq);
+        if !constant_beam_frequency_by_spw.is_empty()
+            && sample_spw_ids
+                .iter()
+                .all(|spw_id| constant_beam_frequency_by_spw.contains_key(spw_id))
+        {
+            return chunk_mfs_mosaic_metadata_batches_with_constant_beam_frequency(
+                sample_spw_ids,
+                &constant_beam_frequency_by_spw,
+                sample_pointing_ids,
+                pointing_direction_by_id,
+                primary_beam_model,
+                max_batch_size,
+            );
+        }
+    }
     let mut batches = Vec::new();
     let mut start = 0usize;
     while start < sample_frequency_hz.len() {
@@ -21717,6 +21738,120 @@ fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
             sample_count: 0,
             groups: Vec::new(),
         });
+    }
+    Ok(batches)
+}
+
+fn constant_beam_frequency_by_spw(
+    beam_frequency_by_spw_freq: &HashMap<(usize, u64), f64>,
+) -> HashMap<usize, f64> {
+    let mut by_spw = HashMap::<usize, Option<f64>>::new();
+    for (&(spw_id, _), &beam_frequency_hz) in beam_frequency_by_spw_freq {
+        by_spw
+            .entry(spw_id)
+            .and_modify(|existing| {
+                if existing.is_some_and(|value| value.to_bits() != beam_frequency_hz.to_bits()) {
+                    *existing = None;
+                }
+            })
+            .or_insert(Some(beam_frequency_hz));
+    }
+    by_spw
+        .into_iter()
+        .filter_map(|(spw_id, frequency)| frequency.map(|frequency| (spw_id, frequency)))
+        .collect()
+}
+
+fn chunk_mfs_mosaic_metadata_batches_with_constant_beam_frequency(
+    sample_spw_ids: &[usize],
+    beam_frequency_by_spw: &HashMap<usize, f64>,
+    sample_pointing_ids: &[usize],
+    pointing_direction_by_id: &BTreeMap<usize, [f64; 2]>,
+    primary_beam_model: PrimaryBeamModel,
+    max_batch_size: usize,
+) -> Result<Vec<GroupedVisibilityMetadataBatch>, String> {
+    let profile_detail = standard_mfs_profile_detail_enabled();
+    let started = profile_detail.then(Instant::now);
+    let mut batches = Vec::new();
+    let mut total_ranges = 0usize;
+    let mut start = 0usize;
+    while start < sample_spw_ids.len() {
+        let end = (start + max_batch_size).min(sample_spw_ids.len());
+        let mut group_index_by_key = BTreeMap::<(usize, u64), usize>::new();
+        let mut groups = Vec::<GroupedVisibilityMetadata>::new();
+        let mut sample_index = start;
+        while sample_index < end {
+            let pointing_id = sample_pointing_ids[sample_index];
+            let spw_id = sample_spw_ids[sample_index];
+            let beam_frequency_hz =
+                beam_frequency_by_spw.get(&spw_id).copied().ok_or_else(|| {
+                    format!(
+                        "internal error: missing constant mosaic beam frequency for SPW {spw_id}"
+                    )
+                })?;
+            let pointing_direction_rad = pointing_direction_by_id
+                .get(&pointing_id)
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "internal error: missing mosaic pointing direction for id {pointing_id}"
+                    )
+                })?;
+            let key = (pointing_id, beam_frequency_hz.to_bits());
+            let group_index = match group_index_by_key.get(&key).copied() {
+                Some(index) => index,
+                None => {
+                    let index = groups.len();
+                    group_index_by_key.insert(key, index);
+                    groups.push(GroupedVisibilityMetadata {
+                        beam_frequency_hz,
+                        primary_beam_model,
+                        pointing_direction_rad,
+                        sample_ranges: Vec::new(),
+                    });
+                    index
+                }
+            };
+            let run_start = sample_index;
+            sample_index += 1;
+            while sample_index < end
+                && sample_pointing_ids[sample_index] == pointing_id
+                && sample_spw_ids[sample_index] == spw_id
+            {
+                sample_index += 1;
+            }
+            groups[group_index]
+                .sample_ranges
+                .push(VisibilitySampleRange {
+                    start: run_start - start,
+                    end: sample_index - start,
+                });
+            total_ranges += 1;
+        }
+        batches.push(GroupedVisibilityMetadataBatch {
+            sample_count: end - start,
+            groups,
+        });
+        start = end;
+    }
+    if batches.is_empty() {
+        batches.push(GroupedVisibilityMetadataBatch {
+            sample_count: 0,
+            groups: Vec::new(),
+        });
+    }
+    if profile_detail {
+        eprintln!(
+            "mosaic_metadata_constant_beam_fast_path samples={} spws={} batches={} ranges={} total_ms={:.3}",
+            sample_spw_ids.len(),
+            beam_frequency_by_spw.len(),
+            batches.len(),
+            total_ranges,
+            started
+                .map_or(Duration::ZERO, |started| started.elapsed())
+                .as_secs_f64()
+                * 1_000.0,
+        );
     }
     Ok(batches)
 }
