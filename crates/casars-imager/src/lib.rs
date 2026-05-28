@@ -5301,8 +5301,14 @@ fn apply_standard_mfs_runtime_plan_locked(
     }
 
     let default_threads = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Auto if mosaic_mfs_eligible && !auto_metal => {
+            auto_multi_cpu.then(|| mosaic_mfs_cpu_grid_threads(auto_threads).to_string())
+        }
         StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then(|| auto_threads.to_string()),
         StandardMfsAccelerationPolicy::Cpu => Some("1".to_string()),
+        StandardMfsAccelerationPolicy::MultiCpu if mosaic_mfs_eligible => {
+            Some(mosaic_mfs_cpu_grid_threads(auto_threads).to_string())
+        }
         StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal => {
             Some(auto_threads.max(2).to_string())
         }
@@ -5481,6 +5487,10 @@ fn standard_mfs_auto_grid_threads() -> usize {
     std::thread::available_parallelism()
         .map_or(1, |value| value.get())
         .clamp(1, 4)
+}
+
+fn mosaic_mfs_cpu_grid_threads(auto_threads: usize) -> usize {
+    auto_threads.clamp(1, 2)
 }
 
 fn standard_mfs_wproject_auto_grid_threads() -> usize {
@@ -24205,6 +24215,62 @@ mod tests {
 
         assert!(env::var_os("CASA_RS_STANDARD_MFS_BACKEND").is_none());
         assert!(env::var_os("CASA_RS_STANDARD_MFS_GRID_THREADS").is_none());
+    }
+
+    #[test]
+    fn mosaic_mfs_multi_cpu_runtime_planner_caps_default_threads() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--field"),
+            OsString::from("0,1"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("multi-cpu"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse mosaic multi-cpu config");
+
+        {
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").as_deref(),
+                Ok("2")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+        }
     }
 
     #[test]
