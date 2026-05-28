@@ -73,8 +73,9 @@ use gridder::{
 };
 pub use weighting::StandardMfsStreamingWeightingPlan;
 use weighting::{
-    apply_weighting, apply_weighting_to_owned_batches,
-    apply_weighting_to_owned_batches_by_sample_groups, apply_weighting_with_density_source,
+    VisibilitySampleRangeRef, apply_weighting, apply_weighting_to_owned_batches,
+    apply_weighting_to_owned_batches_by_sample_groups,
+    apply_weighting_to_owned_batches_by_sample_range_groups, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
@@ -4190,6 +4191,52 @@ struct MosaicPointingGroup {
     sample_frequency_hz: Vec<f64>,
 }
 
+fn empty_visibility_batch_with_capacity(capacity: usize) -> VisibilityBatch {
+    VisibilityBatch {
+        u_lambda: Vec::with_capacity(capacity),
+        v_lambda: Vec::with_capacity(capacity),
+        w_lambda: Vec::with_capacity(capacity),
+        weight: Vec::with_capacity(capacity),
+        sumwt_factor: Vec::with_capacity(capacity),
+        gridable: Vec::with_capacity(capacity),
+        visibility: Vec::with_capacity(capacity),
+    }
+}
+
+fn append_visibility_batch_range(
+    target: &mut VisibilityBatch,
+    source: &VisibilityBatch,
+    range: VisibilitySampleRange,
+) -> Result<(), ImagingError> {
+    if range.start > range.end || range.end > source.len() {
+        return Err(ImagingError::InvalidRequest(
+            "mosaic grouped metadata references an unknown sample range".to_string(),
+        ));
+    }
+    target
+        .u_lambda
+        .extend_from_slice(&source.u_lambda[range.start..range.end]);
+    target
+        .v_lambda
+        .extend_from_slice(&source.v_lambda[range.start..range.end]);
+    target
+        .w_lambda
+        .extend_from_slice(&source.w_lambda[range.start..range.end]);
+    target
+        .weight
+        .extend_from_slice(&source.weight[range.start..range.end]);
+    target
+        .sumwt_factor
+        .extend_from_slice(&source.sumwt_factor[range.start..range.end]);
+    target
+        .gridable
+        .extend_from_slice(&source.gridable[range.start..range.end]);
+    target
+        .visibility
+        .extend_from_slice(&source.visibility[range.start..range.end]);
+    Ok(())
+}
+
 struct MosaicDirtyGroupContribution {
     psf_grid: Array2<Complex64>,
     residual_grid: Array2<Complex64>,
@@ -5112,15 +5159,7 @@ fn build_mosaic_pointing_groups(
                         pointing_direction_rad,
                         frequency_hz,
                         primary_beam_model: metadata.primary_beam_model,
-                        batch: VisibilityBatch {
-                            u_lambda: Vec::new(),
-                            v_lambda: Vec::new(),
-                            w_lambda: Vec::new(),
-                            weight: Vec::new(),
-                            sumwt_factor: Vec::new(),
-                            gridable: Vec::new(),
-                            visibility: Vec::new(),
-                        },
+                        batch: empty_visibility_batch_with_capacity(0),
                         sample_frequency_hz: Vec::new(),
                     });
                     index
@@ -5158,8 +5197,48 @@ fn build_mosaic_pointing_groups_from_grouped(
                 .to_string(),
         ));
     }
+    type MosaicGroupKey = (u64, u64, u64, (u8, u64, u64));
+    type MosaicGroupSpec = ([f64; 2], f64, PrimaryBeamModel, usize);
+    let mut specs = BTreeMap::<MosaicGroupKey, MosaicGroupSpec>::new();
+    for metadata in metadata_batches {
+        for metadata_group in &metadata.groups {
+            let pointing_direction_rad = metadata_group.pointing_direction_rad;
+            let frequency_hz = metadata_group.beam_frequency_hz;
+            let key = (
+                pointing_direction_rad[0].to_bits(),
+                pointing_direction_rad[1].to_bits(),
+                frequency_hz.to_bits(),
+                primary_beam_model_key(metadata_group.primary_beam_model),
+            );
+            let sample_count = metadata_group
+                .sample_ranges
+                .iter()
+                .map(|range| range.end.saturating_sub(range.start))
+                .sum::<usize>();
+            specs
+                .entry(key)
+                .and_modify(|spec| spec.3 += sample_count)
+                .or_insert((
+                    pointing_direction_rad,
+                    frequency_hz,
+                    metadata_group.primary_beam_model,
+                    sample_count,
+                ));
+        }
+    }
     let mut group_indices = BTreeMap::<(u64, u64, u64, (u8, u64, u64)), usize>::new();
-    let mut groups = Vec::<MosaicPointingGroup>::new();
+    let mut groups = Vec::<MosaicPointingGroup>::with_capacity(specs.len());
+    for (key, (pointing_direction_rad, frequency_hz, primary_beam_model, sample_count)) in specs {
+        let index = groups.len();
+        group_indices.insert(key, index);
+        groups.push(MosaicPointingGroup {
+            pointing_direction_rad,
+            frequency_hz,
+            primary_beam_model,
+            batch: empty_visibility_batch_with_capacity(sample_count),
+            sample_frequency_hz: Vec::new(),
+        });
+    }
     for (batch, metadata) in batches.iter().zip(metadata_batches.iter()) {
         for metadata_group in &metadata.groups {
             let pointing_direction_rad = metadata_group.pointing_direction_rad;
@@ -5170,43 +5249,14 @@ fn build_mosaic_pointing_groups_from_grouped(
                 frequency_hz.to_bits(),
                 primary_beam_model_key(metadata_group.primary_beam_model),
             );
-            let group_index = match group_indices.get(&key).copied() {
-                Some(index) => index,
-                None => {
-                    let index = groups.len();
-                    group_indices.insert(key, index);
-                    groups.push(MosaicPointingGroup {
-                        pointing_direction_rad,
-                        frequency_hz,
-                        primary_beam_model: metadata_group.primary_beam_model,
-                        batch: VisibilityBatch {
-                            u_lambda: Vec::new(),
-                            v_lambda: Vec::new(),
-                            w_lambda: Vec::new(),
-                            weight: Vec::new(),
-                            sumwt_factor: Vec::new(),
-                            gridable: Vec::new(),
-                            visibility: Vec::new(),
-                        },
-                        sample_frequency_hz: Vec::new(),
-                    });
-                    index
-                }
-            };
+            let group_index = group_indices.get(&key).copied().ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "grouped mosaic metadata references an unregistered pointing group".to_string(),
+                )
+            })?;
             let entry = &mut groups[group_index];
             for range in &metadata_group.sample_ranges {
-                for sample_index in range.start..range.end {
-                    entry.batch.u_lambda.push(batch.u_lambda[sample_index]);
-                    entry.batch.v_lambda.push(batch.v_lambda[sample_index]);
-                    entry.batch.w_lambda.push(batch.w_lambda[sample_index]);
-                    entry.batch.weight.push(batch.weight[sample_index]);
-                    entry
-                        .batch
-                        .sumwt_factor
-                        .push(batch.sumwt_factor[sample_index]);
-                    entry.batch.gridable.push(batch.gridable[sample_index]);
-                    entry.batch.visibility.push(batch.visibility[sample_index]);
-                }
+                append_visibility_batch_range(&mut entry.batch, batch, *range)?;
             }
         }
     }
@@ -5929,7 +5979,6 @@ fn apply_mosaic_weighting(
     if request.weighting == WeightingMode::Natural {
         return apply_weighting(request, gridder);
     }
-    let mut grouped = BTreeMap::<(u64, u64), Vec<(usize, usize)>>::new();
     if !config.grouped_metadata_batches.is_empty() {
         if request.visibility_batches.len() != config.grouped_metadata_batches.len() {
             return Err(ImagingError::InvalidRequest(
@@ -5937,6 +5986,7 @@ fn apply_mosaic_weighting(
                     .to_string(),
             ));
         }
+        let mut grouped = BTreeMap::<(u64, u64), Vec<VisibilitySampleRangeRef>>::new();
         for (batch_index, metadata) in config.grouped_metadata_batches.iter().enumerate() {
             for group in &metadata.groups {
                 let pointing = group.pointing_direction_rad;
@@ -5944,13 +5994,33 @@ fn apply_mosaic_weighting(
                     .entry((pointing[0].to_bits(), pointing[1].to_bits()))
                     .or_default();
                 for range in &group.sample_ranges {
-                    entry.extend(
-                        (range.start..range.end).map(|sample_index| (batch_index, sample_index)),
-                    );
+                    entry.push(VisibilitySampleRangeRef {
+                        batch_index,
+                        range: *range,
+                    });
                 }
             }
         }
-    } else if request.visibility_batches.len() != config.metadata_batches.len() {
+        let fractional_bandwidth =
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz);
+        let density_mode = match request.weighting {
+            WeightingMode::BriggsBwTaper { .. } => WeightDensityMode::PerPlane,
+            _ => WeightDensityMode::Combined,
+        };
+        let sample_groups = grouped.into_values().collect::<Vec<_>>();
+        return apply_weighting_to_owned_batches_by_sample_range_groups(
+            request.weighting,
+            density_mode,
+            None,
+            fractional_bandwidth,
+            request.visibility_batches.clone(),
+            &sample_groups,
+            gridder,
+        );
+    }
+
+    let mut grouped = BTreeMap::<(u64, u64), Vec<(usize, usize)>>::new();
+    if request.visibility_batches.len() != config.metadata_batches.len() {
         return Err(ImagingError::InvalidRequest(
             "mosaic metadata batch count does not match visibility batch count".to_string(),
         ));

@@ -12001,6 +12001,8 @@ fn prepare_plane_input_inner(
 
     let stage_started_at = Instant::now();
     let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let geometry_columns_elapsed = stage_started_at.elapsed();
+    let geometry_rows_started_at = Instant::now();
     let geometry_rows = build_prepared_geometry_rows_from_selected_uvw(
         ms,
         &active_selected_rows,
@@ -12009,8 +12011,18 @@ fn prepare_plane_input_inner(
         derived_engine.as_ref(),
         uvw_reprojection_mode_for_selection(config, &selection),
         &selected_uvw,
-        stage_started_at,
+        geometry_rows_started_at,
     )?;
+    let geometry_rows_elapsed = geometry_rows_started_at.elapsed();
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "plane_input_geometry rows={} geometry_columns_ms={:.3} geometry_rows_ms={:.3} total_ms={:.3}",
+            geometry_rows.len(),
+            duration_ms(geometry_columns_elapsed),
+            duration_ms(geometry_rows_elapsed),
+            duration_ms(stage_started_at.elapsed()),
+        );
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows",
         stage_started_at.elapsed(),
@@ -12242,6 +12254,7 @@ fn prepare_mfs_mosaic_without_trace_in_row_chunks(
     if let Some(init_error) = frequency_prepared.initialization_error.take() {
         return Err(init_error);
     }
+    let frequency_started = Instant::now();
     let mut row_frequency_scales = Vec::with_capacity(geometry_rows.len());
     for row in geometry_rows {
         row_frequency_scales.push(
@@ -12251,6 +12264,8 @@ fn prepare_mfs_mosaic_without_trace_in_row_chunks(
     }
     let mfs_frequency_edge_range_hz = frequency_prepared
         .mfs_imaging_frequency_edge_range_for_row(&geometry_rows[0].selected_row, derived_engine)?;
+    let frequency_elapsed = frequency_started.elapsed();
+    let worker_started = Instant::now();
     let worker_results = thread::scope(|scope| {
         let mut handles = Vec::new();
         for (chunk_index, row_chunk) in geometry_rows.chunks(chunk_len).enumerate() {
@@ -12304,6 +12319,7 @@ fn prepare_mfs_mosaic_without_trace_in_row_chunks(
         }
         Ok::<_, String>(results)
     })?;
+    let worker_elapsed = worker_started.elapsed();
 
     let mut worker_results = worker_results;
     worker_results.sort_by_key(|(chunk_index, _, _, _)| *chunk_index);
@@ -12327,16 +12343,21 @@ fn prepare_mfs_mosaic_without_trace_in_row_chunks(
         combined_timings += timings;
         inputs.push(prepared_input);
     }
+    let merge_started = Instant::now();
     let prepared_input = merge_mfs_mosaic_prepared_inputs(inputs)?;
+    let merge_elapsed = merge_started.elapsed();
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "mfs_mosaic_prepare_parallel requested_threads={} actual_threads={} chunk_len={} rows_total={} worker_rows_min={} worker_rows_max={} wall_ms={:.3}",
+            "mfs_mosaic_prepare_parallel requested_threads={} actual_threads={} chunk_len={} rows_total={} worker_rows_min={} worker_rows_max={} frequency_ms={:.3} worker_wall_ms={:.3} merge_ms={:.3} wall_ms={:.3}",
             thread_count,
             actual_threads,
             chunk_len,
             geometry_rows.len(),
             worker_rows_min,
             worker_rows_max,
+            duration_ms(frequency_elapsed),
+            duration_ms(worker_elapsed),
+            duration_ms(merge_elapsed),
             duration_ms(started.elapsed()),
         );
     }

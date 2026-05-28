@@ -7,7 +7,7 @@ use ndarray::{Array2, Zip};
 
 use crate::{
     GaussianUvTaper, ImageGeometry, ImagingRequest, UvTaperSize, VisibilityBatch,
-    WeightDensityMode, WeightingMode,
+    VisibilitySampleRange, WeightDensityMode, WeightingMode,
     gridder::{DensityCellConvention, StandardGridder},
     profile,
 };
@@ -758,6 +758,88 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_groups(
     Ok(apply_optional_uv_taper(target_batches, uv_taper))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VisibilitySampleRangeRef {
+    pub batch_index: usize,
+    pub range: VisibilitySampleRange,
+}
+
+pub(crate) fn apply_weighting_to_owned_batches_by_sample_range_groups(
+    weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    fractional_bandwidth: f64,
+    mut target_batches: Vec<VisibilityBatch>,
+    sample_groups: &[Vec<VisibilitySampleRangeRef>],
+    gridder: &StandardGridder,
+) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
+    match weighting {
+        WeightingMode::Natural => return Ok(apply_optional_uv_taper(target_batches, uv_taper)),
+        WeightingMode::Uniform
+        | WeightingMode::Briggs { .. }
+        | WeightingMode::BriggsBwTaper { .. } => {}
+    }
+
+    let density_convention = density_cell_convention(weighting, weight_density_mode);
+    let density_build_convention = density_build_cell_convention(weighting, weight_density_mode);
+    let mirror_hermitian = density_includes_conjugates(density_build_convention);
+    let trace_weighting = trace_weighting_enabled();
+
+    for ranges in sample_groups {
+        let density = build_density_grid_for_sample_ranges(
+            &target_batches,
+            ranges,
+            gridder,
+            mirror_hermitian,
+            density_build_convention,
+        )?;
+        let mode = match weighting {
+            WeightingMode::Uniform => DensityReweightMode::Uniform,
+            WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
+                let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
+                let sumlocwt = density
+                    .iter()
+                    .filter(|value| **value > 0.0)
+                    .map(|value| f64::from(*value) * f64::from(*value))
+                    .sum::<f64>();
+                let f2 = if sumlocwt > 0.0 && density_weight_sum > 0.0 {
+                    (5.0f64 * 10f64.powf(-(robust as f64))).powi(2)
+                        / (sumlocwt / density_weight_sum)
+                } else {
+                    0.0
+                } as f32;
+                if trace_weighting {
+                    let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
+                    let density_max = density
+                        .iter()
+                        .copied()
+                        .fold(0.0f32, |acc, value| acc.max(value));
+                    eprintln!(
+                        "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={density_weight_sum:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                    );
+                }
+                DensityReweightMode::Briggs {
+                    f2,
+                    use_bandwidth_taper: matches!(weighting, WeightingMode::BriggsBwTaper { .. }),
+                    fractional_bandwidth,
+                }
+            }
+            WeightingMode::Natural => unreachable!("natural weighting returned above"),
+        };
+        reweight_sample_ranges_in_place(
+            &mut target_batches,
+            ranges,
+            gridder,
+            &density,
+            density_convention,
+            trace_weighting,
+            mode,
+        )?;
+    }
+
+    Ok(apply_optional_uv_taper(target_batches, uv_taper))
+}
+
 pub(crate) fn trace_weighting_with_density_source(
     weighting: WeightingMode,
     weight_density_mode: WeightDensityMode,
@@ -1042,6 +1124,46 @@ fn build_density_grid_for_positions(
             batch.v_lambda[sample_index],
             weight,
         );
+    }
+    Ok(density_grid)
+}
+
+fn build_density_grid_for_sample_ranges(
+    batches: &[VisibilityBatch],
+    ranges: &[VisibilitySampleRangeRef],
+    gridder: &StandardGridder,
+    mirror_hermitian: bool,
+    convention: DensityCellConvention,
+) -> Result<Array2<f32>, crate::ImagingError> {
+    let [nx, ny] = gridder.density_grid_shape();
+    let mut density_grid = Array2::<f32>::zeros((nx, ny));
+    for range_ref in ranges {
+        let batch = batches.get(range_ref.batch_index).ok_or_else(|| {
+            crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample range group references an unknown batch".to_string(),
+            )
+        })?;
+        if range_ref.range.start > range_ref.range.end || range_ref.range.end > batch.len() {
+            return Err(crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample range group references an unknown sample range"
+                    .to_string(),
+            ));
+        }
+        for sample_index in range_ref.range.start..range_ref.range.end {
+            let weight = batch.weight[sample_index];
+            if !(weight.is_finite() && weight > 0.0) {
+                continue;
+            }
+            accumulate_density_sample_serial(
+                gridder,
+                mirror_hermitian,
+                convention,
+                &mut density_grid,
+                batch.u_lambda[sample_index],
+                batch.v_lambda[sample_index],
+                weight,
+            );
+        }
     }
     Ok(density_grid)
 }
@@ -1628,6 +1750,75 @@ fn reweight_positions_in_place(
             );
         }
         batch.weight[sample_index] = output_weight;
+    }
+    Ok(())
+}
+
+fn reweight_sample_ranges_in_place(
+    batches: &mut [VisibilityBatch],
+    ranges: &[VisibilitySampleRangeRef],
+    gridder: &StandardGridder,
+    density: &Array2<f32>,
+    convention: DensityCellConvention,
+    trace_weighting: bool,
+    mode: DensityReweightMode,
+) -> Result<(), crate::ImagingError> {
+    for range_ref in ranges {
+        let batch = batches.get_mut(range_ref.batch_index).ok_or_else(|| {
+            crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample range group references an unknown batch".to_string(),
+            )
+        })?;
+        if range_ref.range.start > range_ref.range.end || range_ref.range.end > batch.len() {
+            return Err(crate::ImagingError::InvalidRequest(
+                "mosaic weighting sample range group references an unknown sample range"
+                    .to_string(),
+            ));
+        }
+        for sample_index in range_ref.range.start..range_ref.range.end {
+            let weight = batch.weight[sample_index];
+            let u_lambda = batch.u_lambda[sample_index];
+            let v_lambda = batch.v_lambda[sample_index];
+            let Some(cell_density) =
+                gridder.density_at_with_convention(density, u_lambda, v_lambda, convention)
+            else {
+                batch.weight[sample_index] = 0.0;
+                continue;
+            };
+            if !(weight.is_finite()
+                && weight > 0.0
+                && cell_density.is_finite()
+                && cell_density > 0.0)
+            {
+                batch.weight[sample_index] = 0.0;
+                if trace_weighting {
+                    trace_weighting_sample(
+                        sample_index,
+                        u_lambda,
+                        v_lambda,
+                        weight,
+                        cell_density,
+                        0.0,
+                        gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention),
+                    );
+                }
+                continue;
+            }
+            let output_weight =
+                reweight_density_sample(weight, cell_density, u_lambda, v_lambda, gridder, mode);
+            if trace_weighting {
+                trace_weighting_sample(
+                    sample_index,
+                    u_lambda,
+                    v_lambda,
+                    weight,
+                    cell_density,
+                    output_weight,
+                    gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention),
+                );
+            }
+            batch.weight[sample_index] = output_weight;
+        }
     }
     Ok(())
 }
