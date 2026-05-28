@@ -21036,44 +21036,84 @@ fn build_mfs_mosaic_gridder_mode_without_trace(
             metadata.sample_spw_ids.len()
         ));
     }
+    let profile_detail = standard_mfs_profile_detail_enabled();
+    let total_started = profile_detail.then(Instant::now);
+    let primary_beam_started = profile_detail.then(Instant::now);
     let primary_beam_model =
         infer_primary_beam_model_for_antennas(ms, metadata.selected_antenna_ids.iter().copied())?;
-    let beam_frequencies_hz = infer_mosaic_beam_frequencies_hz_from_spw_ids(
+    let primary_beam_elapsed =
+        primary_beam_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let beam_frequency_started = profile_detail.then(Instant::now);
+    let beam_frequency_by_spw_freq = infer_mosaic_beam_frequency_lookup_from_spw_ids(
         ms,
         sample_frequency_hz,
         &metadata.sample_spw_ids,
     )?;
+    let beam_frequency_elapsed =
+        beam_frequency_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let chunk_started = profile_detail.then(Instant::now);
+    let metadata_batches = chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
+        sample_frequency_hz,
+        &metadata.sample_spw_ids,
+        &beam_frequency_by_spw_freq,
+        &metadata.sample_pointing_direction_rad,
+        primary_beam_model,
+        max_batch_size,
+    );
+    let chunk_elapsed = chunk_started.map_or(Duration::ZERO, |started| started.elapsed());
+    if profile_detail {
+        eprintln!(
+            "mosaic_prepare_gridder_mode samples={} selected_antennas={} beam_frequency_lookup_entries={} max_batch_size={} metadata_batches={} primary_beam_ms={:.3} beam_frequency_ms={:.3} metadata_chunk_ms={:.3} total_ms={:.3}",
+            sample_frequency_hz.len(),
+            metadata.selected_antenna_ids.len(),
+            beam_frequency_by_spw_freq.len(),
+            max_batch_size,
+            metadata_batches.len(),
+            primary_beam_elapsed.as_secs_f64() * 1_000.0,
+            beam_frequency_elapsed.as_secs_f64() * 1_000.0,
+            chunk_elapsed.as_secs_f64() * 1_000.0,
+            total_started
+                .map_or(Duration::ZERO, |started| started.elapsed())
+                .as_secs_f64()
+                * 1_000.0,
+        );
+    }
     Ok(GridderMode::Mosaic(MosaicGridderConfig {
         phase_center_direction_rad,
         primary_beam_model,
         pb_limit: mosaic_pb_limit,
-        metadata_batches: chunk_mfs_mosaic_metadata_batches(
-            sample_frequency_hz,
-            &beam_frequencies_hz,
-            &metadata.sample_pointing_direction_rad,
-            primary_beam_model,
-            max_batch_size,
-        ),
+        metadata_batches,
     }))
 }
 
-fn chunk_mfs_mosaic_metadata_batches(
+fn chunk_mfs_mosaic_metadata_batches_from_beam_lookup(
     sample_frequency_hz: &[f64],
-    beam_frequencies_hz: &[f64],
+    sample_spw_ids: &[usize],
+    beam_frequency_by_spw_freq: &HashMap<(usize, u64), f64>,
     pointing_direction_rad: &[[f64; 2]],
     primary_beam_model: PrimaryBeamModel,
     max_batch_size: usize,
 ) -> Vec<VisibilityMetadataBatch> {
-    debug_assert_eq!(beam_frequencies_hz.len(), sample_frequency_hz.len());
+    debug_assert_eq!(sample_spw_ids.len(), sample_frequency_hz.len());
     debug_assert_eq!(pointing_direction_rad.len(), sample_frequency_hz.len());
     let max_batch_size = max_batch_size.max(1);
     let mut batches = Vec::new();
     let mut start = 0usize;
     while start < sample_frequency_hz.len() {
         let end = (start + max_batch_size).min(sample_frequency_hz.len());
+        let mut beam_frequency_hz = Vec::with_capacity(end - start);
+        for sample_index in start..end {
+            let sample_frequency_hz = sample_frequency_hz[sample_index];
+            beam_frequency_hz.push(
+                beam_frequency_by_spw_freq
+                    .get(&(sample_spw_ids[sample_index], sample_frequency_hz.to_bits()))
+                    .copied()
+                    .unwrap_or(sample_frequency_hz),
+            );
+        }
         batches.push(VisibilityMetadataBatch {
             sample_frequency_hz: sample_frequency_hz[start..end].to_vec(),
-            beam_frequency_hz: beam_frequencies_hz[start..end].to_vec(),
+            beam_frequency_hz,
             primary_beam_model,
             pointing_direction_rad: pointing_direction_rad[start..end].to_vec(),
         });
@@ -21142,11 +21182,11 @@ fn infer_mosaic_beam_frequencies_hz(
         .collect())
 }
 
-fn infer_mosaic_beam_frequencies_hz_from_spw_ids(
+fn infer_mosaic_beam_frequency_lookup_from_spw_ids(
     ms: &MeasurementSet,
     sample_frequencies_hz: &[f64],
     sample_spw_ids: &[usize],
-) -> Result<Vec<f64>, String> {
+) -> Result<HashMap<(usize, u64), f64>, String> {
     if sample_frequencies_hz.len() != sample_spw_ids.len() {
         return Err(format!(
             "internal error: mosaic sample frequency/SPW length mismatch: {} versus {}",
@@ -21155,12 +21195,12 @@ fn infer_mosaic_beam_frequencies_hz_from_spw_ids(
         ));
     }
     if sample_frequencies_hz.is_empty() {
-        return Ok(Vec::new());
+        return Ok(HashMap::new());
     }
     let spectral_window = ms
         .spectral_window()
         .map_err(|error| format!("open SPECTRAL_WINDOW for mosaic PB channels: {error}"))?;
-    let mut frequency_bits_by_spw = BTreeMap::<usize, BTreeSet<u64>>::new();
+    let mut frequency_bits_by_spw = BTreeMap::<usize, HashSet<u64>>::new();
     for (&sample_frequency_hz, spw_id) in sample_frequencies_hz.iter().zip(sample_spw_ids.iter()) {
         if sample_frequency_hz.is_finite() && sample_frequency_hz > 0.0 {
             frequency_bits_by_spw
@@ -21191,16 +21231,7 @@ fn infer_mosaic_beam_frequencies_hz_from_spw_ids(
             beam_frequency_by_spw_freq.insert((spw_id, frequency_bits), beam_frequency_hz);
         }
     }
-    Ok(sample_frequencies_hz
-        .iter()
-        .zip(sample_spw_ids.iter())
-        .map(|(&sample_frequency_hz, spw_id)| {
-            beam_frequency_by_spw_freq
-                .get(&(*spw_id, sample_frequency_hz.to_bits()))
-                .copied()
-                .unwrap_or(sample_frequency_hz)
-        })
-        .collect())
+    Ok(beam_frequency_by_spw_freq)
 }
 
 #[cfg(test)]

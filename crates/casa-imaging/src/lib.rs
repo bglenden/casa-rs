@@ -4404,8 +4404,14 @@ fn run_mosaic_dirty_imaging(
     let weighting_elapsed = weighting_started.elapsed();
     stage_timings.weighting += weighting_elapsed;
     let conv_sampling = mosaic_projector_sampling(request.geometry);
+    let trace_enabled = mosaic_trace_enabled();
+    let cell_trace_targets = mosaic_cell_trace_targets();
     let group_started = Instant::now();
-    let groups = build_mosaic_pointing_groups(&weighted_batches, &config.metadata_batches)?;
+    let groups = build_mosaic_pointing_groups(
+        &weighted_batches,
+        &config.metadata_batches,
+        trace_enabled && !cell_trace_targets.is_empty(),
+    )?;
     let group_elapsed = group_started.elapsed();
     if groups.is_empty() {
         return Err(ImagingError::NoUsableSamples);
@@ -4448,8 +4454,6 @@ fn run_mosaic_dirty_imaging(
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
     let mut projector_cache = MosaicProjectorCache::new();
-    let trace_enabled = mosaic_trace_enabled();
-    let cell_trace_targets = mosaic_cell_trace_targets();
 
     let weight_image_started = Instant::now();
     let pb_weight_image = build_mosaic_weight_image(request.geometry, config, &groups)?;
@@ -5075,6 +5079,7 @@ fn primary_beam_model_key(model: PrimaryBeamModel) -> (u8, u64, u64) {
 fn build_mosaic_pointing_groups(
     batches: &[VisibilityBatch],
     metadata_batches: &[VisibilityMetadataBatch],
+    retain_sample_frequency_hz: bool,
 ) -> Result<Vec<MosaicPointingGroup>, ImagingError> {
     let mut group_indices = BTreeMap::<(u64, u64, u64, (u8, u64, u64)), usize>::new();
     let mut groups = Vec::<MosaicPointingGroup>::new();
@@ -5122,9 +5127,11 @@ fn build_mosaic_pointing_groups(
                 .push(batch.sumwt_factor[sample_index]);
             entry.batch.gridable.push(batch.gridable[sample_index]);
             entry.batch.visibility.push(batch.visibility[sample_index]);
-            entry
-                .sample_frequency_hz
-                .push(metadata.sample_frequency_hz[sample_index]);
+            if retain_sample_frequency_hz {
+                entry
+                    .sample_frequency_hz
+                    .push(metadata.sample_frequency_hz[sample_index]);
+            }
         }
     }
     Ok(groups)
