@@ -24,7 +24,7 @@
 //! - staged Hogbom major/minor-cycle CLEAN with explicit stop reasons
 //! - PSF-cutoff beam fitting with interpolation and retry semantics
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 mod beam;
 mod cube;
@@ -4252,6 +4252,22 @@ struct MosaicMetalSample {
     _pad0: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct MosaicMetalSampleKey {
+    loc: u32,
+    support: u32,
+    offset: [i32; 2],
+    range_x: [i32; 2],
+    range_y: [i32; 2],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MosaicMetalSampleAccumulator {
+    weight: f64,
+    weighted_visibility_re: f64,
+    weighted_visibility_im: f64,
+}
+
 struct MosaicMetalPreparedGroup {
     samples: Vec<MosaicMetalSample>,
     group_weight_grid_sum: f64,
@@ -4262,59 +4278,62 @@ struct MosaicMetalPreparedGroup {
 }
 
 impl MosaicMetalSample {
-    fn has_same_plan(self, other: Self) -> bool {
-        self.loc == other.loc
-            && self.support == other.support
-            && self.offset == other.offset
-            && self.range_x == other.range_x
-            && self.range_y == other.range_y
-    }
-
-    fn merge_weighted_visibility(&mut self, other: Self) -> bool {
-        if !self.has_same_plan(other) {
-            return false;
+    fn key(self) -> MosaicMetalSampleKey {
+        MosaicMetalSampleKey {
+            loc: self.loc,
+            support: self.support,
+            offset: self.offset,
+            range_x: self.range_x,
+            range_y: self.range_y,
         }
-        let total_weight = self.weight + other.weight;
-        if !(total_weight.is_finite() && total_weight > 0.0) {
-            return false;
-        }
-        self.visibility_re =
-            (self.visibility_re * self.weight + other.visibility_re * other.weight) / total_weight;
-        self.visibility_im =
-            (self.visibility_im * self.weight + other.visibility_im * other.weight) / total_weight;
-        self.weight = total_weight;
-        true
     }
 }
 
-fn group_mosaic_metal_samples(samples: &mut Vec<MosaicMetalSample>) -> usize {
-    let raw_sample_count = samples.len();
-    if raw_sample_count < 2 {
-        return raw_sample_count;
-    }
-    samples.sort_unstable_by_key(|sample| {
-        (
-            sample.loc,
-            sample.support,
-            sample.offset[0],
-            sample.offset[1],
-            sample.range_x[0],
-            sample.range_x[1],
-            sample.range_y[0],
-            sample.range_y[1],
-        )
-    });
-    let mut write_index = 0usize;
-    for read_index in 0..raw_sample_count {
-        let sample = samples[read_index];
-        if write_index > 0 && samples[write_index - 1].merge_weighted_visibility(sample) {
-            continue;
+impl MosaicMetalSampleKey {
+    fn into_sample(self, accumulator: MosaicMetalSampleAccumulator) -> Option<MosaicMetalSample> {
+        if !(accumulator.weight.is_finite() && accumulator.weight > 0.0) {
+            return None;
         }
-        samples[write_index] = sample;
-        write_index += 1;
+        Some(MosaicMetalSample {
+            loc: self.loc,
+            support: self.support,
+            offset: self.offset,
+            range_x: self.range_x,
+            range_y: self.range_y,
+            weight: accumulator.weight as f32,
+            visibility_re: (accumulator.weighted_visibility_re / accumulator.weight) as f32,
+            visibility_im: (accumulator.weighted_visibility_im / accumulator.weight) as f32,
+            _pad0: 0,
+        })
     }
-    samples.truncate(write_index);
-    raw_sample_count
+}
+
+fn push_mosaic_metal_sample_aggregate(
+    aggregates: &mut HashMap<MosaicMetalSampleKey, MosaicMetalSampleAccumulator>,
+    sample: MosaicMetalSample,
+) {
+    let weight = f64::from(sample.weight);
+    let entry = aggregates
+        .entry(sample.key())
+        .or_insert(MosaicMetalSampleAccumulator {
+            weight: 0.0,
+            weighted_visibility_re: 0.0,
+            weighted_visibility_im: 0.0,
+        });
+    entry.weight += weight;
+    entry.weighted_visibility_re += f64::from(sample.visibility_re) * weight;
+    entry.weighted_visibility_im += f64::from(sample.visibility_im) * weight;
+}
+
+fn finish_mosaic_metal_sample_aggregates(
+    aggregates: HashMap<MosaicMetalSampleKey, MosaicMetalSampleAccumulator>,
+) -> Vec<MosaicMetalSample> {
+    let mut grouped = aggregates.into_iter().collect::<Vec<_>>();
+    grouped.sort_unstable_by_key(|(key, _)| *key);
+    grouped
+        .into_iter()
+        .filter_map(|(key, accumulator)| key.into_sample(accumulator))
+        .collect()
 }
 
 #[repr(C)]
@@ -5391,7 +5410,9 @@ fn collect_mosaic_metal_samples(
     projector: &ScreenProjector,
 ) -> Result<MosaicMetalPreparedGroup, ImagingError> {
     let started = Instant::now();
-    let mut samples = Vec::<MosaicMetalSample>::with_capacity(group.batch.len());
+    let mut samples = HashMap::<MosaicMetalSampleKey, MosaicMetalSampleAccumulator>::with_capacity(
+        group.batch.len().min(1_048_576),
+    );
     let mut group_weight_grid_sum = 0.0f64;
     let mut reported_sumwt = 0.0f64;
     let mut normalization_sumwt = 0.0f64;
@@ -5423,12 +5444,9 @@ fn collect_mosaic_metal_samples(
             skipped_samples += 1;
             continue;
         };
-        samples.push(mosaic_metal_sample_from_plan(
-            &plan,
-            projector.support(),
-            grid_weight,
-            visibility,
-        )?);
+        let sample =
+            mosaic_metal_sample_from_plan(&plan, projector.support(), grid_weight, visibility)?;
+        push_mosaic_metal_sample_aggregate(&mut samples, sample);
         let grid_weight64 = f64::from(grid_weight);
         group_weight_grid_sum += grid_weight64;
         if plan.center_in_bounds {
@@ -5437,9 +5455,9 @@ fn collect_mosaic_metal_samples(
         }
         gridded_samples += 1;
     }
-    let grouping_started = Instant::now();
-    let raw_sample_count = group_mosaic_metal_samples(&mut samples);
-    let grouping_elapsed = grouping_started.elapsed();
+    let finalize_started = Instant::now();
+    let samples = finish_mosaic_metal_sample_aggregates(samples);
+    let finalize_elapsed = finalize_started.elapsed();
     if profile::standard_mfs_profile_detail_enabled() {
         let grouped_sample_ratio = if gridded_samples == 0 {
             0.0
@@ -5448,14 +5466,14 @@ fn collect_mosaic_metal_samples(
         };
         eprintln!(
             "mosaic_metal_prepare raw_samples={} grouped_samples={} grouped_sample_ratio={:.6} gridded_samples={} skipped={} support={} compact_tap_width={} grouping_ms={:.3} total_ms={:.3}",
-            raw_sample_count,
+            gridded_samples,
             samples.len(),
             grouped_sample_ratio,
             gridded_samples,
             skipped_samples,
             projector.support(),
             projector.support() * 2 + 1,
-            profile::millis(grouping_elapsed),
+            profile::millis(finalize_elapsed),
             profile::millis(started.elapsed()),
         );
     }
@@ -16715,11 +16733,12 @@ mod tests {
             visibility_im: 17.0,
             ..first
         };
-        let mut samples = vec![different_plan, second, first];
+        let mut samples = std::collections::HashMap::new();
+        super::push_mosaic_metal_sample_aggregate(&mut samples, different_plan);
+        super::push_mosaic_metal_sample_aggregate(&mut samples, second);
+        super::push_mosaic_metal_sample_aggregate(&mut samples, first);
+        let samples = super::finish_mosaic_metal_sample_aggregates(samples);
 
-        let raw_sample_count = super::group_mosaic_metal_samples(&mut samples);
-
-        assert_eq!(raw_sample_count, 3);
         assert_eq!(samples.len(), 2);
         let grouped = samples
             .iter()
