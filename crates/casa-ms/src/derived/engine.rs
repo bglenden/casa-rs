@@ -15,8 +15,8 @@ use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue};
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
@@ -51,9 +51,9 @@ pub struct MsCalEngine {
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
-    azel_cache: RefCell<HashMap<GeometryCacheKey, (f64, f64)>>,
-    hadec_cache: RefCell<HashMap<GeometryCacheKey, (f64, f64)>>,
-    parallactic_angle_cache: RefCell<HashMap<GeometryCacheKey, f64>>,
+    azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
+    hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
+    parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,6 +71,28 @@ impl GeometryCacheKey {
             antenna_id,
         }
     }
+}
+
+fn cached_geometry_value<T: Copy>(
+    cache: &RwLock<HashMap<GeometryCacheKey, T>>,
+    key: GeometryCacheKey,
+) -> Option<T> {
+    cache
+        .read()
+        .expect("MS calibration geometry cache poisoned")
+        .get(&key)
+        .copied()
+}
+
+fn store_geometry_value<T: Copy>(
+    cache: &RwLock<HashMap<GeometryCacheKey, T>>,
+    key: GeometryCacheKey,
+    value: T,
+) {
+    cache
+        .write()
+        .expect("MS calibration geometry cache poisoned")
+        .insert(key, value);
 }
 
 impl MsCalEngine {
@@ -110,9 +132,9 @@ impl MsCalEngine {
             field_directions,
             observatory_position,
             time_reference,
-            azel_cache: RefCell::new(HashMap::new()),
-            hadec_cache: RefCell::new(HashMap::new()),
-            parallactic_angle_cache: RefCell::new(HashMap::new()),
+            azel_cache: RwLock::new(HashMap::new()),
+            hadec_cache: RwLock::new(HashMap::new()),
+            parallactic_angle_cache: RwLock::new(HashMap::new()),
         })
     }
 
@@ -128,9 +150,9 @@ impl MsCalEngine {
             field_directions,
             observatory_position,
             time_reference: EpochRef::UTC,
-            azel_cache: RefCell::new(HashMap::new()),
-            hadec_cache: RefCell::new(HashMap::new()),
-            parallactic_angle_cache: RefCell::new(HashMap::new()),
+            azel_cache: RwLock::new(HashMap::new()),
+            hadec_cache: RwLock::new(HashMap::new()),
+            parallactic_angle_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -247,11 +269,11 @@ impl MsCalEngine {
         antenna_id: usize,
     ) -> MsResult<f64> {
         let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
-        if let Some(value) = self.parallactic_angle_cache.borrow().get(&key).copied() {
+        if let Some(value) = cached_geometry_value(&self.parallactic_angle_cache, key) {
             return Ok(value);
         }
         if !self.antenna_is_alt_az(antenna_id)? {
-            self.parallactic_angle_cache.borrow_mut().insert(key, 0.0);
+            store_geometry_value(&self.parallactic_angle_cache, key, 0.0);
             return Ok(0.0);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
@@ -262,7 +284,7 @@ impl MsCalEngine {
             MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
                 .convert_to(DirectionRef::AZEL, &frame)?;
         let value = spherical_position_angle(&source_azel, &pole_azel);
-        self.parallactic_angle_cache.borrow_mut().insert(key, value);
+        store_geometry_value(&self.parallactic_angle_cache, key, value);
         Ok(value)
     }
 
@@ -304,14 +326,14 @@ impl MsCalEngine {
         antenna_id: usize,
     ) -> MsResult<(f64, f64)> {
         let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
-        if let Some(value) = self.azel_cache.borrow().get(&key).copied() {
+        if let Some(value) = cached_geometry_value(&self.azel_cache, key) {
             return Ok(value);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
         let dir = self.field_dir(field_id)?;
         let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
         let value = azel.as_angles();
-        self.azel_cache.borrow_mut().insert(key, value);
+        store_geometry_value(&self.azel_cache, key, value);
         Ok(value)
     }
 
@@ -365,14 +387,14 @@ impl MsCalEngine {
         antenna_id: usize,
     ) -> MsResult<(f64, f64)> {
         let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
-        if let Some(value) = self.hadec_cache.borrow().get(&key).copied() {
+        if let Some(value) = cached_geometry_value(&self.hadec_cache, key) {
             return Ok(value);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
         let dir = self.field_dir(field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
         let value = hadec.as_angles();
-        self.hadec_cache.borrow_mut().insert(key, value);
+        store_geometry_value(&self.hadec_cache, key, value);
         Ok(value)
     }
 

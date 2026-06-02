@@ -24,9 +24,33 @@ impl Table {
     /// parent table is opened automatically and the referenced rows are
     /// materialized into this table.
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
+        let profile_open = std::env::var_os("CASA_RS_TABLE_OPEN_PROFILE").is_some();
+        let open_started_at = std::time::Instant::now();
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=start",
+                options.path.display()
+            );
+        }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=invalidate_shared_tile_cache elapsed_s={:.3}",
+                options.path.display(),
+                open_started_at.elapsed().as_secs_f64(),
+            );
+        }
         let storage = CompositeStorage;
         let snapshot = storage.load_metadata_only(&options.path)?;
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=load_metadata_only rows={} dm_count={} elapsed_s={:.3}",
+                options.path.display(),
+                snapshot.row_count,
+                snapshot.dm_info.len(),
+                open_started_at.elapsed().as_secs_f64(),
+            );
+        }
         #[cfg(unix)]
         let row_hint = read_sync_data_from_table_dir(&options.path)
             .ok()
@@ -37,7 +61,7 @@ impl Table {
         let row_hint = 0;
         let virtual_cols = snapshot.virtual_columns;
         let info = snapshot.table_info;
-        Ok(Self {
+        let table = Self {
             inner: TableImpl::with_lazy_rows_keywords_and_schema(
                 snapshot.row_count.max(row_hint),
                 snapshot.keywords,
@@ -55,7 +79,17 @@ impl Table {
             marked_for_delete: false,
             #[cfg(unix)]
             lock_state: None,
-        })
+        };
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=done row_hint={} rows={} elapsed_s={:.3}",
+                options.path.display(),
+                row_hint,
+                table.row_count(),
+                open_started_at.elapsed().as_secs_f64(),
+            );
+        }
+        Ok(table)
     }
 
     /// Opens only table metadata from disk, without materializing rows.

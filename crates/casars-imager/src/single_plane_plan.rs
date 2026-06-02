@@ -2,6 +2,7 @@
 #![allow(missing_docs)]
 
 use casa_imaging::{Deconvolver, WTermMode, WeightingMode};
+use casa_ms::CubeInterpolation;
 
 use crate::{
     CleanMaskMode, CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
@@ -144,7 +145,11 @@ pub(crate) fn build_single_plane_execution_plan(
     let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
     let one_output_channel = spectral.is_one_output_channel();
     let standard_mfs_regression_sentinel = matches!(spectral, SinglePlaneSpectralPlan::Mfs)
-        && matches!(projection, SinglePlaneProjectionPlan::Standard)
+        && matches!(
+            projection,
+            SinglePlaneProjectionPlan::Standard
+                | SinglePlaneProjectionPlan::StandardOrMosaicInferred
+        )
         && matches!(
             deconvolver,
             SinglePlaneDeconvolverPlan::SingleTerm
@@ -264,6 +269,10 @@ fn cpu_multi_worker_eligibility(
                 BackendEligibility::eligible(format!("mosaic-sample-range-workers-{workers}"))
             } else if matches!(config.w_term_mode, WTermMode::WProject) {
                 BackendEligibility::eligible(format!("wproject-streaming-workers-{workers}"))
+            } else if matches!(config.spectral_mode, SpectralMode::Cube) {
+                BackendEligibility::eligible(format!(
+                    "standard-cube-one-channel-parallel-prepare-workers-{workers}"
+                ))
             } else {
                 BackendEligibility::eligible(format!("standard-mfs-fixed-tile-workers-{workers}"))
             }
@@ -305,6 +314,8 @@ fn gpu_metal_eligibility(
             BackendEligibility::eligible("mosaic-screen-projector-metal")
         } else if matches!(config.w_term_mode, WTermMode::WProject) {
             BackendEligibility::eligible("wproject-metal-kernel")
+        } else if matches!(config.spectral_mode, SpectralMode::Cube) {
+            BackendEligibility::eligible("standard-cube-one-channel-grouped-metal")
         } else if config.deconvolver == Deconvolver::Mtmfs {
             BackendEligibility::eligible("mtmfs-metal-sample-cache")
         } else {
@@ -316,8 +327,22 @@ fn gpu_metal_eligibility(
 }
 
 fn shared_strategy_gap_reason(config: &CliConfig) -> String {
-    if !matches!(config.spectral_mode, SpectralMode::Mfs) {
+    if !matches!(config.spectral_mode, SpectralMode::Mfs | SpectralMode::Cube) {
         return "shared-strategy-not-yet-adapted-to-spectral-mode".to_string();
+    }
+    if matches!(config.spectral_mode, SpectralMode::Cube) && config.channel_count != Some(1) {
+        return "not-one-output-channel".to_string();
+    }
+    if matches!(config.spectral_mode, SpectralMode::Cube)
+        && !matches!(config.w_term_mode, WTermMode::None)
+    {
+        return "cube-wterm-requires-cube-path".to_string();
+    }
+    if matches!(config.spectral_mode, SpectralMode::Cube)
+        && config.cube_axis.interpolation != CubeInterpolation::Nearest
+        && !(config.dirty_only || config.niter == 0)
+    {
+        return "cleaned-linear-cube-requires-cube-path".to_string();
     }
     if config.use_pointing || matches!(config.w_term_mode, WTermMode::Direct) {
         return "shared-strategy-not-yet-adapted-to-projection-family".to_string();
@@ -375,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn one_channel_cube_is_represented_but_not_standard_mfs_eligible() {
+    fn one_channel_cube_reuses_standard_single_plane_acceleration() {
         let config = parse([
             "--specmode",
             "cube",
@@ -383,15 +408,46 @@ mod tests {
             "1",
             "--gridder",
             "standard",
+            "--interpolation",
+            "nearest",
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
         assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeOneChannel);
         assert!(plan.spectral.is_one_output_channel());
+        assert!(plan.cpu_multi_worker.eligible);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("standard-cube-one-channel")
+        );
+        assert!(
+            plan.gpu_metal.reason == "standard-cube-one-channel-grouped-metal"
+                || plan.gpu_metal.reason == "metal-device-unavailable"
+        );
+    }
+
+    #[test]
+    fn cleaned_linear_one_channel_cube_keeps_cube_specific_path() {
+        let config = parse([
+            "--specmode",
+            "cube",
+            "--channel-count",
+            "1",
+            "--gridder",
+            "standard",
+            "--interpolation",
+            "linear",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeOneChannel);
         assert!(!plan.cpu_multi_worker.eligible);
         assert_eq!(
             plan.cpu_multi_worker.reason,
-            "shared-strategy-not-yet-adapted-to-spectral-mode"
+            "cleaned-linear-cube-requires-cube-path"
         );
     }
 
@@ -405,6 +461,10 @@ mod tests {
             plan.cpu_multi_worker
                 .reason
                 .starts_with("wproject-streaming")
+        );
+        assert!(
+            plan.gpu_metal.reason == "wproject-metal-kernel"
+                || plan.gpu_metal.reason == "metal-device-unavailable"
         );
     }
 

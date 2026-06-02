@@ -87,10 +87,25 @@ impl StandardMfsStreamingWeightingPlan {
         weighting: WeightingMode,
         selected_frequency_range_hz: [f64; 2],
     ) -> Result<Self, crate::ImagingError> {
+        Self::new_with_density_mode(
+            geometry,
+            weighting,
+            selected_frequency_range_hz,
+            WeightDensityMode::Combined,
+        )
+    }
+
+    /// Create an empty streaming weighting plan with an explicit density-sharing mode.
+    pub fn new_with_density_mode(
+        geometry: ImageGeometry,
+        weighting: WeightingMode,
+        selected_frequency_range_hz: [f64; 2],
+        weight_density_mode: WeightDensityMode,
+    ) -> Result<Self, crate::ImagingError> {
         let gridder = StandardGridder::new(geometry)?;
-        let density_convention = density_cell_convention(weighting, WeightDensityMode::Combined);
+        let density_convention = density_cell_convention(weighting, weight_density_mode);
         let density_build_convention =
-            density_build_cell_convention(weighting, WeightDensityMode::Combined);
+            density_build_cell_convention(weighting, weight_density_mode);
         let density = match weighting {
             WeightingMode::Natural => None,
             WeightingMode::Uniform
@@ -194,8 +209,11 @@ impl StandardMfsStreamingWeightingPlan {
                 let Some(density) = self.density.as_ref() else {
                     return;
                 };
-                let total_density_weight =
-                    density.iter().map(|value| f64::from(*value)).sum::<f64>();
+                let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
+                let total_density_weight = robust_density_weight_sum_for_f2(
+                    density_weight_sum,
+                    self.density_build_convention,
+                );
                 let sumlocwt = density
                     .iter()
                     .filter(|value| **value > 0.0)
@@ -207,6 +225,16 @@ impl StandardMfsStreamingWeightingPlan {
                 } else {
                     0.0
                 } as f32;
+                if trace_weighting_enabled() {
+                    let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
+                    let density_max = density
+                        .iter()
+                        .copied()
+                        .fold(0.0f32, |acc, value| acc.max(value));
+                    eprintln!(
+                        "CASA_RS_TRACE_RUST_WEIGHTING streaming_briggs_density_summary total_density_weight={total_density_weight:.12e} density_sum={density_weight_sum:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                    );
+                }
                 Some(DensityReweightMode::Briggs {
                     f2,
                     use_bandwidth_taper: matches!(
@@ -504,7 +532,8 @@ fn apply_weighting_to_owned_batches_with_options(
             let density_elapsed = profile::elapsed_since(density_started);
             let robust_started = profile::maybe_profile_now();
             let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
-            let total_density_weight = density_weight_sum;
+            let total_density_weight =
+                robust_density_weight_sum_for_f2(density_weight_sum, density_build_convention);
             let sumlocwt = density
                 .iter()
                 .filter(|value| **value > 0.0)
@@ -616,12 +645,8 @@ pub(crate) fn apply_weighting_with_density_source(
                 density_build_convention,
             );
             let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
-            let total_density_weight = density_weight_sum
-                * match density_convention {
-                    DensityCellConvention::VisImagingWeight => 1.0,
-                    DensityCellConvention::CubeBriggsWeightorDensity
-                    | DensityCellConvention::CubeBriggsWeightorLookup => 1.0,
-                };
+            let total_density_weight =
+                robust_density_weight_sum_for_f2(density_weight_sum, density_build_convention);
             let sumlocwt = density
                 .iter()
                 .filter(|value| **value > 0.0)
@@ -720,9 +745,11 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_groups(
                     .filter(|value| **value > 0.0)
                     .map(|value| f64::from(*value) * f64::from(*value))
                     .sum::<f64>();
-                let f2 = if sumlocwt > 0.0 && density_weight_sum > 0.0 {
+                let total_density_weight =
+                    robust_density_weight_sum_for_f2(density_weight_sum, density_build_convention);
+                let f2 = if sumlocwt > 0.0 && total_density_weight > 0.0 {
                     (5.0f64 * 10f64.powf(-(robust as f64))).powi(2)
-                        / (sumlocwt / density_weight_sum)
+                        / (sumlocwt / total_density_weight)
                 } else {
                     0.0
                 } as f32;
@@ -733,7 +760,7 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_groups(
                         .copied()
                         .fold(0.0f32, |acc, value| acc.max(value));
                     eprintln!(
-                        "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={density_weight_sum:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                        "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={total_density_weight:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
                     );
                 }
                 DensityReweightMode::Briggs {
@@ -802,9 +829,11 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_range_groups(
                     .filter(|value| **value > 0.0)
                     .map(|value| f64::from(*value) * f64::from(*value))
                     .sum::<f64>();
-                let f2 = if sumlocwt > 0.0 && density_weight_sum > 0.0 {
+                let total_density_weight =
+                    robust_density_weight_sum_for_f2(density_weight_sum, density_build_convention);
+                let f2 = if sumlocwt > 0.0 && total_density_weight > 0.0 {
                     (5.0f64 * 10f64.powf(-(robust as f64))).powi(2)
-                        / (sumlocwt / density_weight_sum)
+                        / (sumlocwt / total_density_weight)
                 } else {
                     0.0
                 } as f32;
@@ -815,7 +844,7 @@ pub(crate) fn apply_weighting_to_owned_batches_by_sample_range_groups(
                         .copied()
                         .fold(0.0f32, |acc, value| acc.max(value));
                     eprintln!(
-                        "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={density_weight_sum:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                        "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={total_density_weight:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
                     );
                 }
                 DensityReweightMode::Briggs {
@@ -985,6 +1014,17 @@ fn density_includes_conjugates(convention: DensityCellConvention) -> bool {
         DensityCellConvention::VisImagingWeight => true,
         DensityCellConvention::CubeBriggsWeightorDensity
         | DensityCellConvention::CubeBriggsWeightorLookup => false,
+    }
+}
+
+fn robust_density_weight_sum_for_f2(
+    density_weight_sum: f64,
+    build_convention: DensityCellConvention,
+) -> f64 {
+    if density_includes_conjugates(build_convention) {
+        density_weight_sum
+    } else {
+        2.0 * density_weight_sum
     }
 }
 

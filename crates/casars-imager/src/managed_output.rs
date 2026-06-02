@@ -664,7 +664,7 @@ mod tests {
             mosaic_pb_limit: 0.1,
             pbcor: false,
             write_pb: false,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,

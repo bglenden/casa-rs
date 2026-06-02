@@ -1081,18 +1081,24 @@ impl CubeSpectralSetup {
         let source_channel_output_map = build_source_channel_output_map(
             &source_frequencies_for_interpolation,
             &output_frequencies_for_interpolation,
+            &output_channel_widths_for_interpolation,
         );
         let padded_output_frequencies_for_interpolation =
-            build_briggs_cube_weight_output_frequencies(&output_frequencies_for_interpolation);
+            build_briggs_cube_weight_output_frequencies(
+                &output_frequencies_for_interpolation,
+                &output_channel_widths_for_interpolation,
+            );
         let padded_source_channel_output_map = build_source_channel_output_map(
             &source_frequencies_for_interpolation,
             &padded_output_frequencies_for_interpolation,
+            &[],
         );
         let grid_channel_contributions = build_grid_channel_contributions(
             source_frequencies_hz,
             &source_frequencies_for_interpolation,
             &source_channel_widths_for_interpolation,
             &output_frequencies_for_interpolation,
+            &output_channel_widths_for_interpolation,
             self.interpolation,
         );
         let padded_grid_channel_contributions = build_grid_channel_contributions(
@@ -1100,6 +1106,7 @@ impl CubeSpectralSetup {
             &source_frequencies_for_interpolation,
             &source_channel_widths_for_interpolation,
             &padded_output_frequencies_for_interpolation,
+            &[],
             self.interpolation,
         );
         let source_channel_model_contributions = source_frequencies_for_interpolation
@@ -2062,14 +2069,26 @@ fn build_output_channel_contributions(
 fn build_source_channel_output_map(
     source_channel_frequencies_hz: &[f64],
     output_channel_frequencies_hz: &[f64],
+    output_channel_widths_hz: &[f64],
 ) -> Vec<Option<usize>> {
     if output_channel_frequencies_hz.is_empty() {
         return source_channel_frequencies_hz.iter().map(|_| None).collect();
     }
     if output_channel_frequencies_hz.len() == 1 {
+        let center_hz = output_channel_frequencies_hz[0];
+        let half_width_hz = output_channel_widths_hz
+            .first()
+            .copied()
+            .map(|width| 0.5 * width.abs())
+            .unwrap_or(f64::INFINITY);
         return source_channel_frequencies_hz
             .iter()
-            .map(|frequency_hz| frequency_hz.is_finite().then_some(0))
+            .map(|frequency_hz| {
+                (frequency_hz.is_finite()
+                    && center_hz.is_finite()
+                    && (*frequency_hz - center_hz).abs() <= half_width_hz)
+                    .then_some(0)
+            })
             .collect();
     }
     let first_hz = output_channel_frequencies_hz[0];
@@ -2091,11 +2110,18 @@ fn build_source_channel_output_map(
         .collect()
 }
 
-fn build_briggs_cube_weight_output_frequencies(output_channel_frequencies_hz: &[f64]) -> Vec<f64> {
-    if output_channel_frequencies_hz.len() < 2 {
-        return output_channel_frequencies_hz.to_vec();
+fn build_briggs_cube_weight_output_frequencies(
+    output_channel_frequencies_hz: &[f64],
+    output_channel_widths_hz: &[f64],
+) -> Vec<f64> {
+    if output_channel_frequencies_hz.is_empty() {
+        return Vec::new();
     }
-    let increment_hz = output_channel_frequencies_hz[1] - output_channel_frequencies_hz[0];
+    let increment_hz = if output_channel_frequencies_hz.len() >= 2 {
+        output_channel_frequencies_hz[1] - output_channel_frequencies_hz[0]
+    } else {
+        output_channel_widths_hz.first().copied().unwrap_or(0.0)
+    };
     if !(increment_hz.is_finite() && increment_hz != 0.0) {
         return output_channel_frequencies_hz.to_vec();
     }
@@ -2117,11 +2143,13 @@ fn build_grid_channel_contributions(
     source_channel_frequencies_hz: &[f64],
     source_channel_widths_hz: &[f64],
     output_channel_frequencies_hz: &[f64],
+    output_channel_widths_hz: &[f64],
     interpolation: CubeInterpolation,
 ) -> Vec<CubeGridChannelContributions> {
     let (grid_frequencies_hz, channel_map) = casa_grid_frequency_channel_map(
         source_channel_frequencies_hz,
         output_channel_frequencies_hz,
+        output_channel_widths_hz,
         interpolation,
     );
     grid_frequencies_hz
@@ -2148,6 +2176,7 @@ fn build_grid_channel_contributions(
 fn casa_grid_frequency_channel_map(
     source_channel_frequencies_hz: &[f64],
     output_channel_frequencies_hz: &[f64],
+    output_channel_widths_hz: &[f64],
     interpolation: CubeInterpolation,
 ) -> (Vec<f64>, Vec<Option<usize>>) {
     if output_channel_frequencies_hz.is_empty() {
@@ -2160,6 +2189,7 @@ fn casa_grid_frequency_channel_map(
         let channel_map = build_source_channel_output_map(
             source_channel_frequencies_hz,
             output_channel_frequencies_hz,
+            output_channel_widths_hz,
         );
         return (source_channel_frequencies_hz.to_vec(), channel_map);
     }
@@ -2712,27 +2742,35 @@ mod tests {
     fn casa_grid_frequency_channel_map_uses_casa_intermediate_grid_thresholds() {
         let source = (0..12).map(|index| index as f64 * 10.0).collect::<Vec<_>>();
         let linear_direct = vec![5.0, 20.0, 35.0];
-        let (grid, channel_map) =
-            casa_grid_frequency_channel_map(&source, &linear_direct, CubeInterpolation::Linear);
+        let (grid, channel_map) = casa_grid_frequency_channel_map(
+            &source,
+            &linear_direct,
+            &[],
+            CubeInterpolation::Linear,
+        );
         assert_eq!(grid, linear_direct);
         assert_eq!(channel_map, vec![Some(0), Some(1), Some(2)]);
 
         let linear_threshold = vec![0.0, 20.0, 40.0];
-        let (grid, channel_map) =
-            casa_grid_frequency_channel_map(&source, &linear_threshold, CubeInterpolation::Linear);
+        let (grid, channel_map) = casa_grid_frequency_channel_map(
+            &source,
+            &linear_threshold,
+            &[],
+            CubeInterpolation::Linear,
+        );
         assert_eq!(grid, linear_threshold);
         assert_eq!(channel_map, vec![Some(0), Some(1), Some(2)]);
 
         let linear_wide = vec![0.0, 25.0, 50.0];
         let (grid, channel_map) =
-            casa_grid_frequency_channel_map(&source, &linear_wide, CubeInterpolation::Linear);
+            casa_grid_frequency_channel_map(&source, &linear_wide, &[], CubeInterpolation::Linear);
         assert_ne!(grid, linear_wide);
         assert!(grid.len() > linear_wide.len());
         assert!(channel_map.iter().any(Option::is_some));
 
         let cubic_direct = vec![0.0, 40.0, 80.0];
         let (grid, channel_map) =
-            casa_grid_frequency_channel_map(&source, &cubic_direct, CubeInterpolation::Cubic);
+            casa_grid_frequency_channel_map(&source, &cubic_direct, &[], CubeInterpolation::Cubic);
         assert_eq!(grid, cubic_direct);
         assert_eq!(channel_map, vec![Some(0), Some(1), Some(2)]);
     }

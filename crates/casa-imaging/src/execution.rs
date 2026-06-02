@@ -16361,7 +16361,7 @@ static inline bool row_run_density_lookup(
         x = -u * params.density_u_scale + params.density_center_x;
         y = v * params.density_v_scale + params.density_center_y;
     } else {
-        x = u_lambda * params.density_u_scale + params.density_center_x;
+        x = -u_lambda * params.density_u_scale + params.density_center_x;
         y = -v_lambda * params.density_v_scale + params.density_center_y;
     }
     if (!isfinite(x) || !isfinite(y)) {
@@ -19354,6 +19354,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
         )
         .unwrap();
@@ -19366,6 +19367,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
         )
         .unwrap();
@@ -19507,6 +19509,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: true,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
         )
         .unwrap();
@@ -19652,6 +19655,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
         )
         .unwrap();
@@ -19766,6 +19770,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
         )
         .unwrap();
@@ -19957,6 +19962,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
         )
         .unwrap();

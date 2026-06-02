@@ -28,7 +28,15 @@ SUPPORTED_GRIDDER_VALUES = {
     "widefield",
     "wproject",
 }
-RUNNABLE_GRIDDER_VALUES = {"mosaic", "standard", "wproject"}
+RUNNABLE_GRIDDER_VALUES = {
+    "awp2",
+    "awphpg",
+    "awproject",
+    "mosaic",
+    "standard",
+    "widefield",
+    "wproject",
+}
 SUPPORTED_SPEC_MODES = {"cubedata", "cube", "mfs"}
 RUNNABLE_SPEC_MODES = {"cube", "mfs"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
@@ -213,6 +221,12 @@ def build_plan(
     )
     if phase_probe.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.phase_probe must be 0/1, true/false, yes/no, or on/off")
+    skip_casa = os.environ.get("CASA_RS_BENCH_SKIP_CASA") or str_value(
+        run, "skip_casa", "0"
+    )
+    if skip_casa.lower() not in SUPPORTED_BOOLEAN_FLAGS:
+        raise HarnessError("run.skip_casa must be 0/1, true/false, yes/no, or on/off")
+    extra_env = string_map_value(run, "env")
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
     casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
@@ -226,6 +240,7 @@ def build_plan(
         "IMAGER_BENCH_MODE": bench_mode,
         "IMAGER_BENCH_SPECMODE": specmode,
         "IMAGER_BENCH_GRIDDER": gridder,
+        "IMAGER_BENCH_CASA_GRIDDER": str_value(imaging, "casa_gridder", gridder),
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
         "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(imaging, "phasecenter_field"),
@@ -244,6 +259,7 @@ def build_plan(
         "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
         "IMAGER_BENCH_WTERM": wterm,
+        "IMAGER_BENCH_WPROJPLANES": optional_int_string(imaging, "wprojplanes"),
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
@@ -264,7 +280,9 @@ def build_plan(
         ),
         "IMAGER_BENCH_MS_STAGING": ms_staging,
         "IMAGER_BENCH_PHASE_PROBE": phase_probe,
+        "IMAGER_BENCH_SKIP_CASA": skip_casa,
     }
+    env.update(extra_env)
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
     return {
@@ -296,6 +314,7 @@ def build_plan(
             "hogbom_iteration_mode": hogbom_iteration_mode,
             "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
+            "wprojplanes": optional_int_string(imaging, "wprojplanes") or None,
         },
         "run": {
             "repeats": repeats,
@@ -304,6 +323,7 @@ def build_plan(
             or str_value(run, "storage_label", "script-staged-tempdir"),
             "ms_staging": ms_staging,
             "phase_probe": phase_probe,
+            "env": extra_env,
         },
         "run_support": run_support,
         "review": review_contract_value(manifest, run),
@@ -340,7 +360,10 @@ def benchmark_run_support(
         reasons.append(f"specmode={specmode!r} needs benchmark-script execution support")
     if gridder not in RUNNABLE_GRIDDER_VALUES:
         reasons.append(f"gridder={gridder!r} needs benchmark-script execution support")
-    if wterm != "none" and not (gridder == "wproject" and wterm == "wproject"):
+    if wterm != "none" and not (
+        gridder in {"wproject", "widefield", "awproject", "awp2", "awphpg"}
+        and wterm == "wproject"
+    ):
         reasons.append(f"wterm={wterm!r} needs benchmark-script execution support")
     if reasons:
         return {
@@ -958,6 +981,18 @@ def object_value(obj: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise HarnessError(f"{key!r} must be an object")
     return value
+
+
+def string_map_value(obj: dict[str, Any], key: str) -> dict[str, str]:
+    value = obj.get(key, {})
+    if not isinstance(value, dict):
+        raise HarnessError(f"{key!r} must be an object")
+    result = {}
+    for item_key, item_value in value.items():
+        if not isinstance(item_key, str) or not isinstance(item_value, str):
+            raise HarnessError(f"{key!r} must contain only string keys and values")
+        result[item_key] = item_value
+    return result
 
 
 def required_str(obj: dict[str, Any], key: str) -> str:

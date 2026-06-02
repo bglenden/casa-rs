@@ -1016,6 +1016,14 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
     ) -> Result<StorageSnapshot, StorageError> {
+        let profile_open = std::env::var_os("CASA_RS_TABLE_OPEN_PROFILE").is_some();
+        let load_started_at = std::time::Instant::now();
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=storage_load_metadata_only/start",
+                table_path.display(),
+            );
+        }
         let control_path = table_path.join(TABLE_CONTROL_FILE);
         if !table_path.exists() {
             return Err(StorageError::MissingPath(table_path.to_path_buf()));
@@ -1023,16 +1031,49 @@ impl CompositeStorage {
         if !control_path.exists() {
             return Err(StorageError::MissingControlFile(control_path));
         }
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=storage_load_metadata_only/check_paths elapsed_s={:.3}",
+                table_path.display(),
+                load_started_at.elapsed().as_secs_f64(),
+            );
+        }
 
-        match read_table_dat_dispatch(&control_path)? {
+        let table_dat = read_table_dat_dispatch(&control_path)?;
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=storage_load_metadata_only/read_table_dat elapsed_s={:.3}",
+                table_path.display(),
+                load_started_at.elapsed().as_secs_f64(),
+            );
+        }
+        match table_dat {
             TableDatResult::Plain(table_dat) => {
-                self.load_plain_table_metadata(table_path, &table_dat)
+                let snapshot = self.load_plain_table_metadata(table_path, &table_dat)?;
+                if profile_open {
+                    eprintln!(
+                        "table_open_profile path={} stage=storage_load_metadata_only/plain_metadata rows={} dm_count={} elapsed_s={:.3}",
+                        table_path.display(),
+                        snapshot.row_count,
+                        snapshot.dm_info.len(),
+                        load_started_at.elapsed().as_secs_f64(),
+                    );
+                }
+                Ok(snapshot)
             }
             // Metadata-only open is primarily for plain tiled tables. Fall back
             // to the full loader for more complex table types.
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 let mut snapshot = self.load(table_path)?;
                 snapshot.rows.clear();
+                if profile_open {
+                    eprintln!(
+                        "table_open_profile path={} stage=storage_load_metadata_only/full_loader_fallback rows={} elapsed_s={:.3}",
+                        table_path.display(),
+                        snapshot.row_count,
+                        load_started_at.elapsed().as_secs_f64(),
+                    );
+                }
                 Ok(snapshot)
             }
         }

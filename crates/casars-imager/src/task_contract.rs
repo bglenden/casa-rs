@@ -1496,7 +1496,7 @@ fn default_mosaic_pb_limit() -> f32 {
 }
 
 fn default_minor_cycle_length() -> usize {
-    8
+    1000
 }
 
 fn default_cyclefactor() -> f32 {
@@ -1932,7 +1932,7 @@ mod tests {
             mosaic_pb_limit: 0.2,
             pbcor: false,
             write_pb: false,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
@@ -1993,7 +1993,7 @@ mod tests {
             mosaic_pb_limit: 0.1,
             pbcor: false,
             write_pb: false,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
@@ -2237,7 +2237,7 @@ mod tests {
             mosaic_pb_limit: 0.1,
             pbcor: false,
             write_pb: false,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
@@ -2398,7 +2398,7 @@ mod tests {
             mosaic_pb_limit: 0.1,
             pbcor: false,
             write_pb: false,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
@@ -2544,7 +2544,7 @@ mod tests {
             mosaic_pb_limit: 0.2,
             pbcor: false,
             write_pb: false,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,

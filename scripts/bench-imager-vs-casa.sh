@@ -36,8 +36,8 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
   exit 2
 fi
 
-repeats="${BENCH_REPEATS:-5}"
-profile_warmups="${BENCH_PROFILE_WARMUPS:-0}"
+repeats="${BENCH_REPEATS:-${IMAGER_BENCH_REPEATS:-5}}"
+profile_warmups="${BENCH_PROFILE_WARMUPS:-${IMAGER_BENCH_PROFILE_WARMUPS:-0}}"
 field="${IMAGER_BENCH_FIELD:-0}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
@@ -45,6 +45,7 @@ channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
 channel_count="${IMAGER_BENCH_CHANNEL_COUNT:-1}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
 gridder="${IMAGER_BENCH_GRIDDER:-standard}"
+casa_gridder="${IMAGER_BENCH_CASA_GRIDDER:-$gridder}"
 interpolation="${IMAGER_BENCH_INTERPOLATION:-linear}"
 imsize="${IMAGER_BENCH_IMSIZE:-128}"
 cell_arcsec="${IMAGER_BENCH_CELL_ARCSEC:-30}"
@@ -60,6 +61,7 @@ hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
+wprojplanes="${IMAGER_BENCH_WPROJPLANES:-}"
 mode="${IMAGER_BENCH_MODE:-dirty}"
 niter="${IMAGER_BENCH_NITER:-4}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
@@ -73,9 +75,23 @@ keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
 ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
 tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
 phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
+skip_casa="${IMAGER_BENCH_SKIP_CASA:-0}"
 
-if [[ "$wterm" != "none" && ! ( "$gridder" == "wproject" && "$wterm" == "wproject" ) ]]; then
-  echo "error: scripts/bench-imager-vs-casa.sh supports IMAGER_BENCH_WTERM=none, or wproject with gridder=wproject" >&2
+case "$gridder" in
+  wproject|widefield|awproject|awp2|awphpg)
+    gridder_uses_wproject_wterm=1
+    ;;
+  *)
+    gridder_uses_wproject_wterm=0
+    ;;
+esac
+
+if [[ "$wterm" != "none" && ! ( "$gridder_uses_wproject_wterm" == "1" && "$wterm" == "wproject" ) ]]; then
+  echo "error: scripts/bench-imager-vs-casa.sh supports IMAGER_BENCH_WTERM=none, or wproject with gridder=wproject/widefield/AW aliases" >&2
+  exit 2
+fi
+if [[ -n "$wprojplanes" && ! "$wprojplanes" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_WPROJPLANES must be an unsigned integer" >&2
   exit 2
 fi
 
@@ -84,8 +100,12 @@ if [[ "$specmode" != "mfs" && "$specmode" != "cube" ]]; then
   exit 2
 fi
 
-if [[ "$gridder" != "standard" && "$gridder" != "mosaic" && "$gridder" != "wproject" ]]; then
-  echo "error: IMAGER_BENCH_GRIDDER must be standard, mosaic, or wproject" >&2
+if [[ "$gridder" != "standard" && "$gridder" != "mosaic" && "$gridder" != "wproject" && "$gridder" != "widefield" && "$gridder" != "awproject" && "$gridder" != "awp2" && "$gridder" != "awphpg" ]]; then
+  echo "error: IMAGER_BENCH_GRIDDER must be standard, mosaic, wproject, widefield, awproject, awp2, or awphpg" >&2
+  exit 2
+fi
+if [[ "$casa_gridder" != "standard" && "$casa_gridder" != "mosaic" && "$casa_gridder" != "wproject" && "$casa_gridder" != "widefield" && "$casa_gridder" != "awproject" && "$casa_gridder" != "awp2" && "$casa_gridder" != "awphpg" ]]; then
+  echo "error: IMAGER_BENCH_CASA_GRIDDER must be standard, mosaic, wproject, widefield, awproject, awp2, or awphpg" >&2
   exit 2
 fi
 
@@ -203,7 +223,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -229,6 +249,10 @@ if [[ "$write_pb_enabled" == "1" ]]; then
 fi
 if [[ "$pbcor_enabled" == "1" ]]; then
   rust_pb_flags+=(--pbcor)
+fi
+rust_wproject_flags=()
+if [[ -n "$wprojplanes" ]]; then
+  rust_wproject_flags+=(--wprojplanes "$wprojplanes")
 fi
 
 echo "Rust release CLI timings (seconds):"
@@ -273,12 +297,13 @@ for run in $(seq 1 "$repeats"); do
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
-      "${rust_pb_flags[@]}" \
+      ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
       --minpsffraction "$min_psf_fraction" \
       --maxpsffraction "$max_psf_fraction" \
       --wterm "$wterm" \
+      ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
       --no-preview-pngs \
       $dirty_flag; then
       echo "error: Rust casars-imager run $run failed" >&2
@@ -310,12 +335,13 @@ for run in $(seq 1 "$repeats"); do
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
-      "${rust_pb_flags[@]}" \
+      ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
       --minpsffraction "$min_psf_fraction" \
       --maxpsffraction "$max_psf_fraction" \
       --wterm "$wterm" \
+      ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
       --no-preview-pngs \
       $dirty_flag; then
       echo "error: Rust casars-imager run $run failed" >&2
@@ -359,12 +385,13 @@ if [[ -n "$scales" ]]; then
     --threshold-jy "$threshold_jy" \
     --nsigma "$nsigma" \
     --psfcutoff "$psfcutoff" \
-    "${rust_pb_flags[@]}" \
+    ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
     --minor-cycle-length "$minor_cycle_length" \
     --cyclefactor "$cyclefactor" \
     --minpsffraction "$min_psf_fraction" \
     --maxpsffraction "$max_psf_fraction" \
     --wterm "$wterm" \
+    ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
     $dirty_flag \
     --repeats "$repeats" \
     --warmups "$profile_warmups" \
@@ -393,12 +420,13 @@ else
     --threshold-jy "$threshold_jy" \
     --nsigma "$nsigma" \
     --psfcutoff "$psfcutoff" \
-    "${rust_pb_flags[@]}" \
+    ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
     --minor-cycle-length "$minor_cycle_length" \
     --cyclefactor "$cyclefactor" \
     --minpsffraction "$min_psf_fraction" \
     --maxpsffraction "$max_psf_fraction" \
     --wterm "$wterm" \
+    ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
     $dirty_flag \
     --repeats "$repeats" \
     --warmups "$profile_warmups" \
@@ -437,7 +465,8 @@ weighting = os.environ["CASA_RS_BENCH_WEIGHTING"]
 robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
 nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
-gridder = os.environ["CASA_RS_BENCH_GRIDDER"]
+casa_gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER", os.environ["CASA_RS_BENCH_GRIDDER"])
+wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
 interpolation = os.environ["CASA_RS_BENCH_INTERPOLATION"]
@@ -461,7 +490,7 @@ with tempfile.TemporaryDirectory() as td:
             field=field,
             stokes="I",
             specmode=specmode,
-            gridder=gridder,
+            gridder=casa_gridder,
             weighting=weighting,
             deconvolver=deconvolver,
             nterms=nterms,
@@ -500,6 +529,8 @@ with tempfile.TemporaryDirectory() as td:
             )
         else:
             kwargs.update(spw=spw_selector)
+        if wprojplanes_env:
+            kwargs["wprojplanes"] = int(wprojplanes_env)
         if phasecenter_field:
             kwargs["phasecenter"] = int(phasecenter_field)
         tclean(**kwargs)
@@ -512,37 +543,44 @@ if casa_keep_prefix:
     print(f"kept_casa_prefix={casa_keep_prefix}")
 PY
 
-echo "CASA tclean timings (seconds):"
-CASA_RS_BENCH_MS_PATH="$ms_path" \
-CASA_RS_BENCH_REPEATS="$repeats" \
-CASA_RS_BENCH_FIELD="$field" \
-CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
-CASA_RS_BENCH_SPW="$spw" \
-CASA_RS_BENCH_CHANNEL_START="$channel_start" \
-CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
-CASA_RS_BENCH_SPECMODE="$specmode" \
-CASA_RS_BENCH_GRIDDER="$gridder" \
-CASA_RS_BENCH_IMSIZE="$imsize" \
-CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
-CASA_RS_BENCH_WEIGHTING="$weighting" \
-CASA_RS_BENCH_ROBUST="$robust" \
-CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
-CASA_RS_BENCH_NTERMS="$nterms" \
-CASA_RS_BENCH_SCALES="$scales" \
-CASA_RS_BENCH_NITER="$casa_niter" \
-CASA_RS_BENCH_GAIN="$gain" \
-CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
-CASA_RS_BENCH_NSIGMA="$nsigma" \
-CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
-CASA_RS_BENCH_PBLIMIT="$pblimit" \
-CASA_RS_BENCH_PBCOR="$pbcor_enabled" \
-CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
-CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
-CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
-CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
-CASA_RS_BENCH_INTERPOLATION="$interpolation" \
-CASA_RS_BENCH_KEEP_OUTPUT_ROOT="$keep_output_root" \
-  "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
+if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ]]; then
+  echo "CASA tclean timings (seconds):"
+  echo "  skipped; IMAGER_BENCH_SKIP_CASA=$skip_casa"
+else
+  echo "CASA tclean timings (seconds):"
+  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_REPEATS="$repeats" \
+  CASA_RS_BENCH_FIELD="$field" \
+  CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
+  CASA_RS_BENCH_SPW="$spw" \
+  CASA_RS_BENCH_CHANNEL_START="$channel_start" \
+  CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
+  CASA_RS_BENCH_SPECMODE="$specmode" \
+  CASA_RS_BENCH_GRIDDER="$gridder" \
+  CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
+  CASA_RS_BENCH_WPROJPLANES="$wprojplanes" \
+  CASA_RS_BENCH_IMSIZE="$imsize" \
+  CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
+  CASA_RS_BENCH_WEIGHTING="$weighting" \
+  CASA_RS_BENCH_ROBUST="$robust" \
+  CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
+  CASA_RS_BENCH_NTERMS="$nterms" \
+  CASA_RS_BENCH_SCALES="$scales" \
+  CASA_RS_BENCH_NITER="$casa_niter" \
+  CASA_RS_BENCH_GAIN="$gain" \
+  CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
+  CASA_RS_BENCH_NSIGMA="$nsigma" \
+  CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
+  CASA_RS_BENCH_PBLIMIT="$pblimit" \
+  CASA_RS_BENCH_PBCOR="$pbcor_enabled" \
+  CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
+  CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
+  CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
+  CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
+  CASA_RS_BENCH_INTERPOLATION="$interpolation" \
+  CASA_RS_BENCH_KEEP_OUTPUT_ROOT="$keep_output_root" \
+    "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
+fi
 echo
 
 if [[ -n "$keep_output_root" ]]; then
@@ -553,7 +591,7 @@ if [[ -n "$keep_output_root" ]]; then
   echo
 fi
 
-if [[ "$phase_probe_enabled" == "1" ]]; then
+if [[ "$phase_probe_enabled" == "1" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
   echo "CASA PySynthesisImager stage medians (milliseconds):"
   CASA_RS_BENCH_MS_PATH="$ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
@@ -564,6 +602,8 @@ if [[ "$phase_probe_enabled" == "1" ]]; then
   CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
+  CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
+  CASA_RS_BENCH_WPROJPLANES="$wprojplanes" \
   CASA_RS_BENCH_IMSIZE="$imsize" \
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
   CASA_RS_BENCH_WEIGHTING="$weighting" \

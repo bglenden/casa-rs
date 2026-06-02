@@ -1276,7 +1276,7 @@ impl Default for CleanConfig {
             threshold_jy_per_beam: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,

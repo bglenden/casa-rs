@@ -748,10 +748,13 @@ fn parse_gridder_request(text: &str) -> Result<(WTermMode, bool), String> {
         "standard" | "gridft" | "ft" => Ok((WTermMode::None, true)),
         "mosaic" => Ok((WTermMode::None, false)),
         "wproject" => Ok((WTermMode::WProject, false)),
-        "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
-            "gridder={text:?} is not implemented by casa-rs imager yet; \
-             supported gridder values are standard, wproject, and mosaic"
-        )),
+        "widefield" | "awproject" | "awp2" | "awphpg" => {
+            eprintln!(
+                "aw_widefield_alias_plan gridder_request={} core_projection=wproject a_term_cf_planning=not_implemented remaining_capability_issue=https://github.com/bglenden/casa-rs/issues/52",
+                text.to_ascii_lowercase()
+            );
+            Ok((WTermMode::WProject, false))
+        }
         _ => Err(format!(
             "unsupported --gridder value {text:?}; expected standard, wproject, widefield, mosaic, awproject, awp2, or awphpg"
         )),

@@ -52,7 +52,8 @@ def main() -> None:
     chan_start = env_int("CASA_RS_BENCH_CHANNEL_START")
     chan_count = env_int("CASA_RS_BENCH_CHANNEL_COUNT")
     specmode = env_str("CASA_RS_BENCH_SPECMODE")
-    gridder = env_str("CASA_RS_BENCH_GRIDDER")
+    gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER") or env_str("CASA_RS_BENCH_GRIDDER")
+    wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
     imsize = env_int("CASA_RS_BENCH_IMSIZE")
     cell_arcsec = env_str("CASA_RS_BENCH_CELL_ARCSEC")
     weighting = env_str("CASA_RS_BENCH_WEIGHTING")
@@ -151,6 +152,8 @@ def main() -> None:
                     pblimit=pblimit,
                     pbcor=pbcor,
                 )
+                if wprojplanes_env:
+                    parameter_kwargs["wprojplanes"] = int(wprojplanes_env)
                 if specmode == "cube":
                     parameter_kwargs.update(
                         nchan=chan_count,
