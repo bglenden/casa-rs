@@ -2149,7 +2149,7 @@ fn should_fallback_to_general_cube_for_empty_acceleration(
     config: &CliConfig,
     result: &Result<RunSummary, String>,
 ) -> bool {
-    matches!(config.spectral_mode, SpectralMode::Cube)
+    config.spectral_mode.is_cube_like()
         && config.channel_count == Some(1)
         && matches!(
             result,
@@ -2513,12 +2513,15 @@ fn run_single_image_from_config_with_gridder_override(
         imsize: config.imsize,
         phase_center: phase_center.angles_rad,
         cell_arcsec: config.cell_arcsec,
-        freq_ref: prepared_freq_ref,
+        freq_ref: run_result.coordinate_freq_ref(prepared_freq_ref),
         direction_ref: phase_center.reference,
         plane_stokes: run_result.plane_stokes(),
         channel_frequencies_hz: run_result.channel_frequencies_hz(),
         spectral_delta_hz: run_result.spectral_delta_hz(),
-        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
     });
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
@@ -2582,16 +2585,13 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
     _force_standard_gridder: bool,
     ms_count: usize,
 ) -> bool {
-    let standard_cube_one_channel = matches!(config.spectral_mode, SpectralMode::Cube)
-        && config.channel_count == Some(1)
-        && config.force_standard_gridder
-        && matches!(config.w_term_mode, WTermMode::None)
-        && matches!(config.cube_axis.interpolation, CubeInterpolation::Nearest)
-        && env::var_os("CASA_RS_DISABLE_STANDARD_CUBE_ONE_CHANNEL_ACCELERATION").is_none();
+    let standard_cube_like_one_channel =
+        standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
+            && env::var_os("CASA_RS_DISABLE_STANDARD_CUBE_ONE_CHANNEL_ACCELERATION").is_none();
     ms_count == 1
         && (standard_mfs_fixed_tile_backend_enabled_for_frontend()
             || matches!(config.w_term_mode, WTermMode::WProject)
-            || standard_cube_one_channel)
+            || standard_cube_like_one_channel)
         && standard_mfs_shared_acceleration_spectral_mode_is_eligible(config)
         && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
@@ -2762,7 +2762,7 @@ fn new_source_row_block_prepared_selection(
     finish: SourceRowBlockFinish,
 ) -> Result<PreparedSelection, String> {
     if matches!(finish, SourceRowBlockFinish::StandardMfs { .. })
-        && standard_cube_one_channel_can_use_mfs_single_plane_path(config)
+        && standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
     {
         let table_values = standard_mfs_table_values.ok_or_else(|| {
             "internal error: missing standard single-plane table values".to_string()
@@ -3232,12 +3232,15 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms(
         imsize: config.imsize,
         phase_center: phase_center.angles_rad,
         cell_arcsec: config.cell_arcsec,
-        freq_ref: prepared_freq_ref,
+        freq_ref: run_result.coordinate_freq_ref(prepared_freq_ref),
         direction_ref: phase_center.reference,
         plane_stokes: run_result.plane_stokes(),
         channel_frequencies_hz: run_result.channel_frequencies_hz(),
         spectral_delta_hz: run_result.spectral_delta_hz(),
-        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
     });
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
@@ -3486,6 +3489,8 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         w_project_planes: config.w_project_planes,
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
+    let cube_coordinate_metadata =
+        single_plane_cube_coordinate_metadata(config, &first_plane, &table_values)?;
     let mut first_plane_for_initial_replay = Some(first_plane);
 
     let execution_weighting = if cube_one_channel_briggs_streaming.is_some() {
@@ -3529,10 +3534,8 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             )
         })
         .unwrap_or(false);
-    let standard_cube_one_channel_streaming = matches!(config.spectral_mode, SpectralMode::Cube)
-        && config.channel_count == Some(1)
-        && matches!(config.w_term_mode, WTermMode::None)
-        && matches!(config.cube_axis.interpolation, CubeInterpolation::Nearest);
+    let standard_cube_one_channel_streaming =
+        standard_cube_like_one_channel_can_use_mfs_single_plane_path(config);
     let use_sample_streaming = (env_standard_mfs_grid_threads() == Some(1)
         || standard_mfs_fixed_tile_backend_enabled_for_frontend())
         || standard_cube_one_channel_streaming
@@ -4171,18 +4174,25 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
     let stage_start = Instant::now();
-    let (run_result, effective_clean_mask) =
-        standard_single_plane_result_to_run_products(config, result, clean_mask.clone());
+    let (run_result, effective_clean_mask) = standard_single_plane_result_to_run_products(
+        config,
+        result,
+        clean_mask.clone(),
+        cube_coordinate_metadata,
+    );
     let coords = build_coordinate_system(CoordinateSystemBuild {
         imsize: config.imsize,
         phase_center: phase_center.angles_rad,
         cell_arcsec: config.cell_arcsec,
-        freq_ref: prepared_freq_ref,
+        freq_ref: run_result.coordinate_freq_ref(prepared_freq_ref),
         direction_ref: phase_center.reference,
         plane_stokes: run_result.plane_stokes(),
         channel_frequencies_hz: run_result.channel_frequencies_hz(),
         spectral_delta_hz: run_result.spectral_delta_hz(),
-        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
     });
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
@@ -4398,6 +4408,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     let mut accumulator = None::<StandardMfsDirtyAccumulator>;
     let mut phase_center = None::<PhaseCenter>;
     let mut prepared_freq_ref = None::<FrequencyRef>;
+    let mut cube_coordinate_metadata = None::<SinglePlaneCubeCoordinateMetadata>;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let mut run_imaging_time = Duration::ZERO;
     let mut accumulate_timings = AccumulateRowTimings {
@@ -4445,6 +4456,11 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         if accumulator.is_none() {
             phase_center = Some(plane.phase_center.clone());
             prepared_freq_ref = Some(plane.freq_ref);
+            cube_coordinate_metadata = Some(single_plane_cube_coordinate_metadata(
+                config,
+                &plane,
+                &table_values,
+            )?);
             accumulator = Some(
                 StandardMfsDirtyAccumulator::new(StandardMfsDirtyAccumulatorRequest {
                     geometry,
@@ -4499,18 +4515,25 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
     let stage_start = Instant::now();
-    let (run_result, effective_clean_mask) =
-        standard_single_plane_result_to_run_products(config, result, clean_mask.clone());
+    let (run_result, effective_clean_mask) = standard_single_plane_result_to_run_products(
+        config,
+        result,
+        clean_mask.clone(),
+        cube_coordinate_metadata.unwrap_or_default(),
+    );
     let coords = build_coordinate_system(CoordinateSystemBuild {
         imsize: config.imsize,
         phase_center: phase_center.angles_rad,
         cell_arcsec: config.cell_arcsec,
-        freq_ref: prepared_freq_ref,
+        freq_ref: run_result.coordinate_freq_ref(prepared_freq_ref),
         direction_ref: phase_center.reference,
         plane_stokes: run_result.plane_stokes(),
         channel_frequencies_hz: run_result.channel_frequencies_hz(),
         spectral_delta_hz: run_result.spectral_delta_hz(),
-        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
     });
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
@@ -6216,8 +6239,8 @@ fn apply_standard_mfs_runtime_plan_locked(
         can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
     let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
     let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
-    let standard_cube_one_channel =
-        matches!(config.spectral_mode, SpectralMode::Cube) && config.channel_count == Some(1);
+    let standard_cube_like_one_channel =
+        standard_cube_like_one_channel_can_use_mfs_single_plane_path(config);
     let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
     let wproject_acceleration = matches!(config.w_term_mode, WTermMode::WProject);
     let auto_threads = if wproject_acceleration {
@@ -6240,7 +6263,7 @@ fn apply_standard_mfs_runtime_plan_locked(
             "CASA_RS_STANDARD_MFS_BACKEND",
             if wproject_acceleration {
                 Some("fixed_tile")
-            } else if standard_cube_one_channel {
+            } else if standard_cube_like_one_channel {
                 match config.standard_mfs_acceleration {
                     StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then_some("fixed_tile"),
                     StandardMfsAccelerationPolicy::Cpu => Some("fixed_tile"),
@@ -6296,12 +6319,12 @@ fn apply_standard_mfs_runtime_plan_locked(
         "CASA_RS_STANDARD_MFS_TILE_ANCHOR",
         match config.standard_mfs_acceleration {
             StandardMfsAccelerationPolicy::Auto => {
-                (auto_multi_cpu && !mosaic_mfs_eligible && !standard_cube_one_channel)
+                (auto_multi_cpu && !mosaic_mfs_eligible && !standard_cube_like_one_channel)
                     .then_some("center_quadrants")
             }
             StandardMfsAccelerationPolicy::Cpu => None,
             StandardMfsAccelerationPolicy::MultiCpu | StandardMfsAccelerationPolicy::Metal
-                if !mosaic_mfs_eligible && !standard_cube_one_channel =>
+                if !mosaic_mfs_eligible && !standard_cube_like_one_channel =>
             {
                 Some("center_quadrants")
             }
@@ -6438,13 +6461,14 @@ fn can_plan_standard_mfs_acceleration(
 fn standard_mfs_shared_acceleration_spectral_mode_is_eligible(config: &CliConfig) -> bool {
     match config.spectral_mode {
         SpectralMode::Mfs => true,
-        SpectralMode::Cube => standard_cube_one_channel_can_use_mfs_single_plane_path(config),
-        SpectralMode::Cubedata => false,
+        SpectralMode::Cube | SpectralMode::Cubedata => {
+            standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
+        }
     }
 }
 
-fn standard_cube_one_channel_can_use_mfs_single_plane_path(config: &CliConfig) -> bool {
-    matches!(config.spectral_mode, SpectralMode::Cube)
+fn standard_cube_like_one_channel_can_use_mfs_single_plane_path(config: &CliConfig) -> bool {
+    config.spectral_mode.is_cube_like()
         && config.channel_count == Some(1)
         && config.force_standard_gridder
         && matches!(config.w_term_mode, WTermMode::None)
@@ -8441,6 +8465,9 @@ struct MtmfsRunProducts {
 struct CubeRunProducts {
     result: casa_imaging::CubeImagingResult,
     mosaic_weight: Option<Array4<f32>>,
+    coordinate_freq_ref: Option<FrequencyRef>,
+    spectral_delta_hz: Option<f64>,
+    rest_frequency_hz: Option<f64>,
 }
 
 impl RunProducts {
@@ -8462,8 +8489,23 @@ impl RunProducts {
 
     fn spectral_delta_hz(&self) -> Option<f64> {
         match self {
-            Self::Mfs(_) | Self::Cube(_) => None,
+            Self::Mfs(_) => None,
             Self::Mtmfs(products) => products.spectral_delta_hz,
+            Self::Cube(products) => products.spectral_delta_hz,
+        }
+    }
+
+    fn coordinate_freq_ref(&self, default: FrequencyRef) -> FrequencyRef {
+        match self {
+            Self::Cube(products) => products.coordinate_freq_ref.unwrap_or(default),
+            Self::Mfs(_) | Self::Mtmfs(_) => default,
+        }
+    }
+
+    fn rest_frequency_hz(&self) -> Option<f64> {
+        match self {
+            Self::Cube(products) => products.rest_frequency_hz,
+            Self::Mfs(_) | Self::Mtmfs(_) => None,
         }
     }
 
@@ -8933,6 +8975,9 @@ fn run_frontend_cube(
             return Ok(CubeRunProducts {
                 result,
                 mosaic_weight: None,
+                coordinate_freq_ref: None,
+                spectral_delta_hz: None,
+                rest_frequency_hz: None,
             });
         }
         let result = run_cube(&CubeImagingRequest {
@@ -8960,6 +9005,9 @@ fn run_frontend_cube(
         return Ok(CubeRunProducts {
             result,
             mosaic_weight: None,
+            coordinate_freq_ref: None,
+            spectral_delta_hz: None,
+            rest_frequency_hz: None,
         });
     }
     if config.uv_taper.is_some() {
@@ -9291,6 +9339,9 @@ fn run_frontend_cube(
             },
         },
         mosaic_weight: has_mosaic_weight.then_some(weight),
+        coordinate_freq_ref: None,
+        spectral_delta_hz: None,
+        rest_frequency_hz: None,
     })
 }
 
@@ -11208,9 +11259,9 @@ fn prepare_processing_buffer(
         reference_row_time_mjd_sec: selection.reference_row_time_mjd_sec,
         time_bounds_mjd_sec: selection.time_bounds_mjd_sec,
     };
-    let cube_context = if matches!(config.spectral_mode, SpectralMode::Cube)
+    let cube_context = if config.spectral_mode.is_cube_like()
         && standard_mfs_shared_acceleration_spectral_mode_is_eligible(config)
-        && !standard_cube_one_channel_can_use_mfs_single_plane_path(config)
+        && !standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
     {
         Some(cube_setup_context_for_selection(
             &block_selection,
@@ -11220,7 +11271,7 @@ fn prepare_processing_buffer(
         None
     };
     let standard_mfs_table_values =
-        if standard_cube_one_channel_can_use_mfs_single_plane_path(config) {
+        if standard_cube_like_one_channel_can_use_mfs_single_plane_path(config) {
             Some(load_prepared_selection_table_values(
                 selection.selected_ddid,
                 ddid_info,
@@ -15053,6 +15104,7 @@ fn run_standard_one_channel_cube_with_single_plane_acceleration(
     Ok(Some(single_plane_result_to_one_channel_cube(
         plane,
         plane_clean_mask,
+        &SinglePlaneCubeCoordinateMetadata::default(),
     )))
 }
 
@@ -15166,9 +15218,18 @@ fn cube_channel_model_interpolation_is_single_plane_identity(channel: &CubeChann
         })
 }
 
+#[derive(Clone, Debug, Default)]
+struct SinglePlaneCubeCoordinateMetadata {
+    coordinate_freq_ref: Option<FrequencyRef>,
+    channel_frequencies_hz: Option<Vec<f64>>,
+    spectral_delta_hz: Option<f64>,
+    rest_frequency_hz: Option<f64>,
+}
+
 fn single_plane_result_to_one_channel_cube(
     plane: ImagingResult,
     clean_mask: Option<Array2<bool>>,
+    metadata: &SinglePlaneCubeCoordinateMetadata,
 ) -> CubeImagingResult {
     let ImagingResult {
         psf,
@@ -15198,6 +15259,15 @@ fn single_plane_result_to_one_channel_cube(
     let minor_iterations = diagnostics.minor_iterations;
     let clean_stop_reason = diagnostics.clean_stop_reason;
     let stage_timings = diagnostics.stage_timings;
+    let channel_frequencies_hz = metadata
+        .channel_frequencies_hz
+        .clone()
+        .unwrap_or(compatibility.channel_frequencies_hz);
+    let reffreq_hz = if channel_frequencies_hz.is_empty() {
+        compatibility.reffreq_hz
+    } else {
+        0.5 * (channel_frequencies_hz[0] + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
+    };
     CubeImagingResult {
         psf,
         residual,
@@ -15225,8 +15295,8 @@ fn single_plane_result_to_one_channel_cube(
                 AxisKind::Frequency,
             ],
             plane_stokes: compatibility.plane_stokes,
-            reffreq_hz: compatibility.reffreq_hz,
-            channel_frequencies_hz: compatibility.channel_frequencies_hz,
+            reffreq_hz,
+            channel_frequencies_hz,
             psf_units: compatibility.psf_units,
             residual_units: compatibility.residual_units,
             model_units: compatibility.model_units,
@@ -15239,9 +15309,10 @@ fn standard_single_plane_result_to_run_products(
     config: &CliConfig,
     plane: ImagingResult,
     clean_mask: Option<Array2<bool>>,
+    metadata: SinglePlaneCubeCoordinateMetadata,
 ) -> (RunProducts, Option<EffectiveCleanMask>) {
-    if matches!(config.spectral_mode, SpectralMode::Cube) && config.channel_count == Some(1) {
-        let cube = single_plane_result_to_one_channel_cube(plane, clean_mask.clone());
+    if config.spectral_mode.is_cube_like() && config.channel_count == Some(1) {
+        let cube = single_plane_result_to_one_channel_cube(plane, clean_mask.clone(), &metadata);
         let effective_clean_mask = cube
             .clean_mask
             .clone()
@@ -15251,6 +15322,9 @@ fn standard_single_plane_result_to_run_products(
             RunProducts::Cube(CubeRunProducts {
                 result: cube,
                 mosaic_weight: None,
+                coordinate_freq_ref: metadata.coordinate_freq_ref,
+                spectral_delta_hz: metadata.spectral_delta_hz,
+                rest_frequency_hz: metadata.rest_frequency_hz,
             }),
             effective_clean_mask,
         )
@@ -15936,9 +16010,9 @@ fn cube_one_channel_briggs_streaming_plan(
     String,
 > {
     let target_density_cube_clean = !clean_is_dirty(config)
-        && matches!(config.spectral_mode, SpectralMode::Cube)
+        && config.spectral_mode.is_cube_like()
         && config.channel_count == Some(1);
-    if !(matches!(config.spectral_mode, SpectralMode::Cube)
+    if !(config.spectral_mode.is_cube_like()
         && config.channel_count == Some(1)
         && (effective_per_channel_weight_density(config) || target_density_cube_clean)
         && matches!(
@@ -16072,6 +16146,60 @@ fn selected_channel_read_range_from_indices(indices: &[usize]) -> Option<Selecte
             start,
             count: indices.len(),
         })
+}
+
+fn single_plane_cube_coordinate_metadata(
+    config: &CliConfig,
+    plane: &PlaneInput,
+    table_values: &PreparedSelectionTableValues,
+) -> Result<SinglePlaneCubeCoordinateMetadata, String> {
+    if !(config.spectral_mode.is_cube_like() && config.channel_count == Some(1)) {
+        return Ok(SinglePlaneCubeCoordinateMetadata::default());
+    }
+    let spectral_delta_hz = plane
+        .spectral_frequency_edge_range_hz
+        .and_then(spectral_delta_from_range)
+        .or_else(|| spectral_delta_from_range(plane.selected_frequency_range_hz));
+    if !matches!(config.spectral_mode, SpectralMode::Cubedata) {
+        return Ok(SinglePlaneCubeCoordinateMetadata {
+            spectral_delta_hz,
+            ..Default::default()
+        });
+    }
+
+    let (channel_start, channel_count) = shared_single_plane_channel_window(config)?;
+    let selected = resolve_contiguous_channel_selection(
+        &table_values.spw_freqs_hz,
+        channel_start,
+        channel_count,
+    )
+    .map_err(|error| error.to_string())?;
+    if selected.indices.len() != 1 || selected.frequencies_hz.len() != 1 {
+        return Err(format!(
+            "cubedata one-channel metadata expected one selected channel, resolved {}",
+            selected.indices.len()
+        ));
+    }
+    let channel_index = selected.indices[0];
+    let native_width_hz = table_values
+        .spw_widths_hz
+        .get(channel_index)
+        .copied()
+        .map(f64::abs)
+        .filter(|width| width.is_finite() && *width > 0.0)
+        .or(spectral_delta_hz);
+    let rest_frequency_hz = table_values
+        .spw_freqs_hz
+        .first()
+        .zip(table_values.spw_freqs_hz.last())
+        .map(|(first, last)| 0.5 * (*first + *last));
+
+    Ok(SinglePlaneCubeCoordinateMetadata {
+        coordinate_freq_ref: Some(table_values.freq_ref),
+        channel_frequencies_hz: Some(selected.frequencies_hz),
+        spectral_delta_hz: native_width_hz,
+        rest_frequency_hz,
+    })
 }
 
 fn casa_cube_briggs_gridft_density_cell_from_lambda(
@@ -16377,7 +16505,7 @@ fn selected_channel_read_range_for_standard_mfs(
 fn shared_single_plane_channel_window(
     config: &CliConfig,
 ) -> Result<(Option<usize>, Option<usize>), String> {
-    let channel_start = if standard_cube_one_channel_can_use_mfs_single_plane_path(config) {
+    let channel_start = if standard_cube_like_one_channel_can_use_mfs_single_plane_path(config) {
         match config.cube_axis.start {
             Some(CubeAxisValue::Channel(channel)) if channel < 0 => {
                 return Err(format!(
@@ -16397,8 +16525,8 @@ fn selected_channel_read_range_for_shared_single_plane_acceleration(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
 ) -> Result<Option<SelectedChannelReadRange>, String> {
-    if matches!(config.spectral_mode, SpectralMode::Cube)
-        && !standard_cube_one_channel_can_use_mfs_single_plane_path(config)
+    if config.spectral_mode.is_cube_like()
+        && !standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
     {
         return Ok(None);
     }
@@ -17266,8 +17394,7 @@ impl PreparedSelection {
         trace_enabled: bool,
     ) -> Result<Self, String> {
         if !(matches!(config.spectral_mode, SpectralMode::Mfs)
-            || matches!(config.spectral_mode, SpectralMode::Cube)
-                && config.channel_count == Some(1))
+            || config.spectral_mode.is_cube_like() && config.channel_count == Some(1))
         {
             return Err("internal error: standard MFS setup used for non-MFS imaging".to_string());
         }
@@ -27519,6 +27646,8 @@ mod tests {
             OsString::from("128"),
             OsString::from("--cell-arcsec"),
             OsString::from("1.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
             OsString::from("--gridder"),
             OsString::from("standard"),
             OsString::from("--standard-mfs-acceleration"),
@@ -27564,6 +27693,8 @@ mod tests {
             OsString::from("1.0"),
             OsString::from("--gridder"),
             OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
             OsString::from("--weighting"),
             OsString::from("briggs"),
             OsString::from("--niter"),
@@ -27685,8 +27816,12 @@ mod tests {
             OsString::from("128"),
             OsString::from("--cell-arcsec"),
             OsString::from("1.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
             OsString::from("--gridder"),
             OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
             OsString::from("--weighting"),
             OsString::from("briggs"),
             OsString::from("--deconvolver"),
@@ -27878,6 +28013,8 @@ mod tests {
             OsString::from("1.0"),
             OsString::from("--gridder"),
             OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
             OsString::from("--weighting"),
             OsString::from("briggs"),
             OsString::from("--niter"),
@@ -27906,6 +28043,42 @@ mod tests {
                 Ok("cpu")
             );
         }
+    }
+
+    #[test]
+    fn cubedata_one_channel_is_standard_mfs_acceleration_eligible() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cubedata"),
+            OsString::from("--start"),
+            OsString::from("10"),
+            OsString::from("--channel-count"),
+            OsString::from("1"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse cubedata one-channel config");
+
+        assert!(can_plan_standard_mfs_acceleration(&config, false, 1));
+        assert!(can_run_standard_mfs_fixed_tile_streaming_clean(
+            &config, false, 1
+        ));
     }
 
     #[test]
@@ -27979,9 +28152,7 @@ mod tests {
         ])
         .expect("parse cube one-channel config");
 
-        assert!(standard_cube_one_channel_can_use_mfs_single_plane_path(
-            &config
-        ));
+        assert!(standard_cube_like_one_channel_can_use_mfs_single_plane_path(&config));
         assert_eq!(
             shared_single_plane_channel_window(&config).unwrap(),
             (Some(10), Some(1))
@@ -28012,13 +28183,75 @@ mod tests {
         ])
         .expect("parse cube one-channel config");
 
-        assert!(standard_cube_one_channel_can_use_mfs_single_plane_path(
-            &config
-        ));
+        assert!(standard_cube_like_one_channel_can_use_mfs_single_plane_path(&config));
         assert_eq!(
             shared_single_plane_channel_window(&config).unwrap(),
             (Some(10), Some(1))
         );
+    }
+
+    #[test]
+    fn cubedata_one_channel_shared_path_honors_native_channel_start() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cubedata"),
+            OsString::from("--start"),
+            OsString::from("7"),
+            OsString::from("--channel-count"),
+            OsString::from("1"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+        ])
+        .expect("parse cubedata one-channel config");
+
+        assert!(standard_mfs_shared_acceleration_spectral_mode_is_eligible(
+            &config
+        ));
+        assert!(standard_cube_like_one_channel_can_use_mfs_single_plane_path(&config));
+        assert_eq!(
+            shared_single_plane_channel_window(&config).unwrap(),
+            (Some(7), Some(1))
+        );
+    }
+
+    #[test]
+    fn cubedata_one_channel_frequency_start_stays_on_general_cube_path() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cubedata"),
+            OsString::from("--start"),
+            OsString::from("1.0GHz"),
+            OsString::from("--channel-count"),
+            OsString::from("1"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+        ])
+        .expect("parse cubedata frequency-start config");
+
+        assert!(!standard_mfs_shared_acceleration_spectral_mode_is_eligible(
+            &config
+        ));
+        assert!(!standard_cube_like_one_channel_can_use_mfs_single_plane_path(&config));
     }
 
     #[test]
