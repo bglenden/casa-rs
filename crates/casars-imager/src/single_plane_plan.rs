@@ -266,7 +266,23 @@ fn cpu_multi_worker_eligibility(
         };
         if workers > 1 {
             if mosaic_mfs_eligible {
-                BackendEligibility::eligible(format!("mosaic-sample-range-workers-{workers}"))
+                if matches!(config.spectral_mode, SpectralMode::Cube)
+                    && config.channel_count == Some(1)
+                {
+                    BackendEligibility::eligible(format!(
+                        "mosaic-cube-one-channel-parallel-prepare-workers-{workers}-single-grid-owner"
+                    ))
+                } else if config.standard_mfs_acceleration
+                    == StandardMfsAccelerationPolicy::MultiCpu
+                {
+                    BackendEligibility::eligible(format!(
+                        "mosaic-sample-range-workers-{workers}-diagnostic"
+                    ))
+                } else {
+                    BackendEligibility::ineligible(
+                        "mosaic-auto-uses-single-grid-owner-or-metal-groups",
+                    )
+                }
             } else if matches!(config.w_term_mode, WTermMode::WProject) {
                 BackendEligibility::eligible(format!("wproject-streaming-workers-{workers}"))
             } else if matches!(config.spectral_mode, SpectralMode::Cube) {
@@ -311,7 +327,7 @@ fn gpu_metal_eligibility(
     }
     if casa_imaging::standard_mfs_metal_device_available() {
         if mosaic_mfs_eligible {
-            BackendEligibility::eligible("mosaic-screen-projector-metal")
+            BackendEligibility::eligible("mosaic-screen-projector-metal-single-grid-owner")
         } else if matches!(config.w_term_mode, WTermMode::WProject) {
             BackendEligibility::eligible("wproject-metal-kernel")
         } else if matches!(config.spectral_mode, SpectralMode::Cube) {
@@ -492,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_mfs_plan_reports_sample_range_and_metal_eligibility() {
+    fn mosaic_mfs_plan_reports_single_grid_owner_metal_by_default() {
         let config = parse([
             "--gridder",
             "mosaic",
@@ -511,14 +527,42 @@ mod tests {
 
         assert_eq!(plan.spectral, SinglePlaneSpectralPlan::Mfs);
         assert_eq!(plan.projection, SinglePlaneProjectionPlan::Mosaic);
+        assert_eq!(
+            plan.cpu_multi_worker.reason,
+            "mosaic-auto-uses-single-grid-owner-or-metal-groups"
+        );
+        assert!(
+            plan.gpu_metal.reason == "mosaic-screen-projector-metal-single-grid-owner"
+                || plan.gpu_metal.reason == "metal-device-unavailable"
+        );
+    }
+
+    #[test]
+    fn mosaic_mfs_plan_reports_sample_range_workers_only_when_explicit() {
+        let config = parse([
+            "--gridder",
+            "mosaic",
+            "--field",
+            "0,1,2",
+            "--phasecenter-field",
+            "0",
+            "--standard-mfs-acceleration",
+            "multi-cpu",
+            "--deconvolver",
+            "multiscale",
+            "--scales",
+            "0,5,15",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
         assert!(
             plan.cpu_multi_worker
                 .reason
                 .starts_with("mosaic-sample-range-workers")
         );
-        assert!(
-            plan.gpu_metal.reason == "mosaic-screen-projector-metal"
-                || plan.gpu_metal.reason == "metal-device-unavailable"
-        );
+        assert!(plan.cpu_multi_worker.reason.ends_with("-diagnostic"));
+        assert_eq!(plan.gpu_metal.reason, "standard-mfs-policy-disabled-metal");
     }
 }

@@ -9,6 +9,7 @@ tarpaulin-ci/
 casa-*.log
 crates/casa-ms/casa-*.log
 TempLattice*/
+IMAGING_WEIGHT_*/
 __pycache__/
 *.py[cod]
 .codex/

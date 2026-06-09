@@ -307,7 +307,9 @@
           "products": [
             ".image",
             ".residual",
+            ".model",
             ".psf",
+            ".sumwt",
             ".pb",
             ".weight",
             ".image.pbcor"
@@ -321,7 +323,9 @@
           "products": [
             ".image",
             ".residual",
+            ".model",
             ".psf",
+            ".sumwt",
             ".pb",
             ".weight",
             ".image.pbcor"
@@ -335,7 +339,9 @@
           "products": [
             ".image",
             ".residual",
+            ".model",
             ".psf",
+            ".sumwt",
             ".pb",
             ".weight",
             ".image.pbcor"
@@ -471,7 +477,9 @@
           "products": [
             ".image",
             ".residual",
+            ".model",
             ".psf",
+            ".sumwt",
             ".pb",
             ".weight",
             ".image.pbcor"
@@ -485,7 +493,9 @@
           "products": [
             ".image",
             ".residual",
+            ".model",
             ".psf",
+            ".sumwt",
             ".pb",
             ".weight",
             ".image.pbcor"
@@ -499,7 +509,9 @@
           "products": [
             ".image",
             ".residual",
+            ".model",
             ".psf",
+            ".sumwt",
             ".pb",
             ".weight",
             ".image.pbcor"

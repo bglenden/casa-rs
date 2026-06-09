@@ -2100,48 +2100,26 @@ impl ScreenProjector {
         }
         let imaging_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut imaging_evaluator)?;
         let weight_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut weight_evaluator)?;
-        let support = find_hetarray_screen_support(&weight_temp, 1);
-        if support == 0 {
-            return Err(ImagingError::Normalization(
-                "mosaic screen projector support is zero".to_string(),
+        screen_projector_from_hetarray_temps(gridder, sampling, imaging_temp, weight_temp)
+    }
+
+    pub(crate) fn from_hetarray_screen<F>(
+        geometry: ImageGeometry,
+        gridder: &StandardGridder,
+        sampling: usize,
+        conv_size: usize,
+        mut evaluator: F,
+    ) -> Result<Self, ImagingError>
+    where
+        F: FnMut(f64, f64) -> Complex32,
+    {
+        if sampling == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "screen projector sampling must be >= 1".to_string(),
             ));
         }
-
-        let imaging_sum =
-            screen_projector_plane_sum(&imaging_temp, imaging_temp.dim().0 / 2, support, 1);
-        let imaging_norm = imaging_sum.re;
-        if !(imaging_norm.is_finite() && imaging_norm > 1.0e-6) {
-            return Err(ImagingError::Normalization(
-                "mosaic screen projector kernel normalization is non-finite or zero".to_string(),
-            ));
-        }
-
-        let cropped_size = 2 * (support + 2);
-        let cropped_center = cropped_size / 2;
-        let temp_center = imaging_temp.dim().0 / 2;
-        let mut cropped = Array2::<Complex32>::zeros((cropped_size, cropped_size));
-        for y in 0..cropped_size {
-            let source_y = temp_center + y - cropped_center;
-            for x in 0..cropped_size {
-                let source_x = temp_center + x - cropped_center;
-                cropped[(x, y)] = imaging_temp[(source_x, source_y)] / imaging_norm;
-            }
-        }
-
-        let kernel_weights = lanczos_resample_complex(&cropped, sampling);
-        let kernel_center = kernel_weights.dim().0 / 2;
-        Ok(Self {
-            grid_shape: gridder.grid_shape(),
-            du_lambda: gridder.grid_spacing_lambda()[0],
-            dv_lambda: gridder.grid_spacing_lambda()[1],
-            sampling,
-            support,
-            kernel_center,
-            normalization_sum: Complex32::new(imaging_norm as f32, 0.0),
-            phased_kernel_weights: kernel_weights.clone(),
-            kernel_weights,
-            phase_gradient_rad_per_sample: [0.0, 0.0],
-        })
+        let temp = hetarray_screen_fft_temp(geometry, conv_size, &mut evaluator)?;
+        screen_projector_from_hetarray_temps(gridder, sampling, temp.clone(), temp)
     }
 
     pub(crate) fn with_phase_gradient(mut self, phase_gradient_rad_per_sample: [f64; 2]) -> Self {
@@ -2967,6 +2945,56 @@ fn find_hetarray_screen_support(weights: &Array2<Complex32>, sampling: usize) ->
     support
 }
 
+fn screen_projector_from_hetarray_temps(
+    gridder: &StandardGridder,
+    sampling: usize,
+    imaging_temp: Array2<Complex32>,
+    weight_temp: Array2<Complex32>,
+) -> Result<ScreenProjector, ImagingError> {
+    let support = find_hetarray_screen_support(&weight_temp, 1);
+    if support == 0 {
+        return Err(ImagingError::Normalization(
+            "mosaic screen projector support is zero".to_string(),
+        ));
+    }
+
+    let imaging_sum =
+        screen_projector_plane_sum(&imaging_temp, imaging_temp.dim().0 / 2, support, 1);
+    let imaging_norm = imaging_sum.re;
+    if !(imaging_norm.is_finite() && imaging_norm > 1.0e-6) {
+        return Err(ImagingError::Normalization(
+            "mosaic screen projector kernel normalization is non-finite or zero".to_string(),
+        ));
+    }
+
+    let cropped_size = 2 * (support + 2);
+    let cropped_center = cropped_size / 2;
+    let temp_center = imaging_temp.dim().0 / 2;
+    let mut cropped = Array2::<Complex32>::zeros((cropped_size, cropped_size));
+    for y in 0..cropped_size {
+        let source_y = temp_center + y - cropped_center;
+        for x in 0..cropped_size {
+            let source_x = temp_center + x - cropped_center;
+            cropped[(x, y)] = imaging_temp[(source_x, source_y)] / imaging_norm;
+        }
+    }
+
+    let kernel_weights = lanczos_resample_complex(&cropped, sampling);
+    let kernel_center = kernel_weights.dim().0 / 2;
+    Ok(ScreenProjector {
+        grid_shape: gridder.grid_shape(),
+        du_lambda: gridder.grid_spacing_lambda()[0],
+        dv_lambda: gridder.grid_spacing_lambda()[1],
+        sampling,
+        support,
+        kernel_center,
+        normalization_sum: Complex32::new(imaging_norm as f32, 0.0),
+        phased_kernel_weights: kernel_weights.clone(),
+        kernel_weights,
+        phase_gradient_rad_per_sample: [0.0, 0.0],
+    })
+}
+
 fn w_project_plane_sum(kernel: &WProjectKernel, sampling: usize) -> f32 {
     let support = kernel.support as isize;
     let mut sum = 0.0f32;
@@ -3042,6 +3070,13 @@ where
             screen[(x, y)] = Complex64::new(value.re as f64, value.im as f64);
         }
     }
+    hetarray_screen_temp_from_screen(screen, conv_size)
+}
+
+fn hetarray_screen_temp_from_screen(
+    screen: Array2<Complex64>,
+    conv_size: usize,
+) -> Result<Array2<Complex32>, ImagingError> {
     let transformed = centered_fft2_f64(&screen);
     let peak = transformed[(conv_size / 2, conv_size / 2)].norm();
     if !(peak.is_finite() && peak > 0.0) {

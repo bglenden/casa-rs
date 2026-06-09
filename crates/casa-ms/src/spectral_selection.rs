@@ -320,6 +320,55 @@ fn channel_widths_from_centers(channel_frequencies_hz: &[f64]) -> MsResult<Vec<f
         .collect())
 }
 
+fn channel_mode_single_output_width_hz(
+    source_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+    start_channel: i32,
+    width_channels: i32,
+) -> MsResult<f64> {
+    if width_channels == 0 {
+        return Err(MsError::VersionError(
+            "cube channel width must not be zero".to_string(),
+        ));
+    }
+    let nchannels = i32::try_from(source_frequencies_hz.len()).map_err(|_| {
+        MsError::VersionError("spectral window channel count exceeds i32".to_string())
+    })?;
+    if source_channel_widths_hz.len() != source_frequencies_hz.len() {
+        return Err(MsError::VersionError(format!(
+            "channel-mode cube axis requires matching frequency/width arrays, got {} and {}",
+            source_frequencies_hz.len(),
+            source_channel_widths_hz.len()
+        )));
+    }
+    let (low, high) = if width_channels > 0 {
+        let low = start_channel;
+        let high = low + width_channels;
+        (low, high)
+    } else {
+        let high = start_channel + 1;
+        let low = high + width_channels;
+        (low, high)
+    };
+    if low < 0 || high < 0 || low >= nchannels || high > nchannels || low >= high {
+        return Err(MsError::VersionError(format!(
+            "cube channel axis bin [{low}, {high}) is outside the SPW with {nchannels} channels"
+        )));
+    }
+    let selected = usize::try_from(low).expect("validated low bound")
+        ..usize::try_from(high).expect("validated high bound");
+    let low_edge_hz = selected
+        .clone()
+        .map(|index| source_frequencies_hz[index] - source_channel_widths_hz[index].abs() / 2.0)
+        .reduce(f64::min)
+        .expect("validated non-empty channel range");
+    let high_edge_hz = selected
+        .map(|index| source_frequencies_hz[index] + source_channel_widths_hz[index].abs() / 2.0)
+        .reduce(f64::max)
+        .expect("validated non-empty channel range");
+    Ok((high_edge_hz - low_edge_hz).abs())
+}
+
 fn channel_mode_output_centers(
     all_source_frequencies_hz: &[f64],
     all_source_channel_widths_hz: &[f64],
@@ -887,15 +936,26 @@ impl CubeSpectralSetup {
             CubeSpecMode::Cube => axis_config.outframe,
             CubeSpecMode::Cubedata => source_freq_ref,
         };
-        let output_channel_frequencies_hz =
+        let (output_channel_frequencies_hz, output_channel_widths_hz) =
             if matches!(axis_config.specmode, CubeSpecMode::Cubedata) {
-                channel_mode_output_centers(
+                let output_channel_frequencies_hz = channel_mode_output_centers(
                     all_source_frequencies_hz,
                     all_source_channel_widths_hz,
                     start_channel,
                     width_channels,
                     nchan,
-                )?
+                )?;
+                let output_channel_widths_hz = if nchan == 1 {
+                    vec![channel_mode_single_output_width_hz(
+                        all_source_frequencies_hz,
+                        all_source_channel_widths_hz,
+                        start_channel,
+                        width_channels,
+                    )?]
+                } else {
+                    channel_widths_from_centers(&output_channel_frequencies_hz)?
+                };
+                (output_channel_frequencies_hz, output_channel_widths_hz)
             } else {
                 let frame = spectral_frame_observatory(
                     derived_engine,
@@ -932,13 +992,24 @@ impl CubeSpectralSetup {
                         &regridding_input_widths_hz,
                         &frame,
                     )?;
-                casa_transformed_channel_mode_output_centers(
+                let output_channel_frequencies_hz = casa_transformed_channel_mode_output_centers(
                     &source_frequencies_in_output_frame,
                     &source_channel_widths_in_output_frame,
                     start_channel,
                     width_channels,
                     nchan,
-                )?
+                )?;
+                let output_channel_widths_hz = if nchan == 1 {
+                    vec![channel_mode_single_output_width_hz(
+                        &source_frequencies_in_output_frame,
+                        &source_channel_widths_in_output_frame,
+                        start_channel,
+                        width_channels,
+                    )?]
+                } else {
+                    channel_widths_from_centers(&output_channel_frequencies_hz)?
+                };
+                (output_channel_frequencies_hz, output_channel_widths_hz)
             };
         let setup = Self {
             source_freq_ref,
@@ -949,7 +1020,7 @@ impl CubeSpectralSetup {
             ),
             output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
             output_frame_field_id: field_id,
-            output_channel_widths_hz: channel_widths_from_centers(&output_channel_frequencies_hz)?,
+            output_channel_widths_hz,
             output_channel_frequencies_hz,
         };
         let support = cube_source_channel_support(
@@ -3029,6 +3100,24 @@ mod tests {
     }
 
     #[test]
+    fn channel_mode_single_output_width_uses_selected_channel_bin() {
+        let all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
+        let widths = vec![50.0e6; all.len()];
+        assert_eq!(
+            channel_mode_single_output_width_hz(&all, &widths, 0, 1).unwrap(),
+            50.0e6
+        );
+        assert_eq!(
+            channel_mode_single_output_width_hz(&all, &widths, 0, 2).unwrap(),
+            100.0e6
+        );
+        assert_eq!(
+            channel_mode_single_output_width_hz(&all, &widths, 9, -2).unwrap(),
+            100.0e6
+        );
+    }
+
+    #[test]
     fn casa_transformed_channel_mode_output_centers_use_uniform_output_spacing() {
         let centers = casa_transformed_channel_mode_output_centers(
             &[10.0, 11.0, 12.001, 13.003],
@@ -3355,6 +3444,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("must be positive"));
+    }
+
+    #[test]
+    fn for_casa_cube_channel_axis_keeps_single_output_channel_width() {
+        let engine = test_engine();
+        let axis_config = CubeAxisConfig {
+            specmode: CubeSpecMode::Cubedata,
+            start: Some(CubeAxisValue::Channel(0)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        };
+        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+            FrequencyRef::TOPO,
+            &[1.0e9, 1.05e9, 1.10e9],
+            &[5.0e7, 5.0e7, 5.0e7],
+            1,
+            &axis_config,
+            59_000.0 * 86_400.0,
+            0,
+            None,
+            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+            &engine,
+        )
+        .unwrap();
+        assert_eq!(setup.output_channel_frequencies_hz, vec![1.0e9]);
+        assert_eq!(setup.output_channel_widths_hz, vec![5.0e7]);
     }
 
     #[test]

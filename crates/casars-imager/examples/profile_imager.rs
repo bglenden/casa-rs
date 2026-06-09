@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
-use casa_ms::{CubeAxisConfig, CubeInterpolation};
+use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
+use casa_types::measures::doppler::DopplerRef;
 use casars_imager::{
     CliConfig, RunSummary, SpectralMode, StandardMfsAccelerationPolicy, run_from_config,
 };
@@ -30,11 +31,14 @@ struct Options {
     spw: Option<i32>,
     channel_start: Option<usize>,
     channel_count: Option<usize>,
+    cube_start: Option<CubeAxisValue>,
+    cube_width: Option<CubeAxisValue>,
     datacolumn: Option<String>,
     correlation: Option<String>,
     spectral_mode: SpectralMode,
     interpolation: CubeInterpolation,
     weighting: WeightingMode,
+    per_channel_weight_density: bool,
     use_pointing: bool,
     deconvolver: Deconvolver,
     standard_mfs_acceleration: StandardMfsAccelerationPolicy,
@@ -132,7 +136,7 @@ fn run() -> Result<(), String> {
     }
 
     println!(
-        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} use_pointing={} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
+        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} cube_start={:?} cube_width={:?} corr={:?} interpolation={:?} weighting={:?} use_pointing={} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
         options.ms.display(),
         options.field_ids,
         options.phasecenter_field,
@@ -140,6 +144,8 @@ fn run() -> Result<(), String> {
         options.spw,
         options.channel_start,
         options.channel_count,
+        options.cube_start,
+        options.cube_width,
         options.correlation,
         options.interpolation,
         options.weighting,
@@ -355,10 +361,12 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         spectral_mode: options.spectral_mode,
         cube_axis: CubeAxisConfig {
             interpolation: options.interpolation,
+            start: options.cube_start.clone(),
+            width: options.cube_width.clone(),
             ..CubeAxisConfig::default()
         },
         weighting: options.weighting,
-        per_channel_weight_density: false,
+        per_channel_weight_density: options.per_channel_weight_density,
         use_pointing: options.use_pointing,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
@@ -508,12 +516,15 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut spw = None::<i32>;
     let mut channel_start = None::<usize>;
     let mut channel_count = None::<usize>;
+    let mut cube_start = None::<CubeAxisValue>;
+    let mut cube_width = None::<CubeAxisValue>;
     let mut datacolumn = Some("DATA".to_string());
     let mut correlation = None::<String>;
     let mut spectral_mode = SpectralMode::Mfs;
     let mut interpolation = CubeInterpolation::Linear;
     let mut weighting_name = String::from("natural");
     let mut robust = 0.5f32;
+    let mut per_channel_weight_density = None::<bool>;
     let mut use_pointing = false;
     let mut deconvolver = Deconvolver::Hogbom;
     let mut standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
@@ -562,6 +573,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--spw" => spw = Some(parse_next(&mut args, "--spw")?),
             "--channel-start" => channel_start = Some(parse_next(&mut args, "--channel-start")?),
             "--channel-count" => channel_count = Some(parse_next(&mut args, "--channel-count")?),
+            "--start" => {
+                cube_start = Some(parse_cube_axis_value(&next_value(&mut args, "--start")?)?)
+            }
+            "--width" => {
+                cube_width = Some(parse_cube_axis_value(&next_value(&mut args, "--width")?)?)
+            }
             "--datacolumn" => datacolumn = Some(next_value(&mut args, "--datacolumn")?),
             "--corr" => correlation = Some(next_value(&mut args, "--corr")?),
             "--specmode" => {
@@ -573,6 +590,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--weighting" => weighting_name = next_value(&mut args, "--weighting")?,
             "--robust" => robust = parse_next(&mut args, "--robust")?,
+            "--perchanweightdensity" => per_channel_weight_density = Some(true),
+            "--no-perchanweightdensity" => per_channel_weight_density = Some(false),
             "--usepointing" | "--use-pointing" => use_pointing = true,
             "--deconvolver" => {
                 deconvolver = parse_deconvolver(&next_value(&mut args, "--deconvolver")?)?
@@ -650,6 +669,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     }
 
     let weighting = parse_weighting_mode(&weighting_name, robust)?;
+    let per_channel_weight_density =
+        per_channel_weight_density.unwrap_or(matches!(spectral_mode, SpectralMode::Cube));
 
     Ok(Options {
         ms: ms.ok_or_else(help_text)?,
@@ -659,11 +680,14 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         spw,
         channel_start,
         channel_count,
+        cube_start,
+        cube_width,
         datacolumn,
         correlation,
         spectral_mode,
         interpolation,
         weighting,
+        per_channel_weight_density,
         use_pointing,
         deconvolver,
         standard_mfs_acceleration,
@@ -772,6 +796,10 @@ fn parse_cube_interpolation(text: &str) -> Result<CubeInterpolation, String> {
     }
 }
 
+fn parse_cube_axis_value(text: &str) -> Result<CubeAxisValue, String> {
+    CubeAxisValue::parse(text, DopplerRef::RADIO).map_err(|error| error.to_string())
+}
+
 fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
     match text.to_ascii_lowercase().as_str() {
         "hogbom" => Ok(Deconvolver::Hogbom),
@@ -854,12 +882,16 @@ Options:
   --spw ID
   --channel-start N
   --channel-count N
+  --start VALUE
+  --width VALUE
   --datacolumn NAME
   --corr XX|YY|RR|LL
   --specmode mfs|cube
   --interpolation nearest|linear
   --weighting natural|uniform|briggs|briggsbwtaper
   --robust VALUE
+  --perchanweightdensity
+  --no-perchanweightdensity
   --usepointing
   --deconvolver hogbom|clark|multiscale|mtmfs
   --standard-mfs-acceleration auto|cpu|multi-cpu|metal

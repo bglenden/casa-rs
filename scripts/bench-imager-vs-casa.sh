@@ -43,6 +43,8 @@ phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
 channel_count="${IMAGER_BENCH_CHANNEL_COUNT:-1}"
+cube_start="${IMAGER_BENCH_CUBE_START:-}"
+cube_width="${IMAGER_BENCH_CUBE_WIDTH:-}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
 gridder="${IMAGER_BENCH_GRIDDER:-standard}"
 casa_gridder="${IMAGER_BENCH_CASA_GRIDDER:-$gridder}"
@@ -55,6 +57,7 @@ min_psf_fraction="${IMAGER_BENCH_MIN_PSFFRACTION:-0.05}"
 max_psf_fraction="${IMAGER_BENCH_MAX_PSFFRACTION:-0.8}"
 weighting="${IMAGER_BENCH_WEIGHTING:-natural}"
 robust="${IMAGER_BENCH_ROBUST:-0.5}"
+perchanweightdensity="${IMAGER_BENCH_PERCHANWEIGHTDENSITY:-}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
 standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
@@ -170,6 +173,27 @@ case "$pbcor" in
     ;;
 esac
 
+if [[ -z "$perchanweightdensity" ]]; then
+  if [[ "$specmode" == "cube" ]]; then
+    perchanweightdensity_enabled=1
+  else
+    perchanweightdensity_enabled=0
+  fi
+else
+  case "$perchanweightdensity" in
+    1|true|TRUE|yes|YES|on|ON)
+      perchanweightdensity_enabled=1
+      ;;
+    0|false|FALSE|no|NO|off|OFF)
+      perchanweightdensity_enabled=0
+      ;;
+    *)
+      echo "error: IMAGER_BENCH_PERCHANWEIGHTDENSITY must be 0/1, true/false, yes/no, or on/off" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 if [[ ! -d "$tmp_root" ]]; then
   echo "error: IMAGER_BENCH_TMP_ROOT does not exist: $tmp_root" >&2
   exit 2
@@ -223,7 +247,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -253,6 +277,19 @@ fi
 rust_wproject_flags=()
 if [[ -n "$wprojplanes" ]]; then
   rust_wproject_flags+=(--wprojplanes "$wprojplanes")
+fi
+rust_cube_axis_flags=()
+if [[ -n "$cube_start" ]]; then
+  rust_cube_axis_flags+=(--start "$cube_start")
+fi
+if [[ -n "$cube_width" ]]; then
+  rust_cube_axis_flags+=(--width "$cube_width")
+fi
+rust_density_flags=()
+if [[ "$perchanweightdensity_enabled" == "1" ]]; then
+  rust_density_flags+=(--perchanweightdensity)
+else
+  rust_density_flags+=(--no-perchanweightdensity)
 fi
 
 echo "Rust release CLI timings (seconds):"
@@ -284,9 +321,11 @@ for run in $(seq 1 "$repeats"); do
       --specmode "$specmode" \
       --gridder "$gridder" \
       --interpolation "$interpolation" \
+      ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
       --datacolumn DATA \
       --weighting "$weighting" \
       --robust "$robust" \
+      ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -323,9 +362,11 @@ for run in $(seq 1 "$repeats"); do
       --specmode "$specmode" \
       --gridder "$gridder" \
       --interpolation "$interpolation" \
+      ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
       --datacolumn DATA \
       --weighting "$weighting" \
       --robust "$robust" \
+      ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -370,9 +411,11 @@ if [[ -n "$scales" ]]; then
     --specmode "$specmode" \
     --gridder "$gridder" \
     --interpolation "$interpolation" \
+    ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
     --datacolumn DATA \
     --weighting "$weighting" \
     --robust "$robust" \
+    ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -406,9 +449,11 @@ else
     --specmode "$specmode" \
     --gridder "$gridder" \
     --interpolation "$interpolation" \
+    ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
     --datacolumn DATA \
     --weighting "$weighting" \
     --robust "$robust" \
+    ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -448,6 +493,8 @@ phasecenter_field = os.environ["CASA_RS_BENCH_PHASECENTER_FIELD"]
 spw = os.environ["CASA_RS_BENCH_SPW"]
 chan_start = int(os.environ["CASA_RS_BENCH_CHANNEL_START"])
 chan_count = int(os.environ["CASA_RS_BENCH_CHANNEL_COUNT"])
+cube_start = os.environ.get("CASA_RS_BENCH_CUBE_START", "")
+cube_width = os.environ.get("CASA_RS_BENCH_CUBE_WIDTH", "")
 imsize = int(os.environ["CASA_RS_BENCH_IMSIZE"])
 cell_arcsec = os.environ["CASA_RS_BENCH_CELL_ARCSEC"]
 niter = int(os.environ["CASA_RS_BENCH_NITER"])
@@ -463,6 +510,7 @@ minpsffraction = float(os.environ["CASA_RS_BENCH_MIN_PSFFRACTION"])
 maxpsffraction = float(os.environ["CASA_RS_BENCH_MAX_PSFFRACTION"])
 weighting = os.environ["CASA_RS_BENCH_WEIGHTING"]
 robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
+perchanweightdensity = os.environ["CASA_RS_BENCH_PERCHANWEIGHTDENSITY"].lower() in ("1", "true", "yes", "on")
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
 nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
 casa_gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER", os.environ["CASA_RS_BENCH_GRIDDER"])
@@ -492,6 +540,7 @@ with tempfile.TemporaryDirectory() as td:
             specmode=specmode,
             gridder=casa_gridder,
             weighting=weighting,
+            perchanweightdensity=perchanweightdensity,
             deconvolver=deconvolver,
             nterms=nterms,
             scales=scales,
@@ -520,12 +569,14 @@ with tempfile.TemporaryDirectory() as td:
             psfcutoff=psfcutoff,
         )
         if specmode == "cube":
+            casa_start = int(cube_start) if cube_start else chan_start
+            casa_width = int(cube_width) if cube_width else 1
             kwargs.update(
                 spw=str(spw),
                 interpolation=interpolation,
                 nchan=chan_count,
-                start=chan_start,
-                width=1,
+                start=casa_start,
+                width=casa_width,
             )
         else:
             kwargs.update(spw=spw_selector)
@@ -555,6 +606,8 @@ else
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
   CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
+  CASA_RS_BENCH_CUBE_START="$cube_start" \
+  CASA_RS_BENCH_CUBE_WIDTH="$cube_width" \
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
@@ -563,6 +616,7 @@ else
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
   CASA_RS_BENCH_WEIGHTING="$weighting" \
   CASA_RS_BENCH_ROBUST="$robust" \
+  CASA_RS_BENCH_PERCHANWEIGHTDENSITY="$perchanweightdensity_enabled" \
   CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
@@ -600,6 +654,8 @@ if [[ "$phase_probe_enabled" == "1" && ! ( "$skip_casa" == "1" || "$skip_casa" =
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
   CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
+  CASA_RS_BENCH_CUBE_START="$cube_start" \
+  CASA_RS_BENCH_CUBE_WIDTH="$cube_width" \
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
@@ -608,6 +664,7 @@ if [[ "$phase_probe_enabled" == "1" && ! ( "$skip_casa" == "1" || "$skip_casa" =
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
   CASA_RS_BENCH_WEIGHTING="$weighting" \
   CASA_RS_BENCH_ROBUST="$robust" \
+  CASA_RS_BENCH_PERCHANWEIGHTDENSITY="$perchanweightdensity_enabled" \
   CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \

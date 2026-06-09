@@ -9,6 +9,8 @@ from pathlib import Path
 import tempfile
 import sys
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_workload
 
@@ -552,6 +554,16 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         }
         comparison = {
             "status": "completed",
+            "structured_difference_review": {
+                "label": "investigate",
+                "summary": "overall investigate; investigate: .image",
+                "legend": {
+                    "good": "No review action expected from this check.",
+                    "investigate": "Plausible but needs review in context.",
+                    "bad": "Structured or large enough difference; do not close without explanation.",
+                    "unknown": "Check could not be evaluated for this product.",
+                },
+            },
             "products": {
                 ".image": {
                     "status": "compared",
@@ -565,6 +577,9 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("pending", gate["status"])
         self.assertEqual("ready", gate["panel_status"])
         self.assertEqual("after_gpu_metal", gate["evidence_role"])
+        self.assertEqual("investigate", gate["structured_difference_label"])
+        self.assertIn("overall investigate", gate["structured_difference_summary"])
+        self.assertIn("bad", gate["structured_difference_legend"])
 
     def test_product_review_panels_are_square_and_labeled(self) -> None:
         script = run_workload.PRODUCT_COMPARISON_SCRIPT
@@ -587,6 +602,168 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
             [2, 2, 1, 1],
             namespace["stride_for"]([1024, 1024, 1, 1], 1_000_000),
         )
+
+    def test_product_comparison_reports_beam_normalized_structure_metrics(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        y, x = np.indices((64, 64))
+        casa = np.ones((64, 64), dtype=np.float64)
+        rust = casa + 0.01 + 0.005 * (x / 63.0)
+        diff = rust - casa
+        beam_info = {
+            "status": "estimated_from_psf",
+            "beam_block_side_pixels": 4,
+        }
+
+        metrics = namespace["structured_difference_metrics"](
+            ".weight",
+            rust,
+            casa,
+            diff,
+            beam_info,
+        )
+
+        self.assertEqual("computed", metrics["status"])
+        self.assertEqual(4, metrics["beam_block_side_pixels"])
+        self.assertEqual("weight_union_support", metrics["mask"]["type"])
+        self.assertGreater(metrics["low_order_r2_quadratic"], 0.95)
+        self.assertGreater(metrics["large_scale_power_fraction"]["fraction"], 0.5)
+        self.assertGreater(len(metrics["beam_block_rms_by_scale"]), 2)
+        self.assertIsNotNone(metrics["block_rms_decay_slope_vs_independent_beams"])
+        self.assertIn("normalized_block_mean_rms", metrics["beam_block_rms_by_scale"][0])
+        self.assertEqual("computed", metrics["scale_offset_gradient_fit"]["status"])
+        self.assertIn("dx_pixels", metrics["scale_offset_gradient_fit"]["coefficients"])
+        self.assertEqual("bad", metrics["classification"]["overall"])
+        self.assertEqual("bad", metrics["classification"]["amplitude"])
+        self.assertEqual("bad", metrics["classification"]["structure"])
+        self.assertEqual(
+            "bad",
+            metrics["classification"]["structure_components"]["low_order_r2_quadratic"],
+        )
+        self.assertIn("thresholds", metrics["classification"])
+        self.assertEqual("bad", metrics["review"]["label"])
+        self.assertIn("correctness blocker", metrics["review"]["summary"])
+        self.assertEqual(
+            "bad",
+            next(
+                check
+                for check in metrics["review"]["checks"]
+                if check["name"] == "large_scale_power_fraction"
+            )["label"],
+        )
+        self.assertIn("good", metrics["review"]["legend"])
+
+    def test_product_comparison_rolls_up_structured_review_labels(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        rollup = namespace["summarize_product_reviews"](
+            {
+                ".image": {
+                    "structured_difference": {
+                        "review": {
+                            "label": "good",
+                            "summary": ".image: good",
+                            "checks": [
+                                {"name": "normalized_diff_rms", "label": "good"}
+                            ],
+                        }
+                    }
+                },
+                ".weight": {
+                    "structured_difference": {
+                        "review": {
+                            "label": "investigate",
+                            "summary": ".weight: investigate",
+                            "checks": [
+                                {
+                                    "name": "large_scale_power_fraction",
+                                    "label": "bad",
+                                }
+                            ],
+                        }
+                    }
+                },
+            }
+        )
+
+        self.assertEqual("investigate", rollup["label"])
+        self.assertEqual("good", rollup["products"][".image"])
+        self.assertEqual("investigate", rollup["products"][".weight"])
+        self.assertIn("overall investigate", rollup["summary"])
+        self.assertIn("normalized_diff_rms", rollup["thresholds"])
+        self.assertEqual(
+            "bad", rollup["checks_by_product"]["large_scale_power_fraction"][".weight"]
+        )
+        self.assertIn("bad", rollup["legend"])
+
+    def test_review_panel_records_structured_difference_label(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        class FakeAxis:
+            def imshow(self, *args, **kwargs):
+                return object()
+
+            def set_title(self, *args, **kwargs):
+                return None
+
+            def set_aspect(self, *args, **kwargs):
+                return None
+
+            def set_box_aspect(self, *args, **kwargs):
+                return None
+
+            def set_xticks(self, *args, **kwargs):
+                return None
+
+            def set_yticks(self, *args, **kwargs):
+                return None
+
+        class FakeFigure:
+            def suptitle(self, *args, **kwargs):
+                return None
+
+            def colorbar(self, *args, **kwargs):
+                return None
+
+            def savefig(self, *args, **kwargs):
+                return None
+
+        class FakePlot:
+            def subplots(self, *args, **kwargs):
+                return FakeFigure(), [FakeAxis(), FakeAxis(), FakeAxis()]
+
+            def close(self, *args, **kwargs):
+                return None
+
+        namespace["plt"] = FakePlot()
+
+        rust = np.ones((8, 8), dtype=np.float64)
+        casa = np.ones((8, 8), dtype=np.float64) * 0.99
+        diff = rust - casa
+        review = {
+            "label": "investigate",
+            "summary": ".weight: investigate; amplitude is good and structure is bad.",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            panel = namespace["write_review_panel"](
+                temp_dir,
+                ".weight",
+                rust,
+                casa,
+                diff,
+                review=review,
+            )
+
+        self.assertEqual("written", panel["status"])
+        self.assertEqual("investigate", panel["structured_difference_label"])
+        self.assertIn(".weight: investigate", panel["structured_difference_summary"])
 
     def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
         log = """Rust stage medians (milliseconds):

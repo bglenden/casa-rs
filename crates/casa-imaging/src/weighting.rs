@@ -1011,9 +1011,9 @@ fn density_build_cell_convention(
 
 fn density_includes_conjugates(convention: DensityCellConvention) -> bool {
     match convention {
-        DensityCellConvention::VisImagingWeight => true,
-        DensityCellConvention::CubeBriggsWeightorDensity
-        | DensityCellConvention::CubeBriggsWeightorLookup => false,
+        DensityCellConvention::VisImagingWeight
+        | DensityCellConvention::CubeBriggsWeightorDensity => true,
+        DensityCellConvention::CubeBriggsWeightorLookup => false,
     }
 }
 

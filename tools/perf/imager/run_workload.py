@@ -45,6 +45,12 @@ SUPPORTED_HOGBOM_ITERATION_MODES = {"strict", "casa", "casa-inclusive", "casa_in
 SUPPORTED_MS_STAGING = {"copy", "direct"}
 SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
+STRUCTURED_DIFFERENCE_REVIEW_LEGEND = {
+    "good": "No review action expected from this check.",
+    "investigate": "Plausible but needs review in context.",
+    "bad": "Structured or large enough difference; do not close without explanation.",
+    "unknown": "Check could not be evaluated for this product.",
+}
 RUST_STAGE_FIELDS = {
     "open_measurement_set",
     "prepare_plane_input",
@@ -247,10 +253,17 @@ def build_plan(
         "IMAGER_BENCH_SPW": str_value(imaging, "spw", "0"),
         "IMAGER_BENCH_CHANNEL_START": str(int_value(imaging, "channel_start", 0)),
         "IMAGER_BENCH_CHANNEL_COUNT": str(int_value(imaging, "channel_count", 1)),
+        "IMAGER_BENCH_CUBE_START": str_value(imaging, "start", ""),
+        "IMAGER_BENCH_CUBE_WIDTH": str_value(imaging, "width", ""),
         "IMAGER_BENCH_IMSIZE": str(int_value(imaging, "imsize", 128)),
         "IMAGER_BENCH_CELL_ARCSEC": str(float_value(imaging, "cell_arcsec", 30.0)),
         "IMAGER_BENCH_WEIGHTING": str_value(imaging, "weighting", "natural"),
         "IMAGER_BENCH_ROBUST": str(float_value(imaging, "robust", 0.5)),
+        "IMAGER_BENCH_PERCHANWEIGHTDENSITY": boolean_env_value(
+            imaging,
+            "perchanweightdensity",
+            specmode == "cube",
+        ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
             imaging, "standard_mfs_acceleration", "auto"
@@ -306,7 +319,14 @@ def build_plan(
             "bench_mode": bench_mode,
             "image_shape": [int_value(imaging, "imsize", 128), int_value(imaging, "imsize", 128)],
             "channel_count": int_value(imaging, "channel_count", 1),
+            "start": str_value(imaging, "start", "") or None,
+            "width": str_value(imaging, "width", "") or None,
             "weighting": str_value(imaging, "weighting", "natural"),
+            "perchanweightdensity": boolean_env_value(
+                imaging,
+                "perchanweightdensity",
+                specmode == "cube",
+            ),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
             "standard_mfs_acceleration": str_value(
                 imaging, "standard_mfs_acceleration", "auto"
@@ -405,8 +425,12 @@ def human_review_gate(
     review = plan.get("review", {})
     panel_status = "not_run"
     panel_reason = "benchmark has not produced comparison panels yet"
+    structured_review = {}
     if comparison:
         panel_status, panel_reason = review_panel_status(comparison)
+        value = comparison.get("structured_difference_review")
+        if isinstance(value, dict):
+            structured_review = value
     return {
         "status": "pending",
         "required_reviewer": review.get("required_reviewer", "Brian"),
@@ -417,6 +441,13 @@ def human_review_gate(
         "required_evidence_roles": review.get("required_evidence_roles", []),
         "panel_status": panel_status,
         "panel_reason": panel_reason,
+        "structured_difference_label": structured_review.get("label", "not_run"),
+        "structured_difference_summary": structured_review.get(
+            "summary", "structured-difference review has not run yet"
+        ),
+        "structured_difference_legend": structured_review.get(
+            "legend", STRUCTURED_DIFFERENCE_REVIEW_LEGEND
+        ),
         "reason": "mode ticket cannot move to Done until the review bundle is accepted",
     }
 
@@ -1104,23 +1135,82 @@ def main():
         request = json.load(handle)
     products = {}
     os.makedirs(request["panel_dir"], exist_ok=True)
+    max_elements = int(request["max_elements_per_product"])
+    beam_info = estimate_beam_info(request["casa_prefix"] + ".psf", max_elements)
     for suffix in request["products"]:
         rust_path = request["rust_prefix"] + suffix
         casa_path = request["casa_prefix"] + suffix
         products[suffix] = compare_one(
             rust_path,
             casa_path,
-            int(request["max_elements_per_product"]),
+            max_elements,
             request["panel_dir"],
             suffix,
+            beam_info,
         )
-    output = {"status": "completed", "products": products}
+    output = {
+        "status": "completed",
+        "beam_info": beam_info,
+        "products": products,
+        "structured_difference_review": summarize_product_reviews(products),
+    }
     with open(sys.argv[2], "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
 
-def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix):
+def summarize_product_reviews(products):
+    product_labels = {}
+    product_summaries = {}
+    check_labels = {}
+    for suffix, product in sorted(products.items()):
+        if not isinstance(product, dict):
+            continue
+        structure = product.get("structured_difference")
+        if not isinstance(structure, dict):
+            product_labels[suffix] = product.get("status", "unknown")
+            continue
+        review = structure.get("review")
+        if not isinstance(review, dict):
+            product_labels[suffix] = structure.get("status", "unknown")
+            continue
+        product_labels[suffix] = review.get("label", "unknown")
+        product_summaries[suffix] = review.get("summary")
+        for check in review.get("checks", []):
+            if not isinstance(check, dict):
+                continue
+            name = check.get("name")
+            if not isinstance(name, str):
+                continue
+            check_labels.setdefault(name, {})[suffix] = check.get("label", "unknown")
+    overall = worst_review_label(product_labels.values())
+    return {
+        "label": overall,
+        "summary": structured_difference_rollup_summary(overall, product_labels),
+        "products": product_labels,
+        "product_summaries": product_summaries,
+        "checks_by_product": check_labels,
+        "thresholds": structured_difference_thresholds(),
+        "legend": structured_difference_review_legend(),
+    }
+
+
+def structured_difference_rollup_summary(overall, product_labels):
+    if not product_labels:
+        return "No structured-difference product reviews were available."
+    grouped = {
+        label: [suffix for suffix, product_label in product_labels.items() if product_label == label]
+        for label in ("bad", "investigate", "good", "unknown")
+    }
+    parts = []
+    for label in ("bad", "investigate", "good", "unknown"):
+        suffixes = grouped[label]
+        if suffixes:
+            parts.append(f"{label}: {', '.join(suffixes)}")
+    return f"overall {overall}; " + "; ".join(parts)
+
+
+def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info):
     if not os.path.isdir(rust_path) or not os.path.isdir(casa_path):
         return {
             "status": "missing",
@@ -1164,12 +1254,20 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix):
     casa_peak_summary = peak_summary(casa_data)
     diff_full = rust_data - casa_data
     diff_peak = peak_summary(diff_full)
+    structure = structured_difference_metrics(
+        suffix=suffix,
+        rust_data=rust_data,
+        casa_data=casa_data,
+        diff_data=diff_full,
+        beam_info=beam_info,
+    )
     panel = write_review_panel(
         panel_dir=panel_dir,
         suffix=suffix,
         rust_data=rust_data,
         casa_data=casa_data,
         diff_data=diff_full,
+        review=structure.get("review") if isinstance(structure, dict) else None,
     )
     return {
         "status": "compared",
@@ -1193,7 +1291,520 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix):
         "rust_peak_abs": rust_peak,
         "casa_peak_abs": casa_peak_summary,
         "diff_peak_abs": diff_peak,
+        "structured_difference": structure,
         "review_panel": panel,
+    }
+
+
+def estimate_beam_info(psf_path, max_elements):
+    if not os.path.isdir(psf_path):
+        return {"status": "missing_psf", "psf_path": psf_path}
+    try:
+        psf = load_image(psf_path, max_elements)
+    except Exception as error:
+        return {"status": "failed", "psf_path": psf_path, "reason": str(error)}
+    plane = display_plane(psf["data"])
+    finite = np.isfinite(plane)
+    if not np.any(finite):
+        return {"status": "no_finite_psf", "psf_path": psf_path}
+    peak_index = np.unravel_index(int(np.nanargmax(np.abs(plane))), plane.shape)
+    peak_abs = float(abs(plane[peak_index]))
+    if not np.isfinite(peak_abs) or peak_abs <= 0.0:
+        return {"status": "zero_psf_peak", "psf_path": psf_path}
+    half = 0.5 * peak_abs
+    x_width = contiguous_threshold_width(np.abs(plane[:, peak_index[1]]), peak_index[0], half)
+    y_width = contiguous_threshold_width(np.abs(plane[peak_index[0], :]), peak_index[1], half)
+    beam_area = math.pi * x_width * y_width / (4.0 * math.log(2.0))
+    block_side = max(1, int(round(math.sqrt(max(1.0, beam_area)))))
+    return {
+        "status": "estimated_from_psf",
+        "psf_path": psf_path,
+        "sample_stride": psf["sample_stride"],
+        "peak_location": [int(value) for value in peak_index],
+        "peak_abs": finite_float(peak_abs),
+        "fwhm_pixels": [int(x_width), int(y_width)],
+        "beam_area_pixels": finite_float(beam_area),
+        "beam_block_side_pixels": int(block_side),
+    }
+
+
+def contiguous_threshold_width(values, center, threshold):
+    center = int(center)
+    lower = center
+    upper = center
+    while lower > 0 and values[lower - 1] >= threshold:
+        lower -= 1
+    while upper + 1 < values.size and values[upper + 1] >= threshold:
+        upper += 1
+    return int(upper - lower + 1)
+
+
+def structured_difference_metrics(suffix, rust_data, casa_data, diff_data, beam_info):
+    rust_plane = display_plane(rust_data)
+    casa_plane = display_plane(casa_data)
+    diff_plane = display_plane(diff_data)
+    base_mask = np.isfinite(rust_plane) & np.isfinite(casa_plane) & np.isfinite(diff_plane)
+    mask, mask_description = structured_difference_mask(suffix, rust_plane, casa_plane, base_mask)
+    finite_count = int(np.count_nonzero(mask))
+    if finite_count == 0:
+        return {
+            "status": "no_masked_pixels",
+            "mask": mask_description,
+            "finite_overlap": int(np.count_nonzero(base_mask)),
+            "beam_info_status": beam_info.get("status") if isinstance(beam_info, dict) else None,
+        }
+
+    beam_side = 1
+    if isinstance(beam_info, dict) and beam_info.get("status") == "estimated_from_psf":
+        beam_side = max(1, int(beam_info.get("beam_block_side_pixels") or 1))
+    analysis_mask = erode_mask_for_product(mask, suffix, beam_side)
+    if not np.any(analysis_mask):
+        analysis_mask = mask
+
+    diff_values = diff_plane[analysis_mask]
+    casa_values = casa_plane[analysis_mask]
+    flux_norm = robust_product_scale(casa_values)
+    diff_rms = rms(diff_values)
+    normalized_diff_rms = diff_rms / flux_norm if flux_norm else None
+    low_order_r2 = low_order_r2_score(diff_plane, analysis_mask)
+    large_scale_power = large_scale_power_fraction(
+        diff_plane,
+        analysis_mask,
+        beam_side,
+        min_wavelength_beams=8.0,
+    )
+    basis_fit = difference_basis_fit(casa_plane, diff_plane, analysis_mask)
+    block_metrics = beam_block_metrics(diff_plane, analysis_mask, beam_side, flux_norm)
+    classification = structured_difference_classification(
+        normalized_diff_rms=normalized_diff_rms,
+        low_order_r2=low_order_r2,
+        large_scale_power=large_scale_power,
+        block_decay_slope=block_metrics["decay_slope"],
+    )
+    review = structured_difference_review(
+        suffix=suffix,
+        classification=classification,
+        normalized_diff_rms=normalized_diff_rms,
+        low_order_r2=low_order_r2,
+        large_scale_power=large_scale_power,
+        block_decay_slope=block_metrics["decay_slope"],
+    )
+    return {
+        "status": "computed",
+        "mask": mask_description,
+        "masked_pixels": finite_count,
+        "analysis_pixels": int(np.count_nonzero(analysis_mask)),
+        "beam_block_side_pixels": int(beam_side),
+        "normalization": {
+            "type": "casa_support_rms_or_peak",
+            "value": finite_float(flux_norm),
+        },
+        "diff_rms": finite_float(diff_rms),
+        "normalized_diff_rms": finite_float(normalized_diff_rms),
+        "low_order_r2_quadratic": finite_float(low_order_r2),
+        "large_scale_power_fraction": large_scale_power,
+        "scale_offset_gradient_fit": basis_fit,
+        "beam_block_rms_by_scale": block_metrics["scales"],
+        "block_rms_decay_slope_vs_independent_beams": block_metrics["decay_slope"],
+        "classification": classification,
+        "review": review,
+    }
+
+
+def structured_difference_mask(suffix, rust_plane, casa_plane, base_mask):
+    if suffix == ".weight":
+        scale = max(
+            finite_absmax(rust_plane[base_mask]),
+            finite_absmax(casa_plane[base_mask]),
+        )
+        if scale > 0.0:
+            threshold = 1.0e-3 * scale
+            return (
+                base_mask & ((np.abs(rust_plane) > threshold) | (np.abs(casa_plane) > threshold)),
+                {
+                    "type": "weight_union_support",
+                    "threshold_fraction_of_peak": 1.0e-3,
+                    "threshold": finite_float(threshold),
+                },
+            )
+    if suffix == ".pb":
+        return (
+            base_mask & (casa_plane > 0.01),
+            {
+                "type": "casa_pb_support",
+                "threshold": 0.01,
+            },
+        )
+    return base_mask, {"type": "finite_overlap"}
+
+
+def erode_mask_for_product(mask, suffix, beam_side):
+    if suffix not in {".pb", ".weight"} or beam_side <= 1:
+        return mask
+    radius = int(max(1, round(beam_side)))
+    if mask.shape[0] <= 2 * radius or mask.shape[1] <= 2 * radius:
+        return mask
+    eroded = np.zeros_like(mask, dtype=bool)
+    eroded[radius:-radius, radius:-radius] = mask[radius:-radius, radius:-radius]
+    return eroded
+
+
+def robust_product_scale(values):
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0
+    scale = rms(finite)
+    if scale > 0.0 and np.isfinite(scale):
+        return float(abs(scale))
+    return finite_absmax(finite)
+
+
+def finite_absmax(values):
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0
+    return float(np.nanmax(np.abs(finite)))
+
+
+def low_order_r2_score(data, mask):
+    if int(np.count_nonzero(mask)) < 8:
+        return None
+    y_index, x_index = np.indices(data.shape)
+    x_values = x_index[mask].astype(np.float64)
+    y_values = y_index[mask].astype(np.float64)
+    x_span = float(np.ptp(x_values))
+    y_span = float(np.ptp(y_values))
+    x = (x_values - float(np.mean(x_values))) / (0.5 * x_span if x_span else 1.0)
+    y = (y_values - float(np.mean(y_values))) / (0.5 * y_span if y_span else 1.0)
+    z = data[mask].astype(np.float64)
+    z = z - float(np.mean(z))
+    total = float(np.sum(z * z))
+    if total <= 0.0 or not np.isfinite(total):
+        return None
+    basis = np.vstack([np.ones_like(x), x, y, x * x, x * y, y * y, x * x + y * y]).T
+    coefficients, *_ = np.linalg.lstsq(basis, z, rcond=None)
+    fitted = basis @ coefficients
+    residual = z - fitted
+    return 1.0 - float(np.sum(residual * residual)) / total
+
+
+def difference_basis_fit(reference, diff, mask):
+    if int(np.count_nonzero(mask)) < 8:
+        return {"status": "insufficient_pixels"}
+    y_gradient, x_gradient = np.gradient(reference.astype(np.float64))
+    diff_values = diff[mask].astype(np.float64)
+    reference_values = reference[mask].astype(np.float64)
+    basis = np.vstack(
+        [
+            reference_values,
+            np.ones_like(reference_values),
+            x_gradient[mask].astype(np.float64),
+            y_gradient[mask].astype(np.float64),
+        ]
+    ).T
+    coefficients, *_ = np.linalg.lstsq(basis, diff_values, rcond=None)
+    fitted = basis @ coefficients
+    residual = diff_values - fitted
+    total = float(np.sum((diff_values - float(np.mean(diff_values))) ** 2))
+    residual_sum = float(np.sum(residual * residual))
+    r2 = 1.0 - residual_sum / total if total > 0.0 and np.isfinite(total) else None
+    return {
+        "status": "computed",
+        "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+        "r2": finite_float(r2),
+        "diff_rms": finite_float(rms(diff_values)),
+        "residual_rms": finite_float(rms(residual)),
+        "coefficients": {
+            "scale": finite_float(coefficients[0]),
+            "offset": finite_float(coefficients[1]),
+            "dx_pixels": finite_float(coefficients[2]),
+            "dy_pixels": finite_float(coefficients[3]),
+        },
+    }
+
+
+def structured_difference_classification(
+    normalized_diff_rms,
+    low_order_r2,
+    large_scale_power,
+    block_decay_slope,
+):
+    amplitude = classify_amplitude(normalized_diff_rms)
+    structure_components = {
+        "block_rms_decay_slope_vs_independent_beams": classify_block_decay(block_decay_slope),
+        "large_scale_power_fraction": classify_large_scale_power(
+            large_scale_power.get("fraction") if isinstance(large_scale_power, dict) else None
+        ),
+        "low_order_r2_quadratic": classify_low_order_r2(low_order_r2),
+    }
+    structure = worst_classification(structure_components.values())
+    overall = overall_structured_difference_label(amplitude, structure)
+    return {
+        "overall": overall,
+        "amplitude": amplitude,
+        "structure": structure,
+        "structure_components": structure_components,
+        "thresholds": structured_difference_thresholds(),
+    }
+
+
+def structured_difference_review(
+    suffix,
+    classification,
+    normalized_diff_rms,
+    low_order_r2,
+    large_scale_power,
+    block_decay_slope,
+):
+    large_scale_fraction = (
+        large_scale_power.get("fraction") if isinstance(large_scale_power, dict) else None
+    )
+    components = classification.get("structure_components", {})
+    checks = [
+        {
+            "name": "normalized_diff_rms",
+            "label": classification.get("amplitude", "unknown"),
+            "value": finite_float(normalized_diff_rms),
+            "meaning": "beam/product-scale RMS amplitude difference",
+        },
+        {
+            "name": "block_rms_decay_slope_vs_independent_beams",
+            "label": components.get(
+                "block_rms_decay_slope_vs_independent_beams", "unknown"
+            ),
+            "value": finite_float(block_decay_slope),
+            "meaning": "whether averaging over independent beams suppresses the difference",
+        },
+        {
+            "name": "large_scale_power_fraction",
+            "label": components.get("large_scale_power_fraction", "unknown"),
+            "value": finite_float(large_scale_fraction),
+            "meaning": "fraction of difference power on scales much larger than the beam",
+        },
+        {
+            "name": "low_order_r2_quadratic",
+            "label": components.get("low_order_r2_quadratic", "unknown"),
+            "value": finite_float(low_order_r2),
+            "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+        },
+    ]
+    return {
+        "label": classification.get("overall", "unknown"),
+        "summary": structured_difference_review_summary(suffix, classification),
+        "checks": checks,
+        "legend": structured_difference_review_legend(),
+    }
+
+
+def structured_difference_thresholds():
+    return {
+        "normalized_diff_rms": {
+            "good": "< 1e-4",
+            "investigate": "1e-4 .. 1e-3",
+            "bad": "> 1e-3",
+        },
+        "block_rms_decay_slope_vs_independent_beams": {
+            "good": "<= -0.35",
+            "investigate": "-0.35 .. -0.15",
+            "bad": "> -0.15",
+        },
+        "large_scale_power_fraction": {
+            "good": "< 0.25",
+            "investigate": "0.25 .. 0.5",
+            "bad": "> 0.5",
+        },
+        "low_order_r2_quadratic": {
+            "good": "< 0.05",
+            "investigate": "0.05 .. 0.2",
+            "bad": "> 0.2",
+        },
+    }
+
+
+def structured_difference_review_legend():
+    return {
+        "good": "No review action expected from this check.",
+        "investigate": "Plausible but needs review in context.",
+        "bad": "Structured or large enough difference; do not close without explanation.",
+        "unknown": "Check could not be evaluated for this product.",
+    }
+
+
+def structured_difference_review_summary(suffix, classification):
+    overall = classification.get("overall", "unknown")
+    amplitude = classification.get("amplitude", "unknown")
+    structure = classification.get("structure", "unknown")
+    if overall == "good":
+        return f"{suffix}: good; amplitude and beam-scale structure checks passed."
+    if overall == "bad":
+        return (
+            f"{suffix}: bad; amplitude is {amplitude} and structure is {structure}. "
+            "Treat this as a correctness blocker until instrumented or explained."
+        )
+    if overall == "investigate":
+        return (
+            f"{suffix}: investigate; amplitude is {amplitude} and structure is "
+            f"{structure}."
+        )
+    return f"{suffix}: unknown; one or more structured-difference checks did not run."
+
+
+def classify_amplitude(value):
+    if value is None:
+        return "unknown"
+    if value < 1.0e-4:
+        return "good"
+    if value <= 1.0e-3:
+        return "investigate"
+    return "bad"
+
+
+def classify_block_decay(value):
+    if value is None:
+        return "unknown"
+    if value <= -0.35:
+        return "good"
+    if value <= -0.15:
+        return "investigate"
+    return "bad"
+
+
+def classify_large_scale_power(value):
+    if value is None:
+        return "unknown"
+    if value < 0.25:
+        return "good"
+    if value <= 0.5:
+        return "investigate"
+    return "bad"
+
+
+def classify_low_order_r2(value):
+    if value is None:
+        return "unknown"
+    if value < 0.05:
+        return "good"
+    if value <= 0.2:
+        return "investigate"
+    return "bad"
+
+
+def worst_classification(labels):
+    rank = {"unknown": 0, "good": 1, "investigate": 2, "bad": 3}
+    labels = list(labels)
+    if not labels:
+        return "unknown"
+    return max(labels, key=lambda label: rank.get(label, 0))
+
+
+def worst_review_label(labels):
+    rank = {"unknown": 0, "good": 1, "investigate": 2, "bad": 3}
+    labels = list(labels)
+    if not labels:
+        return "unknown"
+    return max(labels, key=lambda label: rank.get(label, 0))
+
+
+def overall_structured_difference_label(amplitude, structure):
+    if amplitude == "bad":
+        return "bad"
+    if amplitude == "investigate" and structure == "bad":
+        return "bad"
+    if amplitude == "good" and structure == "good":
+        return "good"
+    if amplitude == "unknown" and structure == "unknown":
+        return "unknown"
+    return "investigate"
+
+
+def large_scale_power_fraction(data, mask, beam_side, min_wavelength_beams):
+    if int(np.count_nonzero(mask)) < 4:
+        return None
+    centered = np.asarray(data, dtype=np.float64).copy()
+    centered[~mask] = np.nan
+    mean = float(np.nanmean(centered))
+    centered = np.where(np.isfinite(centered), centered - mean, 0.0)
+    spectrum = np.fft.rfft2(centered)
+    power = np.abs(spectrum) ** 2
+    y_freq = np.fft.fftfreq(centered.shape[0])[:, np.newaxis]
+    x_freq = np.fft.rfftfreq(centered.shape[1])[np.newaxis, :]
+    radius = np.sqrt(x_freq * x_freq + y_freq * y_freq)
+    dc = radius == 0.0
+    total = float(np.sum(power[~dc]))
+    if total <= 0.0 or not np.isfinite(total):
+        return None
+    cutoff = 1.0 / max(1.0, float(beam_side) * float(min_wavelength_beams))
+    selected = (radius <= cutoff) & (~dc)
+    return {
+        "min_wavelength_beams": finite_float(min_wavelength_beams),
+        "frequency_cutoff_cycles_per_pixel": finite_float(cutoff),
+        "fraction": finite_float(float(np.sum(power[selected])) / total),
+    }
+
+
+def beam_block_metrics(data, mask, beam_side, flux_norm):
+    scales = []
+    block_sides = []
+    normalized_rms_values = []
+    independent_beam_counts = []
+    for multiplier in [1, 2, 4, 8, 16, 32]:
+        side = max(1, int(round(float(beam_side) * multiplier)))
+        metric = block_metric_for_side(data, mask, side, beam_side, flux_norm, multiplier)
+        if metric is None:
+            continue
+        scales.append(metric)
+        normalized = metric.get("normalized_block_mean_rms")
+        independent_beams = metric.get("approx_independent_beams_per_block")
+        if normalized is not None and normalized > 0.0 and independent_beams and independent_beams > 0.0:
+            block_sides.append(side)
+            normalized_rms_values.append(float(normalized))
+            independent_beam_counts.append(float(independent_beams))
+    slope = None
+    if len(normalized_rms_values) >= 2:
+        x = np.log(np.asarray(independent_beam_counts, dtype=np.float64))
+        y = np.log(np.asarray(normalized_rms_values, dtype=np.float64))
+        if np.all(np.isfinite(x)) and np.all(np.isfinite(y)) and np.ptp(x) > 0.0:
+            slope = float(np.polyfit(x, y, 1)[0])
+    return {"scales": scales, "decay_slope": finite_float(slope) if slope is not None else None}
+
+
+def block_metric_for_side(data, mask, side, beam_side, flux_norm, multiplier):
+    height, width = data.shape
+    means = []
+    pixel_rms_values = []
+    min_pixels = max(4, int(math.ceil(0.35 * side * side)))
+    for y_start in range(0, height, side):
+        for x_start in range(0, width, side):
+            block_mask = mask[y_start : y_start + side, x_start : x_start + side]
+            if int(np.count_nonzero(block_mask)) < min_pixels:
+                continue
+            block = data[y_start : y_start + side, x_start : x_start + side][block_mask]
+            means.append(float(np.mean(block)))
+            pixel_rms_values.append(rms(block))
+    if len(means) < 3:
+        return None
+    mean_values = np.asarray(means, dtype=np.float64)
+    pixel_rms_mean = float(np.mean(pixel_rms_values)) if pixel_rms_values else None
+    block_mean_rms = rms(mean_values)
+    robust_center = float(np.median(mean_values))
+    robust_sigma = 1.4826 * float(np.median(np.abs(mean_values - robust_center)))
+    max_robust_z = None
+    if robust_sigma > 0.0 and np.isfinite(robust_sigma):
+        max_robust_z = float(np.nanmax(np.abs(mean_values - robust_center)) / robust_sigma)
+    independent_beams = (float(side) / max(1.0, float(beam_side))) ** 2
+    return {
+        "beam_width_multiplier": finite_float(multiplier),
+        "block_side_pixels": int(side),
+        "approx_independent_beams_per_block": finite_float(independent_beams),
+        "n_blocks": int(len(means)),
+        "block_mean_rms": finite_float(block_mean_rms),
+        "normalized_block_mean_rms": finite_float(block_mean_rms / flux_norm) if flux_norm else None,
+        "median_abs_block_mean": finite_float(float(np.median(np.abs(mean_values)))),
+        "mean_pixel_rms_in_blocks": finite_float(pixel_rms_mean),
+        "block_mean_rms_over_mean_pixel_rms": finite_float(block_mean_rms / pixel_rms_mean)
+        if pixel_rms_mean
+        else None,
+        "max_block_robust_z": finite_float(max_robust_z) if max_robust_z is not None else None,
     }
 
 
@@ -1220,7 +1831,7 @@ def peak_summary(data):
     }
 
 
-def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
+def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, review=None):
     if plt is None:
         return {
             "status": "skipped",
@@ -1246,8 +1857,18 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
     safe_name = suffix.strip(".").replace(".", "_") or "image"
     product_label = suffix if suffix else ".image"
     value_label = product_value_label(suffix)
+    review_label = None
+    review_summary = None
+    if isinstance(review, dict):
+        review_label = review.get("label")
+        review_summary = review.get("summary")
     panel_path = os.path.join(panel_dir, f"{safe_name}.review.png")
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
+    if review_label:
+        fig.suptitle(
+            f"{product_label} structured difference: {review_label}",
+            fontsize=11,
+        )
     rust_artist = axes[0].imshow(
         rust_plane.T,
         origin="lower",
@@ -1295,6 +1916,8 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data):
         "path": panel_path,
         "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
         "difference_color_limits": [-diff_abs, diff_abs],
+        "structured_difference_label": review_label,
+        "structured_difference_summary": review_summary,
     }
 
 
@@ -1374,6 +1997,8 @@ def rms(values):
 
 
 def finite_float(value):
+    if value is None:
+        return None
     value = float(value)
     return value if math.isfinite(value) else None
 

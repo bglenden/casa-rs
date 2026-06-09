@@ -980,6 +980,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                         .as_ref()
                         .expect("missing cube multiscale state"),
                     plane.request.clean_mask.as_ref(),
+                    ImageWindow::full(plane.residual.dim()),
                 )
                 .map(|candidate| MinorCycleProbe {
                     initial_scale_pixels: Some(scales[candidate.scale_index]),

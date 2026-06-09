@@ -1,0 +1,70 @@
+{
+  "id": "wave3-mosaic-cube-alma-large-stress-auto",
+  "mode_id": "mosaic-cube-one-channel",
+  "description": "Wave 3 #284 ALMA mosaic-large auto-default row using all seven mosaic fields, specmode=cube nchan=1 width=1024, uniform weighting, Clark clean, and a 1280 image covering the full pointing footprint.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cube",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 1,
+    "start": "0",
+    "width": "1024",
+    "interpolation": "nearest",
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "uniform",
+    "robust": 0.5,
+    "perchanweightdensity": true,
+    "deconvolver": "clark",
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 1000,
+    "minor_cycle_length": 1000,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "auto"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "wave3-mosaic-cube-large-stress-auto",
+    "storage_label": "external-ssd-wave1-large",
+    "ms_staging": "direct",
+    "skip_casa": "1",
+    "phase_probe": "0",
+    "evidence_role": "after_auto_default"
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ]
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".model",
+      ".psf",
+      ".weight",
+      ".sumwt",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}
