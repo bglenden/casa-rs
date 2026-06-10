@@ -2236,6 +2236,19 @@ fn run_single_image_from_config_with_gridder_override(
             total_start,
         );
     }
+    if can_run_mosaic_cube_one_channel_from_bounded_stream(
+        config,
+        force_standard_gridder,
+        ms_paths.len(),
+    ) {
+        return run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
+            &ms,
+            config,
+            data_column,
+            open_measurement_set,
+            total_start,
+        );
+    }
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
         let (prepared, trace) =
@@ -2638,8 +2651,7 @@ fn can_run_mfs_mosaic_from_single_plane_stream(
     ms_count == 1
         && !force_standard_gridder
         && can_plan_mosaic_mfs_acceleration(config, ms_count)
-        && (matches!(config.spectral_mode, SpectralMode::Mfs)
-            || mosaic_cube_one_channel_can_use_single_plane_stream(config))
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
         && !config.use_pointing
         && config.deconvolver != Deconvolver::Mtmfs
         && config.save_model == SaveModelMode::None
@@ -2648,6 +2660,28 @@ fn can_run_mfs_mosaic_from_single_plane_stream(
         && config.use_mask != CleanMaskMode::AutoMultiThreshold
         && config.uv_taper.is_none()
         && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
+        && matches!(config.w_term_mode, WTermMode::None)
+        && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
+        && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
+}
+
+fn can_run_mosaic_cube_one_channel_from_bounded_stream(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && !force_standard_gridder
+        && can_plan_mosaic_mfs_acceleration(config, ms_count)
+        && mosaic_cube_one_channel_can_use_single_plane_stream(config)
+        && casa_cube_briggs_preweighting_is_enabled(config, 1)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask != CleanMaskMode::AutoMultiThreshold
+        && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None)
         && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
         && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
@@ -2805,6 +2839,109 @@ fn one_channel_cube_plane_input_to_streaming_plane(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn prepare_mosaic_cube_one_channel_source_row_block(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    load_visibility_values: bool,
+    selection: &SelectedRowsContext,
+    _table_values: &PreparedSelectionTableValues,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    row_chunk: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<CubePlaneInput, String> {
+    let stage_started_at = Instant::now();
+    let density_processing_buffer;
+    let processing_buffer;
+    let geometry_rows;
+    let flag_column;
+    let weight_column;
+    let weight_spectrum;
+    let data_column = if load_visibility_values {
+        processing_buffer = get_ms_values_into_processing_buffer(
+            ms,
+            data_column_kind,
+            selection,
+            row_chunk,
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
+            geometry_columns,
+            prepare_started_at,
+            None,
+        )?;
+        geometry_rows = &processing_buffer.geometry_rows;
+        flag_column = &processing_buffer.flag_column;
+        weight_column = &processing_buffer.weight_column;
+        weight_spectrum = processing_buffer.weight_spectrum.as_ref();
+        Some(&processing_buffer.data_column)
+    } else {
+        density_processing_buffer = get_ms_values_into_density_processing_buffer(
+            ms,
+            selection,
+            row_chunk,
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
+            geometry_columns,
+            prepare_started_at,
+            None,
+        )?;
+        geometry_rows = &density_processing_buffer.geometry_rows;
+        flag_column = &density_processing_buffer.flag_column;
+        weight_column = &density_processing_buffer.weight_column;
+        weight_spectrum = density_processing_buffer.weight_spectrum.as_ref();
+        None
+    };
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+
+    let stage_started_at = Instant::now();
+    let cube_context = cube_setup_context_for_selection(selection, derived_engine)?;
+    let prepared_input = prepare_source_row_block_plane_inner(
+        ms,
+        config,
+        selection,
+        ddid_info,
+        spectral_window,
+        polarization,
+        geometry_rows,
+        data_column,
+        flag_column,
+        flag_row,
+        weight_column,
+        weight_spectrum,
+        derived_engine,
+        None,
+        Some(cube_context),
+        SourceRowBlockFinish::Cube,
+        accumulate_timings,
+    )?;
+    prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
+    match prepared_input {
+        PreparedInput::Cube(cube)
+            if mosaic_cube_one_channel_can_use_single_plane_stream(config) =>
+        {
+            Ok(cube)
+        }
+        PreparedInput::Cube(_) => Err(
+            "internal error: mosaic cube source block produced non-one-channel cube input"
+                .to_string(),
+        ),
+        PreparedInput::Mfs(_) => {
+            Err("internal error: mosaic cube source block produced MFS input".to_string())
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum SourceRowBlockFinish {
     StandardMfs { batch_size: usize },
@@ -2918,66 +3055,77 @@ fn prepare_source_row_block_plane_inner(
 
     let started = Instant::now();
     let chunk_len = geometry_rows.len().div_ceil(thread_count).max(1);
-    let worker_results =
-        thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for (chunk_index, row_chunk) in geometry_rows.chunks(chunk_len).enumerate() {
-                let row_offset = chunk_index * chunk_len;
-                let cube_context = cube_context.clone();
-                handles.push(scope.spawn(move || {
-                    let mut prepared = new_source_row_block_prepared_selection(
-                        config,
-                        selection,
-                        ddid_info,
-                        spectral_window,
-                        polarization,
-                        standard_mfs_table_values,
-                        cube_context,
-                        finish,
-                    )?;
-                    prepared.reserve_standard_mfs_row_block(row_chunk.len());
-                    let mut timings = AccumulateRowTimings::default();
-                    for (local_slot, row) in row_chunk.iter().enumerate() {
-                        let row_slot = row_offset + local_slot;
-                        if let Some(data_column) = data_column {
-                            prepared.accumulate_row(
-                                row,
-                                data_column,
-                                flag_column,
-                                flag_row,
-                                weight_column,
-                                weight_spectrum,
-                                derived_engine,
-                                row_slot,
-                                &mut timings,
-                            )?;
-                        } else {
-                            prepared.accumulate_mfs_mosaic_row_without_visibility(
-                                row,
-                                flag_column,
-                                flag_row,
-                                weight_column,
-                                weight_spectrum,
-                                derived_engine,
-                                row_slot,
-                                &mut timings,
-                            )?;
-                        }
+    let worker_results = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for (chunk_index, row_chunk) in geometry_rows.chunks(chunk_len).enumerate() {
+            let row_offset = chunk_index * chunk_len;
+            let cube_context = cube_context.clone();
+            handles.push(scope.spawn(move || {
+                let mut prepared = new_source_row_block_prepared_selection(
+                    config,
+                    selection,
+                    ddid_info,
+                    spectral_window,
+                    polarization,
+                    standard_mfs_table_values,
+                    cube_context,
+                    finish,
+                )?;
+                prepared.reserve_standard_mfs_row_block(row_chunk.len());
+                let mut timings = AccumulateRowTimings::default();
+                for (local_slot, row) in row_chunk.iter().enumerate() {
+                    let row_slot = row_offset + local_slot;
+                    if let Some(data_column) = data_column {
+                        prepared.accumulate_row(
+                            row,
+                            data_column,
+                            flag_column,
+                            flag_row,
+                            weight_column,
+                            weight_spectrum,
+                            derived_engine,
+                            row_slot,
+                            &mut timings,
+                        )?;
+                    } else {
+                        prepared.accumulate_mfs_mosaic_row_without_visibility(
+                            row,
+                            flag_column,
+                            flag_row,
+                            weight_column,
+                            weight_spectrum,
+                            derived_engine,
+                            row_slot,
+                            &mut timings,
+                        )?;
                     }
-                    let prepared_input =
-                        finish_source_row_block_prepared_selection(ms, prepared, finish)?;
-                    Ok::<_, String>((chunk_index, row_chunk.len(), timings, prepared_input))
-                }));
-            }
+                }
+                let prepared_input =
+                    finish_source_row_block_prepared_selection(ms, prepared, finish)?;
+                Ok::<_, String>((chunk_index, row_chunk.len(), timings, prepared_input))
+            }));
+        }
 
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.join().map_err(|_| {
-                    "MFS mosaic source block prepare worker panicked".to_string()
-                })??);
+        let mut results = Vec::with_capacity(handles.len());
+        let mut first_error = None;
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(result)) => results.push(result),
+                Ok(Err(error)) => {
+                    first_error.get_or_insert(error);
+                }
+                Err(_) => {
+                    first_error.get_or_insert_with(|| {
+                        "single-plane source row block prepare worker panicked".to_string()
+                    });
+                }
             }
-            Ok::<_, String>(results)
-        })?;
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok::<_, String>(results)
+    })?;
 
     let mut worker_results = worker_results;
     worker_results.sort_by_key(|(chunk_index, _, _, _)| *chunk_index);
@@ -3160,19 +3308,24 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
         &spectral_window,
         &polarization,
     )?;
-    let selected_channel_count = if mosaic_cube_one_channel_can_use_single_plane_stream(read_config)
-    {
-        shared_single_plane_channel_window(read_config)?
-            .1
-            .unwrap_or(table_values.spw_freqs_hz.len())
-            .max(1)
+    let channel_read_range = if read_config.spectral_mode.is_cube_like() {
+        selected_channel_read_range_for_cube_source_row_blocks(
+            read_config,
+            &table_values,
+            &selection,
+            derived_engine.as_ref(),
+        )?
+    } else {
+        selected_channel_read_range_for_shared_single_plane_acceleration(
+            read_config,
+            &table_values,
+        )?
+    };
+    let selected_channel_count = if read_config.spectral_mode.is_cube_like() {
+        retained_materialization_channel_count(&table_values, channel_read_range)
     } else {
         selected_channel_count_estimate_from_table_values(read_config, &table_values)
     };
-    let channel_read_range = selected_channel_read_range_for_shared_single_plane_acceleration(
-        read_config,
-        &table_values,
-    )?;
     let strategy = standard_mfs_memory_plan(
         read_config,
         selected_channel_count,
@@ -3256,8 +3409,9 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
 
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
+    let weight_density_mode = standard_mfs_streaming_weight_density_mode(read_config);
     let result =
-        run_mosaic_mfs_from_single_plane_stream(request, WeightDensityMode::Combined, |pass, consumer| {
+        run_mosaic_mfs_from_single_plane_stream(request, weight_density_mode, |pass, consumer| {
         let replay_started = Instant::now();
         let ordinal = replay_invocation;
         replay_invocation += 1;
@@ -3380,6 +3534,423 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     let stage_start = Instant::now();
     write_products(
         output_config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
+}
+
+fn mosaic_stream_request_gridder_mode(gridder_mode: &GridderMode) -> Result<GridderMode, String> {
+    let GridderMode::Mosaic(mosaic) = gridder_mode else {
+        return Err("mosaic stream expected mosaic gridder metadata".to_string());
+    };
+    Ok(GridderMode::Mosaic(MosaicGridderConfig {
+        phase_center_direction_rad: mosaic.phase_center_direction_rad,
+        primary_beam_model: mosaic.primary_beam_model,
+        pb_limit: mosaic.pb_limit,
+        metadata_batches: Vec::new(),
+        grouped_metadata_batches: Vec::new(),
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn preweight_mosaic_cube_stream_block(
+    geometry: ImageGeometry,
+    density_set: &CasaCubeBriggsDensityGridSet,
+    mut cube: CubePlaneInput,
+) -> Result<PlaneInput, String> {
+    let preweighting = cube.casa_cube_briggs_preweighting.take().ok_or_else(|| {
+        "bounded mosaic cube stream expected CASA cube preweighting sidecar".to_string()
+    })?;
+    apply_casa_cube_briggs_preweighting_from_density_grids(
+        geometry,
+        density_set,
+        &preweighting,
+        &mut cube.channels,
+    )?;
+    one_channel_cube_plane_input_to_streaming_plane(cube)
+}
+
+fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    eprintln!(
+        "execution_mode=mosaic_cube_one_channel_bounded_stream weighting={} acceleration={} niter={} cycleniter={}",
+        canonical_weighting_name(config.weighting),
+        standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
+        config.niter,
+        config.minor_cycle_length,
+    );
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: if config.dirty_only { 0 } else { config.niter },
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        config.use_mask == CleanMaskMode::User,
+    )?;
+
+    let prepare_started_at = Instant::now();
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(ms, config, &ddid_info)?;
+    if !can_finish_mfs_mosaic_without_trace(config, &selection) {
+        return Err(
+            "internal error: bounded mosaic cube stream selected for an ineligible row selection"
+                .to_string(),
+        );
+    }
+    let flag_row = selection.flag_row.as_slice();
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active mosaic cube rows".to_string());
+    }
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let derived_engine = if selection.needs_geometry_engine
+        || selected_freq_ref != FrequencyRef::LSRK
+        || config.spectral_mode.is_cube_like()
+    {
+        Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+    } else {
+        None
+    };
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let channel_read_range = selected_channel_read_range_for_cube_source_row_blocks(
+        config,
+        &table_values,
+        &selection,
+        derived_engine.as_ref(),
+    )?;
+    let selected_channel_count =
+        retained_materialization_channel_count(&table_values, channel_read_range);
+    let strategy =
+        standard_mfs_memory_plan(config, selected_channel_count, active_selected_rows.len());
+    validate_standard_mfs_memory_plan(&strategy)?;
+    let row_block_rows = strategy.row_block_rows.max(1);
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_selected_rows.len(),
+        0,
+        0,
+        "mosaic_cube_one_channel_bounded_stream",
+    );
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+
+    let mut density_set = None::<CasaCubeBriggsDensityGridSet>;
+    let mut density_blocks = 0usize;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let cube = prepare_mosaic_cube_one_channel_source_row_block(
+            ms,
+            config,
+            data_column,
+            false,
+            &selection,
+            &table_values,
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            flag_row,
+            row_chunk,
+            derived_engine.as_ref(),
+            channel_read_range,
+            &geometry_columns,
+            prepare_started_at,
+            &mut prepare_stage_timings,
+            &mut accumulate_timings,
+        )?;
+        let preweighting = cube.casa_cube_briggs_preweighting.as_ref().ok_or_else(|| {
+            "bounded mosaic cube stream expected CASA cube preweighting sidecar".to_string()
+        })?;
+        if density_set.is_none() {
+            density_set = Some(CasaCubeBriggsDensityGridSet::new(geometry, preweighting));
+        }
+        density_set
+            .as_mut()
+            .expect("density set initialized")
+            .accumulate(geometry, preweighting)?;
+        density_blocks += 1;
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/mosaic_cube_briggs_density rows_done={} rows_total={} blocks={} total_elapsed_s={:.3}",
+                (density_blocks * row_block_rows).min(active_selected_rows.len()),
+                active_selected_rows.len(),
+                density_blocks,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    let mut density_set = density_set
+        .ok_or_else(|| "bounded mosaic cube stream built no density grid".to_string())?;
+    density_set.finish();
+
+    let first_rows_len = row_block_rows.min(active_selected_rows.len());
+    let first_cube = prepare_mosaic_cube_one_channel_source_row_block(
+        ms,
+        config,
+        data_column,
+        true,
+        &selection,
+        &table_values,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        flag_row,
+        &active_selected_rows[..first_rows_len],
+        derived_engine.as_ref(),
+        channel_read_range,
+        &geometry_columns,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+    )?;
+    let first_plane = preweight_mosaic_cube_stream_block(geometry, &density_set, first_cube)?;
+    let phase_center = first_plane.phase_center.clone();
+    let prepared_freq_ref = first_plane.freq_ref;
+    let cube_metadata = single_plane_cube_coordinate_metadata(config, &first_plane, &table_values)?;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: Vec::new(),
+        gridder_mode: mosaic_stream_request_gridder_mode(&first_plane.gridder_mode)?,
+        plane_stokes: first_plane.plane_stokes,
+        weighting: WeightingMode::Natural,
+        reffreq_hz: first_plane.reffreq_hz,
+        selected_frequency_range_hz: first_plane.selected_frequency_range_hz,
+        deconvolver: config.deconvolver,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        clean,
+        clean_mask: clean_mask.clone(),
+        initial_model: None,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+    let prepare_plane_time = prepare_started_at.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+
+    let run_started_at = Instant::now();
+    let mut replay_invocation = 0usize;
+    let result = run_mosaic_mfs_from_single_plane_stream(
+        request,
+        WeightDensityMode::Combined,
+        |pass, consumer| {
+            let replay_started = Instant::now();
+            let ordinal = replay_invocation;
+            replay_invocation += 1;
+            let mut block_count = 0usize;
+            let mut sample_count = 0usize;
+            for row_chunk in active_selected_rows.chunks(row_block_rows) {
+                let cube = prepare_mosaic_cube_one_channel_source_row_block(
+                    ms,
+                    config,
+                    data_column,
+                    true,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    flag_row,
+                    row_chunk,
+                    derived_engine.as_ref(),
+                    channel_read_range,
+                    &geometry_columns,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                )
+                .map_err(ImagingError::InvalidRequest)?;
+                let plane =
+                    preweight_mosaic_cube_stream_block(geometry, &density_set, cube)
+                        .map_err(ImagingError::InvalidRequest)?;
+                let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
+                    return Err(ImagingError::InvalidRequest(
+                        "bounded mosaic cube row block produced standard gridder metadata"
+                            .to_string(),
+                    ));
+                };
+                for (batch, metadata) in plane
+                    .batches
+                    .into_iter()
+                    .zip(mosaic.grouped_metadata_batches.into_iter())
+                {
+                    sample_count += batch.len();
+                    consumer(SinglePlaneVisibilityBlock {
+                        visibility: batch,
+                        gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
+                    })?;
+                }
+                block_count += 1;
+                if frontend_progress_enabled() {
+                    eprintln!(
+                        "frontend stage=run_imaging/mosaic_cube_bounded_stream_replay invocation={} pass={:?} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                        ordinal,
+                        pass,
+                        (block_count * row_block_rows).min(active_selected_rows.len()),
+                        active_selected_rows.len(),
+                        block_count,
+                        sample_count,
+                        replay_started.elapsed().as_secs_f64(),
+                    );
+                }
+            }
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "mosaic_cube_bounded_stream_replay invocation={} pass={:?} blocks={} samples={} elapsed_ms={:.3}",
+                    ordinal,
+                    pass,
+                    block_count,
+                    sample_count,
+                    duration_ms(replay_started.elapsed()),
+                );
+            }
+            Ok(())
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let run_imaging_time = run_started_at.elapsed();
+    accumulate_timings.log(prepare_started_at.elapsed());
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let mosaic_weight = result
+        .diagnostics
+        .mosaic_weight_image
+        .as_ref()
+        .map(expand_plane_for_write);
+    let cube = single_plane_result_to_one_channel_cube(result, clean_mask.clone(), &cube_metadata);
+    let run_result = RunProducts::Cube(CubeRunProducts {
+        result: cube,
+        mosaic_weight,
+        coordinate_freq_ref: cube_metadata.coordinate_freq_ref,
+        spectral_delta_hz: cube_metadata.spectral_delta_hz,
+        rest_frequency_hz: cube_metadata.rest_frequency_hz,
+    });
+    let effective_clean_mask = clean_mask.clone().map(EffectiveCleanMask::Plane);
+
+    let stage_start = Instant::now();
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: run_result.coordinate_freq_ref(prepared_freq_ref),
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        spectral_delta_hz: run_result.spectral_delta_hz(),
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
+    });
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    write_products(
+        config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
@@ -9107,6 +9678,234 @@ fn apply_casa_cube_briggs_preweighting(
                     );
                 }
                 visibility_batch.weight[sample_index] = output_weight;
+            }
+            sample_offset += visibility_batch.len();
+        }
+        if sample_offset != density_plane_indices.len() {
+            return Err(format!(
+                "CASA cube Briggs channel {channel_index} has {sample_offset} visibility samples but {} density-plane lookups",
+                density_plane_indices.len()
+            ));
+        }
+        channel.density_batches.clear();
+    }
+    Ok(())
+}
+
+struct CasaCubeBriggsDensityGridSet {
+    weighting: WeightingMode,
+    fractional_bandwidth: f64,
+    density_plane_count: usize,
+    density_group_field_ids: Vec<usize>,
+    density_grids: Vec<Array2<f32>>,
+    f2_by_plane: Vec<f32>,
+}
+
+impl CasaCubeBriggsDensityGridSet {
+    fn new(geometry: ImageGeometry, preweighting: &CasaCubeBriggsPreparedWeighting) -> Self {
+        let _ = geometry;
+        Self {
+            weighting: preweighting.weighting,
+            fractional_bandwidth: preweighting.fractional_bandwidth,
+            density_plane_count: preweighting.density_plane_count,
+            density_group_field_ids: Vec::new(),
+            density_grids: Vec::new(),
+            f2_by_plane: Vec::new(),
+        }
+    }
+
+    fn ensure_group(&mut self, field_id: usize, shape: (usize, usize)) -> usize {
+        if let Some(group_index) = self
+            .density_group_field_ids
+            .iter()
+            .position(|known| *known == field_id)
+        {
+            return group_index * self.density_plane_count;
+        }
+        let group_index = self.density_group_field_ids.len();
+        self.density_group_field_ids.push(field_id);
+        self.density_grids
+            .extend((0..self.density_plane_count).map(|_| Array2::<f32>::zeros(shape)));
+        group_index * self.density_plane_count
+    }
+
+    fn accumulate(
+        &mut self,
+        geometry: ImageGeometry,
+        preweighting: &CasaCubeBriggsPreparedWeighting,
+    ) -> Result<(), String> {
+        if self.weighting != preweighting.weighting
+            || !frequencies_close(self.fractional_bandwidth, preweighting.fractional_bandwidth)
+            || self.density_plane_count != preweighting.density_plane_count
+        {
+            return Err("incompatible CASA cube Briggs density preweighting block".to_string());
+        }
+        let shape = (geometry.image_shape[0], geometry.image_shape[1]);
+        for (local_plane, batch) in preweighting.density_batches.iter().enumerate() {
+            let local_group = local_plane / preweighting.density_plane_count;
+            let plane_offset = local_plane % preweighting.density_plane_count;
+            let Some(field_id) = preweighting
+                .density_group_field_ids
+                .get(local_group)
+                .copied()
+            else {
+                continue;
+            };
+            let global_plane = self.ensure_group(field_id, shape) + plane_offset;
+            let Some(density) = self.density_grids.get_mut(global_plane) else {
+                continue;
+            };
+            accumulate_casa_cube_briggs_density_grid(geometry, batch, density);
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) {
+        self.f2_by_plane = self
+            .density_grids
+            .iter()
+            .map(|density| casa_cube_briggs_f2(self.weighting, density))
+            .collect();
+    }
+
+    fn map_local_plane(
+        &self,
+        preweighting: &CasaCubeBriggsPreparedWeighting,
+        local_plane: usize,
+    ) -> Option<usize> {
+        let local_group = local_plane / preweighting.density_plane_count;
+        let plane_offset = local_plane % preweighting.density_plane_count;
+        let field_id = preweighting.density_group_field_ids.get(local_group)?;
+        let global_group = self
+            .density_group_field_ids
+            .iter()
+            .position(|known| known == field_id)?;
+        Some(global_group * self.density_plane_count + plane_offset)
+    }
+}
+
+fn accumulate_casa_cube_briggs_density_grid(
+    geometry: ImageGeometry,
+    batch: &VisibilityBatch,
+    density: &mut Array2<f32>,
+) {
+    let [nx, ny] = geometry.image_shape;
+    for sample_index in 0..batch.len() {
+        if !batch.gridable[sample_index] {
+            continue;
+        }
+        let weight = batch.weight[sample_index];
+        if !(weight.is_finite() && weight > 0.0) {
+            continue;
+        }
+        if let Some((x, y)) = casa_cube_briggs_gridft_density_cell(
+            geometry,
+            batch.u_lambda[sample_index],
+            batch.v_lambda[sample_index],
+        ) {
+            density[(x, y)] += weight;
+            let mirror_x = nx.saturating_sub(x);
+            let mirror_y = ny.saturating_sub(y);
+            if mirror_x < nx && mirror_y < ny {
+                density[(mirror_x, mirror_y)] += weight;
+            }
+        }
+    }
+}
+
+fn apply_casa_cube_briggs_preweighting_from_density_grids(
+    geometry: ImageGeometry,
+    density_set: &CasaCubeBriggsDensityGridSet,
+    preweighting: &CasaCubeBriggsPreparedWeighting,
+    channels: &mut [CubeChannelRequest],
+) -> Result<(), String> {
+    if channels.len() != preweighting.channel_density_plane_indices.len() {
+        return Err(format!(
+            "CASA cube Briggs lookup channel count {} does not match cube channel count {}",
+            preweighting.channel_density_plane_indices.len(),
+            channels.len()
+        ));
+    }
+    for (channel_index, channel) in channels.iter_mut().enumerate() {
+        let density_plane_indices = &preweighting.channel_density_plane_indices[channel_index];
+        let mut sample_offset = 0usize;
+        if channel.visibility_batches.len() != channel.density_batches.len() {
+            return Err(format!(
+                "CASA cube Briggs channel {channel_index} has {} visibility batches but {} density lookup batches",
+                channel.visibility_batches.len(),
+                channel.density_batches.len()
+            ));
+        }
+        for (visibility_batch, lookup_batch) in channel
+            .visibility_batches
+            .iter_mut()
+            .zip(channel.density_batches.iter())
+        {
+            if visibility_batch.len() != lookup_batch.len() {
+                return Err(format!(
+                    "CASA cube Briggs channel {channel_index} lookup length {} does not match visibility length {}",
+                    lookup_batch.len(),
+                    visibility_batch.len()
+                ));
+            }
+            for sample_index in 0..visibility_batch.len() {
+                let Some(local_density_plane) = density_plane_indices
+                    .get(sample_offset + sample_index)
+                    .copied()
+                    .flatten()
+                else {
+                    visibility_batch.weight[sample_index] = 0.0;
+                    continue;
+                };
+                let Some(density_plane) =
+                    density_set.map_local_plane(preweighting, local_density_plane)
+                else {
+                    visibility_batch.weight[sample_index] = 0.0;
+                    continue;
+                };
+                let Some(density_grid) = density_set.density_grids.get(density_plane) else {
+                    visibility_batch.weight[sample_index] = 0.0;
+                    continue;
+                };
+                let Some((x, y)) = casa_cube_briggs_density_cell(
+                    geometry,
+                    lookup_batch.u_lambda[sample_index],
+                    lookup_batch.v_lambda[sample_index],
+                ) else {
+                    visibility_batch.weight[sample_index] = 0.0;
+                    continue;
+                };
+                let density = density_grid[(x, y)];
+                let f2 = density_set
+                    .f2_by_plane
+                    .get(density_plane)
+                    .copied()
+                    .unwrap_or(0.0);
+                let input_weight = visibility_batch.weight[sample_index];
+                if !(density.is_finite()
+                    && density > 0.0
+                    && f2.is_finite()
+                    && f2 > 0.0
+                    && input_weight.is_finite()
+                    && input_weight > 0.0)
+                {
+                    visibility_batch.weight[sample_index] = 0.0;
+                    continue;
+                }
+                let denominator = casa_cube_briggs_weight_denominator(
+                    density_set.weighting,
+                    geometry,
+                    density_set.fractional_bandwidth,
+                    lookup_batch.u_lambda[sample_index],
+                    lookup_batch.v_lambda[sample_index],
+                    density,
+                    f2,
+                );
+                if !(denominator.is_finite() && denominator > 0.0) {
+                    visibility_batch.weight[sample_index] = 0.0;
+                    continue;
+                }
+                visibility_batch.weight[sample_index] = input_weight / denominator;
             }
             sample_offset += visibility_batch.len();
         }
@@ -19342,6 +20141,7 @@ impl PreparedSelection {
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
         let transform = geometry_row.transform;
+        let raw_uvw_m = geometry_row.raw_uvw_m;
         let uvw_m = transform.uvw_m;
         let baseline_pointing_direction_rad = combine_pointing_direction_rad(
             geometry_row.antenna1_pointing.angles_rad,
@@ -19364,6 +20164,11 @@ impl PreparedSelection {
         let source_channel_indices = self.source_channel_indices.clone();
         let source_channel_frequencies_hz = self.source_channel_frequencies_hz.clone();
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
+        let casa_cube_briggs_density_uvw_m = gridft_density_uvw_m(
+            raw_uvw_m,
+            geometry_row.field_phase_center_direction_rad,
+            self.phase_center.angles_rad,
+        );
         let cube_row_spectral_contributions = if matches!(
             &self.state,
             PreparedState::ExplicitCube { .. }
@@ -19403,6 +20208,7 @@ impl PreparedSelection {
             None
         };
         let cube_mosaic_pb_frequency_cache = &mut self.cube_mosaic_pb_frequency_cache;
+        let casa_cube_briggs_preweighting = &mut self.casa_cube_briggs_preweighting;
         match &mut self.state {
             PreparedState::ExplicitMfs {
                 corr_index,
@@ -19616,6 +20422,44 @@ impl PreparedSelection {
                     .as_ref()
                     .expect("cube spectral contributions prepared for cube state");
                 let assignments = &row_spectral_contributions.output_channel_contributions;
+                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                    let density_group_base =
+                        casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
+                    for grid in &row_spectral_contributions.padded_grid_channel_contributions {
+                        let Some(sample) = interpolate_explicit_cube_output_weight_only(
+                            &flags_2d,
+                            &weights,
+                            *corr_index,
+                            &source_channel_indices,
+                            &grid.contributions,
+                            false,
+                        )?
+                        else {
+                            continue;
+                        };
+                        if let Some(density_plane) = casa_cube_briggs_density_plane_index(
+                            preweighting,
+                            density_group_base,
+                            grid.output_channel,
+                        ) {
+                            let batch = &mut preweighting.density_batches[density_plane];
+                            let before = batch.len();
+                            push_casa_cube_briggs_density_sample(
+                                batch,
+                                grid.grid_frequency_hz,
+                                casa_cube_briggs_density_uvw_m,
+                                sample.weight,
+                                is_cross,
+                            );
+                            if batch.len() > before
+                                && let Some(rows) =
+                                    preweighting.density_sample_rows.get_mut(density_plane)
+                            {
+                                rows.push(row);
+                            }
+                        }
+                    }
+                }
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -19713,6 +20557,44 @@ impl PreparedSelection {
                     .as_ref()
                     .expect("cube spectral contributions prepared for cube state");
                 let assignments = &row_spectral_contributions.output_channel_contributions;
+                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                    let density_group_base =
+                        casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
+                    for grid in &row_spectral_contributions.padded_grid_channel_contributions {
+                        let Some(sample) = interpolate_paired_cube_output_weight_only(
+                            &flags_2d,
+                            &weights,
+                            *pair,
+                            &source_channel_indices,
+                            &grid.contributions,
+                            false,
+                        )?
+                        else {
+                            continue;
+                        };
+                        if let Some(density_plane) = casa_cube_briggs_density_plane_index(
+                            preweighting,
+                            density_group_base,
+                            grid.output_channel,
+                        ) {
+                            let batch = &mut preweighting.density_batches[density_plane];
+                            let before = batch.len();
+                            push_casa_cube_briggs_density_sample(
+                                batch,
+                                grid.grid_frequency_hz,
+                                casa_cube_briggs_density_uvw_m,
+                                sample.first_weight + sample.second_weight,
+                                is_cross,
+                            );
+                            if batch.len() > before
+                                && let Some(rows) =
+                                    preweighting.density_sample_rows.get_mut(density_plane)
+                            {
+                                rows.push(row);
+                            }
+                        }
+                    }
+                }
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -29880,6 +30762,9 @@ mod tests {
             OsString::from("0,1"),
             OsString::from("--phasecenter-field"),
             OsString::from("0"),
+            OsString::from("--weighting"),
+            OsString::from("uniform"),
+            OsString::from("--perchanweightdensity"),
             OsString::from("--standard-mfs-acceleration"),
             OsString::from("multi-cpu"),
             OsString::from("--niter"),
@@ -29888,6 +30773,14 @@ mod tests {
         .expect("parse mosaic cube one-channel config");
 
         assert!(mosaic_cube_one_channel_can_use_single_plane_stream(&config));
+        assert!(
+            !can_run_mfs_mosaic_from_single_plane_stream(&config, false, 1),
+            "cube one-channel mosaic must use the cube-specific replay path"
+        );
+        assert!(
+            can_run_mosaic_cube_one_channel_from_bounded_stream(&config, false, 1),
+            "uniform one-channel mosaic cube should use bounded streaming preweighting instead of full cube materialization"
+        );
         let channel = CubeChannelRequest {
             channel_frequency_hz: 1.5e9,
             visibility_batches: vec![VisibilityBatch {

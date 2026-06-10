@@ -2103,25 +2103,6 @@ impl ScreenProjector {
         screen_projector_from_hetarray_temps(gridder, sampling, imaging_temp, weight_temp)
     }
 
-    pub(crate) fn from_hetarray_screen<F>(
-        geometry: ImageGeometry,
-        gridder: &StandardGridder,
-        sampling: usize,
-        conv_size: usize,
-        mut evaluator: F,
-    ) -> Result<Self, ImagingError>
-    where
-        F: FnMut(f64, f64) -> Complex32,
-    {
-        if sampling == 0 {
-            return Err(ImagingError::InvalidRequest(
-                "screen projector sampling must be >= 1".to_string(),
-            ));
-        }
-        let temp = hetarray_screen_fft_temp(geometry, conv_size, &mut evaluator)?;
-        screen_projector_from_hetarray_temps(gridder, sampling, temp.clone(), temp)
-    }
-
     pub(crate) fn with_phase_gradient(mut self, phase_gradient_rad_per_sample: [f64; 2]) -> Self {
         self.phase_gradient_rad_per_sample = phase_gradient_rad_per_sample;
         self.phased_kernel_weights = self.kernel_weights.clone();
@@ -3046,6 +3027,10 @@ pub(crate) fn hetarray_screen_conv_size_for_support(
     let mut conv_size = support.max(64) + 1;
     while conv_size % 2 != 0 || !is_casa_composite_len(conv_size) {
         conv_size += 1;
+    }
+    conv_size = (conv_size / 16) * 16;
+    if conv_size < 64 {
+        conv_size = 64;
     }
     conv_size
 }
