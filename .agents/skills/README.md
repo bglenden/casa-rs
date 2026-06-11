@@ -17,6 +17,10 @@ Scaled skills:
 - `wdad-planning-board-audit`
 - `wdad-stabilization-wave`
 
+casa-rs domain skills:
+
+- `casa-rs-imaging-performance`
+
 Durable policy belongs in `AGENTS.md`, `ARCHITECTURE.md`, `TESTING.md`,
 accepted ADRs, tests, and CI. Skills are reusable procedures, not hidden
 sources of truth.

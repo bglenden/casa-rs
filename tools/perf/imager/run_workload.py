@@ -232,6 +232,11 @@ def build_plan(
     )
     if skip_casa.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.skip_casa must be 0/1, true/false, yes/no, or on/off")
+    skip_profile = os.environ.get("CASA_RS_BENCH_SKIP_PROFILE") or str_value(
+        run, "skip_profile", "0"
+    )
+    if skip_profile.lower() not in SUPPORTED_BOOLEAN_FLAGS:
+        raise HarnessError("run.skip_profile must be 0/1, true/false, yes/no, or on/off")
     extra_env = string_map_value(run, "env")
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
@@ -294,6 +299,7 @@ def build_plan(
         "IMAGER_BENCH_MS_STAGING": ms_staging,
         "IMAGER_BENCH_PHASE_PROBE": phase_probe,
         "IMAGER_BENCH_SKIP_CASA": skip_casa,
+        "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
     }
     env.update(extra_env)
 
@@ -344,6 +350,7 @@ def build_plan(
             "ms_staging": ms_staging,
             "phase_probe": phase_probe,
             "env": extra_env,
+            "stream_log": bool_value(run, "stream_log", False),
         },
         "run_support": run_support,
         "review": review_contract_value(manifest, run),
@@ -476,15 +483,13 @@ def review_panel_status(comparison: dict[str, Any]) -> tuple[str, str | None]:
 def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     env = os.environ.copy()
     env.update(plan["command"]["env"])
+    if bool(plan.get("run", {}).get("stream_log", False)):
+        env["IMAGER_BENCH_STREAM_LOG"] = "1"
     started = utc_now()
-    completed = subprocess.run(
+    completed = run_benchmark_command(
         plan["command"]["argv"],
-        cwd=REPO_ROOT,
         env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
+        stream_log=bool(plan.get("run", {}).get("stream_log", False)),
     )
     log_path.write_text(completed.stdout, encoding="utf-8")
     if completed.returncode != 0:
@@ -516,6 +521,38 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         "results": parsed,
         "human_review": human_review_gate(plan, comparison),
     }
+
+
+def run_benchmark_command(
+    argv: list[str], *, env: dict[str, str], stream_log: bool
+) -> subprocess.CompletedProcess[str]:
+    if not stream_log:
+        return subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+    process = subprocess.Popen(
+        argv,
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    output_chunks = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        output_chunks.append(line)
+        print(line, end="", flush=True)
+    returncode = process.wait()
+    return subprocess.CompletedProcess(argv, returncode, "".join(output_chunks), None)
 
 
 def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
@@ -1072,6 +1109,10 @@ def boolean_env_value(obj: dict[str, Any], key: str, default: bool) -> str:
         if normalized in SUPPORTED_BOOLEAN_FLAGS:
             return "1" if normalized in {"1", "true", "yes", "on"} else "0"
     raise HarnessError(f"{key!r} must be a boolean")
+
+
+def bool_value(obj: dict[str, Any], key: str, default: bool) -> bool:
+    return boolean_env_value(obj, key, default) == "1"
 
 
 def enum_value(obj: dict[str, Any], key: str, allowed: set[str]) -> str:

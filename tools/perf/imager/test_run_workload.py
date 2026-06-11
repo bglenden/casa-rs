@@ -371,9 +371,39 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("direct", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
         self.assertEqual("0", plan["run"]["phase_probe"])
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASE_PROBE"])
+        self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_SKIP_PROFILE"])
         self.assertEqual("runnable", plan["run_support"]["status"])
         self.assertEqual("pending", run_workload.human_review_gate(plan, None)["status"])
         self.assertEqual("Brian", plan["review"]["required_reviewer"])
+
+    def test_turnaround_workload_can_skip_profile_rerun(self) -> None:
+        manifest = {
+            "id": "large-turnaround",
+            "mode_id": "mosaic-cube-one-channel",
+            "dataset": {
+                "key": "large.ms",
+                "path": "/tmp/large.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "cube",
+                "gridder": "mosaic",
+            },
+            "run": {
+                "skip_profile": "1",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_SKIP_PROFILE"])
 
     def test_cubedata_is_accepted_as_dry_run_only_wave3_mode(self) -> None:
         manifest = {

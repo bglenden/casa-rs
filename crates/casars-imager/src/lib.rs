@@ -16,7 +16,6 @@ use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -54,7 +53,7 @@ use casa_imaging::{
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan, trace_weighting,
 };
-use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock};
+use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneStreamPass, SinglePlaneVisibilityBlock};
 use casa_ms::MeasurementSet;
 #[cfg(test)]
 use casa_ms::columns::time_columns::TimeColumn;
@@ -126,6 +125,7 @@ pub use task_contract::{
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 65_536;
+const DEFAULT_ACCELERATED_STREAMING_BATCH_SIZE: usize = DEFAULT_BATCH_SIZE * 8;
 const DEFAULT_STANDARD_MFS_MEMORY_TARGET_FALLBACK_BYTES: usize = 8 * 1024 * 1024 * 1024;
 const MIN_PREPARE_ROW_BLOCK_ROWS: usize = 128;
 const MAX_PREPARE_ROW_BLOCK_ROWS: usize = 32_768;
@@ -883,14 +883,24 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     for warning in &result.run.warnings {
         eprintln!("warning: {warning}");
     }
-    println!(
-        "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
-        result.request.image_name.display(),
-        result.run.gridded_samples,
-        result.run.major_cycles,
-        result.run.minor_iterations,
-        result.run.clean_stop_reason
-    );
+    if summary.gridded_samples == 0
+        && summary.stage_timings.total == Duration::ZERO
+        && summary.frontend_timings.write_products == Duration::ZERO
+    {
+        println!(
+            "Completed diagnostic imaging run for prefix {} (no CASA image products written)",
+            result.request.image_name.display(),
+        );
+    } else {
+        println!(
+            "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, {} minor iterations, stop={:?})",
+            result.request.image_name.display(),
+            result.run.gridded_samples,
+            result.run.major_cycles,
+            result.run.minor_iterations,
+            result.run.clean_stop_reason
+        );
+    }
     Ok(())
 }
 
@@ -2781,6 +2791,9 @@ fn prepare_mfs_mosaic_source_row_block_plane(
         None,
         cube_context,
         finish,
+        None,
+        true,
+        true,
         accumulate_timings,
     )?;
     prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
@@ -2855,9 +2868,12 @@ fn prepare_mosaic_cube_one_channel_source_row_block(
     derived_engine: Option<&MsCalEngine>,
     channel_read_range: Option<SelectedChannelReadRange>,
     geometry_columns: &PreparedGeometryColumnCache,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
     prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
+    build_cube_briggs_density_samples: bool,
+    build_cube_mosaic_metadata: bool,
 ) -> Result<CubePlaneInput, String> {
     let stage_started_at = Instant::now();
     let density_processing_buffer;
@@ -2923,6 +2939,9 @@ fn prepare_mosaic_cube_one_channel_source_row_block(
         None,
         Some(cube_context),
         SourceRowBlockFinish::Cube,
+        cube_row_spectral_reusable_plan,
+        build_cube_briggs_density_samples,
+        build_cube_mosaic_metadata,
         accumulate_timings,
     )?;
     prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
@@ -2959,6 +2978,9 @@ fn new_source_row_block_prepared_selection(
     standard_mfs_table_values: Option<&PreparedSelectionTableValues>,
     cube_context: Option<CubeSetupContext<'_>>,
     finish: SourceRowBlockFinish,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
+    build_cube_briggs_density_samples: bool,
+    build_cube_mosaic_metadata: bool,
 ) -> Result<PreparedSelection, String> {
     if matches!(finish, SourceRowBlockFinish::StandardMfs { .. })
         && standard_cube_like_one_channel_can_use_mfs_single_plane_path(config)
@@ -2985,6 +3007,11 @@ fn new_source_row_block_prepared_selection(
         false,
         matches!(finish, SourceRowBlockFinish::MfsMosaic),
     );
+    prepared.set_cube_row_spectral_reusable_plan(cube_row_spectral_reusable_plan);
+    prepared.set_build_cube_briggs_density_samples(build_cube_briggs_density_samples);
+    if !build_cube_mosaic_metadata {
+        prepared.disable_cube_mosaic_metadata();
+    }
     if let Some(init_error) = prepared.initialization_error.take() {
         return Err(init_error);
     }
@@ -3009,6 +3036,9 @@ fn prepare_source_row_block_plane_inner(
     standard_mfs_table_values: Option<&PreparedSelectionTableValues>,
     cube_context: Option<CubeSetupContext<'_>>,
     finish: SourceRowBlockFinish,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
+    build_cube_briggs_density_samples: bool,
+    build_cube_mosaic_metadata: bool,
     accumulate_timings: &mut AccumulateRowTimings,
 ) -> Result<PreparedInput, String> {
     let thread_count = standard_mfs_density_prepare_threads(geometry_rows.len());
@@ -3022,6 +3052,9 @@ fn prepare_source_row_block_plane_inner(
             standard_mfs_table_values,
             cube_context.clone(),
             finish,
+            cube_row_spectral_reusable_plan.clone(),
+            build_cube_briggs_density_samples,
+            build_cube_mosaic_metadata,
         )?;
         prepared.reserve_standard_mfs_row_block(geometry_rows.len());
         for (row_slot, row) in geometry_rows.iter().enumerate() {
@@ -3060,6 +3093,7 @@ fn prepare_source_row_block_plane_inner(
         for (chunk_index, row_chunk) in geometry_rows.chunks(chunk_len).enumerate() {
             let row_offset = chunk_index * chunk_len;
             let cube_context = cube_context.clone();
+            let cube_row_spectral_reusable_plan = cube_row_spectral_reusable_plan.clone();
             handles.push(scope.spawn(move || {
                 let mut prepared = new_source_row_block_prepared_selection(
                     config,
@@ -3070,6 +3104,9 @@ fn prepare_source_row_block_plane_inner(
                     standard_mfs_table_values,
                     cube_context,
                     finish,
+                    cube_row_spectral_reusable_plan,
+                    build_cube_briggs_density_samples,
+                    build_cube_mosaic_metadata,
                 )?;
                 prepared.reserve_standard_mfs_row_block(row_chunk.len());
                 let mut timings = AccumulateRowTimings::default();
@@ -3597,6 +3634,119 @@ fn preweight_mosaic_cube_stream_block(
     one_channel_cube_plane_input_to_streaming_plane(cube)
 }
 
+fn one_channel_mosaic_cube_metadata_plane(cube: &CubePlaneInput) -> Result<PlaneInput, String> {
+    if cube.channels.len() != 1 || cube.gridder_modes.len() != 1 {
+        return Err(format!(
+            "internal error: one-channel mosaic cube metadata expected 1 channel and 1 gridder mode, found {} and {}",
+            cube.channels.len(),
+            cube.gridder_modes.len(),
+        ));
+    }
+    let channel = &cube.channels[0];
+    let reffreq_hz = channel.channel_frequency_hz;
+    if !(reffreq_hz.is_finite() && reffreq_hz > 0.0) {
+        return Err(format!(
+            "internal error: invalid one-channel mosaic cube metadata frequency: {reffreq_hz}"
+        ));
+    }
+    Ok(PlaneInput {
+        phase_center: cube.phase_center.clone(),
+        freq_ref: cube.freq_ref,
+        reffreq_hz,
+        selected_frequency_range_hz: [reffreq_hz, reffreq_hz],
+        spectral_frequency_edge_range_hz: None,
+        plane_stokes: cube.plane_stokes,
+        batches: Vec::new(),
+        sample_frequency_range_hz: Some([reffreq_hz, reffreq_hz]),
+        sample_frequency_batches_hz: Vec::new(),
+        gridder_mode: mosaic_stream_request_gridder_mode(&cube.gridder_modes[0])?,
+    })
+}
+
+fn mosaic_cube_gridder_metadata_counts(cube: &CubePlaneInput) -> Result<(usize, usize), String> {
+    if cube.channels.len() != 1 || cube.gridder_modes.len() != 1 {
+        return Err(format!(
+            "internal error: one-channel mosaic cube metadata count expected 1 channel and 1 gridder mode, found {} and {}",
+            cube.channels.len(),
+            cube.gridder_modes.len(),
+        ));
+    }
+    let GridderMode::Mosaic(mosaic) = &cube.gridder_modes[0] else {
+        return Err(
+            "internal error: mosaic cube metadata count expected mosaic gridder".to_string(),
+        );
+    };
+    Ok(mosaic
+        .grouped_metadata_batches
+        .iter()
+        .fold((0usize, 0usize), |(groups, ranges), batch| {
+            (
+                groups + batch.groups.len(),
+                ranges
+                    + batch
+                        .groups
+                        .iter()
+                        .map(|group| group.sample_ranges.len())
+                        .sum::<usize>(),
+            )
+        }))
+}
+
+fn mosaic_gridder_metadata_matches_visibility_batches(
+    gridder_mode: &GridderMode,
+    batches: &[VisibilityBatch],
+) -> bool {
+    mosaic_gridder_metadata_alignment_error(gridder_mode, batches).is_none()
+}
+
+fn mosaic_gridder_metadata_alignment_error(
+    gridder_mode: &GridderMode,
+    batches: &[VisibilityBatch],
+) -> Option<String> {
+    let GridderMode::Mosaic(mosaic) = gridder_mode else {
+        return Some("gridder mode is not mosaic".to_string());
+    };
+    if !mosaic.metadata_batches.is_empty() || mosaic.grouped_metadata_batches.len() != batches.len()
+    {
+        let grouped_samples = mosaic
+            .grouped_metadata_batches
+            .iter()
+            .map(|metadata| metadata.sample_count)
+            .sum::<usize>();
+        let visibility_samples = batches.iter().map(VisibilityBatch::len).sum::<usize>();
+        return Some(format!(
+            "metadata_batches={} grouped_metadata_batches={} visibility_batches={} grouped_samples={} visibility_samples={}",
+            mosaic.metadata_batches.len(),
+            mosaic.grouped_metadata_batches.len(),
+            batches.len(),
+            grouped_samples,
+            visibility_samples
+        ));
+    }
+    for (batch_index, (metadata, batch)) in mosaic
+        .grouped_metadata_batches
+        .iter()
+        .zip(batches.iter())
+        .enumerate()
+    {
+        if metadata.sample_count != batch.len() {
+            return Some(format!(
+                "batch={} metadata_samples={} visibility_samples={} metadata_groups={} metadata_ranges={}",
+                batch_index + 1,
+                metadata.sample_count,
+                batch.len(),
+                metadata.groups.len(),
+                metadata
+                    .groups
+                    .iter()
+                    .map(|group| group.sample_ranges.len())
+                    .sum::<usize>()
+            ));
+        }
+    }
+    None
+}
+
 fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -3611,6 +3761,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         config.niter,
         config.minor_cycle_length,
     );
+    let stream_probe_mode = mosaic_cube_stream_probe_mode()?;
     let geometry = ImageGeometry {
         image_shape: [config.imsize, config.imsize],
         cell_size_rad: [
@@ -3639,23 +3790,55 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     )?;
 
     let prepare_started_at = Instant::now();
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=start total_elapsed_s={:.3}",
+            total_start.elapsed().as_secs_f64(),
+        );
+    }
+    let setup_step_started = Instant::now();
     let data_description = ms
         .data_description()
         .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
     let ddid_info = data_description_index(&data_description)?;
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=data_description elapsed_s={:.3} step_s={:.3}",
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
+    let setup_step_started = Instant::now();
     let spectral_window = ms
         .spectral_window()
         .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
     let polarization = ms
         .polarization()
         .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=spectral_window_polarization elapsed_s={:.3} step_s={:.3}",
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
+    let setup_step_started = Instant::now();
     let selection = select_main_rows(ms, config, &ddid_info)?;
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=select_main_rows selected_rows={} elapsed_s={:.3} step_s={:.3}",
+            selection.selected_rows.len(),
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
     if !can_finish_mfs_mosaic_without_trace(config, &selection) {
         return Err(
             "internal error: bounded mosaic cube stream selected for an ineligible row selection"
                 .to_string(),
         );
     }
+    let setup_step_started = Instant::now();
     let flag_row = selection.flag_row.as_slice();
     let active_selected_rows = selection
         .selected_rows
@@ -3669,9 +3852,18 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         })
         .cloned()
         .collect::<Vec<_>>();
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=active_row_filter active_rows={} elapsed_s={:.3} step_s={:.3}",
+            active_selected_rows.len(),
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic cube rows".to_string());
     }
+    let setup_step_started = Instant::now();
     let selected_spw_id = ddid_info
         .get(selection.selected_ddid)
         .copied()
@@ -3697,20 +3889,89 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     } else {
         None
     };
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=frequency_ref_and_engine freq_ref={:?} derived_engine={} elapsed_s={:.3} step_s={:.3}",
+            selected_freq_ref,
+            derived_engine.is_some(),
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
+    let setup_step_started = Instant::now();
     let table_values = load_prepared_selection_table_values(
         selection.selected_ddid,
         &ddid_info,
         &spectral_window,
         &polarization,
     )?;
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=table_values elapsed_s={:.3} step_s={:.3}",
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
+    let setup_step_started = Instant::now();
     let channel_read_range = selected_channel_read_range_for_cube_source_row_blocks(
         config,
         &table_values,
         &selection,
         derived_engine.as_ref(),
     )?;
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=channel_read_range range={:?} elapsed_s={:.3} step_s={:.3}",
+            channel_read_range,
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
+    let setup_step_started = Instant::now();
+    let cube_row_spectral_reusable_plan = build_mosaic_cube_row_spectral_reusable_plan(
+        config,
+        &selection,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        &active_selected_rows,
+        derived_engine.as_ref(),
+    )?;
+    if frontend_progress_enabled() {
+        let entries = cube_row_spectral_reusable_plan
+            .as_ref()
+            .map_or(0, |plan| plan.spectral_entries());
+        let source_frequency_entries = cube_row_spectral_reusable_plan
+            .as_ref()
+            .map_or(0, |plan| plan.source_frequency_entries());
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=reusable_spectral_plan entries={} source_frequency_entries={} elapsed_s={:.3} step_s={:.3}",
+            entries,
+            source_frequency_entries,
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
     let selected_channel_count =
         retained_materialization_channel_count(&table_values, channel_read_range);
+    let field_distribution = selected_row_field_distribution(&active_selected_rows);
+    let estimated_sample_visits_per_pass = active_selected_rows
+        .len()
+        .saturating_mul(selected_channel_count);
+    eprintln!(
+        "mosaic_cube_perf_budget selected_channels={} active_rows={} estimated_sample_visits_per_pass={} fields={} target_sample_rate_sps={:.3} width1024_serial_baseline_s={:.3} width1024_target_s={:.3} descriptor_cache_8b_gib={:.3} descriptor_cache_16b_gib={:.3} descriptor_cache_32b_gib={:.3} plan_cache=spectral_per_time_field visibility_value_cache=off emitted_block_order=ms_order",
+        selected_channel_count,
+        active_selected_rows.len(),
+        estimated_sample_visits_per_pass,
+        field_distribution,
+        MOSAIC_CUBE_TARGET_SAMPLES_PER_SECOND,
+        MOSAIC_CUBE_WIDTH1024_SERIAL_BASELINE_SECONDS,
+        MOSAIC_CUBE_WIDTH1024_TARGET_SECONDS,
+        bytes_to_gib(estimated_sample_visits_per_pass.saturating_mul(8)),
+        bytes_to_gib(estimated_sample_visits_per_pass.saturating_mul(16)),
+        bytes_to_gib(estimated_sample_visits_per_pass.saturating_mul(32)),
+    );
+    let setup_step_started = Instant::now();
     let strategy =
         standard_mfs_memory_plan(config, selected_channel_count, active_selected_rows.len());
     validate_standard_mfs_memory_plan(&strategy)?;
@@ -3722,83 +3983,220 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         0,
         "mosaic_cube_one_channel_bounded_stream",
     );
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=memory_plan selected_channels={} row_block_rows={} elapsed_s={:.3} step_s={:.3}",
+            selected_channel_count,
+            row_block_rows,
+            prepare_started_at.elapsed().as_secs_f64(),
+            setup_step_started.elapsed().as_secs_f64(),
+        );
+    }
     let stage_started_at = Instant::now();
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=geometry_columns_start elapsed_s={:.3}",
+            prepare_started_at.elapsed().as_secs_f64(),
+        );
+    }
     let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mosaic_cube_setup event=geometry_columns elapsed_s={:.3} step_s={:.3}",
+            prepare_started_at.elapsed().as_secs_f64(),
+            stage_started_at.elapsed().as_secs_f64(),
+        );
+    }
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
         ..Default::default()
     };
 
     let mut density_set = None::<CasaCubeBriggsDensityGridSet>;
+    let mut direct_density_plan = None::<MosaicCubeBriggsDirectDensityPlan>;
+    let mut first_density_plane = None::<PlaneInput>;
     let mut density_blocks = 0usize;
+    let mut density_stats =
+        MosaicCubeBoundedStreamPassStats::new(SinglePlaneStreamPass::WeightingDensity, 0);
+    let density_channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(ms)?);
+    let density_channel_read_range = channel_read_range.ok_or_else(|| {
+        "bounded mosaic cube density pass requires a bounded channel read range".to_string()
+    })?;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let cube = prepare_mosaic_cube_one_channel_source_row_block(
+        let block_prepare_before = prepare_stage_timings;
+        let block_accumulate_before = accumulate_timings;
+        let block_started = Instant::now();
+        let density_read_started = Instant::now();
+        let (density_block, _density_read_timings) = read_ms_imaging_density_essentials_block(
             ms,
-            config,
-            data_column,
-            false,
-            &selection,
-            &table_values,
-            &ddid_info,
-            &spectral_window,
-            &polarization,
-            flag_row,
-            row_chunk,
-            derived_engine.as_ref(),
-            channel_read_range,
+            Arc::clone(&density_channel_axes),
             &geometry_columns,
-            prepare_started_at,
-            &mut prepare_stage_timings,
+            row_chunk,
+            density_channel_read_range,
+        )?;
+        prepare_stage_timings.get_ms_values_into_processing_buffer +=
+            density_read_started.elapsed();
+        let mut compact_metadata = None::<(GridderMode, usize, usize)>;
+        if direct_density_plan.is_none() {
+            let cube = prepare_mosaic_cube_one_channel_source_row_block(
+                ms,
+                config,
+                data_column,
+                false,
+                &selection,
+                &table_values,
+                &ddid_info,
+                &spectral_window,
+                &polarization,
+                flag_row,
+                row_chunk,
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                cube_row_spectral_reusable_plan.clone(),
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                false,
+                true,
+            )?;
+            let preweighting = cube.casa_cube_briggs_preweighting.as_ref().ok_or_else(|| {
+                "bounded mosaic cube stream expected CASA cube preweighting configuration"
+                    .to_string()
+            })?;
+            direct_density_plan = Some(MosaicCubeBriggsDirectDensityPlan::new(
+                config,
+                geometry,
+                preweighting,
+                &table_values,
+                density_channel_read_range,
+                selection.phase_center.angles_rad,
+                cube.channels
+                    .iter()
+                    .map(|channel| channel.channel_frequency_hz)
+                    .collect(),
+            )?);
+            if first_density_plane.is_none() {
+                first_density_plane = Some(one_channel_mosaic_cube_metadata_plane(&cube)?);
+            }
+            let (metadata_groups, metadata_ranges) = mosaic_cube_gridder_metadata_counts(&cube)?;
+            if cube.gridder_modes.len() != 1 {
+                return Err(format!(
+                    "bounded mosaic cube stream expected one metadata gridder mode, found {}",
+                    cube.gridder_modes.len()
+                ));
+            }
+            compact_metadata = Some((
+                cube.gridder_modes[0].clone(),
+                metadata_groups,
+                metadata_ranges,
+            ));
+        }
+        let block_samples = accumulate_mosaic_cube_briggs_direct_density_rows(
+            row_chunk,
+            &density_block.rows,
+            density_set.get_or_insert_with(|| {
+                CasaCubeBriggsDensityGridSet::new_from_direct(
+                    geometry,
+                    direct_density_plan
+                        .as_ref()
+                        .expect("direct density plan initialized"),
+                )
+            }),
+            direct_density_plan
+                .as_ref()
+                .expect("direct density plan initialized"),
+            cube_row_spectral_reusable_plan.as_deref(),
+            derived_engine.as_ref(),
             &mut accumulate_timings,
         )?;
-        let preweighting = cube.casa_cube_briggs_preweighting.as_ref().ok_or_else(|| {
-            "bounded mosaic cube stream expected CASA cube preweighting sidecar".to_string()
-        })?;
-        if density_set.is_none() {
-            density_set = Some(CasaCubeBriggsDensityGridSet::new(geometry, preweighting));
-        }
-        density_set
-            .as_mut()
-            .expect("density set initialized")
-            .accumulate(geometry, preweighting)?;
+        let (metadata_groups, metadata_ranges) = match compact_metadata {
+            Some((_, metadata_groups, metadata_ranges)) => (metadata_groups, metadata_ranges),
+            None => (0, 0),
+        };
+        let block_prepare_delta = prepare_stage_timings.delta_since(block_prepare_before);
+        let block_accumulate_delta = accumulate_timings.delta_since(block_accumulate_before);
         density_blocks += 1;
+        density_stats.record_block(
+            row_chunk.len(),
+            density_set
+                .as_ref()
+                .map(|set| set.density_grids.len())
+                .unwrap_or(0),
+            block_samples,
+            metadata_groups,
+            metadata_ranges,
+            block_prepare_delta,
+            block_accumulate_delta,
+            Duration::ZERO,
+            Duration::ZERO,
+        );
         if frontend_progress_enabled() {
             eprintln!(
-                "frontend stage=prepare_plane_input/mosaic_cube_briggs_density rows_done={} rows_total={} blocks={} total_elapsed_s={:.3}",
+                "frontend stage=prepare_plane_input/mosaic_cube_briggs_density rows_done={} rows_total={} blocks={} samples={} metadata_groups={} metadata_ranges={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} adapt_samples_ms={:.3} sample_rate_sps={:.3} total_elapsed_s={:.3}",
                 (density_blocks * row_block_rows).min(active_selected_rows.len()),
                 active_selected_rows.len(),
                 density_blocks,
+                block_samples,
+                metadata_groups,
+                metadata_ranges,
+                duration_ms(block_prepare_delta.get_ms_values_into_processing_buffer),
+                duration_ms(block_prepare_delta.prepare_processing_buffer),
+                duration_ms(block_accumulate_delta.adapt_samples),
+                sample_rate_per_second(block_samples, block_started.elapsed()),
                 prepare_started_at.elapsed().as_secs_f64(),
             );
         }
     }
+    density_stats.log_summary(
+        active_selected_rows.len(),
+        selected_channel_count,
+        row_block_rows,
+        &field_distribution,
+        standard_mfs_streaming_weight_density_mode(config),
+        false,
+    );
     let mut density_set = density_set
         .ok_or_else(|| "bounded mosaic cube stream built no density grid".to_string())?;
     density_set.finish();
 
-    let first_rows_len = row_block_rows.min(active_selected_rows.len());
-    let first_cube = prepare_mosaic_cube_one_channel_source_row_block(
-        ms,
-        config,
-        data_column,
-        true,
-        &selection,
-        &table_values,
-        &ddid_info,
-        &spectral_window,
-        &polarization,
-        flag_row,
-        &active_selected_rows[..first_rows_len],
-        derived_engine.as_ref(),
-        channel_read_range,
-        &geometry_columns,
-        prepare_started_at,
-        &mut prepare_stage_timings,
-        &mut accumulate_timings,
-    )?;
-    let first_plane = preweight_mosaic_cube_stream_block(geometry, &density_set, first_cube)?;
+    let first_plane = first_density_plane
+        .ok_or_else(|| "bounded mosaic cube stream built no metadata plane".to_string())?;
+    let prepare_plane_time = prepare_started_at.elapsed();
+    if matches!(stream_probe_mode, MosaicCubeStreamProbeMode::DensityOnly) {
+        maybe_log_frontend_progress(
+            "prepare_plane_input",
+            prepare_plane_time,
+            total_start.elapsed(),
+        );
+        return Ok(RunSummary {
+            warnings: vec![
+                "diagnostic mosaic cube stream probe stopped after density/setup pass; no image products written"
+                    .to_string(),
+            ],
+            gridded_samples: 0,
+            major_cycles: 0,
+            minor_iterations: 0,
+            clean_stop_reason: None,
+            minor_cycle_traces: Vec::new(),
+            channel_summaries: Vec::new(),
+            stage_timings: ImagingStageTimings::default(),
+            frontend_timings: FrontendStageTimings {
+                open_measurement_set,
+                prepare_plane_input: prepare_plane_time,
+                get_ms_values_into_processing_buffer: prepare_stage_timings
+                    .get_ms_values_into_processing_buffer,
+                prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+                extract_phase_center: Duration::ZERO,
+                run_imaging: Duration::ZERO,
+                build_coordinate_system: Duration::ZERO,
+                write_products: Duration::ZERO,
+                total: total_start.elapsed(),
+            },
+        });
+    }
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
     let cube_metadata = single_plane_cube_coordinate_metadata(config, &first_plane, &table_values)?;
@@ -3820,7 +4218,6 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         w_project_planes: config.w_project_planes,
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
-    let prepare_plane_time = prepare_started_at.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input",
         prepare_plane_time,
@@ -3829,80 +4226,191 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
 
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
+    let weight_density_mode = standard_mfs_streaming_weight_density_mode(config);
+    let mut replay_probe_stop = None::<(SinglePlaneStreamPass, usize, usize, usize, usize)>;
     let result = run_mosaic_mfs_from_single_plane_stream(
         request,
-        WeightDensityMode::Combined,
+        weight_density_mode,
         |pass, consumer| {
             let replay_started = Instant::now();
             let ordinal = replay_invocation;
             replay_invocation += 1;
+            let load_visibility_values = pass.needs_visibility_values();
             let mut block_count = 0usize;
             let mut sample_count = 0usize;
+            let mut pass_stats = MosaicCubeBoundedStreamPassStats::new(pass, ordinal);
             for row_chunk in active_selected_rows.chunks(row_block_rows) {
-                let cube = prepare_mosaic_cube_one_channel_source_row_block(
-                    ms,
-                    config,
-                    data_column,
-                    true,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &spectral_window,
-                    &polarization,
-                    flag_row,
-                    row_chunk,
-                    derived_engine.as_ref(),
-                    channel_read_range,
-                    &geometry_columns,
-                    prepare_started_at,
-                    &mut prepare_stage_timings,
-                    &mut accumulate_timings,
-                )
-                .map_err(ImagingError::InvalidRequest)?;
-                let plane =
-                    preweight_mosaic_cube_stream_block(geometry, &density_set, cube)
+                let block_prepare_before = prepare_stage_timings;
+                let block_accumulate_before = accumulate_timings;
+                let block_started = Instant::now();
+                let (plane_batches, gridder_mode, preweight_elapsed) =
+                    if let Some(plan) = direct_density_plan.as_ref() {
+                        let read_started = Instant::now();
+                        let channel_axes = Arc::clone(&density_channel_axes);
+                        let (block, _read_timings) = read_ms_imaging_essentials_block(
+                            ms,
+                            data_column,
+                            channel_axes,
+                            &geometry_columns,
+                            row_chunk,
+                            channel_read_range,
+                        )
                         .map_err(ImagingError::InvalidRequest)?;
-                let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
+                        prepare_stage_timings.get_ms_values_into_processing_buffer +=
+                            read_started.elapsed();
+                        let processing_started = Instant::now();
+                        let visibility_block = build_mosaic_cube_briggs_direct_visibility_batches(
+                            ms,
+                            config,
+                            &selection,
+                            row_chunk,
+                            &block.rows,
+                            &density_set,
+                            plan,
+                            cube_row_spectral_reusable_plan.as_deref(),
+                            derived_engine.as_ref(),
+                            &mut accumulate_timings,
+                        )
+                        .map_err(ImagingError::InvalidRequest)?;
+                        prepare_stage_timings.prepare_processing_buffer +=
+                            processing_started.elapsed();
+                        (visibility_block.batches, visibility_block.gridder_mode, Duration::ZERO)
+                    } else {
+                        let cube = prepare_mosaic_cube_one_channel_source_row_block(
+                            ms,
+                            config,
+                            data_column,
+                            load_visibility_values,
+                            &selection,
+                            &table_values,
+                            &ddid_info,
+                            &spectral_window,
+                            &polarization,
+                            flag_row,
+                            row_chunk,
+                            derived_engine.as_ref(),
+                            channel_read_range,
+                            &geometry_columns,
+                            cube_row_spectral_reusable_plan.clone(),
+                            prepare_started_at,
+                            &mut prepare_stage_timings,
+                            &mut accumulate_timings,
+                            false,
+                            false,
+                        )
+                        .map_err(ImagingError::InvalidRequest)?;
+                        let preweight_started = Instant::now();
+                        let plane =
+                            preweight_mosaic_cube_stream_block(geometry, &density_set, cube)
+                                .map_err(ImagingError::InvalidRequest)?;
+                        (plane.batches, plane.gridder_mode, preweight_started.elapsed())
+                    };
+                let block_prepare_delta = prepare_stage_timings.delta_since(block_prepare_before);
+                let block_accumulate_delta = accumulate_timings.delta_since(block_accumulate_before);
+                if !mosaic_gridder_metadata_matches_visibility_batches(&gridder_mode, &plane_batches)
+                {
+                    let detail = mosaic_gridder_metadata_alignment_error(
+                        &gridder_mode,
+                        &plane_batches,
+                    )
+                    .unwrap_or_else(|| "unknown mismatch".to_string());
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "bounded mosaic cube metadata for block {} is not aligned with replay visibility batches: {}",
+                        block_count + 1,
+                        detail,
+                    )));
+                }
+                let block_batches = plane_batches.len();
+                let block_samples = plane_batches.iter().map(VisibilityBatch::len).sum::<usize>();
+                let GridderMode::Mosaic(mosaic) = gridder_mode else {
                     return Err(ImagingError::InvalidRequest(
                         "bounded mosaic cube row block produced standard gridder metadata"
                             .to_string(),
                     ));
                 };
-                for (batch, metadata) in plane
-                    .batches
+                let block_metadata_groups = mosaic
+                    .grouped_metadata_batches
+                    .iter()
+                    .map(|metadata| metadata.groups.len())
+                    .sum::<usize>();
+                let block_metadata_ranges = mosaic
+                    .grouped_metadata_batches
+                    .iter()
+                    .flat_map(|metadata| metadata.groups.iter())
+                    .map(|group| group.sample_ranges.len())
+                    .sum::<usize>();
+                let consumer_started = Instant::now();
+                for (batch, metadata) in plane_batches
                     .into_iter()
                     .zip(mosaic.grouped_metadata_batches.into_iter())
                 {
-                    sample_count += batch.len();
                     consumer(SinglePlaneVisibilityBlock {
                         visibility: batch,
                         gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
                     })?;
                 }
+                let consumer_elapsed = consumer_started.elapsed();
+                sample_count += block_samples;
                 block_count += 1;
+                pass_stats.record_block(
+                    row_chunk.len(),
+                    block_batches,
+                    block_samples,
+                    block_metadata_groups,
+                    block_metadata_ranges,
+                    block_prepare_delta,
+                    block_accumulate_delta,
+                    preweight_elapsed,
+                    consumer_elapsed,
+                );
                 if frontend_progress_enabled() {
                     eprintln!(
-                        "frontend stage=run_imaging/mosaic_cube_bounded_stream_replay invocation={} pass={:?} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                        "frontend stage=run_imaging/mosaic_cube_bounded_stream_replay invocation={} pass={} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} block_samples={} batches={} metadata_groups={} metadata_ranges={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} adapt_samples_ms={:.3} preweight_ms={:.3} consumer_ms={:.3} block_rate_sps={:.3} elapsed_s={:.3}",
                         ordinal,
-                        pass,
+                        pass.label(),
+                        load_visibility_values,
                         (block_count * row_block_rows).min(active_selected_rows.len()),
                         active_selected_rows.len(),
                         block_count,
                         sample_count,
+                        block_samples,
+                        block_batches,
+                        block_metadata_groups,
+                        block_metadata_ranges,
+                        duration_ms(block_prepare_delta.get_ms_values_into_processing_buffer),
+                        duration_ms(block_prepare_delta.prepare_processing_buffer),
+                        duration_ms(block_accumulate_delta.adapt_samples),
+                        duration_ms(preweight_elapsed),
+                        duration_ms(consumer_elapsed),
+                        sample_rate_per_second(block_samples, block_started.elapsed()),
                         replay_started.elapsed().as_secs_f64(),
                     );
                 }
+                if let Some(limit) = stream_probe_mode.replay_block_limit()
+                    && load_visibility_values
+                    && block_count >= limit
+                {
+                    replay_probe_stop = Some((pass, ordinal, block_count, sample_count, limit));
+                    eprintln!(
+                        "mosaic_cube_stream_probe_stop pass={} ordinal={} blocks={} samples={} requested_blocks={} elapsed_s={:.3}",
+                        pass.label(),
+                        ordinal,
+                        block_count,
+                        sample_count,
+                        limit,
+                        replay_started.elapsed().as_secs_f64(),
+                    );
+                    break;
+                }
             }
-            if standard_mfs_profile_detail_enabled() {
-                eprintln!(
-                    "mosaic_cube_bounded_stream_replay invocation={} pass={:?} blocks={} samples={} elapsed_ms={:.3}",
-                    ordinal,
-                    pass,
-                    block_count,
-                    sample_count,
-                    duration_ms(replay_started.elapsed()),
-                );
-            }
+            pass_stats.log_summary(
+                active_selected_rows.len(),
+                selected_channel_count,
+                row_block_rows,
+                &field_distribution,
+                weight_density_mode,
+                load_visibility_values,
+            );
             Ok(())
         },
     )
@@ -3959,8 +4467,20 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     let write_products_time = stage_start.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
 
+    let mut warnings = run_result.warnings();
+    if let Some((pass, ordinal, blocks, samples, limit)) = replay_probe_stop {
+        warnings.push(format!(
+            "diagnostic mosaic cube stream probe stopped {} replay ordinal {} after {} blocks / {} samples (requested_blocks={}); image products are partial timing probes, not correctness evidence",
+            pass.label(),
+            ordinal,
+            blocks,
+            samples,
+            limit,
+        ));
+    }
+
     Ok(RunSummary {
-        warnings: run_result.warnings(),
+        warnings,
         gridded_samples: run_result.gridded_samples(),
         major_cycles: run_result.major_cycles(),
         minor_iterations: run_result.minor_iterations(),
@@ -8428,6 +8948,355 @@ impl PreparePlaneInputStageTimings {
         self.get_ms_values_into_processing_buffer += extra.get_ms_values_into_processing_buffer;
         self.prepare_processing_buffer += extra.prepare_processing_buffer;
     }
+
+    fn delta_since(self, before: Self) -> Self {
+        Self {
+            get_ms_values_into_processing_buffer: self
+                .get_ms_values_into_processing_buffer
+                .saturating_sub(before.get_ms_values_into_processing_buffer),
+            prepare_processing_buffer: self
+                .prepare_processing_buffer
+                .saturating_sub(before.prepare_processing_buffer),
+        }
+    }
+}
+
+const MOSAIC_CUBE_WIDTH1024_SERIAL_BASELINE_SECONDS: f64 = 8244.666_577;
+const MOSAIC_CUBE_WIDTH1024_TARGET_SECONDS: f64 = 825.0;
+const MOSAIC_CUBE_TARGET_SAMPLES_PER_SECOND: f64 = 7_500_000.0;
+
+#[derive(Debug)]
+struct MosaicCubeBoundedStreamPassStats {
+    pass: SinglePlaneStreamPass,
+    ordinal: usize,
+    started_at: Instant,
+    row_blocks: usize,
+    rows: usize,
+    batches: usize,
+    samples: usize,
+    metadata_groups: usize,
+    metadata_ranges: usize,
+    prepare_timings: PreparePlaneInputStageTimings,
+    accumulate_timings: AccumulateRowTimings,
+    preweight: Duration,
+    consumer: Duration,
+}
+
+impl MosaicCubeBoundedStreamPassStats {
+    fn new(pass: SinglePlaneStreamPass, ordinal: usize) -> Self {
+        Self {
+            pass,
+            ordinal,
+            started_at: Instant::now(),
+            row_blocks: 0,
+            rows: 0,
+            batches: 0,
+            samples: 0,
+            metadata_groups: 0,
+            metadata_ranges: 0,
+            prepare_timings: PreparePlaneInputStageTimings::default(),
+            accumulate_timings: AccumulateRowTimings::default(),
+            preweight: Duration::ZERO,
+            consumer: Duration::ZERO,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_block(
+        &mut self,
+        rows: usize,
+        batches: usize,
+        samples: usize,
+        metadata_groups: usize,
+        metadata_ranges: usize,
+        prepare_timings: PreparePlaneInputStageTimings,
+        accumulate_timings: AccumulateRowTimings,
+        preweight: Duration,
+        consumer: Duration,
+    ) {
+        self.row_blocks += 1;
+        self.rows += rows;
+        self.batches += batches;
+        self.samples += samples;
+        self.metadata_groups += metadata_groups;
+        self.metadata_ranges += metadata_ranges;
+        self.prepare_timings.add(prepare_timings);
+        self.accumulate_timings += accumulate_timings;
+        self.preweight += preweight;
+        self.consumer += consumer;
+    }
+
+    fn log_summary(
+        &self,
+        total_active_rows: usize,
+        selected_channels: usize,
+        row_block_rows: usize,
+        field_distribution: &str,
+        weight_density_mode: WeightDensityMode,
+        load_visibility_values: bool,
+    ) {
+        if !(frontend_progress_enabled() || standard_mfs_profile_detail_enabled()) {
+            return;
+        }
+        let elapsed = self.started_at.elapsed();
+        eprintln!(
+            "mosaic_cube_stream_pass_summary ordinal={} pass={} load_visibility_values={} density_mode={:?} row_blocks={} rows={} rows_total={} row_block_rows={} selected_channels={} samples={} sample_rate_sps={:.3} target_sample_rate_sps={:.3} batches={} metadata_groups={} metadata_ranges={} fields={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} cube_spectral_cache_hits={} cube_spectral_cache_misses={} cube_source_frequency_cache_hits={} cube_source_frequency_cache_misses={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_source_frequency_lookup_ms={:.3} cube_density_sidecar_ms={:.3} cube_density_weight_ms={:.3} cube_density_cell_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} preweight_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            self.ordinal,
+            self.pass.label(),
+            load_visibility_values,
+            weight_density_mode,
+            self.row_blocks,
+            self.rows,
+            total_active_rows,
+            row_block_rows,
+            selected_channels,
+            self.samples,
+            sample_rate_per_second(self.samples, elapsed),
+            MOSAIC_CUBE_TARGET_SAMPLES_PER_SECOND,
+            self.batches,
+            self.metadata_groups,
+            self.metadata_ranges,
+            field_distribution,
+            duration_ms(self.prepare_timings.get_ms_values_into_processing_buffer),
+            duration_ms(self.prepare_timings.prepare_processing_buffer),
+            self.accumulate_timings.rows_seen,
+            self.accumulate_timings.rows_flagged,
+            self.accumulate_timings.cube_spectral_cache_hits,
+            self.accumulate_timings.cube_spectral_cache_misses,
+            self.accumulate_timings.cube_source_frequency_cache_hits,
+            self.accumulate_timings.cube_source_frequency_cache_misses,
+            duration_ms(self.accumulate_timings.flag_row),
+            duration_ms(self.accumulate_timings.data_column),
+            duration_ms(self.accumulate_timings.flag_column),
+            duration_ms(self.accumulate_timings.weight_column),
+            duration_ms(self.accumulate_timings.weight_spectrum),
+            duration_ms(self.accumulate_timings.adapt_samples),
+            duration_ms(self.accumulate_timings.cube_spectral_lookup),
+            duration_ms(self.accumulate_timings.cube_source_frequency_lookup),
+            duration_ms(self.accumulate_timings.cube_density_sidecar),
+            duration_ms(self.accumulate_timings.cube_density_weight),
+            duration_ms(self.accumulate_timings.cube_density_cell),
+            duration_ms(self.accumulate_timings.cube_density_grid_update),
+            duration_ms(self.accumulate_timings.cube_visibility_sample),
+            duration_ms(self.accumulate_timings.cube_visibility_push),
+            duration_ms(self.accumulate_timings.cube_metadata),
+            duration_ms(self.preweight),
+            duration_ms(self.consumer),
+            duration_ms(elapsed),
+        );
+    }
+}
+
+fn sample_rate_per_second(samples: usize, elapsed: Duration) -> f64 {
+    let elapsed = elapsed.as_secs_f64();
+    if elapsed > 0.0 {
+        samples as f64 / elapsed
+    } else {
+        0.0
+    }
+}
+
+fn bytes_to_gib(bytes: usize) -> f64 {
+    bytes as f64 / 1024.0 / 1024.0 / 1024.0
+}
+
+fn selected_row_field_distribution(rows: &[SelectedMainRow]) -> String {
+    let mut counts = BTreeMap::<usize, usize>::new();
+    for row in rows {
+        *counts.entry(row.field_id).or_default() += 1;
+    }
+    counts
+        .iter()
+        .map(|(field, count)| format!("{field}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mosaic_cube_row_spectral_reusable_plan(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<Option<Arc<CubeRowSpectralReusablePlan>>, String> {
+    if !mosaic_cube_one_channel_can_use_single_plane_stream(config) {
+        return Ok(None);
+    }
+    let started_at = Instant::now();
+    let cube_context = cube_setup_context_for_selection(selection, derived_engine)?;
+    let mut prepared = PreparedSelection::new(
+        config,
+        selection.selected_ddid,
+        ddid_info,
+        spectral_window,
+        polarization,
+        selection.phase_center.clone(),
+        Some(cube_context),
+        false,
+        false,
+    );
+    if let Some(init_error) = prepared.initialization_error.take() {
+        return Err(init_error);
+    }
+    let cube_setup = prepared
+        .cube_spectral_setup
+        .take()
+        .ok_or_else(|| "internal error: missing mosaic cube spectral setup".to_string())?;
+    let derived_engine = derived_engine.ok_or_else(|| {
+        "internal error: missing derived engine for mosaic cube spectral plan".to_string()
+    })?;
+    let mut keys = BTreeSet::<(u64, usize)>::new();
+    for row in active_selected_rows {
+        let row_time_mjd_sec = row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for mosaic cube spectral plan".to_string()
+        })?;
+        keys.insert((row_time_mjd_sec.to_bits(), row.field_id));
+    }
+
+    let mut plan = CubeRowSpectralReusablePlan {
+        spectral: HashMap::with_capacity(keys.len()),
+        source_frequencies: HashMap::new(),
+    };
+    let needs_source_frequency_cache = prepared.casa_cube_grid_interpolation;
+    if needs_source_frequency_cache {
+        plan.source_frequencies = HashMap::with_capacity(keys.len());
+    }
+
+    let mut grid_assignments = 0usize;
+    let mut grid_contributions = 0usize;
+    let mut padded_grid_assignments = 0usize;
+    let mut padded_grid_contributions = 0usize;
+    let mut output_contributions = 0usize;
+    let mut source_frequency_values = 0usize;
+    for cache_key in keys {
+        let (time_bits, field_id) = cache_key;
+        let row_time_mjd_sec = f64::from_bits(time_bits);
+        let contributions = Arc::new(
+            cube_setup
+                .row_spectral_contributions(
+                    &prepared.source_channel_frequencies_hz,
+                    &prepared.source_channel_widths_hz,
+                    row_time_mjd_sec,
+                    field_id,
+                    derived_engine,
+                )
+                .map_err(|error| error.to_string())?,
+        );
+        grid_assignments += contributions.grid_channel_contributions.len();
+        grid_contributions += contributions
+            .grid_channel_contributions
+            .iter()
+            .map(|grid| grid.contributions.len())
+            .sum::<usize>();
+        padded_grid_assignments += contributions.padded_grid_channel_contributions.len();
+        padded_grid_contributions += contributions
+            .padded_grid_channel_contributions
+            .iter()
+            .map(|grid| grid.contributions.len())
+            .sum::<usize>();
+        output_contributions += contributions
+            .output_channel_contributions
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>();
+        plan.spectral.insert(cache_key, contributions);
+
+        if needs_source_frequency_cache {
+            let source_frequencies = Arc::new(
+                cube_setup
+                    .row_source_frequencies_for_interpolation(
+                        &prepared.source_channel_frequencies_hz,
+                        row_time_mjd_sec,
+                        field_id,
+                        derived_engine,
+                    )
+                    .map_err(|error| error.to_string())?,
+            );
+            source_frequency_values += source_frequencies.len();
+            plan.source_frequencies
+                .insert(cache_key, source_frequencies);
+        }
+    }
+
+    let estimated_bytes = grid_contributions
+        .saturating_add(padded_grid_contributions)
+        .saturating_add(output_contributions)
+        .saturating_mul(std::mem::size_of::<CubeChannelContribution>())
+        .saturating_add(source_frequency_values.saturating_mul(std::mem::size_of::<f64>()));
+    eprintln!(
+        "mosaic_cube_reusable_plan_summary entries={} source_frequency_entries={} selected_channels={} output_channels={} grid_assignments={} grid_contributions={} padded_grid_assignments={} padded_grid_contributions={} output_contributions={} estimated_payload_gib={:.6} build_ms={:.3} cache_scope=per_time_field visibility_value_cache=off",
+        plan.spectral_entries(),
+        plan.source_frequency_entries(),
+        prepared.source_channel_indices.len(),
+        cube_setup.output_channel_frequencies_hz.len(),
+        grid_assignments,
+        grid_contributions,
+        padded_grid_assignments,
+        padded_grid_contributions,
+        output_contributions,
+        bytes_to_gib(estimated_bytes),
+        duration_ms(started_at.elapsed()),
+    );
+    Ok(Some(Arc::new(plan)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MosaicCubeStreamProbeMode {
+    None,
+    DensityOnly,
+    ReplayBlockLimit(usize),
+}
+
+fn mosaic_cube_stream_probe_mode() -> Result<MosaicCubeStreamProbeMode, String> {
+    let Ok(value) = env::var("CASA_RS_MOSAIC_CUBE_STREAM_PROBE") else {
+        return Ok(MosaicCubeStreamProbeMode::None);
+    };
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "0" | "false" | "none" | "off" => Ok(MosaicCubeStreamProbeMode::None),
+        "density" | "density-only" | "density_only" => Ok(MosaicCubeStreamProbeMode::DensityOnly),
+        other
+            if other
+                .strip_prefix("dirty-blocks:")
+                .or_else(|| other.strip_prefix("replay-blocks:"))
+                .or_else(|| other.strip_prefix("dirty_blocks:"))
+                .or_else(|| other.strip_prefix("replay_blocks:"))
+                .is_some() =>
+        {
+            let raw_limit = other
+                .strip_prefix("dirty-blocks:")
+                .or_else(|| other.strip_prefix("replay-blocks:"))
+                .or_else(|| other.strip_prefix("dirty_blocks:"))
+                .or_else(|| other.strip_prefix("replay_blocks:"))
+                .expect("prefix checked");
+            let limit = raw_limit.parse::<usize>().map_err(|error| {
+                format!(
+                    "unsupported CASA_RS_MOSAIC_CUBE_STREAM_PROBE={value:?}; block limit must be a positive integer: {error}"
+                )
+            })?;
+            if limit == 0 {
+                return Err(format!(
+                    "unsupported CASA_RS_MOSAIC_CUBE_STREAM_PROBE={value:?}; block limit must be positive"
+                ));
+            }
+            Ok(MosaicCubeStreamProbeMode::ReplayBlockLimit(limit))
+        }
+        other => Err(format!(
+            "unsupported CASA_RS_MOSAIC_CUBE_STREAM_PROBE={other:?}; expected none, density, or dirty-blocks:<N>"
+        )),
+    }
+}
+
+impl MosaicCubeStreamProbeMode {
+    fn replay_block_limit(self) -> Option<usize> {
+        match self {
+            Self::ReplayBlockLimit(limit) => Some(limit),
+            Self::None | Self::DensityOnly => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -9702,12 +10571,12 @@ struct CasaCubeBriggsDensityGridSet {
 }
 
 impl CasaCubeBriggsDensityGridSet {
-    fn new(geometry: ImageGeometry, preweighting: &CasaCubeBriggsPreparedWeighting) -> Self {
+    fn new_from_direct(geometry: ImageGeometry, plan: &MosaicCubeBriggsDirectDensityPlan) -> Self {
         let _ = geometry;
         Self {
-            weighting: preweighting.weighting,
-            fractional_bandwidth: preweighting.fractional_bandwidth,
-            density_plane_count: preweighting.density_plane_count,
+            weighting: plan.weighting,
+            fractional_bandwidth: plan.fractional_bandwidth,
+            density_plane_count: plan.density_plane_count,
             density_group_field_ids: Vec::new(),
             density_grids: Vec::new(),
             f2_by_plane: Vec::new(),
@@ -9727,37 +10596,6 @@ impl CasaCubeBriggsDensityGridSet {
         self.density_grids
             .extend((0..self.density_plane_count).map(|_| Array2::<f32>::zeros(shape)));
         group_index * self.density_plane_count
-    }
-
-    fn accumulate(
-        &mut self,
-        geometry: ImageGeometry,
-        preweighting: &CasaCubeBriggsPreparedWeighting,
-    ) -> Result<(), String> {
-        if self.weighting != preweighting.weighting
-            || !frequencies_close(self.fractional_bandwidth, preweighting.fractional_bandwidth)
-            || self.density_plane_count != preweighting.density_plane_count
-        {
-            return Err("incompatible CASA cube Briggs density preweighting block".to_string());
-        }
-        let shape = (geometry.image_shape[0], geometry.image_shape[1]);
-        for (local_plane, batch) in preweighting.density_batches.iter().enumerate() {
-            let local_group = local_plane / preweighting.density_plane_count;
-            let plane_offset = local_plane % preweighting.density_plane_count;
-            let Some(field_id) = preweighting
-                .density_group_field_ids
-                .get(local_group)
-                .copied()
-            else {
-                continue;
-            };
-            let global_plane = self.ensure_group(field_id, shape) + plane_offset;
-            let Some(density) = self.density_grids.get_mut(global_plane) else {
-                continue;
-            };
-            accumulate_casa_cube_briggs_density_grid(geometry, batch, density);
-        }
-        Ok(())
     }
 
     fn finish(&mut self) {
@@ -9784,33 +10622,873 @@ impl CasaCubeBriggsDensityGridSet {
     }
 }
 
-fn accumulate_casa_cube_briggs_density_grid(
-    geometry: ImageGeometry,
-    batch: &VisibilityBatch,
-    density: &mut Array2<f32>,
-) {
-    let [nx, ny] = geometry.image_shape;
-    for sample_index in 0..batch.len() {
-        if !batch.gridable[sample_index] {
-            continue;
-        }
-        let weight = batch.weight[sample_index];
-        if !(weight.is_finite() && weight > 0.0) {
-            continue;
-        }
-        if let Some((x, y)) = casa_cube_briggs_gridft_density_cell(
-            geometry,
-            batch.u_lambda[sample_index],
-            batch.v_lambda[sample_index],
-        ) {
-            density[(x, y)] += weight;
-            let mirror_x = nx.saturating_sub(x);
-            let mirror_y = ny.saturating_sub(y);
-            if mirror_x < nx && mirror_y < ny {
-                density[(mirror_x, mirror_y)] += weight;
+struct MosaicCubeBriggsDirectDensityPlan {
+    weighting: WeightingMode,
+    fractional_bandwidth: f64,
+    density_plane_count: usize,
+    source_channel_indices: Arc<[usize]>,
+    source_channel_frequencies_hz: Arc<[f64]>,
+    spw_frequencies_hz: Arc<[f64]>,
+    spw_widths_hz: Arc<[f64]>,
+    output_channel_frequencies_hz: Arc<[f64]>,
+    polarization: CubeOneChannelBriggsPolarization,
+    pair_transform: Option<PairCollapseTransform>,
+    plane_stokes: PlaneStokes,
+    phase_center_direction_rad: [f64; 2],
+    image_shape: (usize, usize),
+    cell_size_rad: [f64; 2],
+}
+
+impl MosaicCubeBriggsDirectDensityPlan {
+    fn new(
+        config: &CliConfig,
+        geometry: ImageGeometry,
+        preweighting: &CasaCubeBriggsPreparedWeighting,
+        table_values: &PreparedSelectionTableValues,
+        density_channel_read_range: SelectedChannelReadRange,
+        phase_center_direction_rad: [f64; 2],
+        output_channel_frequencies_hz: Vec<f64>,
+    ) -> Result<Self, String> {
+        let explicit_plane = config
+            .correlation
+            .as_deref()
+            .map(parse_plane_stokes)
+            .transpose()?;
+        let plane_stokes = explicit_plane.unwrap_or(PlaneStokes::I);
+        let mut pair_transform = None;
+        let polarization = if let Some(corr_code) = plane_to_corr_code(plane_stokes) {
+            let corr_index = table_values
+                .corr_types
+                .iter()
+                .position(|code| *code == corr_code)
+                .ok_or_else(|| {
+                    format!(
+                        "requested raw correlation plane {} is not present",
+                        plane_stokes.as_str()
+                    )
+                })?;
+            CubeOneChannelBriggsPolarization::Explicit { corr_index }
+        } else {
+            let (pair, transform) =
+                derive_stokes_pair_selection(plane_stokes, &table_values.corr_types)?;
+            pair_transform = Some(transform);
+            CubeOneChannelBriggsPolarization::CollapsedPair {
+                first_corr_index: pair.0,
+                second_corr_index: pair.1,
             }
+        };
+        Ok(Self {
+            weighting: preweighting.weighting,
+            fractional_bandwidth: preweighting.fractional_bandwidth,
+            density_plane_count: preweighting.density_plane_count,
+            source_channel_indices: Arc::from(
+                (density_channel_read_range.start
+                    ..density_channel_read_range.start + density_channel_read_range.count)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+            source_channel_frequencies_hz: Arc::from(
+                table_values.spw_freqs_hz[density_channel_read_range.start
+                    ..density_channel_read_range.start + density_channel_read_range.count]
+                    .to_vec(),
+            ),
+            spw_frequencies_hz: Arc::from(table_values.spw_freqs_hz.clone()),
+            spw_widths_hz: Arc::from(table_values.spw_widths_hz.clone()),
+            output_channel_frequencies_hz: Arc::from(output_channel_frequencies_hz),
+            polarization,
+            pair_transform,
+            plane_stokes,
+            phase_center_direction_rad,
+            image_shape: (geometry.image_shape[0], geometry.image_shape[1]),
+            cell_size_rad: geometry.cell_size_rad,
+        })
+    }
+}
+
+fn accumulate_mosaic_cube_briggs_direct_density_rows(
+    selected_rows: &[SelectedMainRow],
+    rows: &[MsImagingDensityEssentials],
+    density_set: &mut CasaCubeBriggsDensityGridSet,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    reusable_plan: Option<&CubeRowSpectralReusablePlan>,
+    _derived_engine: Option<&MsCalEngine>,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<usize, String> {
+    if selected_rows.len() != rows.len() {
+        return Err(format!(
+            "internal error: selected row count {} differs from density row count {}",
+            selected_rows.len(),
+            rows.len()
+        ));
+    }
+    let mut accepted_samples = 0usize;
+    for (selected_row, row) in selected_rows.iter().zip(rows.iter()) {
+        if row.spw_id != selected_row.spw_id {
+            return Err(format!(
+                "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                selected_row.row_index, selected_row.spw_id, row.spw_id
+            ));
+        }
+        let adapt_started = Instant::now();
+        if row.gridable {
+            let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+                "internal error: missing row time for mosaic cube Briggs density".to_string()
+            })?;
+            let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+            let spectral_started = Instant::now();
+            let contributions = reusable_plan
+                .and_then(|plan| plan.spectral(&cache_key))
+                .ok_or_else(|| {
+                    "internal error: missing reusable spectral entry for mosaic cube Briggs density"
+                        .to_string()
+                })?;
+            accumulate_timings.cube_spectral_lookup += spectral_started.elapsed();
+            let density_row_started = Instant::now();
+            accepted_samples =
+                accepted_samples.saturating_add(accumulate_mosaic_cube_briggs_direct_density_row(
+                    selected_row,
+                    row,
+                    density_set,
+                    plan,
+                    &contributions,
+                )?);
+            accumulate_timings.cube_density_grid_update += density_row_started.elapsed();
+        }
+        accumulate_timings.adapt_samples += adapt_started.elapsed();
+    }
+    Ok(accepted_samples)
+}
+
+fn accumulate_mosaic_cube_briggs_direct_density_row(
+    selected_row: &SelectedMainRow,
+    row: &MsImagingDensityEssentials,
+    density_set: &mut CasaCubeBriggsDensityGridSet,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    contributions: &CubeRowSpectralContributions,
+) -> Result<usize, String> {
+    let density_group_base = density_set.ensure_group(selected_row.field_id, plan.image_shape);
+    let density_uvw_m = gridft_density_uvw_m(
+        [row.u_m, row.v_m, row.w_m],
+        row.field_phase_center_direction_rad,
+        plan.phase_center_direction_rad,
+    );
+    let mut accepted = 0usize;
+    for grid in &contributions.padded_grid_channel_contributions {
+        let Some(weight) = cube_one_channel_briggs_density_weight(
+            row,
+            plan.polarization,
+            &plan.source_channel_indices,
+            &grid.contributions,
+        )?
+        else {
+            continue;
+        };
+        let Some(density_plane) = (grid.output_channel < plan.density_plane_count)
+            .then_some(density_group_base + grid.output_channel)
+        else {
+            continue;
+        };
+        let Some(density) = density_set.density_grids.get_mut(density_plane) else {
+            continue;
+        };
+        let lambda_scale = grid.grid_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        let Some((x, y)) = casa_cube_briggs_gridft_density_cell_from_lambda(
+            density.dim(),
+            density_uvw_m[0] * lambda_scale,
+            density_uvw_m[1] * lambda_scale,
+            plan.cell_size_rad,
+        ) else {
+            continue;
+        };
+        density[(x, y)] += weight;
+        let (nx, ny) = density.dim();
+        let mirror_x = nx.saturating_sub(x);
+        let mirror_y = ny.saturating_sub(y);
+        if mirror_x < nx && mirror_y < ny {
+            density[(mirror_x, mirror_y)] += weight;
+        }
+        accepted += 1;
+    }
+    Ok(accepted)
+}
+
+fn cached_direct_mosaic_cube_pb_frequency_hz(
+    cache: &mut HashMap<(usize, u64), f64>,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    output_channel: usize,
+    output_frequency_hz: f64,
+) -> f64 {
+    let key = (output_channel, output_frequency_hz.to_bits());
+    if let Some(value) = cache.get(&key).copied() {
+        return value;
+    }
+    let value = casa_one_channel_cube_mosaic_pb_frequency_hz(
+        output_channel,
+        output_frequency_hz,
+        Some(plan.output_channel_frequencies_hz.as_ref()),
+        plan.source_channel_frequencies_hz.as_ref(),
+        plan.spw_frequencies_hz.as_ref(),
+        plan.spw_widths_hz.as_ref(),
+    );
+    cache.insert(key, value);
+    value
+}
+
+struct MosaicCubeDirectVisibilityBlock {
+    batches: Vec<VisibilityBatch>,
+    gridder_mode: GridderMode,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mosaic_cube_briggs_direct_visibility_batches(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    selected_rows: &[SelectedMainRow],
+    rows: &[MsImagingEssentials],
+    density_set: &CasaCubeBriggsDensityGridSet,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    reusable_plan: Option<&CubeRowSpectralReusablePlan>,
+    derived_engine: Option<&MsCalEngine>,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<MosaicCubeDirectVisibilityBlock, String> {
+    if selected_rows.len() != rows.len() {
+        return Err(format!(
+            "internal error: selected row count {} differs from visibility row count {}",
+            selected_rows.len(),
+            rows.len()
+        ));
+    }
+    let max_batch_size = standard_mfs_streaming_batch_size().max(1);
+    let prepare_thread_count = standard_mfs_density_prepare_threads(rows.len()).max(1);
+    let prepare_chunk_len = rows.len().div_ceil(prepare_thread_count).max(1);
+    let use_casa_cube_grid_interpolation = effective_cube_grid_interpolation(config)
+        && matches!(
+            config.weighting,
+            WeightingMode::Uniform
+                | WeightingMode::Briggs { .. }
+                | WeightingMode::BriggsBwTaper { .. }
+        );
+    let mut batches = Vec::<VisibilityBatch>::new();
+    let mut batch = empty_visibility_batch(max_batch_size.min(1_048_576));
+    let primary_beam_model = infer_primary_beam_model_for_antennas(
+        ms,
+        rows.iter()
+            .flat_map(|row| [row.antenna1_id, row.antenna2_id]),
+    )?;
+    let mut metadata_batches = Vec::<GroupedVisibilityMetadataBatch>::new();
+    let mut metadata_group_index_by_key = BTreeMap::<(usize, u64), usize>::new();
+    let mut metadata_groups = Vec::<GroupedVisibilityMetadata>::new();
+    let mut metadata_sample_count = 0usize;
+    let mut beam_frequency_cache = HashMap::<(usize, u64), f64>::new();
+    for (row_offset, (selected_row, row)) in selected_rows.iter().zip(rows.iter()).enumerate() {
+        accumulate_timings.rows_seen += 1;
+        if row.spw_id != selected_row.spw_id {
+            return Err(format!(
+                "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                selected_row.row_index, selected_row.spw_id, row.spw_id
+            ));
+        }
+        let adapt_started = Instant::now();
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for mosaic cube visibility".to_string()
+        })?;
+        let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+        let contributions = reusable_plan
+            .and_then(|plan| plan.spectral(&cache_key))
+            .ok_or_else(|| {
+                "internal error: missing reusable spectral entry for mosaic cube visibility"
+                    .to_string()
+            })?;
+        let source_lookup_frequencies =
+            reusable_plan.and_then(|plan| plan.source_frequencies(&cache_key));
+        let source_lookup_frequencies_hz = source_lookup_frequencies.as_deref().map(Vec::as_slice);
+        let transform = row_imaging_transform(
+            selected_row.row_index,
+            selected_row.field_id,
+            &selection.phase_center,
+            [row.u_m, row.v_m, row.w_m],
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+        )?;
+        let assignment_iter: Box<
+            dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
+        > = if use_casa_cube_grid_interpolation {
+            Box::new(contributions.grid_channel_contributions.iter().map(|grid| {
+                (
+                    grid.output_channel,
+                    grid.grid_frequency_hz,
+                    grid.contributions.as_slice(),
+                )
+            }))
+        } else {
+            Box::new(
+                contributions
+                    .output_channel_contributions
+                    .iter()
+                    .enumerate()
+                    .map(|(output_channel, output_contributions)| {
+                        (
+                            output_channel,
+                            plan.output_channel_frequencies_hz[output_channel],
+                            output_contributions.as_slice(),
+                        )
+                    }),
+            )
+        };
+        for (output_channel, output_frequency_hz, sample_contributions) in assignment_iter {
+            if sample_contributions.is_empty()
+                || !(output_frequency_hz.is_finite() && output_frequency_hz > 0.0)
+            {
+                continue;
+            }
+            let Some((visibility, natural_weight, sumwt_factor)) =
+                direct_mosaic_cube_output_sample(
+                    row,
+                    plan,
+                    transform.phase_shift_m,
+                    output_frequency_hz,
+                    sample_contributions,
+                    use_casa_cube_grid_interpolation,
+                )?
+            else {
+                continue;
+            };
+            let lambda_scale = output_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+            let beam_frequency_hz = cached_direct_mosaic_cube_pb_frequency_hz(
+                &mut beam_frequency_cache,
+                plan,
+                output_channel,
+                output_frequency_hz,
+            );
+            push_mosaic_cube_direct_metadata_range(
+                &mut metadata_batches,
+                &mut metadata_group_index_by_key,
+                &mut metadata_groups,
+                &mut metadata_sample_count,
+                max_batch_size,
+                primary_beam_model,
+                selected_row.field_id,
+                row.pointing_direction_rad,
+                Some(beam_frequency_hz),
+                1,
+            )?;
+            let (lookup_u_lambda, lookup_v_lambda, density_plane) =
+                direct_mosaic_cube_density_lookup(
+                    selected_row,
+                    row,
+                    density_set,
+                    plan,
+                    &contributions,
+                    source_lookup_frequencies_hz,
+                    sample_contributions,
+                )?;
+            let final_weight = direct_mosaic_cube_briggs_preweighted_weight(
+                density_set,
+                plan,
+                density_plane,
+                lookup_u_lambda,
+                lookup_v_lambda,
+                natural_weight,
+            );
+            batch.u_lambda.push(transform.uvw_m[0] * lambda_scale);
+            batch.v_lambda.push(transform.uvw_m[1] * lambda_scale);
+            batch.w_lambda.push(transform.uvw_m[2] * lambda_scale);
+            batch.weight.push(final_weight);
+            batch.sumwt_factor.push(sumwt_factor);
+            batch.gridable.push(row.gridable);
+            batch.visibility.push(visibility);
+            if batch.len() >= max_batch_size {
+                batches.push(std::mem::replace(
+                    &mut batch,
+                    empty_visibility_batch(max_batch_size.min(1_048_576)),
+                ));
+            }
+            let _ = output_channel;
+        }
+        accumulate_timings.adapt_samples += adapt_started.elapsed();
+        if (row_offset + 1) % prepare_chunk_len == 0 && !batch.is_empty() {
+            batches.push(std::mem::replace(
+                &mut batch,
+                empty_visibility_batch(max_batch_size.min(1_048_576)),
+            ));
+            flush_mosaic_cube_direct_metadata_batch(
+                &mut metadata_batches,
+                &mut metadata_group_index_by_key,
+                &mut metadata_groups,
+                &mut metadata_sample_count,
+            );
         }
     }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    flush_mosaic_cube_direct_metadata_batch(
+        &mut metadata_batches,
+        &mut metadata_group_index_by_key,
+        &mut metadata_groups,
+        &mut metadata_sample_count,
+    );
+    if batches.is_empty() {
+        batches.push(empty_visibility_batch(0));
+    }
+    if metadata_batches.is_empty() {
+        metadata_batches.push(GroupedVisibilityMetadataBatch {
+            sample_count: 0,
+            groups: Vec::new(),
+        });
+    }
+    if metadata_batches.len() != batches.len() {
+        return Err(format!(
+            "direct mosaic cube replay built {} metadata batches for {} visibility batches",
+            metadata_batches.len(),
+            batches.len()
+        ));
+    }
+    Ok(MosaicCubeDirectVisibilityBlock {
+        batches,
+        gridder_mode: GridderMode::Mosaic(MosaicGridderConfig {
+            phase_center_direction_rad: plan.phase_center_direction_rad,
+            primary_beam_model,
+            pb_limit: config.mosaic_pb_limit,
+            metadata_batches: Vec::new(),
+            grouped_metadata_batches: metadata_batches,
+        }),
+    })
+}
+
+fn direct_mosaic_cube_output_sample(
+    row: &MsImagingEssentials,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    phase_shift_m: f64,
+    output_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<(Complex32, f32, f32)>, String> {
+    match plan.polarization {
+        CubeOneChannelBriggsPolarization::Explicit { corr_index } => {
+            direct_explicit_mosaic_cube_output_sample(
+                row,
+                corr_index,
+                &plan.source_channel_indices,
+                phase_shift_m,
+                output_frequency_hz,
+                contributions,
+                nearest_weight,
+            )
+        }
+        CubeOneChannelBriggsPolarization::CollapsedPair {
+            first_corr_index,
+            second_corr_index,
+        } => {
+            let Some(transform) = plan.pair_transform else {
+                return Err(
+                    "internal error: collapsed cube sample missing pair transform".to_string(),
+                );
+            };
+            direct_collapsed_mosaic_cube_output_sample(
+                row,
+                (first_corr_index, second_corr_index),
+                transform,
+                plan.plane_stokes,
+                &plan.source_channel_indices,
+                phase_shift_m,
+                output_frequency_hz,
+                contributions,
+                nearest_weight,
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_explicit_mosaic_cube_output_sample(
+    row: &MsImagingEssentials,
+    corr_index: usize,
+    source_channel_indices: &[usize],
+    phase_shift_m: f64,
+    output_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<(Complex32, f32, f32)>, String> {
+    let mut visibility = Complex32::new(0.0, 0.0);
+    let mut weight = 0.0f32;
+    let mut sumwt_factor = 0.0f32;
+    let mut nearest_weight_candidate = None::<(f32, f32)>;
+    let channel_count = row.data.shape().get(1).copied().unwrap_or(0);
+    for contribution in contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&source_channel) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let local_channel = local_channel_index(source_channel, row.channel_origin, channel_count)?;
+        if *row
+            .flag
+            .get((corr_index, local_channel))
+            .ok_or_else(|| format!("FLAG index [{corr_index}, {source_channel}] out of bounds"))?
+        {
+            return Ok(None);
+        }
+        let source_visibility = *row
+            .data
+            .get((corr_index, local_channel))
+            .ok_or_else(|| format!("DATA index [{corr_index}, {source_channel}] out of bounds"))?;
+        let source_weight = essentials_row_weight_for_corr_channel(row, corr_index, local_channel)?;
+        if !(source_visibility.re.is_finite()
+            && source_visibility.im.is_finite()
+            && source_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        visibility += source_visibility * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => nearest_weight_candidate = Some((contribution.factor, source_weight)),
+                Some((best_factor, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate = Some((contribution.factor, source_weight));
+                }
+                _ => {}
+            }
+        } else {
+            weight += source_weight * contribution.factor;
+        }
+        sumwt_factor += contribution.factor;
+    }
+    if nearest_weight {
+        let Some((_, nearest_source_weight)) = nearest_weight_candidate else {
+            return Ok(None);
+        };
+        weight = nearest_source_weight;
+        sumwt_factor = 1.0;
+    }
+    if !(visibility.re.is_finite()
+        && visibility.im.is_finite()
+        && weight.is_finite()
+        && weight > 0.0
+        && sumwt_factor.is_finite()
+        && sumwt_factor > 0.0)
+    {
+        return Ok(None);
+    }
+    Ok(Some((
+        phase_rotate_visibility(visibility, phase_shift_m, output_frequency_hz),
+        weight,
+        sumwt_factor,
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_collapsed_mosaic_cube_output_sample(
+    row: &MsImagingEssentials,
+    pair: (usize, usize),
+    transform: PairCollapseTransform,
+    plane_stokes: PlaneStokes,
+    source_channel_indices: &[usize],
+    phase_shift_m: f64,
+    output_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<(Complex32, f32, f32)>, String> {
+    let mut first_visibility = Complex32::new(0.0, 0.0);
+    let mut second_visibility = Complex32::new(0.0, 0.0);
+    let mut first_weight = 0.0f32;
+    let mut second_weight = 0.0f32;
+    let mut nearest_weight_candidate = None::<(f32, f32, f32)>;
+    let channel_count = row.data.shape().get(1).copied().unwrap_or(0);
+    for contribution in contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&source_channel) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let local_channel = local_channel_index(source_channel, row.channel_origin, channel_count)?;
+        if *row
+            .flag
+            .get((pair.0, local_channel))
+            .ok_or_else(|| format!("FLAG index [{}, {source_channel}] out of bounds", pair.0))?
+            || *row
+                .flag
+                .get((pair.1, local_channel))
+                .ok_or_else(|| format!("FLAG index [{}, {source_channel}] out of bounds", pair.1))?
+        {
+            return Ok(None);
+        }
+        let first = *row
+            .data
+            .get((pair.0, local_channel))
+            .ok_or_else(|| format!("DATA index [{}, {source_channel}] out of bounds", pair.0))?;
+        let second = *row
+            .data
+            .get((pair.1, local_channel))
+            .ok_or_else(|| format!("DATA index [{}, {source_channel}] out of bounds", pair.1))?;
+        let first_sample_weight =
+            essentials_row_weight_for_corr_channel(row, pair.0, local_channel)?;
+        let second_sample_weight =
+            essentials_row_weight_for_corr_channel(row, pair.1, local_channel)?;
+        if !(first.re.is_finite()
+            && first.im.is_finite()
+            && second.re.is_finite()
+            && second.im.is_finite()
+            && first_sample_weight.is_finite()
+            && second_sample_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        first_visibility += first * contribution.factor;
+        second_visibility += second * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        first_sample_weight,
+                        second_sample_weight,
+                    ));
+                }
+                Some((best_factor, _, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        first_sample_weight,
+                        second_sample_weight,
+                    ));
+                }
+                _ => {}
+            }
+        } else {
+            first_weight += first_sample_weight * contribution.factor;
+            second_weight += second_sample_weight * contribution.factor;
+        }
+    }
+    if nearest_weight {
+        let Some((_, nearest_first_weight, nearest_second_weight)) = nearest_weight_candidate
+        else {
+            return Ok(None);
+        };
+        first_weight = nearest_first_weight;
+        second_weight = nearest_second_weight;
+    }
+    if !(first_weight.is_finite()
+        && first_weight > 0.0
+        && second_weight.is_finite()
+        && second_weight > 0.0)
+    {
+        return Ok(None);
+    }
+    let first_visibility =
+        phase_rotate_visibility(first_visibility, phase_shift_m, output_frequency_hz);
+    let second_visibility =
+        phase_rotate_visibility(second_visibility, phase_shift_m, output_frequency_hz);
+    let visibility = collapse_paired_visibility(first_visibility, second_visibility, transform);
+    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+        return Ok(None);
+    }
+    Ok(Some((
+        visibility,
+        0.5 * (first_weight + second_weight),
+        reported_sumwt_factor_for_paired_plane(plane_stokes),
+    )))
+}
+
+fn direct_mosaic_cube_density_lookup(
+    selected_row: &SelectedMainRow,
+    row: &MsImagingEssentials,
+    density_set: &CasaCubeBriggsDensityGridSet,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    contributions: &CubeRowSpectralContributions,
+    source_lookup_frequencies_hz: Option<&[f64]>,
+    sample_contributions: &[CubeChannelContribution],
+) -> Result<(f64, f64, Option<usize>), String> {
+    let Some(nearest) = nearest_cube_density_contribution(sample_contributions) else {
+        return Ok((0.0, 0.0, None));
+    };
+    let density_plane_offset = contributions
+        .padded_source_channel_output_map
+        .get(nearest.source_channel)
+        .copied()
+        .flatten();
+    let density_plane = density_plane_offset.and_then(|offset| {
+        density_set
+            .density_group_field_ids
+            .iter()
+            .position(|known| *known == selected_row.field_id)
+            .map(|group| group * plan.density_plane_count + offset)
+    });
+    let lookup_frequency_hz = source_lookup_frequencies_hz
+        .and_then(|frequencies| frequencies.get(nearest.source_channel))
+        .copied()
+        .unwrap_or(nearest.source_frequency_hz);
+    if !(lookup_frequency_hz.is_finite() && lookup_frequency_hz > 0.0) {
+        return Ok((0.0, 0.0, density_plane));
+    }
+    let frequency_scale = (lookup_frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32;
+    let casa_u = (-row.u_m * f64::from(frequency_scale)) as f32;
+    let casa_v = (-row.v_m * f64::from(frequency_scale)) as f32;
+    Ok((-f64::from(casa_u), -f64::from(casa_v), density_plane))
+}
+
+fn essentials_row_weight_for_corr_channel(
+    row: &MsImagingEssentials,
+    corr_index: usize,
+    local_channel: usize,
+) -> Result<f32, String> {
+    if let Some(weight_spectrum) = &row.weight_spectrum {
+        weight_spectrum
+            .get((corr_index, local_channel))
+            .copied()
+            .ok_or_else(|| {
+                format!("WEIGHT_SPECTRUM index [{corr_index}, {local_channel}] out of bounds")
+            })
+    } else {
+        row.weight
+            .get(corr_index)
+            .copied()
+            .ok_or_else(|| format!("WEIGHT correlation {corr_index} out of bounds"))
+    }
+}
+
+fn direct_mosaic_cube_briggs_preweighted_weight(
+    density_set: &CasaCubeBriggsDensityGridSet,
+    plan: &MosaicCubeBriggsDirectDensityPlan,
+    density_plane: Option<usize>,
+    lookup_u_lambda: f64,
+    lookup_v_lambda: f64,
+    natural_weight: f32,
+) -> f32 {
+    let Some(density_plane) = density_plane else {
+        return 0.0;
+    };
+    let Some(density_grid) = density_set.density_grids.get(density_plane) else {
+        return 0.0;
+    };
+    let Some((x, y)) = casa_cube_briggs_density_cell_from_lambda(
+        density_grid.dim(),
+        lookup_u_lambda,
+        lookup_v_lambda,
+        plan.cell_size_rad,
+    ) else {
+        return 0.0;
+    };
+    let density = density_grid[(x, y)];
+    let f2 = density_set
+        .f2_by_plane
+        .get(density_plane)
+        .copied()
+        .unwrap_or(0.0);
+    if !(natural_weight.is_finite()
+        && natural_weight > 0.0
+        && density.is_finite()
+        && density > 0.0
+        && f2.is_finite()
+        && f2 > 0.0)
+    {
+        return 0.0;
+    }
+    let geometry = ImageGeometry {
+        image_shape: [plan.image_shape.0, plan.image_shape.1],
+        cell_size_rad: plan.cell_size_rad,
+    };
+    let denominator = casa_cube_briggs_weight_denominator(
+        density_set.weighting,
+        geometry,
+        density_set.fractional_bandwidth,
+        lookup_u_lambda,
+        lookup_v_lambda,
+        density,
+        f2,
+    );
+    if denominator.is_finite() && denominator > 0.0 {
+        natural_weight / denominator
+    } else {
+        0.0
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_mosaic_cube_direct_metadata_range(
+    batches: &mut Vec<GroupedVisibilityMetadataBatch>,
+    group_index_by_key: &mut BTreeMap<(usize, u64), usize>,
+    groups: &mut Vec<GroupedVisibilityMetadata>,
+    sample_count: &mut usize,
+    max_batch_size: usize,
+    primary_beam_model: PrimaryBeamModel,
+    pointing_id: usize,
+    pointing_direction_rad: [f64; 2],
+    beam_frequency_hz: Option<f64>,
+    mut len: usize,
+) -> Result<(), String> {
+    if len == 0 {
+        return Ok(());
+    }
+    let beam_frequency_hz = beam_frequency_hz.ok_or_else(|| {
+        "internal error: direct mosaic metadata range has length but no beam frequency".to_string()
+    })?;
+    if !(beam_frequency_hz.is_finite() && beam_frequency_hz > 0.0) {
+        return Err(format!(
+            "internal error: non-finite mosaic PB frequency in direct metadata: {beam_frequency_hz}"
+        ));
+    }
+    let max_batch_size = max_batch_size.max(1);
+    while len > 0 {
+        if *sample_count >= max_batch_size {
+            flush_mosaic_cube_direct_metadata_batch(
+                batches,
+                group_index_by_key,
+                groups,
+                sample_count,
+            );
+        }
+        let take = len.min(max_batch_size - *sample_count);
+        let key = (pointing_id, beam_frequency_hz.to_bits());
+        let group_index = match group_index_by_key.get(&key).copied() {
+            Some(index) => index,
+            None => {
+                let index = groups.len();
+                group_index_by_key.insert(key, index);
+                groups.push(GroupedVisibilityMetadata {
+                    beam_frequency_hz,
+                    primary_beam_model,
+                    pointing_direction_rad,
+                    sample_ranges: Vec::new(),
+                });
+                index
+            }
+        };
+        let group = groups.get_mut(group_index).ok_or_else(|| {
+            "internal error: mosaic metadata group index out of range".to_string()
+        })?;
+        match group.sample_ranges.last_mut() {
+            Some(range) if range.end == *sample_count => {
+                range.end += take;
+            }
+            _ => group.sample_ranges.push(VisibilitySampleRange {
+                start: *sample_count,
+                end: *sample_count + take,
+            }),
+        }
+        *sample_count += take;
+        len -= take;
+    }
+    Ok(())
+}
+
+fn flush_mosaic_cube_direct_metadata_batch(
+    batches: &mut Vec<GroupedVisibilityMetadataBatch>,
+    group_index_by_key: &mut BTreeMap<(usize, u64), usize>,
+    groups: &mut Vec<GroupedVisibilityMetadata>,
+    sample_count: &mut usize,
+) {
+    if *sample_count == 0 && groups.is_empty() {
+        return;
+    }
+    batches.push(GroupedVisibilityMetadataBatch {
+        sample_count: *sample_count,
+        groups: std::mem::take(groups),
+    });
+    group_index_by_key.clear();
+    *sample_count = 0;
 }
 
 fn apply_casa_cube_briggs_preweighting_from_density_grids(
@@ -10731,6 +12409,10 @@ struct MsImagingEssentials {
     u_m: f64,
     v_m: f64,
     w_m: f64,
+    field_phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+    antenna1_id: i32,
+    antenna2_id: i32,
     gridable: bool,
     spw_id: usize,
     channel_origin: usize,
@@ -10743,7 +12425,8 @@ struct MsImagingEssentials {
 #[allow(dead_code)]
 impl MsImagingEssentials {
     fn logical_bytes(&self) -> usize {
-        (3 * std::mem::size_of::<f64>())
+        (7 * std::mem::size_of::<f64>())
+            .saturating_add(2 * std::mem::size_of::<i32>())
             .saturating_add(std::mem::size_of::<usize>() * 2)
             .saturating_add(
                 self.data
@@ -10795,6 +12478,10 @@ struct MsImagingDensityEssentials {
     u_m: f64,
     v_m: f64,
     w_m: f64,
+    field_phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+    antenna1_id: i32,
+    antenna2_id: i32,
     gridable: bool,
     spw_id: usize,
     channel_origin: usize,
@@ -10997,7 +12684,7 @@ fn read_ms_imaging_essentials_block(
     ms: &MeasurementSet,
     data_column_kind: VisibilityDataColumn,
     channel_axes: Arc<MsImagingChannelAxisCatalog>,
-    _geometry_columns: &PreparedGeometryColumnCache,
+    geometry_columns: &PreparedGeometryColumnCache,
     row_chunk: &[SelectedMainRow],
     channel_read_range: Option<SelectedChannelReadRange>,
 ) -> Result<(MsImagingEssentialsBlock, MsImagingEssentialsReadTimings), String> {
@@ -11017,6 +12704,7 @@ fn read_ms_imaging_essentials_block(
         selected_uvw,
         antenna1_values,
         antenna2_values,
+        pointing_ids,
     ) = if ms_imaging_read_parallel_columns_enabled() {
         std::thread::scope(|scope| {
             let data_handle = scope.spawn(|| {
@@ -11068,6 +12756,11 @@ fn read_ms_imaging_essentials_block(
                 .spawn(|| load_selected_i32_main_column(ms, "ANTENNA1", &selected_row_indices));
             let antenna2_handle = scope
                 .spawn(|| load_selected_i32_main_column(ms, "ANTENNA2", &selected_row_indices));
+            let pointing_id_handle = geometry_columns.pointing_resolver.is_some().then(|| {
+                scope.spawn(|| {
+                    load_selected_optional_i32_main_column(ms, "POINTING_ID", &selected_row_indices)
+                })
+            });
             let weight_spectrum_handle = has_weight_spectrum.then(|| {
                 scope.spawn(|| {
                     let started = Instant::now();
@@ -11121,6 +12814,14 @@ fn read_ms_imaging_essentials_block(
             let antenna2_values = antenna2_handle
                 .join()
                 .map_err(|_| "ANTENNA2 column reader panicked".to_string())??;
+            let pointing_ids = match pointing_id_handle {
+                Some(handle) => Some(
+                    handle
+                        .join()
+                        .map_err(|_| "POINTING_ID column reader panicked".to_string())??,
+                ),
+                None => None,
+            };
             Ok::<_, String>((
                 data_column,
                 flag_column,
@@ -11129,6 +12830,7 @@ fn read_ms_imaging_essentials_block(
                 selected_uvw,
                 antenna1_values,
                 antenna2_values,
+                pointing_ids,
             ))
         })?
     } else {
@@ -11189,6 +12891,15 @@ fn read_ms_imaging_essentials_block(
         timings.uvw_column = started.elapsed();
         let antenna1_values = load_selected_i32_main_column(ms, "ANTENNA1", &selected_row_indices)?;
         let antenna2_values = load_selected_i32_main_column(ms, "ANTENNA2", &selected_row_indices)?;
+        let pointing_ids = if geometry_columns.pointing_resolver.is_some() {
+            Some(load_selected_optional_i32_main_column(
+                ms,
+                "POINTING_ID",
+                &selected_row_indices,
+            )?)
+        } else {
+            None
+        };
 
         (
             data_column,
@@ -11198,6 +12909,7 @@ fn read_ms_imaging_essentials_block(
             selected_uvw,
             antenna1_values,
             antenna2_values,
+            pointing_ids,
         )
     };
     timings.columns_wall = columns_started.elapsed();
@@ -11210,6 +12922,7 @@ fn read_ms_imaging_essentials_block(
     let mut weight_spectrum_values = weight_spectrum.map(|column| column.values);
     let mut uvw_values = selected_uvw.values;
     let channel_origin = data_column.channel_origin;
+    let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
     let mut rows = Vec::with_capacity(row_chunk.len());
     for (row_slot, selected_row) in row_chunk.iter().enumerate() {
         let row_index = selected_row.row_index;
@@ -11223,6 +12936,67 @@ fn read_ms_imaging_essentials_block(
             &take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?,
             row_index,
         )?;
+        let row_phase_center =
+            if let Some(angles_rad) = field_phase_centers.get(&selected_row.field_id) {
+                *angles_rad
+            } else {
+                let direction = resolve_field_phase_direction_j2000(ms, selected_row.field_id)
+                    .map_err(|error| {
+                        format!(
+                            "resolve FIELD.PHASE_DIR[{}] to J2000 for row {row_index}: {error}",
+                            selected_row.field_id
+                        )
+                    })?;
+                let (ra, dec) = direction.as_angles();
+                let angles_rad = [ra, dec];
+                field_phase_centers.insert(selected_row.field_id, angles_rad);
+                angles_rad
+            };
+        let pointing_id = pointing_ids
+            .as_deref()
+            .and_then(|values| values.get(row_slot))
+            .copied()
+            .flatten();
+        let antenna1_pointing = match (
+            geometry_columns.pointing_resolver.as_ref(),
+            selected_row.time_mjd_seconds,
+        ) {
+            (Some(resolver), Some(time_mjd_seconds)) => {
+                resolver.resolve(pointing_id, antenna1_id, time_mjd_seconds, row_phase_center)
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "row {row_index} requires TIME to resolve POINTING directions"
+                ));
+            }
+            (None, _) => ResolvedPointingDirection {
+                source_row_index: None,
+                used_fallback: true,
+                angles_rad: row_phase_center,
+            },
+        };
+        let antenna2_pointing = match (
+            geometry_columns.pointing_resolver.as_ref(),
+            selected_row.time_mjd_seconds,
+        ) {
+            (Some(resolver), Some(time_mjd_seconds)) => {
+                resolver.resolve(pointing_id, antenna2_id, time_mjd_seconds, row_phase_center)
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "row {row_index} requires TIME to resolve POINTING directions"
+                ));
+            }
+            (None, _) => ResolvedPointingDirection {
+                source_row_index: None,
+                used_fallback: true,
+                angles_rad: row_phase_center,
+            },
+        };
+        let pointing_direction_rad = combine_pointing_direction_rad(
+            antenna1_pointing.angles_rad,
+            antenna2_pointing.angles_rad,
+        );
         let data = complex_array2_owned(
             take_required_array(
                 &mut data_values,
@@ -11270,6 +13044,10 @@ fn read_ms_imaging_essentials_block(
             u_m: raw_uvw_m[0],
             v_m: raw_uvw_m[1],
             w_m: raw_uvw_m[2],
+            field_phase_center_direction_rad: row_phase_center,
+            pointing_direction_rad,
+            antenna1_id,
+            antenna2_id,
             gridable: antenna1_id != antenna2_id,
             spw_id: selected_row.spw_id,
             channel_origin,
@@ -11288,7 +13066,7 @@ fn read_ms_imaging_essentials_block(
 fn read_ms_imaging_density_essentials_block(
     ms: &MeasurementSet,
     channel_axes: Arc<MsImagingChannelAxisCatalog>,
-    _geometry_columns: &PreparedGeometryColumnCache,
+    geometry_columns: &PreparedGeometryColumnCache,
     row_chunk: &[SelectedMainRow],
     channel_read_range: SelectedChannelReadRange,
 ) -> Result<
@@ -11313,6 +13091,7 @@ fn read_ms_imaging_density_essentials_block(
         selected_uvw,
         antenna1_values,
         antenna2_values,
+        pointing_ids,
     ) = if ms_imaging_read_parallel_columns_enabled() {
         std::thread::scope(|scope| {
             let flag_handle = scope.spawn(|| {
@@ -11341,6 +13120,11 @@ fn read_ms_imaging_density_essentials_block(
                 .spawn(|| load_selected_i32_main_column(ms, "ANTENNA1", &selected_row_indices));
             let antenna2_handle = scope
                 .spawn(|| load_selected_i32_main_column(ms, "ANTENNA2", &selected_row_indices));
+            let pointing_id_handle = geometry_columns.pointing_resolver.is_some().then(|| {
+                scope.spawn(|| {
+                    load_selected_optional_i32_main_column(ms, "POINTING_ID", &selected_row_indices)
+                })
+            });
             let weight_spectrum_handle = has_weight_spectrum.then(|| {
                 scope.spawn(|| {
                     let started = Instant::now();
@@ -11383,6 +13167,14 @@ fn read_ms_imaging_density_essentials_block(
             let antenna2_values = antenna2_handle
                 .join()
                 .map_err(|_| "ANTENNA2 column reader panicked".to_string())??;
+            let pointing_ids = match pointing_id_handle {
+                Some(handle) => Some(
+                    handle
+                        .join()
+                        .map_err(|_| "POINTING_ID column reader panicked".to_string())??,
+                ),
+                None => None,
+            };
             Ok::<_, String>((
                 flag_column,
                 weight_column,
@@ -11390,6 +13182,7 @@ fn read_ms_imaging_density_essentials_block(
                 selected_uvw,
                 antenna1_values,
                 antenna2_values,
+                pointing_ids,
             ))
         })?
     } else {
@@ -11427,6 +13220,15 @@ fn read_ms_imaging_density_essentials_block(
         timings.uvw_column = started.elapsed();
         let antenna1_values = load_selected_i32_main_column(ms, "ANTENNA1", &selected_row_indices)?;
         let antenna2_values = load_selected_i32_main_column(ms, "ANTENNA2", &selected_row_indices)?;
+        let pointing_ids = if geometry_columns.pointing_resolver.is_some() {
+            Some(load_selected_optional_i32_main_column(
+                ms,
+                "POINTING_ID",
+                &selected_row_indices,
+            )?)
+        } else {
+            None
+        };
 
         (
             flag_column,
@@ -11435,6 +13237,7 @@ fn read_ms_imaging_density_essentials_block(
             selected_uvw,
             antenna1_values,
             antenna2_values,
+            pointing_ids,
         )
     };
     timings.columns_wall = columns_started.elapsed();
@@ -11444,6 +13247,7 @@ fn read_ms_imaging_density_essentials_block(
     let mut weight_values = weight_column.values;
     let mut weight_spectrum_values = weight_spectrum.map(|column| column.values);
     let mut uvw_values = selected_uvw.values;
+    let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
     let mut rows = Vec::with_capacity(row_chunk.len());
     for (row_slot, selected_row) in row_chunk.iter().enumerate() {
         let row_index = selected_row.row_index;
@@ -11457,6 +13261,67 @@ fn read_ms_imaging_density_essentials_block(
             &take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?,
             row_index,
         )?;
+        let row_phase_center =
+            if let Some(angles_rad) = field_phase_centers.get(&selected_row.field_id) {
+                *angles_rad
+            } else {
+                let direction = resolve_field_phase_direction_j2000(ms, selected_row.field_id)
+                    .map_err(|error| {
+                        format!(
+                            "resolve FIELD.PHASE_DIR[{}] to J2000 for row {row_index}: {error}",
+                            selected_row.field_id
+                        )
+                    })?;
+                let (ra, dec) = direction.as_angles();
+                let angles_rad = [ra, dec];
+                field_phase_centers.insert(selected_row.field_id, angles_rad);
+                angles_rad
+            };
+        let pointing_id = pointing_ids
+            .as_deref()
+            .and_then(|values| values.get(row_slot))
+            .copied()
+            .flatten();
+        let antenna1_pointing = match (
+            geometry_columns.pointing_resolver.as_ref(),
+            selected_row.time_mjd_seconds,
+        ) {
+            (Some(resolver), Some(time_mjd_seconds)) => {
+                resolver.resolve(pointing_id, antenna1_id, time_mjd_seconds, row_phase_center)
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "row {row_index} requires TIME to resolve POINTING directions"
+                ));
+            }
+            (None, _) => ResolvedPointingDirection {
+                source_row_index: None,
+                used_fallback: true,
+                angles_rad: row_phase_center,
+            },
+        };
+        let antenna2_pointing = match (
+            geometry_columns.pointing_resolver.as_ref(),
+            selected_row.time_mjd_seconds,
+        ) {
+            (Some(resolver), Some(time_mjd_seconds)) => {
+                resolver.resolve(pointing_id, antenna2_id, time_mjd_seconds, row_phase_center)
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "row {row_index} requires TIME to resolve POINTING directions"
+                ));
+            }
+            (None, _) => ResolvedPointingDirection {
+                source_row_index: None,
+                used_fallback: true,
+                angles_rad: row_phase_center,
+            },
+        };
+        let pointing_direction_rad = combine_pointing_direction_rad(
+            antenna1_pointing.angles_rad,
+            antenna2_pointing.angles_rad,
+        );
         let flag = bool_array2_owned(
             take_required_array(&mut flag_values, row_slot, "FLAG", row_index)?,
             "FLAG",
@@ -11494,6 +13359,10 @@ fn read_ms_imaging_density_essentials_block(
             u_m: raw_uvw_m[0],
             v_m: raw_uvw_m[1],
             w_m: raw_uvw_m[2],
+            field_phase_center_direction_rad: row_phase_center,
+            pointing_direction_rad,
+            antenna1_id,
+            antenna2_id,
             gridable: antenna1_id != antenna2_id,
             spw_id: selected_row.spw_id,
             channel_origin: channel_read_range.start,
@@ -12739,6 +14608,9 @@ fn prepare_processing_buffer(
         standard_mfs_table_values.as_ref(),
         cube_context,
         finish,
+        None,
+        true,
+        true,
         accumulate_timings,
     )?;
     let plane = match prepared_input {
@@ -13436,19 +15308,13 @@ fn stream_cube_one_channel_briggs_density_row_blocks(
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
-        let mut block_samples = 0usize;
-        for (selected_row, row) in row_chunk.iter().zip(block.rows.iter()) {
-            if row.spw_id != selected_row.spw_id {
-                return Err(format!(
-                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
-                    selected_row.row_index, selected_row.spw_id, row.spw_id
-                ));
-            }
-            accumulate_timings.rows_seen += 1;
-            let adapt_started = Instant::now();
-            block_samples += plan.accumulate_density_row(selected_row, row, derived_engine)?;
-            accumulate_timings.adapt_samples += adapt_started.elapsed();
-        }
+        let block_samples = accumulate_cube_one_channel_briggs_density_rows(
+            row_chunk,
+            &block.rows,
+            plan,
+            derived_engine,
+            accumulate_timings,
+        )?;
         let prepare_processing_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
         pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
@@ -13467,6 +15333,36 @@ fn stream_cube_one_channel_briggs_density_row_blocks(
                 prepare_started_at.elapsed().as_secs_f64(),
             );
         }
+    }
+    Ok(accepted_samples)
+}
+
+fn accumulate_cube_one_channel_briggs_density_rows(
+    selected_rows: &[SelectedMainRow],
+    rows: &[MsImagingDensityEssentials],
+    plan: &mut CubeOneChannelBriggsStreamingPlanWithGeometry,
+    derived_engine: Option<&MsCalEngine>,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<usize, String> {
+    if selected_rows.len() != rows.len() {
+        return Err(format!(
+            "internal error: selected row count {} differs from density row count {}",
+            selected_rows.len(),
+            rows.len()
+        ));
+    }
+    let mut accepted_samples = 0usize;
+    for (selected_row, row) in selected_rows.iter().zip(rows.iter()) {
+        if row.spw_id != selected_row.spw_id {
+            return Err(format!(
+                "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                selected_row.row_index, selected_row.spw_id, row.spw_id
+            ));
+        }
+        accumulate_timings.rows_seen += 1;
+        let adapt_started = Instant::now();
+        accepted_samples += plan.accumulate_density_row(selected_row, row, derived_engine)?;
+        accumulate_timings.adapt_samples += adapt_started.elapsed();
     }
     Ok(accepted_samples)
 }
@@ -13495,7 +15391,7 @@ fn stream_cube_one_channel_briggs_preweighted_routed_visibility_row_blocks<F>(
 where
     F: FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), String>,
 {
-    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+    let prepared = PreparedSelection::new_standard_mfs_from_table_values(
         config,
         table_values,
         selection.phase_center.clone(),
@@ -13527,72 +15423,40 @@ where
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
-        let rows = block.rows;
-        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+        let prepared_block = prepare_cube_one_channel_briggs_preweighted_routed_visibility_block(
             config,
+            selection,
             table_values,
-            &selection.phase_center,
             row_chunk,
+            block.rows,
             derived_engine,
+            Arc::clone(&source_channel_indices),
+            plan,
+            planned_sample_builder,
+            &mut next_input_seq,
         )?;
-        let mut block_candidate_samples = 0usize;
-        let mut block_planned_samples = 0usize;
-        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
-        for ((selected_row, row), &mfs_frequency_scale) in
-            row_chunk.iter().zip(rows).zip(row_frequency_scales.iter())
-        {
-            if row.spw_id != selected_row.spw_id {
-                return Err(format!(
-                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
-                    selected_row.row_index, selected_row.spw_id, row.spw_id
-                ));
-            }
-            let counts = prepared.stream_standard_mfs_routed_essentials_row_visibility_runs(
-                selected_row,
-                row,
-                derived_engine,
-                Some(mfs_frequency_scale),
-                Arc::clone(&source_channel_indices),
-                planned_sample_builder,
-                &mut next_input_seq,
-                &mut |run| {
-                    let weighted_row = Arc::new(
-                        plan.preweighted_row_for_target(
-                            selected_row,
-                            run.row.as_ref(),
-                            derived_engine,
-                        )
-                        .map_err(ImagingError::InvalidRequest)?,
-                    );
-                    let weighted_run = StandardMfsRoutedVisibilityRun {
-                        row: weighted_row,
-                        source_slot_range: run.source_slot_range.clone(),
-                        tap_centers: Arc::clone(&run.tap_centers),
-                        first_input_seq: run.first_input_seq,
-                    };
-                    consume(&weighted_run).map_err(ImagingError::InvalidRequest)?;
-                    Ok(())
-                },
-            )?;
-            block_candidate_samples += counts.candidate_samples;
-            block_planned_samples += counts.planned_samples;
-            block_detail.add(counts.detail);
+        let mut consumer_elapsed = Duration::ZERO;
+        for run in prepared_block.runs {
+            let consumer_started = Instant::now();
+            consume(&run)?;
+            consumer_elapsed += consumer_started.elapsed();
         }
         let prepare_processing_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
         pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
         pass_stats.add_planned_sample_counts(
-            block_candidate_samples,
-            block_planned_samples,
-            block_planned_samples.saturating_mul(49),
+            prepared_block.candidate_samples,
+            prepared_block.planned_samples,
+            prepared_block.planned_samples.saturating_mul(49),
         );
-        pass_stats.add_planned_sample_detail(block_detail);
+        pass_stats.add_planned_sample_detail(prepared_block.detail);
+        pass_stats.add_consumer(consumer_elapsed);
         pass_stats.record_density_block(
-            block_planned_samples,
+            prepared_block.planned_samples,
             get_ms_values_elapsed,
             prepare_processing_elapsed,
         );
-        accepted_samples = accepted_samples.saturating_add(block_planned_samples);
+        accepted_samples = accepted_samples.saturating_add(prepared_block.planned_samples);
         if frontend_progress_enabled() {
             eprintln!(
                 "frontend stage=prepare_plane_input/cube_briggs_preweighted_cache_block rows_done={} rows_total={} accepted_samples={} total_elapsed_s={:.3}",
@@ -13604,6 +15468,202 @@ where
         }
     }
     Ok(accepted_samples)
+}
+
+struct CubeBriggsPreweightedReplayBlock {
+    candidate_samples: usize,
+    planned_samples: usize,
+    detail: StandardMfsPlannedRowSampleDetailTimings,
+    runs: Vec<StandardMfsRoutedVisibilityRun>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_cube_one_channel_briggs_preweighted_routed_visibility_block(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    selected_rows: &[SelectedMainRow],
+    rows: Vec<MsImagingEssentials>,
+    derived_engine: Option<&MsCalEngine>,
+    source_channel_indices: Arc<[usize]>,
+    plan: &CubeOneChannelBriggsStreamingPlanWithGeometry,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    next_input_seq: &mut u64,
+) -> Result<CubeBriggsPreweightedReplayBlock, String> {
+    if selected_rows.len() != rows.len() {
+        return Err(format!(
+            "internal error: selected row count {} differs from replay row count {}",
+            selected_rows.len(),
+            rows.len()
+        ));
+    }
+
+    let thread_count = standard_mfs_density_prepare_threads(rows.len());
+    let mut chunk_results = if thread_count <= 1 || rows.len() < 2 {
+        vec![
+            prepare_cube_one_channel_briggs_preweighted_routed_visibility_chunk(
+                config,
+                selection,
+                table_values,
+                0,
+                selected_rows,
+                rows,
+                derived_engine,
+                Arc::clone(&source_channel_indices),
+                plan,
+                planned_sample_builder,
+            )?,
+        ]
+    } else {
+        let chunk_len = rows.len().div_ceil(thread_count).max(1);
+        let mut row_chunks = Vec::<Vec<MsImagingEssentials>>::new();
+        let mut current = Vec::with_capacity(chunk_len);
+        for row in rows {
+            current.push(row);
+            if current.len() == chunk_len {
+                row_chunks.push(current);
+                current = Vec::with_capacity(chunk_len);
+            }
+        }
+        if !current.is_empty() {
+            row_chunks.push(current);
+        }
+
+        thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(row_chunks.len());
+            let mut row_offset = 0usize;
+            for (chunk_index, row_chunk) in row_chunks.into_iter().enumerate() {
+                let chunk_rows = row_chunk.len();
+                let selected_chunk = &selected_rows[row_offset..row_offset + chunk_rows];
+                row_offset += chunk_rows;
+                let source_channel_indices = Arc::clone(&source_channel_indices);
+                handles.push(scope.spawn(move || {
+                    prepare_cube_one_channel_briggs_preweighted_routed_visibility_chunk(
+                        config,
+                        selection,
+                        table_values,
+                        chunk_index,
+                        selected_chunk,
+                        row_chunk,
+                        derived_engine,
+                        source_channel_indices,
+                        plan,
+                        planned_sample_builder,
+                    )
+                }));
+            }
+
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.join().map_err(|_| {
+                    "cube Briggs preweighted replay preparation worker panicked".to_string()
+                })??);
+            }
+            Ok::<_, String>(results)
+        })?
+    };
+
+    chunk_results.sort_by_key(|result| result.chunk_index);
+    let mut merged = CubeBriggsPreweightedReplayBlock {
+        candidate_samples: 0,
+        planned_samples: 0,
+        detail: StandardMfsPlannedRowSampleDetailTimings::default(),
+        runs: Vec::new(),
+    };
+    for mut result in chunk_results {
+        merged.candidate_samples = merged
+            .candidate_samples
+            .saturating_add(result.candidate_samples);
+        merged.planned_samples = merged
+            .planned_samples
+            .saturating_add(result.planned_samples);
+        merged.detail.add(result.detail);
+        for mut run in result.runs.drain(..) {
+            run.first_input_seq = *next_input_seq;
+            *next_input_seq = (*next_input_seq).saturating_add(run.len() as u64);
+            merged.runs.push(run);
+        }
+    }
+    Ok(merged)
+}
+
+struct CubeBriggsPreweightedReplayChunk {
+    chunk_index: usize,
+    candidate_samples: usize,
+    planned_samples: usize,
+    detail: StandardMfsPlannedRowSampleDetailTimings,
+    runs: Vec<StandardMfsRoutedVisibilityRun>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_cube_one_channel_briggs_preweighted_routed_visibility_chunk(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    chunk_index: usize,
+    selected_rows: &[SelectedMainRow],
+    rows: Vec<MsImagingEssentials>,
+    derived_engine: Option<&MsCalEngine>,
+    source_channel_indices: Arc<[usize]>,
+    plan: &CubeOneChannelBriggsStreamingPlanWithGeometry,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+) -> Result<CubeBriggsPreweightedReplayChunk, String> {
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
+    let mut result = CubeBriggsPreweightedReplayChunk {
+        chunk_index,
+        candidate_samples: 0,
+        planned_samples: 0,
+        detail: StandardMfsPlannedRowSampleDetailTimings::default(),
+        runs: Vec::new(),
+    };
+    let mut local_input_seq = 0u64;
+    for (selected_row, row) in selected_rows.iter().zip(rows.into_iter()) {
+        if row.spw_id != selected_row.spw_id {
+            return Err(format!(
+                "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                selected_row.row_index, selected_row.spw_id, row.spw_id
+            ));
+        }
+        let counts = prepared.stream_standard_mfs_routed_essentials_row_visibility_runs(
+            selected_row,
+            row,
+            derived_engine,
+            None,
+            Arc::clone(&source_channel_indices),
+            planned_sample_builder,
+            &mut local_input_seq,
+            &mut |run| {
+                let weighted_row = Arc::new(
+                    plan.preweighted_row_for_target_readonly(
+                        selected_row,
+                        run.row.as_ref(),
+                        derived_engine,
+                    )
+                    .map_err(ImagingError::InvalidRequest)?,
+                );
+                result.runs.push(StandardMfsRoutedVisibilityRun {
+                    row: weighted_row,
+                    source_slot_range: run.source_slot_range.clone(),
+                    tap_centers: Arc::clone(&run.tap_centers),
+                    first_input_seq: run.first_input_seq,
+                });
+                Ok(())
+            },
+        )?;
+        result.candidate_samples = result
+            .candidate_samples
+            .saturating_add(counts.candidate_samples);
+        result.planned_samples = result
+            .planned_samples
+            .saturating_add(counts.planned_samples);
+        result.detail.add(counts.detail);
+    }
+    Ok(result)
 }
 
 fn prepare_plane_input(
@@ -15203,6 +17263,9 @@ fn prepare_cube_without_trace_in_source_row_blocks(
             None,
             Some(cube_context.clone()),
             SourceRowBlockFinish::Cube,
+            None,
+            true,
+            true,
             &mut combined_accumulate_timings,
         )?;
         prepared_samples += prepared_input_visibility_sample_count(&prepared_input);
@@ -15773,12 +17836,11 @@ fn merge_one_channel_mosaic_cube_prepared_inputs(
                 "internal error: one-channel mosaic cube chunk has invalid shape".to_string(),
             );
         }
-        // This specialized path feeds `one_channel_cube_plane_input_to_streaming_plane`,
-        // which consumes the channel visibility batches and mosaic metadata but never
-        // reads cube preweighting sidecars. Avoid an expensive generic metadata merge
-        // for an intermediate value that is discarded before imaging.
-        merged_cube.casa_cube_briggs_preweighting = None;
-        cube.casa_cube_briggs_preweighting = None;
+        merged_cube.casa_cube_briggs_preweighting = merge_casa_cube_briggs_preweighting(
+            merged_cube.casa_cube_briggs_preweighting,
+            cube.casa_cube_briggs_preweighting,
+            CasaCubeBriggsDensityMerge::SameMeasurementSet,
+        )?;
         let mut channel = cube.channels.remove(0);
         let merged_channel = &mut merged_cube.channels[0];
         if !frequencies_close(
@@ -16586,7 +18648,7 @@ fn standard_mfs_streaming_batch_size() -> usize {
     if env_standard_mfs_grid_threads() == Some(1) {
         usize::MAX
     } else {
-        DEFAULT_BATCH_SIZE
+        DEFAULT_ACCELERATED_STREAMING_BATCH_SIZE
     }
 }
 
@@ -17667,7 +19729,7 @@ struct CubeOneChannelBriggsStreamingPlan {
     source_channel_indices: Arc<[usize]>,
     source_channel_frequencies_hz: Arc<[f64]>,
     source_channel_widths_hz: Arc<[f64]>,
-    row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
+    row_spectral_cache: HashMap<(u64, usize), Arc<CubeRowSpectralContributions>>,
     density_grids: Vec<Array2<f32>>,
     f2_by_plane: Vec<f32>,
     weighting: WeightingMode,
@@ -17700,18 +19762,18 @@ impl CubeOneChannelBriggsStreamingPlan {
         &mut self,
         selected_row: &SelectedMainRow,
         derived_engine: Option<&MsCalEngine>,
-    ) -> Result<Rc<CubeRowSpectralContributions>, String> {
+    ) -> Result<Arc<CubeRowSpectralContributions>, String> {
         let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
             "internal error: missing row time for cube Briggs weighting".to_string()
         })?;
         let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
         if let Some(cached) = self.row_spectral_cache.get(&cache_key) {
-            return Ok(Rc::clone(cached));
+            return Ok(Arc::clone(cached));
         }
         let derived_engine = derived_engine.ok_or_else(|| {
             "internal error: missing derived engine for cube Briggs weighting".to_string()
         })?;
-        let computed = Rc::new(
+        let computed = Arc::new(
             self.cube_setup
                 .row_spectral_contributions(
                     &self.source_channel_frequencies_hz,
@@ -17723,8 +19785,36 @@ impl CubeOneChannelBriggsStreamingPlan {
                 .map_err(|error| error.to_string())?,
         );
         self.row_spectral_cache
-            .insert(cache_key, Rc::clone(&computed));
+            .insert(cache_key, Arc::clone(&computed));
         Ok(computed)
+    }
+
+    fn row_spectral_contributions_readonly(
+        &self,
+        selected_row: &SelectedMainRow,
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<Arc<CubeRowSpectralContributions>, String> {
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for cube Briggs weighting".to_string()
+        })?;
+        let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+        if let Some(cached) = self.row_spectral_cache.get(&cache_key) {
+            return Ok(Arc::clone(cached));
+        }
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for cube Briggs weighting".to_string()
+        })?;
+        Ok(Arc::new(
+            self.cube_setup
+                .row_spectral_contributions(
+                    &self.source_channel_frequencies_hz,
+                    &self.source_channel_widths_hz,
+                    row_time_mjd_sec,
+                    selected_row.field_id,
+                    derived_engine,
+                )
+                .map_err(|error| error.to_string())?,
+        ))
     }
 }
 
@@ -17785,8 +19875,8 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
         Ok(accepted)
     }
 
-    fn preweighted_row_for_target(
-        &mut self,
+    fn preweighted_row_for_target_readonly(
+        &self,
         selected_row: &SelectedMainRow,
         row: &StandardMfsRoutedVisibilityRow,
         derived_engine: Option<&MsCalEngine>,
@@ -17799,7 +19889,7 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
         }
         let contributions = self
             .plan
-            .row_spectral_contributions(selected_row, derived_engine)?;
+            .row_spectral_contributions_readonly(selected_row, derived_engine)?;
         let output_contributions = contributions
             .output_channel_contributions
             .first()
@@ -18902,8 +20992,9 @@ struct PreparedSelection {
     reffreq_hz: f64,
     freq_ref: FrequencyRef,
     cube_spectral_setup: Option<CubeSpectralSetup>,
-    cube_row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
-    cube_row_source_frequency_cache: HashMap<(u64, usize), Rc<Vec<f64>>>,
+    cube_row_spectral_cache: HashMap<(u64, usize), Arc<CubeRowSpectralContributions>>,
+    cube_row_source_frequency_cache: HashMap<(u64, usize), Arc<Vec<f64>>>,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
     cube_mosaic_pb_frequency_cache: HashMap<(u64, usize, usize, u64), f64>,
     mfs_frequency_scale_cache: HashMap<(u64, usize), f64>,
     mfs_channel_lambda_scale_cache: HashMap<u64, Arc<[f64]>>,
@@ -18911,6 +21002,7 @@ struct PreparedSelection {
     casa_cube_grid_interpolation: bool,
     casa_cube_briggs_preweighting: Option<CasaCubeBriggsPreparedWeighting>,
     use_density_batches: bool,
+    build_cube_briggs_density_samples: bool,
     use_model_interpolation_batches: bool,
     mosaic_pb_limit: f32,
     phase_center: PhaseCenter,
@@ -18946,9 +21038,22 @@ struct AccumulateRowTimings {
     weight_column: Duration,
     weight_spectrum: Duration,
     adapt_samples: Duration,
+    cube_spectral_lookup: Duration,
+    cube_source_frequency_lookup: Duration,
+    cube_density_sidecar: Duration,
+    cube_density_weight: Duration,
+    cube_density_cell: Duration,
+    cube_density_grid_update: Duration,
+    cube_visibility_sample: Duration,
+    cube_visibility_push: Duration,
+    cube_metadata: Duration,
     rows_seen: usize,
     rows_flagged: usize,
     rows_skipped_by_flag_row: usize,
+    cube_spectral_cache_hits: usize,
+    cube_spectral_cache_misses: usize,
+    cube_source_frequency_cache_hits: usize,
+    cube_source_frequency_cache_misses: usize,
 }
 
 impl AccumulateRowTimings {
@@ -18960,11 +21065,48 @@ impl AccumulateRowTimings {
             weight_column: self.weight_column.saturating_sub(before.weight_column),
             weight_spectrum: self.weight_spectrum.saturating_sub(before.weight_spectrum),
             adapt_samples: self.adapt_samples.saturating_sub(before.adapt_samples),
+            cube_spectral_lookup: self
+                .cube_spectral_lookup
+                .saturating_sub(before.cube_spectral_lookup),
+            cube_source_frequency_lookup: self
+                .cube_source_frequency_lookup
+                .saturating_sub(before.cube_source_frequency_lookup),
+            cube_density_sidecar: self
+                .cube_density_sidecar
+                .saturating_sub(before.cube_density_sidecar),
+            cube_density_weight: self
+                .cube_density_weight
+                .saturating_sub(before.cube_density_weight),
+            cube_density_cell: self
+                .cube_density_cell
+                .saturating_sub(before.cube_density_cell),
+            cube_density_grid_update: self
+                .cube_density_grid_update
+                .saturating_sub(before.cube_density_grid_update),
+            cube_visibility_sample: self
+                .cube_visibility_sample
+                .saturating_sub(before.cube_visibility_sample),
+            cube_visibility_push: self
+                .cube_visibility_push
+                .saturating_sub(before.cube_visibility_push),
+            cube_metadata: self.cube_metadata.saturating_sub(before.cube_metadata),
             rows_seen: self.rows_seen.saturating_sub(before.rows_seen),
             rows_flagged: self.rows_flagged.saturating_sub(before.rows_flagged),
             rows_skipped_by_flag_row: self
                 .rows_skipped_by_flag_row
                 .saturating_sub(before.rows_skipped_by_flag_row),
+            cube_spectral_cache_hits: self
+                .cube_spectral_cache_hits
+                .saturating_sub(before.cube_spectral_cache_hits),
+            cube_spectral_cache_misses: self
+                .cube_spectral_cache_misses
+                .saturating_sub(before.cube_spectral_cache_misses),
+            cube_source_frequency_cache_hits: self
+                .cube_source_frequency_cache_hits
+                .saturating_sub(before.cube_source_frequency_cache_hits),
+            cube_source_frequency_cache_misses: self
+                .cube_source_frequency_cache_misses
+                .saturating_sub(before.cube_source_frequency_cache_misses),
         }
     }
 }
@@ -18977,9 +21119,22 @@ impl std::ops::AddAssign for AccumulateRowTimings {
         self.weight_column += extra.weight_column;
         self.weight_spectrum += extra.weight_spectrum;
         self.adapt_samples += extra.adapt_samples;
+        self.cube_spectral_lookup += extra.cube_spectral_lookup;
+        self.cube_source_frequency_lookup += extra.cube_source_frequency_lookup;
+        self.cube_density_sidecar += extra.cube_density_sidecar;
+        self.cube_density_weight += extra.cube_density_weight;
+        self.cube_density_cell += extra.cube_density_cell;
+        self.cube_density_grid_update += extra.cube_density_grid_update;
+        self.cube_visibility_sample += extra.cube_visibility_sample;
+        self.cube_visibility_push += extra.cube_visibility_push;
+        self.cube_metadata += extra.cube_metadata;
         self.rows_seen += extra.rows_seen;
         self.rows_flagged += extra.rows_flagged;
         self.rows_skipped_by_flag_row += extra.rows_skipped_by_flag_row;
+        self.cube_spectral_cache_hits += extra.cube_spectral_cache_hits;
+        self.cube_spectral_cache_misses += extra.cube_spectral_cache_misses;
+        self.cube_source_frequency_cache_hits += extra.cube_source_frequency_cache_hits;
+        self.cube_source_frequency_cache_misses += extra.cube_source_frequency_cache_misses;
     }
 }
 
@@ -18987,19 +21142,56 @@ impl AccumulateRowTimings {
     fn log(self, total_elapsed: Duration) {
         if frontend_progress_enabled() {
             eprintln!(
-                "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen={} rows_flagged={} rows_skipped_by_flag_row={} flag_row_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} adapt_samples_ms={:.3} total_elapsed_s={:.3}",
+                "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen={} rows_flagged={} rows_skipped_by_flag_row={} cube_spectral_cache_hits={} cube_spectral_cache_misses={} cube_source_frequency_cache_hits={} cube_source_frequency_cache_misses={} flag_row_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_source_frequency_lookup_ms={:.3} cube_density_sidecar_ms={:.3} cube_density_weight_ms={:.3} cube_density_cell_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} total_elapsed_s={:.3}",
                 self.rows_seen,
                 self.rows_flagged,
                 self.rows_skipped_by_flag_row,
+                self.cube_spectral_cache_hits,
+                self.cube_spectral_cache_misses,
+                self.cube_source_frequency_cache_hits,
+                self.cube_source_frequency_cache_misses,
                 self.flag_row.as_secs_f64() * 1_000.0,
                 self.data_column.as_secs_f64() * 1_000.0,
                 self.flag_column.as_secs_f64() * 1_000.0,
                 self.weight_column.as_secs_f64() * 1_000.0,
                 self.weight_spectrum.as_secs_f64() * 1_000.0,
                 self.adapt_samples.as_secs_f64() * 1_000.0,
+                self.cube_spectral_lookup.as_secs_f64() * 1_000.0,
+                self.cube_source_frequency_lookup.as_secs_f64() * 1_000.0,
+                self.cube_density_sidecar.as_secs_f64() * 1_000.0,
+                self.cube_density_weight.as_secs_f64() * 1_000.0,
+                self.cube_density_cell.as_secs_f64() * 1_000.0,
+                self.cube_density_grid_update.as_secs_f64() * 1_000.0,
+                self.cube_visibility_sample.as_secs_f64() * 1_000.0,
+                self.cube_visibility_push.as_secs_f64() * 1_000.0,
+                self.cube_metadata.as_secs_f64() * 1_000.0,
                 total_elapsed.as_secs_f64(),
             );
         }
+    }
+}
+
+#[derive(Default)]
+struct CubeRowSpectralReusablePlan {
+    spectral: HashMap<(u64, usize), Arc<CubeRowSpectralContributions>>,
+    source_frequencies: HashMap<(u64, usize), Arc<Vec<f64>>>,
+}
+
+impl CubeRowSpectralReusablePlan {
+    fn spectral(&self, cache_key: &(u64, usize)) -> Option<Arc<CubeRowSpectralContributions>> {
+        self.spectral.get(cache_key).map(Arc::clone)
+    }
+
+    fn source_frequencies(&self, cache_key: &(u64, usize)) -> Option<Arc<Vec<f64>>> {
+        self.source_frequencies.get(cache_key).map(Arc::clone)
+    }
+
+    fn spectral_entries(&self) -> usize {
+        self.spectral.len()
+    }
+
+    fn source_frequency_entries(&self) -> usize {
+        self.source_frequencies.len()
     }
 }
 
@@ -19538,6 +21730,7 @@ impl PreparedSelection {
             cube_spectral_setup: None,
             cube_row_spectral_cache: HashMap::new(),
             cube_row_source_frequency_cache: HashMap::new(),
+            cube_row_spectral_reusable_plan: None,
             cube_mosaic_pb_frequency_cache: HashMap::new(),
             mfs_frequency_scale_cache: HashMap::new(),
             mfs_channel_lambda_scale_cache: HashMap::new(),
@@ -19545,6 +21738,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: false,
             casa_cube_briggs_preweighting: None,
             use_density_batches,
+            build_cube_briggs_density_samples: true,
             use_model_interpolation_batches,
             mosaic_pb_limit: config.mosaic_pb_limit,
             phase_center,
@@ -19618,6 +21812,31 @@ impl PreparedSelection {
                         metadata.reserve(per_channel_capacity);
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_cube_row_spectral_reusable_plan(
+        &mut self,
+        plan: Option<Arc<CubeRowSpectralReusablePlan>>,
+    ) {
+        self.cube_row_spectral_reusable_plan = plan;
+    }
+
+    fn set_build_cube_briggs_density_samples(&mut self, build_samples: bool) {
+        self.build_cube_briggs_density_samples = build_samples;
+    }
+
+    fn disable_cube_mosaic_metadata(&mut self) {
+        match &mut self.state {
+            PreparedState::ExplicitCube {
+                mosaic_metadata, ..
+            }
+            | PreparedState::CollapsedCube {
+                mosaic_metadata, ..
+            } => {
+                *mosaic_metadata = None;
             }
             _ => {}
         }
@@ -19746,8 +21965,15 @@ impl PreparedSelection {
                 .as_ref()
                 .map(|setup| setup.output_freq_ref)
                 .unwrap_or(freq_ref);
+            let trace_free_cube_mosaic = !trace_enabled
+                && matches!(
+                    config.spectral_mode,
+                    SpectralMode::Cube | SpectralMode::Cubedata
+                )
+                && mosaic_cube_one_channel_can_use_single_plane_stream(config);
             let use_density_batches = config.weighting != WeightingMode::Natural;
-            let use_model_interpolation_batches = !(config.dirty_only || config.niter == 0);
+            let use_model_interpolation_batches =
+                !(config.dirty_only || config.niter == 0 || trace_free_cube_mosaic);
             let selected_frequency_range_hz = frequency_range_hz(&output_channel_frequencies_hz)?;
             let selected_frequency_edge_range_hz =
                 frequency_edge_range_hz(&source_channel_frequencies_hz, &source_channel_widths_hz)?;
@@ -19787,12 +22013,6 @@ impl PreparedSelection {
                 .map(parse_plane_stokes)
                 .transpose()?;
             let use_explicit_corr = explicit_plane.and_then(plane_to_corr_code).is_some();
-            let trace_free_cube_mosaic = !trace_enabled
-                && matches!(
-                    config.spectral_mode,
-                    SpectralMode::Cube | SpectralMode::Cubedata
-                )
-                && mosaic_cube_one_channel_can_use_single_plane_stream(config);
             let new_cube_mosaic_metadata = || {
                 trace_free_cube_mosaic.then(|| {
                     output_channel_frequencies_hz
@@ -19999,6 +22219,7 @@ impl PreparedSelection {
                 cube_spectral_setup,
                 cube_row_spectral_cache: HashMap::new(),
                 cube_row_source_frequency_cache: HashMap::new(),
+                cube_row_spectral_reusable_plan: None,
                 cube_mosaic_pb_frequency_cache: HashMap::new(),
                 mfs_frequency_scale_cache: HashMap::new(),
                 mfs_channel_lambda_scale_cache: HashMap::new(),
@@ -20006,6 +22227,7 @@ impl PreparedSelection {
                 casa_cube_grid_interpolation: use_casa_cube_grid_interpolation,
                 casa_cube_briggs_preweighting,
                 use_density_batches,
+                build_cube_briggs_density_samples: true,
                 use_model_interpolation_batches,
                 mosaic_pb_limit: config.mosaic_pb_limit,
                 phase_center,
@@ -20030,6 +22252,7 @@ impl PreparedSelection {
                 cube_spectral_setup: None,
                 cube_row_spectral_cache: HashMap::new(),
                 cube_row_source_frequency_cache: HashMap::new(),
+                cube_row_spectral_reusable_plan: None,
                 cube_mosaic_pb_frequency_cache: HashMap::new(),
                 mfs_frequency_scale_cache: HashMap::new(),
                 mfs_channel_lambda_scale_cache: HashMap::new(),
@@ -20037,6 +22260,7 @@ impl PreparedSelection {
                 casa_cube_grid_interpolation: false,
                 casa_cube_briggs_preweighting: None,
                 use_density_batches: false,
+                build_cube_briggs_density_samples: true,
                 use_model_interpolation_batches: false,
                 mosaic_pb_limit: config.mosaic_pb_limit,
                 phase_center: PhaseCenter {
@@ -20158,11 +22382,11 @@ impl PreparedSelection {
         let cube_output_channel_frequencies_hz = self
             .cube_spectral_setup
             .as_ref()
-            .map(|setup| setup.output_channel_frequencies_hz.clone());
-        let spw_frequencies_hz = self.spw_frequencies_hz.clone();
-        let spw_widths_hz = self.spw_widths_hz.clone();
-        let source_channel_indices = self.source_channel_indices.clone();
-        let source_channel_frequencies_hz = self.source_channel_frequencies_hz.clone();
+            .map(|setup| setup.output_channel_frequencies_hz.as_slice());
+        let spw_frequencies_hz = self.spw_frequencies_hz.as_slice();
+        let spw_widths_hz = self.spw_widths_hz.as_slice();
+        let source_channel_indices = self.source_channel_indices.as_slice();
+        let source_channel_frequencies_hz = self.source_channel_frequencies_hz.as_slice();
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
         let casa_cube_briggs_density_uvw_m = gridft_density_uvw_m(
             raw_uvw_m,
@@ -20186,10 +22410,19 @@ impl PreparedSelection {
                 .time_mjd_seconds
                 .ok_or_else(|| "internal error: missing row time for cube imaging".to_string())?;
             let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-            if let Some(cached) = self.cube_row_spectral_cache.get(&cache_key) {
-                Some(Rc::clone(cached))
+            if let Some(cached) = self
+                .cube_row_spectral_reusable_plan
+                .as_ref()
+                .and_then(|plan| plan.spectral(&cache_key))
+            {
+                timings.cube_spectral_cache_hits += 1;
+                Some(cached)
+            } else if let Some(cached) = self.cube_row_spectral_cache.get(&cache_key) {
+                timings.cube_spectral_cache_hits += 1;
+                Some(Arc::clone(cached))
             } else {
-                let computed = Rc::new(
+                timings.cube_spectral_cache_misses += 1;
+                let computed = Arc::new(
                     cube_setup
                         .row_spectral_contributions(
                             &self.source_channel_frequencies_hz,
@@ -20201,12 +22434,13 @@ impl PreparedSelection {
                         .map_err(|error| error.to_string())?,
                 );
                 self.cube_row_spectral_cache
-                    .insert(cache_key, Rc::clone(&computed));
+                    .insert(cache_key, Arc::clone(&computed));
                 Some(computed)
             }
         } else {
             None
         };
+        let build_cube_briggs_density_samples = self.build_cube_briggs_density_samples;
         let cube_mosaic_pb_frequency_cache = &mut self.cube_mosaic_pb_frequency_cache;
         let casa_cube_briggs_preweighting = &mut self.casa_cube_briggs_preweighting;
         match &mut self.state {
@@ -20421,8 +22655,9 @@ impl PreparedSelection {
                 let row_spectral_contributions = cube_row_spectral_contributions
                     .as_ref()
                     .expect("cube spectral contributions prepared for cube state");
-                let assignments = &row_spectral_contributions.output_channel_contributions;
-                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                if build_cube_briggs_density_samples
+                    && let Some(preweighting) = casa_cube_briggs_preweighting.as_mut()
+                {
                     let density_group_base =
                         casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
                     for grid in &row_spectral_contributions.padded_grid_channel_contributions {
@@ -20460,6 +22695,7 @@ impl PreparedSelection {
                         }
                     }
                 }
+                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -20484,7 +22720,6 @@ impl PreparedSelection {
                             (
                                 output_channel,
                                 cube_output_channel_frequencies_hz
-                                    .as_ref()
                                     .expect("missing cube spectral setup")[output_channel],
                                 contributions.as_slice(),
                             )
@@ -20532,10 +22767,10 @@ impl PreparedSelection {
                             selected_row,
                             output_channel,
                             output_frequency_hz,
-                            cube_output_channel_frequencies_hz.as_deref(),
-                            &source_channel_frequencies_hz,
-                            &spw_frequencies_hz,
-                            &spw_widths_hz,
+                            cube_output_channel_frequencies_hz,
+                            source_channel_frequencies_hz,
+                            spw_frequencies_hz,
+                            spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
                             selected_row.field_id,
@@ -20556,8 +22791,9 @@ impl PreparedSelection {
                 let row_spectral_contributions = cube_row_spectral_contributions
                     .as_ref()
                     .expect("cube spectral contributions prepared for cube state");
-                let assignments = &row_spectral_contributions.output_channel_contributions;
-                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                if build_cube_briggs_density_samples
+                    && let Some(preweighting) = casa_cube_briggs_preweighting.as_mut()
+                {
                     let density_group_base =
                         casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
                     for grid in &row_spectral_contributions.padded_grid_channel_contributions {
@@ -20595,6 +22831,8 @@ impl PreparedSelection {
                         }
                     }
                 }
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -20619,7 +22857,6 @@ impl PreparedSelection {
                             (
                                 output_channel,
                                 cube_output_channel_frequencies_hz
-                                    .as_ref()
                                     .expect("missing cube spectral setup")[output_channel],
                                 contributions.as_slice(),
                             )
@@ -20627,7 +22864,6 @@ impl PreparedSelection {
                         .collect::<Vec<_>>();
                     Box::new(grid_assignments.into_iter())
                 };
-                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
                 for (output_channel, output_frequency_hz, contributions) in assignment_iter {
                     if contributions.is_empty()
                         || !(output_frequency_hz.is_finite() && output_frequency_hz > 0.0)
@@ -20672,10 +22908,10 @@ impl PreparedSelection {
                             selected_row,
                             output_channel,
                             output_frequency_hz,
-                            cube_output_channel_frequencies_hz.as_deref(),
-                            &source_channel_frequencies_hz,
-                            &spw_frequencies_hz,
-                            &spw_widths_hz,
+                            cube_output_channel_frequencies_hz,
+                            source_channel_frequencies_hz,
+                            spw_frequencies_hz,
+                            spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
                             selected_row.field_id,
@@ -20748,6 +22984,7 @@ impl PreparedSelection {
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
         timings.weight_spectrum += stage_started_at.elapsed();
         let adapt_started_at = Instant::now();
+        let profile_cube_detail = standard_mfs_profile_block_detail_enabled();
         let data_2d = ComplexRow2d::new_with_channel_origin(data, data_column.channel_origin())?;
         let flags_2d = BoolRow2d::new_with_channel_origin(flags, flag_column.channel_origin())?;
         let weights = WeightRow::new(
@@ -20765,12 +23002,7 @@ impl PreparedSelection {
             geometry_row.antenna1_pointing.angles_rad,
             geometry_row.antenna2_pointing.angles_rad,
         );
-        let cube_output_channel_frequencies_hz = self
-            .cube_spectral_setup
-            .as_ref()
-            .map(|setup| setup.output_channel_frequencies_hz.clone());
-        let spw_frequencies_hz = self.spw_frequencies_hz.clone();
-        let spw_widths_hz = self.spw_widths_hz.clone();
+        let cube_spectral_lookup_started = profile_cube_detail.then(Instant::now);
         let cube_row_spectral_contributions = if matches!(
             &self.state,
             PreparedState::ExplicitCube { .. }
@@ -20788,10 +23020,19 @@ impl PreparedSelection {
                 .time_mjd_seconds
                 .ok_or_else(|| "internal error: missing row time for cube imaging".to_string())?;
             let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-            if let Some(cached) = self.cube_row_spectral_cache.get(&cache_key) {
-                Some(Rc::clone(cached))
+            if let Some(cached) = self
+                .cube_row_spectral_reusable_plan
+                .as_ref()
+                .and_then(|plan| plan.spectral(&cache_key))
+            {
+                timings.cube_spectral_cache_hits += 1;
+                Some(cached)
+            } else if let Some(cached) = self.cube_row_spectral_cache.get(&cache_key) {
+                timings.cube_spectral_cache_hits += 1;
+                Some(Arc::clone(cached))
             } else {
-                let computed = Rc::new(
+                timings.cube_spectral_cache_misses += 1;
+                let computed = Arc::new(
                     cube_setup
                         .row_spectral_contributions(
                             &self.source_channel_frequencies_hz,
@@ -20840,12 +23081,16 @@ impl PreparedSelection {
                     }
                 }
                 self.cube_row_spectral_cache
-                    .insert(cache_key, Rc::clone(&computed));
+                    .insert(cache_key, Arc::clone(&computed));
                 Some(computed)
             }
         } else {
             None
         };
+        if let Some(started) = cube_spectral_lookup_started {
+            timings.cube_spectral_lookup += started.elapsed();
+        }
+        let cube_source_frequency_lookup_started = profile_cube_detail.then(Instant::now);
         let cube_row_source_frequencies_for_interpolation =
             if self.casa_cube_grid_interpolation && cube_row_spectral_contributions.is_some() {
                 let cube_setup = self
@@ -20859,10 +23104,19 @@ impl PreparedSelection {
                     "internal error: missing row time for cube imaging".to_string()
                 })?;
                 let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-                if let Some(cached) = self.cube_row_source_frequency_cache.get(&cache_key) {
-                    Some(Rc::clone(cached))
+                if let Some(cached) = self
+                    .cube_row_spectral_reusable_plan
+                    .as_ref()
+                    .and_then(|plan| plan.source_frequencies(&cache_key))
+                {
+                    timings.cube_source_frequency_cache_hits += 1;
+                    Some(cached)
+                } else if let Some(cached) = self.cube_row_source_frequency_cache.get(&cache_key) {
+                    timings.cube_source_frequency_cache_hits += 1;
+                    Some(Arc::clone(cached))
                 } else {
-                    let computed = Rc::new(
+                    timings.cube_source_frequency_cache_misses += 1;
+                    let computed = Arc::new(
                         cube_setup
                             .row_source_frequencies_for_interpolation(
                                 &self.source_channel_frequencies_hz,
@@ -20873,12 +23127,15 @@ impl PreparedSelection {
                             .map_err(|error| error.to_string())?,
                     );
                     self.cube_row_source_frequency_cache
-                        .insert(cache_key, Rc::clone(&computed));
+                        .insert(cache_key, Arc::clone(&computed));
                     Some(computed)
                 }
             } else {
                 None
             };
+        if let Some(started) = cube_source_frequency_lookup_started {
+            timings.cube_source_frequency_lookup += started.elapsed();
+        }
         let cube_row_source_frequencies_for_interpolation =
             cube_row_source_frequencies_for_interpolation
                 .as_deref()
@@ -20904,6 +23161,7 @@ impl PreparedSelection {
         let trace_enabled = self.trace_enabled;
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
         let use_density_batches = self.use_density_batches;
+        let build_cube_briggs_density_samples = self.build_cube_briggs_density_samples;
         let use_model_interpolation_batches = self.use_model_interpolation_batches;
         let mfs_frequency_scale = if matches!(
             &self.state,
@@ -20930,6 +23188,12 @@ impl PreparedSelection {
             1.0
         };
         let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
+        let cube_output_channel_frequencies_hz = self
+            .cube_spectral_setup
+            .as_ref()
+            .map(|setup| setup.output_channel_frequencies_hz.as_slice());
+        let spw_frequencies_hz = self.spw_frequencies_hz.as_slice();
+        let spw_widths_hz = self.spw_widths_hz.as_slice();
         let casa_cube_briggs_density_uvw_m = gridft_density_uvw_m(
             raw_uvw_m,
             geometry_row.field_phase_center_direction_rad,
@@ -21088,12 +23352,12 @@ impl PreparedSelection {
                     .expect("cube spectral contributions prepared for cube state");
                 let source_model_contributions =
                     &row_spectral_contributions.source_channel_model_contributions;
-                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let density_slot_offset = (self
                     .source_channel_indices
                     .len()
                     .saturating_sub(channel_density_batches.len()))
                     / 2;
+                let density_sidecar_started = profile_cube_detail.then(Instant::now);
                 if use_density_batches && !use_casa_cube_grid_interpolation {
                     for (output_channel, density_batch) in
                         channel_density_batches.iter_mut().enumerate()
@@ -21125,15 +23389,16 @@ impl PreparedSelection {
                         )?;
                     }
                 }
-                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                if build_cube_briggs_density_samples
+                    && let Some(preweighting) = casa_cube_briggs_preweighting.as_mut()
+                {
                     let density_group_base =
                         casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
                     for grid in &row_spectral_contributions.padded_grid_channel_contributions {
-                        let Some(sample) = interpolate_explicit_cube_output_sample(
-                            data,
-                            flags,
-                            row_weights,
-                            weight_spectrum_row,
+                        let Some(sample) = interpolate_explicit_cube_output_sample_from_rows(
+                            &data_2d,
+                            &flags_2d,
+                            &weights,
                             *corr_index,
                             &self.source_channel_indices,
                             transform.phase_shift_m,
@@ -21168,6 +23433,10 @@ impl PreparedSelection {
                         }
                     }
                 }
+                if let Some(started) = density_sidecar_started {
+                    timings.cube_density_sidecar += started.elapsed();
+                }
+                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -21192,7 +23461,6 @@ impl PreparedSelection {
                             (
                                 output_channel,
                                 cube_output_channel_frequencies_hz
-                                    .as_ref()
                                     .expect("missing cube spectral setup")[output_channel],
                                 contributions.as_slice(),
                             )
@@ -21209,24 +23477,31 @@ impl PreparedSelection {
                     if contributions.is_empty() {
                         continue;
                     }
-                    let Some(sample) = interpolate_explicit_cube_output_sample(
-                        data,
-                        flags,
-                        row_weights,
-                        weight_spectrum_row,
-                        *corr_index,
-                        &self.source_channel_indices,
-                        transform.phase_shift_m,
-                        output_frequency_hz,
-                        contributions,
-                        use_casa_cube_grid_interpolation,
-                    )?
-                    else {
+                    let sample = {
+                        let sample_started = profile_cube_detail.then(Instant::now);
+                        let sample = interpolate_explicit_cube_output_sample_from_rows(
+                            &data_2d,
+                            &flags_2d,
+                            &weights,
+                            *corr_index,
+                            &self.source_channel_indices,
+                            transform.phase_shift_m,
+                            output_frequency_hz,
+                            contributions,
+                            use_casa_cube_grid_interpolation,
+                        )?;
+                        if let Some(started) = sample_started {
+                            timings.cube_visibility_sample += started.elapsed();
+                        }
+                        sample
+                    };
+                    let Some(sample) = sample else {
                         continue;
                     };
                     if !(output_frequency_hz.is_finite() && output_frequency_hz > 0.0) {
                         continue;
                     }
+                    let density_sidecar_started = profile_cube_detail.then(Instant::now);
                     if use_density_batches && use_casa_cube_grid_interpolation {
                         push_explicit_cube_density_sample_from_contributions(
                             &mut channel_density_batches[output_channel],
@@ -21284,6 +23559,10 @@ impl PreparedSelection {
                             }
                         }
                     }
+                    if let Some(started) = density_sidecar_started {
+                        timings.cube_density_sidecar += started.elapsed();
+                    }
+                    let visibility_push_started = profile_cube_detail.then(Instant::now);
                     let lambda_scale = output_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                     let batch = &mut channel_batches[output_channel];
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
@@ -21293,6 +23572,10 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(sample.sumwt_factor);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(sample.visibility);
+                    if let Some(started) = visibility_push_started {
+                        timings.cube_visibility_push += started.elapsed();
+                    }
+                    let metadata_started = profile_cube_detail.then(Instant::now);
                     if let Some(metadata) = mosaic_metadata
                         .as_mut()
                         .and_then(|metadata| metadata.get_mut(output_channel))
@@ -21307,10 +23590,10 @@ impl PreparedSelection {
                             selected_row,
                             output_channel,
                             output_frequency_hz,
-                            cube_output_channel_frequencies_hz.as_deref(),
+                            cube_output_channel_frequencies_hz,
                             &self.source_channel_frequencies_hz,
-                            &spw_frequencies_hz,
-                            &spw_widths_hz,
+                            spw_frequencies_hz,
+                            spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
                             selected_row.field_id,
@@ -21318,6 +23601,9 @@ impl PreparedSelection {
                             output_frequency_hz,
                             beam_frequency_hz,
                         );
+                    }
+                    if let Some(started) = metadata_started {
+                        timings.cube_metadata += started.elapsed();
                     }
                     if trace_m100_row(selected_row.row_index) {
                         eprintln!(
@@ -21341,37 +23627,39 @@ impl PreparedSelection {
                             ),
                         );
                     }
-                    channel_samples[output_channel].push(PreparedVisibilitySampleTrace {
-                        row_index: selected_row.row_index,
-                        input_field_id: selected_row.field_id,
-                        phase_center_field_id: self.phase_center.field_id,
-                        ddid: selected_row.ddid,
-                        spw_id: selected_row.spw_id,
-                        polarization_id: selected_row.polarization_id,
-                        antenna1_id,
-                        antenna2_id,
-                        is_cross,
-                        raw_uvw_m,
-                        imaging_uvw_m: uvw_m,
-                        phase_shift_m: transform.phase_shift_m,
-                        correlation_indices: vec![*corr_index],
-                        output_channel_index: Some(output_channel),
-                        output_frequency_hz,
-                        field_phase_center_direction_rad: geometry_row
-                            .field_phase_center_direction_rad,
-                        pointing_direction_rad: baseline_pointing_direction_rad,
-                        visibility_re: sample.visibility.re,
-                        visibility_im: sample.visibility.im,
-                        weight: sample.weight,
-                        weight_source: sample.weight_source,
-                        sumwt_factor: sample.sumwt_factor,
-                        gridable: is_cross,
-                        source_contributions: build_source_contribution_traces(
-                            &self.source_channel_indices,
-                            &self.source_channel_frequencies_hz,
-                            contributions,
-                        ),
-                    });
+                    if trace_enabled {
+                        channel_samples[output_channel].push(PreparedVisibilitySampleTrace {
+                            row_index: selected_row.row_index,
+                            input_field_id: selected_row.field_id,
+                            phase_center_field_id: self.phase_center.field_id,
+                            ddid: selected_row.ddid,
+                            spw_id: selected_row.spw_id,
+                            polarization_id: selected_row.polarization_id,
+                            antenna1_id,
+                            antenna2_id,
+                            is_cross,
+                            raw_uvw_m,
+                            imaging_uvw_m: uvw_m,
+                            phase_shift_m: transform.phase_shift_m,
+                            correlation_indices: vec![*corr_index],
+                            output_channel_index: Some(output_channel),
+                            output_frequency_hz,
+                            field_phase_center_direction_rad: geometry_row
+                                .field_phase_center_direction_rad,
+                            pointing_direction_rad: baseline_pointing_direction_rad,
+                            visibility_re: sample.visibility.re,
+                            visibility_im: sample.visibility.im,
+                            weight: sample.weight,
+                            weight_source: sample.weight_source,
+                            sumwt_factor: sample.sumwt_factor,
+                            gridable: is_cross,
+                            source_contributions: build_source_contribution_traces(
+                                &self.source_channel_indices,
+                                &self.source_channel_frequencies_hz,
+                                contributions,
+                            ),
+                        });
+                    }
                 }
             }
             (
@@ -21627,7 +23915,6 @@ impl PreparedSelection {
                     .expect("cube spectral contributions prepared for cube state");
                 let source_model_contributions =
                     &row_spectral_contributions.source_channel_model_contributions;
-                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let density_slot_offset = (self
                     .source_channel_indices
                     .len()
@@ -21664,15 +23951,16 @@ impl PreparedSelection {
                         )?;
                     }
                 }
-                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                if build_cube_briggs_density_samples
+                    && let Some(preweighting) = casa_cube_briggs_preweighting.as_mut()
+                {
                     let density_group_base =
                         casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
                     for grid in &row_spectral_contributions.padded_grid_channel_contributions {
-                        let Some(sample) = interpolate_paired_cube_output_sample(
-                            data,
-                            flags,
-                            row_weights,
-                            weight_spectrum_row,
+                        let Some(sample) = interpolate_paired_cube_output_sample_from_rows(
+                            &data_2d,
+                            &flags_2d,
+                            &weights,
                             *pair,
                             &self.source_channel_indices,
                             transform.phase_shift_m,
@@ -21707,6 +23995,8 @@ impl PreparedSelection {
                         }
                     }
                 }
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -21731,7 +24021,6 @@ impl PreparedSelection {
                             (
                                 output_channel,
                                 cube_output_channel_frequencies_hz
-                                    .as_ref()
                                     .expect("missing cube spectral setup")[output_channel],
                                 contributions.as_slice(),
                             )
@@ -21739,24 +24028,29 @@ impl PreparedSelection {
                         .collect::<Vec<_>>();
                     Box::new(grid_assignments.into_iter())
                 };
-                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
                 for (output_channel, output_frequency_hz, contributions) in assignment_iter {
                     if contributions.is_empty() {
                         continue;
                     }
-                    let Some(sample) = interpolate_paired_cube_output_sample(
-                        data,
-                        flags,
-                        row_weights,
-                        weight_spectrum_row,
-                        *pair,
-                        &self.source_channel_indices,
-                        transform.phase_shift_m,
-                        output_frequency_hz,
-                        contributions,
-                        use_casa_cube_grid_interpolation,
-                    )?
-                    else {
+                    let sample = {
+                        let sample_started = profile_cube_detail.then(Instant::now);
+                        let sample = interpolate_paired_cube_output_sample_from_rows(
+                            &data_2d,
+                            &flags_2d,
+                            &weights,
+                            *pair,
+                            &self.source_channel_indices,
+                            transform.phase_shift_m,
+                            output_frequency_hz,
+                            contributions,
+                            use_casa_cube_grid_interpolation,
+                        )?;
+                        if let Some(started) = sample_started {
+                            timings.cube_visibility_sample += started.elapsed();
+                        }
+                        sample
+                    };
+                    let Some(sample) = sample else {
                         continue;
                     };
                     if !(output_frequency_hz.is_finite() && output_frequency_hz > 0.0) {
@@ -21770,6 +24064,7 @@ impl PreparedSelection {
                     if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                         continue;
                     }
+                    let density_sidecar_started = profile_cube_detail.then(Instant::now);
                     if use_density_batches && use_casa_cube_grid_interpolation {
                         push_paired_cube_density_sample_from_contributions(
                             &mut channel_density_batches[output_channel],
@@ -21827,6 +24122,9 @@ impl PreparedSelection {
                             }
                         }
                     }
+                    if let Some(started) = density_sidecar_started {
+                        timings.cube_density_sidecar += started.elapsed();
+                    }
                     if trace_m100_row(selected_row.row_index) {
                         eprintln!(
                             "CASA_RS_TRACE_M100_ROW0 row={} output={} freq={:.17e} contributions={:?} first=({:.17e},{:.17e}) second=({:.17e},{:.17e}) first_weight={:.17e} second_weight={:.17e} collapsed=({:.17e},{:.17e})",
@@ -21848,6 +24146,7 @@ impl PreparedSelection {
                     if !(combined_weight.is_finite() && combined_weight > 0.0) {
                         continue;
                     }
+                    let visibility_push_started = profile_cube_detail.then(Instant::now);
                     let lambda_scale = output_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                     let batch = &mut channel_batches[output_channel];
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
@@ -21857,6 +24156,10 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(sumwt_factor);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
+                    if let Some(started) = visibility_push_started {
+                        timings.cube_visibility_push += started.elapsed();
+                    }
+                    let metadata_started = profile_cube_detail.then(Instant::now);
                     if let Some(metadata) = mosaic_metadata
                         .as_mut()
                         .and_then(|metadata| metadata.get_mut(output_channel))
@@ -21871,10 +24174,10 @@ impl PreparedSelection {
                             selected_row,
                             output_channel,
                             output_frequency_hz,
-                            cube_output_channel_frequencies_hz.as_deref(),
+                            cube_output_channel_frequencies_hz,
                             &self.source_channel_frequencies_hz,
-                            &spw_frequencies_hz,
-                            &spw_widths_hz,
+                            spw_frequencies_hz,
+                            spw_widths_hz,
                         );
                         metadata.push_sample_with_beam_frequency(
                             selected_row.field_id,
@@ -21882,6 +24185,9 @@ impl PreparedSelection {
                             output_frequency_hz,
                             beam_frequency_hz,
                         );
+                    }
+                    if let Some(started) = metadata_started {
+                        timings.cube_metadata += started.elapsed();
                     }
                     if use_model_interpolation_batches {
                         channel_model_interpolation_samples[output_channel].push(
@@ -21955,7 +24261,6 @@ impl PreparedSelection {
                     .expect("cube spectral contributions prepared for cube state");
                 let source_model_contributions =
                     &row_spectral_contributions.source_channel_model_contributions;
-                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let density_slot_offset = (self
                     .source_channel_indices
                     .len()
@@ -21992,15 +24297,16 @@ impl PreparedSelection {
                         )?;
                     }
                 }
-                if let Some(preweighting) = casa_cube_briggs_preweighting.as_mut() {
+                if build_cube_briggs_density_samples
+                    && let Some(preweighting) = casa_cube_briggs_preweighting.as_mut()
+                {
                     let density_group_base =
                         casa_cube_briggs_density_group_base(preweighting, selected_row.field_id);
                     for grid in &row_spectral_contributions.padded_grid_channel_contributions {
-                        let Some(sample) = interpolate_paired_cube_output_sample(
-                            data,
-                            flags,
-                            row_weights,
-                            weight_spectrum_row,
+                        let Some(sample) = interpolate_paired_cube_output_sample_from_rows(
+                            &data_2d,
+                            &flags_2d,
+                            &weights,
                             *pair,
                             &self.source_channel_indices,
                             transform.phase_shift_m,
@@ -22035,6 +24341,7 @@ impl PreparedSelection {
                         }
                     }
                 }
+                let assignments = &row_spectral_contributions.output_channel_contributions;
                 let grid_assignments;
                 let assignment_iter: Box<
                     dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
@@ -22059,7 +24366,6 @@ impl PreparedSelection {
                             (
                                 output_channel,
                                 cube_output_channel_frequencies_hz
-                                    .as_ref()
                                     .expect("missing cube spectral setup")[output_channel],
                                 contributions.as_slice(),
                             )
@@ -22071,11 +24377,10 @@ impl PreparedSelection {
                     if contributions.is_empty() {
                         continue;
                     }
-                    let Some(sample) = interpolate_paired_cube_output_sample(
-                        data,
-                        flags,
-                        row_weights,
-                        weight_spectrum_row,
+                    let Some(sample) = interpolate_paired_cube_output_sample_from_rows(
+                        &data_2d,
+                        &flags_2d,
+                        &weights,
                         *pair,
                         &self.source_channel_indices,
                         transform.phase_shift_m,
@@ -23881,6 +26186,7 @@ impl PreparedSelection {
             cube_spectral_setup: _,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
+            cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             mfs_channel_lambda_scale_cache: _,
@@ -23888,6 +26194,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting: _,
             use_density_batches: _,
+            build_cube_briggs_density_samples: _,
             use_model_interpolation_batches: _,
             mosaic_pb_limit,
             phase_center,
@@ -23990,6 +26297,7 @@ impl PreparedSelection {
             cube_spectral_setup: _,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
+            cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             mfs_channel_lambda_scale_cache: _,
@@ -23997,6 +26305,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting: _,
             use_density_batches: _,
+            build_cube_briggs_density_samples: _,
             use_model_interpolation_batches: _,
             mosaic_pb_limit: _,
             phase_center,
@@ -24088,6 +26397,7 @@ impl PreparedSelection {
             cube_spectral_setup,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
+            cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             mfs_channel_lambda_scale_cache: _,
@@ -24095,6 +26405,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting,
             use_density_batches,
+            build_cube_briggs_density_samples: _,
             use_model_interpolation_batches,
             mosaic_pb_limit,
             phase_center,
@@ -24314,6 +26625,7 @@ impl PreparedSelection {
             cube_spectral_setup,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
+            cube_row_spectral_reusable_plan: _,
             cube_mosaic_pb_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             mfs_channel_lambda_scale_cache: _,
@@ -24321,6 +26633,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting,
             use_density_batches,
+            build_cube_briggs_density_samples: _,
             use_model_interpolation_batches,
             mosaic_pb_limit,
             phase_center: prepared_phase_center,
@@ -29263,6 +31576,7 @@ impl<'a> WeightRow<'a> {
     }
 }
 
+#[cfg(test)]
 fn complex32_at_2d(data: &ArrayValue, corr: usize, chan: usize) -> Result<Complex32, String> {
     match data {
         ArrayValue::Complex32(values) => values
@@ -29280,6 +31594,7 @@ fn complex32_at_2d(data: &ArrayValue, corr: usize, chan: usize) -> Result<Comple
     }
 }
 
+#[cfg(test)]
 fn bool_at_2d(data: &ArrayValue, corr: usize, chan: usize) -> Result<bool, String> {
     match data {
         ArrayValue::Bool(values) => values
@@ -29293,6 +31608,7 @@ fn bool_at_2d(data: &ArrayValue, corr: usize, chan: usize) -> Result<bool, Strin
     }
 }
 
+#[cfg(test)]
 fn resolve_weight_with_source(
     weight_row: &ArrayValue,
     weight_spectrum_row: Option<&ArrayValue>,
@@ -29770,6 +32086,7 @@ fn interpolate_explicit_cube_output_weight_only(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn interpolate_explicit_cube_output_sample(
     data: &ArrayValue,
     flags: &ArrayValue,
@@ -29869,6 +32186,95 @@ fn interpolate_explicit_cube_output_sample(
                 "CASA_RS_TRACE_CUBE_GRID_INTERP explicit_sample reject=final visibility={visibility:?} weight={weight} sumwt_factor={sumwt_factor} contributions={contributions:?}"
             );
         }
+        return Ok(None);
+    }
+
+    visibility = phase_rotate_visibility(visibility, phase_shift_m, interpolation_frequency_hz);
+
+    Ok(Some(ExplicitCubeOutputSample {
+        visibility,
+        weight,
+        weight_source: weight_source.unwrap_or(WeightSourceKind::Weight),
+        sumwt_factor,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn interpolate_explicit_cube_output_sample_from_rows(
+    data: &ComplexRow2d<'_>,
+    flags: &BoolRow2d<'_>,
+    weights: &WeightRow<'_>,
+    corr_index: usize,
+    source_channel_indices: &[usize],
+    phase_shift_m: f64,
+    interpolation_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<ExplicitCubeOutputSample>, String> {
+    let mut visibility = Complex32::new(0.0, 0.0);
+    let mut weight = 0.0f32;
+    let mut weight_source = None::<WeightSourceKind>;
+    let mut sumwt_factor = 0.0f32;
+    let mut nearest_weight_candidate = None::<(f32, f32, WeightSourceKind)>;
+
+    for contribution in contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&channel_index) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let local_channel = data.local_channel(channel_index)?;
+        if flags.get_local(corr_index, local_channel, channel_index)? {
+            return Ok(None);
+        }
+        let source_visibility = data.get_local(corr_index, local_channel, channel_index)?;
+        let (source_weight, source_weight_source) = weights.get_local(corr_index, local_channel)?;
+        if !(source_visibility.re.is_finite()
+            && source_visibility.im.is_finite()
+            && source_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        visibility += source_visibility * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => {
+                    nearest_weight_candidate =
+                        Some((contribution.factor, source_weight, source_weight_source));
+                }
+                Some((best_factor, _, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate =
+                        Some((contribution.factor, source_weight, source_weight_source));
+                }
+                _ => {}
+            }
+        } else {
+            weight += source_weight * contribution.factor;
+        }
+        weight_source = Some(match weight_source {
+            None => source_weight_source,
+            Some(existing) => weight_source_union(existing, source_weight_source),
+        });
+        sumwt_factor += contribution.factor;
+    }
+
+    if nearest_weight {
+        let Some((_, nearest_source_weight, nearest_source_kind)) = nearest_weight_candidate else {
+            return Ok(None);
+        };
+        weight = nearest_source_weight;
+        weight_source = Some(nearest_source_kind);
+        sumwt_factor = 1.0;
+    }
+
+    if !(visibility.re.is_finite()
+        && visibility.im.is_finite()
+        && weight.is_finite()
+        && weight > 0.0
+        && sumwt_factor.is_finite()
+        && sumwt_factor > 0.0)
+    {
         return Ok(None);
     }
 
@@ -29987,6 +32393,7 @@ fn nearest_cube_density_contribution(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn interpolate_paired_cube_output_sample(
     data: &ArrayValue,
     flags: &ArrayValue,
@@ -30021,6 +32428,136 @@ fn interpolate_paired_cube_output_sample(
             resolve_weight_with_source(row_weights, weight_spectrum_row, pair.0, channel_index)?;
         let (source_second_weight, source_second_weight_source) =
             resolve_weight_with_source(row_weights, weight_spectrum_row, pair.1, channel_index)?;
+        if !(source_first_visibility.re.is_finite()
+            && source_first_visibility.im.is_finite()
+            && source_second_visibility.re.is_finite()
+            && source_second_visibility.im.is_finite()
+            && source_first_weight.is_finite()
+            && source_second_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        first_visibility += source_first_visibility * contribution.factor;
+        second_visibility += source_second_visibility * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        source_first_weight,
+                        source_first_weight_source,
+                        source_second_weight,
+                        source_second_weight_source,
+                    ));
+                }
+                Some((best_factor, _, _, _, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        source_first_weight,
+                        source_first_weight_source,
+                        source_second_weight,
+                        source_second_weight_source,
+                    ));
+                }
+                _ => {}
+            }
+        } else {
+            first_weight += source_first_weight * contribution.factor;
+            second_weight += source_second_weight * contribution.factor;
+        }
+        first_weight_source = Some(match first_weight_source {
+            None => source_first_weight_source,
+            Some(existing) => weight_source_union(existing, source_first_weight_source),
+        });
+        second_weight_source = Some(match second_weight_source {
+            None => source_second_weight_source,
+            Some(existing) => weight_source_union(existing, source_second_weight_source),
+        });
+    }
+
+    if nearest_weight {
+        let Some((
+            _,
+            nearest_first_weight,
+            nearest_first_source,
+            nearest_second_weight,
+            nearest_second_source,
+        )) = nearest_weight_candidate
+        else {
+            return Ok(None);
+        };
+        first_weight = nearest_first_weight;
+        second_weight = nearest_second_weight;
+        first_weight_source = Some(nearest_first_source);
+        second_weight_source = Some(nearest_second_source);
+    }
+
+    if !(first_visibility.re.is_finite()
+        && first_visibility.im.is_finite()
+        && second_visibility.re.is_finite()
+        && second_visibility.im.is_finite()
+        && first_weight.is_finite()
+        && first_weight > 0.0
+        && second_weight.is_finite()
+        && second_weight > 0.0)
+    {
+        return Ok(None);
+    }
+
+    first_visibility =
+        phase_rotate_visibility(first_visibility, phase_shift_m, interpolation_frequency_hz);
+    second_visibility =
+        phase_rotate_visibility(second_visibility, phase_shift_m, interpolation_frequency_hz);
+
+    Ok(Some(PairedCubeOutputSample {
+        first_visibility,
+        second_visibility,
+        first_weight,
+        second_weight,
+        first_weight_source: first_weight_source.unwrap_or(WeightSourceKind::Weight),
+        second_weight_source: second_weight_source.unwrap_or(WeightSourceKind::Weight),
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn interpolate_paired_cube_output_sample_from_rows(
+    data: &ComplexRow2d<'_>,
+    flags: &BoolRow2d<'_>,
+    weights: &WeightRow<'_>,
+    pair: (usize, usize),
+    source_channel_indices: &[usize],
+    phase_shift_m: f64,
+    interpolation_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<PairedCubeOutputSample>, String> {
+    let mut first_visibility = Complex32::new(0.0, 0.0);
+    let mut second_visibility = Complex32::new(0.0, 0.0);
+    let mut first_weight = 0.0f32;
+    let mut second_weight = 0.0f32;
+    let mut first_weight_source = None::<WeightSourceKind>;
+    let mut second_weight_source = None::<WeightSourceKind>;
+    let mut nearest_weight_candidate = None::<(f32, f32, WeightSourceKind, f32, WeightSourceKind)>;
+
+    for contribution in contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&channel_index) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let local_channel = data.local_channel(channel_index)?;
+        if flags.get_local(pair.0, local_channel, channel_index)?
+            || flags.get_local(pair.1, local_channel, channel_index)?
+        {
+            return Ok(None);
+        }
+        let source_first_visibility = data.get_local(pair.0, local_channel, channel_index)?;
+        let source_second_visibility = data.get_local(pair.1, local_channel, channel_index)?;
+        let (source_first_weight, source_first_weight_source) =
+            weights.get_local(pair.0, local_channel)?;
+        let (source_second_weight, source_second_weight_source) =
+            weights.get_local(pair.1, local_channel)?;
         if !(source_first_visibility.re.is_finite()
             && source_first_visibility.im.is_finite()
             && source_second_visibility.re.is_finite()

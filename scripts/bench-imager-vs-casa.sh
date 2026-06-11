@@ -79,6 +79,7 @@ ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
 tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
 phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
 skip_casa="${IMAGER_BENCH_SKIP_CASA:-0}"
+skip_profile="${IMAGER_BENCH_SKIP_PROFILE:-0}"
 
 case "$gridder" in
   wproject|widefield|awproject|awp2|awphpg)
@@ -143,6 +144,19 @@ case "$phase_probe" in
     ;;
   *)
     echo "error: IMAGER_BENCH_PHASE_PROBE must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+
+case "$skip_profile" in
+  1|true|TRUE|yes|YES|on|ON)
+    skip_profile_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    skip_profile_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_SKIP_PROFILE must be 0/1, true/false, yes/no, or on/off" >&2
     exit 2
     ;;
 esac
@@ -230,7 +244,11 @@ import time
 print(f"{time.perf_counter():.9f}")
 PY
 )"
-  "$@" >/dev/null 2>"$stderr_file"
+  if [[ "${IMAGER_BENCH_STREAM_LOG:-0}" == "1" || "${IMAGER_BENCH_STREAM_LOG:-}" == "true" || "${IMAGER_BENCH_STREAM_LOG:-}" == "yes" || "${IMAGER_BENCH_STREAM_LOG:-}" == "on" ]]; then
+    "$@" >/dev/null 2> >(tee "$stderr_file" >&2)
+  else
+    "$@" >/dev/null 2>"$stderr_file"
+  fi
   status="$?"
   python3 - "$start" "$stderr_file" <<'PY'
 import sys
@@ -247,7 +265,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -401,7 +419,9 @@ fi
 echo
 
 echo "Rust stage medians (milliseconds):"
-if [[ -n "$scales" ]]; then
+if [[ "$skip_profile_enabled" == "1" ]]; then
+  echo "  skipped=1"
+elif [[ -n "$scales" ]]; then
   run_with_optional_phasecenter target/release/examples/profile_imager \
     "$ms_path" \
     --field "$field" \
