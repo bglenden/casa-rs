@@ -7268,8 +7268,26 @@ fn compute_mosaic_dirty_parallel(
     if profile::standard_mfs_profile_block_detail_enabled() {
         let total_worker_samples = worker_samples.iter().sum::<usize>();
         let grouped_samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+        let metal_cache_prepared_groups = metal_group_cache
+            .map(|cache| cache.iter().filter(|group| group.is_some()).count())
+            .unwrap_or(0);
+        let metal_cache_prepared_ge_threshold = metal_group_cache
+            .map(|cache| {
+                cache
+                    .iter()
+                    .filter_map(|group| group.as_ref())
+                    .filter(|group| {
+                        group.samples.len() >= MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let metal_cache_prepared_below_threshold =
+            metal_cache_prepared_groups.saturating_sub(metal_cache_prepared_ge_threshold);
+        let metal_groups_missing_prepared =
+            groups.len().saturating_sub(metal_cache_prepared_groups);
         eprintln!(
-            "mosaic_dirty_parallel groups={} grouped_samples={} total_worker_samples={} requested_threads={} chunk_len={} partition=group-contiguous actual_threads={} worker_samples={:?} worker_alloc_ms={:?} worker_ms={:?} metal_calls={} metal_dirty_calls={} metal_residual_calls={} metal_samples={} metal_kernel_pack_ms={:.3} metal_device_queue_ms={:.3} metal_shader_compile_ms={:.3} metal_pipeline_ms={:.3} metal_buffer_alloc_ms={:.3} metal_model_pack_ms={:.3} metal_zero_outputs_ms={:.3} metal_encode_ms={:.3} metal_dispatch_wait_ms={:.3} metal_reduce_wait_ms={:.3} metal_readback_ms={:.3} metal_total_ms={:.3} join_ms={:.3} merge_ms={:.3} total_ms={:.3}",
+            "mosaic_dirty_parallel groups={} grouped_samples={} total_worker_samples={} requested_threads={} chunk_len={} partition=group-contiguous actual_threads={} worker_samples={:?} worker_alloc_ms={:?} worker_ms={:?} metal_backend_enabled={} metal_cache_present={} metal_cache_prepared_groups={} metal_cache_prepared_ge_threshold={} metal_cache_prepared_below_threshold={} metal_groups_missing_prepared={} metal_threshold_prepared_samples={} metal_calls={} metal_dirty_calls={} metal_residual_calls={} metal_samples={} metal_kernel_pack_ms={:.3} metal_device_queue_ms={:.3} metal_shader_compile_ms={:.3} metal_pipeline_ms={:.3} metal_buffer_alloc_ms={:.3} metal_model_pack_ms={:.3} metal_zero_outputs_ms={:.3} metal_encode_ms={:.3} metal_dispatch_wait_ms={:.3} metal_reduce_wait_ms={:.3} metal_readback_ms={:.3} metal_total_ms={:.3} join_ms={:.3} merge_ms={:.3} total_ms={:.3}",
             groups.len(),
             grouped_samples,
             total_worker_samples,
@@ -7285,6 +7303,13 @@ fn compute_mosaic_dirty_parallel(
                 .iter()
                 .map(|elapsed| profile::millis(*elapsed))
                 .collect::<Vec<_>>(),
+            mosaic_initial_dirty_metal_backend_enabled(),
+            metal_group_cache.is_some(),
+            metal_cache_prepared_groups,
+            metal_cache_prepared_ge_threshold,
+            metal_cache_prepared_below_threshold,
+            metal_groups_missing_prepared,
+            MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES,
             metal_stats.calls,
             metal_stats.dirty_calls,
             metal_stats.residual_calls,
@@ -9393,8 +9418,49 @@ fn compute_mosaic_residual_parallel(
     if profile::standard_mfs_profile_block_detail_enabled() {
         let total_worker_samples = worker_samples.iter().sum::<usize>();
         let grouped_samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+        let residual_on_demand_candidate_groups = groups
+            .iter()
+            .filter(|group| {
+                group.batch.len() >= MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES
+                    && mosaic_pointing_contributes_by_simple_pb_center(
+                        request.geometry,
+                        config.phase_center_direction_rad,
+                        group.pointing_direction_rad,
+                    )
+            })
+            .count();
+        let residual_raw_below_grouped_threshold = groups
+            .iter()
+            .filter(|group| group.batch.len() < MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES)
+            .count();
+        let residual_pb_rejected_groups = groups
+            .iter()
+            .filter(|group| {
+                !mosaic_pointing_contributes_by_simple_pb_center(
+                    request.geometry,
+                    config.phase_center_direction_rad,
+                    group.pointing_direction_rad,
+                )
+            })
+            .count();
+        let metal_cache_prepared_groups = metal_group_cache
+            .map(|cache| cache.iter().filter(|group| group.is_some()).count())
+            .unwrap_or(0);
+        let metal_cache_prepared_ge_threshold = metal_group_cache
+            .map(|cache| {
+                cache
+                    .iter()
+                    .filter_map(|group| group.as_ref())
+                    .filter(|group| {
+                        group.samples.len() >= MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let metal_cache_prepared_below_threshold =
+            metal_cache_prepared_groups.saturating_sub(metal_cache_prepared_ge_threshold);
         eprintln!(
-            "mosaic_residual_parallel groups={} grouped_samples={} total_worker_samples={} requested_threads={} chunk_len={} partition=group-contiguous actual_threads={} worker_samples={:?} worker_alloc_ms={:?} worker_ms={:?} metal_calls={} metal_dirty_calls={} metal_residual_calls={} metal_samples={} metal_kernel_pack_ms={:.3} metal_device_queue_ms={:.3} metal_shader_compile_ms={:.3} metal_pipeline_ms={:.3} metal_buffer_alloc_ms={:.3} metal_model_pack_ms={:.3} metal_zero_outputs_ms={:.3} metal_encode_ms={:.3} metal_dispatch_wait_ms={:.3} metal_reduce_wait_ms={:.3} metal_readback_ms={:.3} metal_total_ms={:.3} join_ms={:.3} merge_ms={:.3} total_ms={:.3}",
+            "mosaic_residual_parallel groups={} grouped_samples={} total_worker_samples={} requested_threads={} chunk_len={} partition=group-contiguous actual_threads={} worker_samples={:?} worker_alloc_ms={:?} worker_ms={:?} metal_backend_enabled={} metal_cache_present={} metal_cache_prepared_groups={} metal_cache_prepared_ge_threshold={} metal_cache_prepared_below_threshold={} metal_on_demand_candidate_groups={} metal_raw_below_grouped_threshold={} metal_pb_rejected_groups={} metal_threshold_raw_samples={} metal_threshold_prepared_samples={} metal_calls={} metal_dirty_calls={} metal_residual_calls={} metal_samples={} metal_kernel_pack_ms={:.3} metal_device_queue_ms={:.3} metal_shader_compile_ms={:.3} metal_pipeline_ms={:.3} metal_buffer_alloc_ms={:.3} metal_model_pack_ms={:.3} metal_zero_outputs_ms={:.3} metal_encode_ms={:.3} metal_dispatch_wait_ms={:.3} metal_reduce_wait_ms={:.3} metal_readback_ms={:.3} metal_total_ms={:.3} join_ms={:.3} merge_ms={:.3} total_ms={:.3}",
             groups.len(),
             grouped_samples,
             total_worker_samples,
@@ -9410,6 +9476,16 @@ fn compute_mosaic_residual_parallel(
                 .iter()
                 .map(|elapsed| profile::millis(*elapsed))
                 .collect::<Vec<_>>(),
+            mosaic_residual_metal_backend_enabled(),
+            metal_group_cache.is_some(),
+            metal_cache_prepared_groups,
+            metal_cache_prepared_ge_threshold,
+            metal_cache_prepared_below_threshold,
+            residual_on_demand_candidate_groups,
+            residual_raw_below_grouped_threshold,
+            residual_pb_rejected_groups,
+            MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES,
+            MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES,
             metal_stats.calls,
             metal_stats.dirty_calls,
             metal_stats.residual_calls,

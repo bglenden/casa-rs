@@ -1072,28 +1072,30 @@ impl CubeSpectralSetup {
                     })
                     .collect::<MsResult<Vec<_>>>()?
             };
-        let source_channel_widths_for_interpolation =
-            if self.interpolation_uses_native_source_frequencies {
-                source_channel_widths_hz.to_vec()
-            } else {
-                match (
-                    source_spectral_frame.as_ref(),
-                    output_spectral_frame.as_ref(),
-                ) {
-                    (Some(source_frame), Some(output_frame)) => {
-                        convert_channel_widths_to_frame_with_frames(
-                            self.source_freq_ref,
-                            self.output_freq_ref,
-                            source_frequencies_hz,
-                            source_channel_widths_hz,
-                            source_frame,
-                            output_frame,
-                        )?
-                    }
-                    (None, None) => source_channel_widths_hz.to_vec(),
-                    _ => unreachable!("source and output spectral frames are paired"),
+        let source_channel_widths_for_interpolation = if self.interpolation
+            == CubeInterpolation::Nearest
+            || self.interpolation_uses_native_source_frequencies
+        {
+            source_channel_widths_hz.to_vec()
+        } else {
+            match (
+                source_spectral_frame.as_ref(),
+                output_spectral_frame.as_ref(),
+            ) {
+                (Some(source_frame), Some(output_frame)) => {
+                    convert_channel_widths_to_frame_with_frames(
+                        self.source_freq_ref,
+                        self.output_freq_ref,
+                        source_frequencies_hz,
+                        source_channel_widths_hz,
+                        source_frame,
+                        output_frame,
+                    )?
                 }
-            };
+                (None, None) => source_channel_widths_hz.to_vec(),
+                _ => unreachable!("source and output spectral frames are paired"),
+            }
+        };
         let output_frequencies_for_interpolation =
             if self.interpolation_uses_native_source_frequencies {
                 match (
@@ -2223,6 +2225,30 @@ fn build_grid_channel_contributions(
         output_channel_widths_hz,
         interpolation,
     );
+    if interpolation == CubeInterpolation::Nearest
+        && grid_frequencies_hz.len() == source_channel_frequencies_hz.len()
+    {
+        return grid_frequencies_hz
+            .into_iter()
+            .zip(channel_map)
+            .enumerate()
+            .filter_map(|(source_channel, (grid_frequency_hz, output_channel))| {
+                let output_channel = output_channel?;
+                let source_frequency_hz = native_source_channel_frequencies_hz
+                    .get(source_channel)
+                    .copied()?;
+                Some(CubeGridChannelContributions {
+                    output_channel,
+                    grid_frequency_hz,
+                    contributions: vec![CubeChannelContribution {
+                        source_channel,
+                        source_frequency_hz,
+                        factor: 1.0,
+                    }],
+                })
+            })
+            .collect();
+    }
     grid_frequencies_hz
         .into_iter()
         .zip(channel_map)

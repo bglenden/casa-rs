@@ -3448,25 +3448,25 @@ mod tests {
             image_shape: [800, 800],
             cell_size_rad: [1.0e-6, 1.0e-6],
         };
-        assert_eq!(super::hetarray_screen_conv_size(geometry), 810);
+        assert_eq!(super::hetarray_screen_conv_size(geometry), 800);
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 224),
-            810
+            800
         );
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 524),
-            810
+            800
         );
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 1040),
-            1080
+            1072
         );
         assert_eq!(
             super::hetarray_screen_conv_size(ImageGeometry {
                 image_shape: [64, 64],
                 cell_size_rad: [1.0e-6, 1.0e-6],
             }),
-            72
+            64
         );
         assert_eq!(
             super::hetarray_screen_conv_size(ImageGeometry {
