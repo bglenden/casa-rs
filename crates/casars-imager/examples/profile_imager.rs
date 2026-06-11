@@ -43,6 +43,10 @@ struct Options {
     deconvolver: Deconvolver,
     standard_mfs_acceleration: StandardMfsAccelerationPolicy,
     standard_mfs_grid_threads: Option<String>,
+    imaging_memory_target_mb: Option<usize>,
+    imaging_prepare_buffer_mb: Option<usize>,
+    imaging_row_block_rows: Option<usize>,
+    imaging_prepare_workers: Option<usize>,
     nterms: usize,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
@@ -404,6 +408,12 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: options.imaging_memory_target_mb,
+        imaging_prepare_buffer_mb: options.imaging_prepare_buffer_mb,
+        imaging_row_block_rows: options.imaging_row_block_rows,
+        imaging_prepare_workers: options.imaging_prepare_workers,
         write_preview_pngs: false,
     }
 }
@@ -529,6 +539,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut deconvolver = Deconvolver::Hogbom;
     let mut standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
     let mut standard_mfs_grid_threads = None::<String>;
+    let mut imaging_memory_target_mb = None::<usize>;
+    let mut imaging_prepare_buffer_mb = None::<usize>;
+    let mut imaging_row_block_rows = None::<usize>;
+    let mut imaging_prepare_workers = None::<usize>;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
     let mut small_scale_bias = 0.0f32;
@@ -605,6 +619,20 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--standard-mfs-grid-threads" => {
                 standard_mfs_grid_threads =
                     Some(next_value(&mut args, "--standard-mfs-grid-threads")?)
+            }
+            "--imaging-memory-target-mb" => {
+                imaging_memory_target_mb =
+                    Some(parse_next(&mut args, "--imaging-memory-target-mb")?)
+            }
+            "--imaging-prepare-buffer-mb" => {
+                imaging_prepare_buffer_mb =
+                    Some(parse_next(&mut args, "--imaging-prepare-buffer-mb")?)
+            }
+            "--imaging-row-block-rows" => {
+                imaging_row_block_rows = Some(parse_next(&mut args, "--imaging-row-block-rows")?)
+            }
+            "--imaging-prepare-workers" => {
+                imaging_prepare_workers = Some(parse_next(&mut args, "--imaging-prepare-workers")?)
             }
             "--nterms" => nterms = parse_next(&mut args, "--nterms")?,
             "--scales" => {
@@ -692,6 +720,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         deconvolver,
         standard_mfs_acceleration,
         standard_mfs_grid_threads,
+        imaging_memory_target_mb,
+        imaging_prepare_buffer_mb,
+        imaging_row_block_rows,
+        imaging_prepare_workers,
         nterms,
         multiscale_scales,
         small_scale_bias,
@@ -896,6 +928,10 @@ Options:
   --deconvolver hogbom|clark|multiscale|mtmfs
   --standard-mfs-acceleration auto|cpu|multi-cpu|metal
   --standard-mfs-grid-threads N|auto
+  --imaging-memory-target-mb N
+  --imaging-prepare-buffer-mb N
+  --imaging-row-block-rows N
+  --imaging-prepare-workers N
   --nterms N
   --scales PIXELS
   --smallscalebias VALUE

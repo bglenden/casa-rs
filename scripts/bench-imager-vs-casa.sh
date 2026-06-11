@@ -65,6 +65,10 @@ nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
 wprojplanes="${IMAGER_BENCH_WPROJPLANES:-}"
+imaging_memory_target_mb="${IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB:-}"
+imaging_prepare_buffer_mb="${IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB:-}"
+imaging_row_block_rows="${IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS:-}"
+imaging_prepare_workers="${IMAGER_BENCH_IMAGING_PREPARE_WORKERS:-}"
 mode="${IMAGER_BENCH_MODE:-dirty}"
 niter="${IMAGER_BENCH_NITER:-4}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
@@ -96,6 +100,22 @@ if [[ "$wterm" != "none" && ! ( "$gridder_uses_wproject_wterm" == "1" && "$wterm
 fi
 if [[ -n "$wprojplanes" && ! "$wprojplanes" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_WPROJPLANES must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$imaging_prepare_buffer_mb" && ! "$imaging_prepare_buffer_mb" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$imaging_row_block_rows" && ! "$imaging_row_block_rows" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$imaging_prepare_workers" && ! "$imaging_prepare_workers" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_PREPARE_WORKERS must be an unsigned integer" >&2
   exit 2
 fi
 
@@ -265,7 +285,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -309,6 +329,19 @@ if [[ "$perchanweightdensity_enabled" == "1" ]]; then
 else
   rust_density_flags+=(--no-perchanweightdensity)
 fi
+rust_source_stream_flags=()
+if [[ -n "$imaging_memory_target_mb" ]]; then
+  rust_source_stream_flags+=(--imaging-memory-target-mb "$imaging_memory_target_mb")
+fi
+if [[ -n "$imaging_prepare_buffer_mb" ]]; then
+  rust_source_stream_flags+=(--imaging-prepare-buffer-mb "$imaging_prepare_buffer_mb")
+fi
+if [[ -n "$imaging_row_block_rows" ]]; then
+  rust_source_stream_flags+=(--imaging-row-block-rows "$imaging_row_block_rows")
+fi
+if [[ -n "$imaging_prepare_workers" ]]; then
+  rust_source_stream_flags+=(--imaging-prepare-workers "$imaging_prepare_workers")
+fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
@@ -346,6 +379,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --scales "$scales" \
@@ -387,6 +421,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --niter "$niter" \
@@ -438,6 +473,7 @@ elif [[ -n "$scales" ]]; then
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
     --scales "$scales" \
@@ -476,6 +512,7 @@ else
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
     --imsize "$imsize" \

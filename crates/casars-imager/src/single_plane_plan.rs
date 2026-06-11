@@ -59,6 +59,25 @@ impl SinglePlaneProjectionPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SinglePlanePrimaryBeamRequirement {
+    None,
+    SingleFieldProducts,
+    WProjectionProducts,
+    MosaicProjection,
+}
+
+impl SinglePlanePrimaryBeamRequirement {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::SingleFieldProducts => "single-field-products",
+            Self::WProjectionProducts => "wprojection-products",
+            Self::MosaicProjection => "mosaic-projection",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SinglePlaneDeconvolverPlan {
     SingleTerm,
     Multiscale,
@@ -105,15 +124,18 @@ pub(crate) struct SinglePlaneExecutionPlan {
     pub(crate) weighting: &'static str,
     pub(crate) output_channel_count: usize,
     pub(crate) primary_beam_products: bool,
+    pub(crate) primary_beam_requirement: SinglePlanePrimaryBeamRequirement,
+    pub(crate) output_products: Vec<String>,
     pub(crate) cpu_multi_worker: BackendEligibility,
     pub(crate) gpu_metal: BackendEligibility,
+    pub(crate) stage_timing_attribution: &'static str,
     pub(crate) standard_mfs_regression_sentinel: bool,
 }
 
 impl SinglePlaneExecutionPlan {
     pub(crate) fn log_line(&self) -> String {
         format!(
-            "single_plane_execution_plan spectral={} projection={} deconvolver={} weighting={} output_channels={} one_output_channel={} pb_products={} cpu_multi_worker_eligible={} cpu_multi_worker_reason={} gpu_metal_eligible={} gpu_metal_reason={} standard_mfs_regression_sentinel={}",
+            "single_plane_execution_plan spectral={} projection={} deconvolver={} weighting={} output_channels={} one_output_channel={} source_stream=bounded source_stream_memory=planner pb_products={} pb_requirement={} output_products={} cpu_multi_worker_eligible={} cpu_multi_worker_reason={} gpu_metal_eligible={} gpu_metal_reason={} stage_timing_attribution={} standard_mfs_regression_sentinel={}",
             self.spectral.label(),
             self.projection.label(),
             self.deconvolver.label(),
@@ -121,10 +143,13 @@ impl SinglePlaneExecutionPlan {
             self.output_channel_count,
             self.spectral.is_one_output_channel(),
             self.primary_beam_products,
+            self.primary_beam_requirement.label(),
+            self.output_products.join(","),
             self.cpu_multi_worker.eligible,
             self.cpu_multi_worker.reason,
             self.gpu_metal.eligible,
             self.gpu_metal.reason,
+            self.stage_timing_attribution,
             self.standard_mfs_regression_sentinel,
         )
     }
@@ -140,6 +165,9 @@ pub(crate) fn build_single_plane_execution_plan(
     let projection = projection_plan(config, force_standard_gridder);
     let deconvolver = deconvolver_plan(config.deconvolver);
     let primary_beam_products = needs_single_field_primary_beam_products(config);
+    let primary_beam_requirement =
+        primary_beam_requirement(config, projection, primary_beam_products);
+    let output_products = output_products(config, primary_beam_requirement);
     let standard_mfs_eligible =
         can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
     let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
@@ -164,6 +192,8 @@ pub(crate) fn build_single_plane_execution_plan(
         weighting: weighting_label(&config.weighting),
         output_channel_count,
         primary_beam_products,
+        primary_beam_requirement,
+        output_products,
         cpu_multi_worker: cpu_multi_worker_eligibility(
             config,
             standard_mfs_eligible,
@@ -176,6 +206,7 @@ pub(crate) fn build_single_plane_execution_plan(
             mosaic_mfs_eligible,
             one_output_channel,
         ),
+        stage_timing_attribution: "frontend-core-product-stages",
         standard_mfs_regression_sentinel,
     }
 }
@@ -227,6 +258,77 @@ fn deconvolver_plan(deconvolver: Deconvolver) -> SinglePlaneDeconvolverPlan {
         Deconvolver::Multiscale => SinglePlaneDeconvolverPlan::Multiscale,
         Deconvolver::Hogbom | Deconvolver::Clark => SinglePlaneDeconvolverPlan::SingleTerm,
     }
+}
+
+fn primary_beam_requirement(
+    config: &CliConfig,
+    projection: SinglePlaneProjectionPlan,
+    primary_beam_products: bool,
+) -> SinglePlanePrimaryBeamRequirement {
+    if matches!(projection, SinglePlaneProjectionPlan::Mosaic) {
+        SinglePlanePrimaryBeamRequirement::MosaicProjection
+    } else if primary_beam_products && matches!(projection, SinglePlaneProjectionPlan::WProjection)
+    {
+        SinglePlanePrimaryBeamRequirement::WProjectionProducts
+    } else if primary_beam_products {
+        SinglePlanePrimaryBeamRequirement::SingleFieldProducts
+    } else if config.use_pointing {
+        SinglePlanePrimaryBeamRequirement::MosaicProjection
+    } else {
+        SinglePlanePrimaryBeamRequirement::None
+    }
+}
+
+fn output_products(
+    config: &CliConfig,
+    primary_beam_requirement: SinglePlanePrimaryBeamRequirement,
+) -> Vec<String> {
+    let mut products = Vec::new();
+    if config.deconvolver == Deconvolver::Mtmfs {
+        let nterms = config.nterms.max(1);
+        for term in 0..nterms {
+            products.push(format!(".image.tt{term}"));
+            products.push(format!(".residual.tt{term}"));
+            products.push(format!(".model.tt{term}"));
+            products.push(format!(".psf.tt{term}"));
+            products.push(format!(".sumwt.tt{term}"));
+        }
+        if nterms > 1 {
+            products.push(".alpha".to_string());
+            products.push(".alpha.error".to_string());
+        }
+        if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+            for term in 0..nterms {
+                products.push(format!(".pb.tt{term}"));
+            }
+        }
+        if config.pbcor {
+            for term in 0..nterms {
+                products.push(format!(".image.tt{term}.pbcor"));
+            }
+            if nterms > 1 {
+                products.push(".alpha.pbcor".to_string());
+            }
+        }
+        return products;
+    }
+
+    for product in [".image", ".residual", ".model", ".psf", ".sumwt"] {
+        products.push(product.to_string());
+    }
+    if matches!(
+        primary_beam_requirement,
+        SinglePlanePrimaryBeamRequirement::MosaicProjection
+    ) {
+        products.push(".weight".to_string());
+    }
+    if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+        products.push(".pb".to_string());
+    }
+    if config.pbcor {
+        products.push(".image.pbcor".to_string());
+    }
+    products
 }
 
 fn weighting_label(weighting: &WeightingMode) -> &'static str {
@@ -393,6 +495,13 @@ mod tests {
         CliConfig::parse(argv.into_iter().map(OsString::from)).expect("parse config")
     }
 
+    fn products(plan: &SinglePlaneExecutionPlan) -> Vec<&str> {
+        plan.output_products
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    }
+
     #[test]
     fn standard_mfs_plan_reports_cpu_and_metal_eligibility_separately() {
         let config = parse([
@@ -409,9 +518,43 @@ mod tests {
         assert_eq!(plan.projection, SinglePlaneProjectionPlan::Standard);
         assert!(plan.standard_mfs_regression_sentinel);
         assert!(plan.cpu_multi_worker.reason.starts_with("standard-mfs"));
+        assert_eq!(
+            plan.primary_beam_requirement,
+            SinglePlanePrimaryBeamRequirement::None
+        );
+        assert_eq!(
+            products(&plan),
+            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+        );
         assert!(
             plan.gpu_metal.reason.contains("standard-mfs")
                 || plan.gpu_metal.reason == "metal-device-unavailable"
+        );
+        let log = plan.log_line();
+        assert!(log.contains("output_products=.image,.residual,.model,.psf,.sumwt"));
+        assert!(log.contains("source_stream=bounded"));
+        assert!(log.contains("stage_timing_attribution=frontend-core-product-stages"));
+    }
+
+    #[test]
+    fn clark_and_hogbom_share_single_term_family_when_outputs_match() {
+        let hogbom = build_single_plane_execution_plan(
+            &parse(["--gridder", "standard", "--deconvolver", "hogbom"]),
+            false,
+            1,
+        );
+        let clark = build_single_plane_execution_plan(
+            &parse(["--gridder", "standard", "--deconvolver", "clark"]),
+            false,
+            1,
+        );
+
+        assert_eq!(hogbom.deconvolver, SinglePlaneDeconvolverPlan::SingleTerm);
+        assert_eq!(clark.deconvolver, SinglePlaneDeconvolverPlan::SingleTerm);
+        assert_eq!(hogbom.output_products, clark.output_products);
+        assert_eq!(
+            hogbom.cpu_multi_worker.reason,
+            clark.cpu_multi_worker.reason
         );
     }
 
@@ -432,6 +575,10 @@ mod tests {
         assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeOneChannel);
         assert!(plan.spectral.is_one_output_channel());
         assert!(plan.cpu_multi_worker.eligible);
+        assert_eq!(
+            products(&plan),
+            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+        );
         assert!(
             plan.cpu_multi_worker
                 .reason
@@ -468,6 +615,53 @@ mod tests {
     }
 
     #[test]
+    fn cubedata_one_channel_reports_first_class_single_plane_eligibility() {
+        let config = parse([
+            "--specmode",
+            "cubedata",
+            "--channel-count",
+            "1",
+            "--gridder",
+            "standard",
+            "--interpolation",
+            "nearest",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubedataOneChannel);
+        assert!(plan.spectral.is_one_output_channel());
+        assert!(plan.cpu_multi_worker.eligible);
+        assert!(
+            plan.cpu_multi_worker
+                .reason
+                .starts_with("standard-mfs-fixed-tile-workers")
+        );
+        assert_eq!(
+            products(&plan),
+            vec![".image", ".residual", ".model", ".psf", ".sumwt"]
+        );
+    }
+
+    #[test]
+    fn cubedata_multi_channel_rejects_shared_single_plane_backends() {
+        let config = parse([
+            "--specmode",
+            "cubedata",
+            "--channel-count",
+            "2",
+            "--gridder",
+            "standard",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubedataMultiChannel);
+        assert!(!plan.spectral.is_one_output_channel());
+        assert!(!plan.cpu_multi_worker.eligible);
+        assert_eq!(plan.cpu_multi_worker.reason, "not-one-output-channel");
+        assert_eq!(plan.gpu_metal.reason, "not-one-output-channel");
+    }
+
+    #[test]
     fn wproject_plan_keeps_projection_family_explicit() {
         let config = parse(["--gridder", "wproject"]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
@@ -481,6 +675,35 @@ mod tests {
         assert!(
             plan.gpu_metal.reason == "wproject-metal-kernel"
                 || plan.gpu_metal.reason == "metal-device-unavailable"
+        );
+    }
+
+    #[test]
+    fn wproject_with_pb_products_keeps_pb_requirement_explicit() {
+        let config = parse(["--gridder", "wproject", "--write-pb", "--pbcor"]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(plan.projection, SinglePlaneProjectionPlan::WProjection);
+        assert_eq!(
+            plan.primary_beam_requirement,
+            SinglePlanePrimaryBeamRequirement::WProjectionProducts
+        );
+        assert!(plan.primary_beam_products);
+        assert_eq!(
+            products(&plan),
+            vec![
+                ".image",
+                ".residual",
+                ".model",
+                ".psf",
+                ".sumwt",
+                ".pb",
+                ".image.pbcor"
+            ]
+        );
+        assert!(
+            plan.log_line()
+                .contains("pb_requirement=wprojection-products")
         );
     }
 
@@ -505,6 +728,23 @@ mod tests {
             plan.gpu_metal.reason,
             "shared-strategy-not-yet-adapted-to-mtmfs"
         );
+        assert_eq!(
+            products(&plan),
+            vec![
+                ".image.tt0",
+                ".residual.tt0",
+                ".model.tt0",
+                ".psf.tt0",
+                ".sumwt.tt0",
+                ".image.tt1",
+                ".residual.tt1",
+                ".model.tt1",
+                ".psf.tt1",
+                ".sumwt.tt1",
+                ".alpha",
+                ".alpha.error"
+            ]
+        );
     }
 
     #[test]
@@ -528,6 +768,10 @@ mod tests {
         assert_eq!(plan.spectral, SinglePlaneSpectralPlan::Mfs);
         assert_eq!(plan.projection, SinglePlaneProjectionPlan::Mosaic);
         assert_eq!(
+            plan.primary_beam_requirement,
+            SinglePlanePrimaryBeamRequirement::MosaicProjection
+        );
+        assert_eq!(
             plan.cpu_multi_worker.reason,
             "mosaic-auto-uses-single-grid-owner-or-metal-groups"
         );
@@ -535,6 +779,42 @@ mod tests {
             plan.gpu_metal.reason == "mosaic-screen-projector-metal-single-grid-owner"
                 || plan.gpu_metal.reason == "metal-device-unavailable"
         );
+    }
+
+    #[test]
+    fn mosaic_pb_products_are_explicit_in_planner_output() {
+        let config = parse([
+            "--gridder",
+            "mosaic",
+            "--field",
+            "0,1,2",
+            "--phasecenter-field",
+            "0",
+            "--write-pb",
+            "--pbcor",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert_eq!(
+            products(&plan),
+            vec![
+                ".image",
+                ".residual",
+                ".model",
+                ".psf",
+                ".sumwt",
+                ".weight",
+                ".pb",
+                ".image.pbcor"
+            ]
+        );
+        let log = plan.log_line();
+        assert!(log.contains("pb_requirement=mosaic-projection"));
+        assert!(log.contains(
+            "output_products=.image,.residual,.model,.psf,.sumwt,.weight,.pb,.image.pbcor"
+        ));
     }
 
     #[test]
@@ -564,5 +844,48 @@ mod tests {
         );
         assert!(plan.cpu_multi_worker.reason.ends_with("-diagnostic"));
         assert_eq!(plan.gpu_metal.reason, "standard-mfs-policy-disabled-metal");
+    }
+
+    #[test]
+    fn representative_standard_rejection_keeps_explicit_reason() {
+        let config = parse([
+            "--gridder",
+            "standard",
+            "--savemodel",
+            "modelcolumn",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert!(!plan.cpu_multi_worker.eligible);
+        assert_eq!(
+            plan.cpu_multi_worker.reason,
+            "savemodel-requires-traced-path"
+        );
+        assert_eq!(plan.gpu_metal.reason, "savemodel-requires-traced-path");
+    }
+
+    #[test]
+    fn representative_automask_rejection_keeps_explicit_reason() {
+        let config = parse([
+            "--gridder",
+            "standard",
+            "--usemask",
+            "auto-multithresh",
+            "--niter",
+            "10",
+        ]);
+        let plan = build_single_plane_execution_plan(&config, false, 1);
+
+        assert!(!plan.cpu_multi_worker.eligible);
+        assert_eq!(
+            plan.cpu_multi_worker.reason,
+            "automask-not-supported-by-shared-strategy"
+        );
+        assert_eq!(
+            plan.gpu_metal.reason,
+            "automask-not-supported-by-shared-strategy"
+        );
     }
 }

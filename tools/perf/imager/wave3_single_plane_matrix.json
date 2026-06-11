@@ -317,9 +317,9 @@
         },
         {
           "tier": "medium",
-          "dataset_key": "wave3-aw-style-medium",
-          "dataset_source": "generate-if-missing",
-          "relative_path": "aw-style/medium/ms/wave3-aw-style-medium.ms",
+          "dataset_key": "wave3-vla-aw-widefield-medium",
+          "dataset_source": "generated-wave3",
+          "relative_path": "vla/aw-widefield/medium/ms/wave3-vla-aw-widefield-medium.ms",
           "products": [
             ".image",
             ".residual",

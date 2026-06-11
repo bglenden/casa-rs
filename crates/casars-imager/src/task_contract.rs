@@ -946,6 +946,45 @@ pub struct ImagerRunTaskRequest {
     /// Skip CLEAN and only write dirty/residual products.
     #[serde(default)]
     pub dirty_only: bool,
+    /// Runtime acceleration policy for single-plane standard-family imaging.
+    #[serde(default)]
+    pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
+    /// Optional explicit standard-MFS backend override.
+    #[serde(default)]
+    pub standard_mfs_backend: Option<String>,
+    /// Optional explicit standard-MFS grid worker count override.
+    #[serde(default)]
+    pub standard_mfs_grid_threads: Option<String>,
+    /// Optional explicit standard-MFS fixed-tile anchor override.
+    #[serde(default)]
+    pub standard_mfs_tile_anchor: Option<String>,
+    /// Optional explicit standard-MFS residual-refresh backend override.
+    #[serde(default)]
+    pub standard_mfs_residual_backend: Option<String>,
+    /// Optional explicit standard-MFS initial dirty/PSF backend override.
+    #[serde(default)]
+    pub standard_mfs_initial_dirty_backend: Option<String>,
+    /// Optional explicit Metal grouped input cache override.
+    #[serde(default)]
+    pub standard_mfs_metal_grouped_input_cache: Option<bool>,
+    /// Optional standard-MFS planner memory target in MiB.
+    #[serde(default)]
+    pub standard_mfs_memory_target_mb: Option<usize>,
+    /// Optional standard-MFS prepare-buffer budget in MiB.
+    #[serde(default)]
+    pub standard_mfs_prepare_buffer_mb: Option<usize>,
+    /// Optional shared imaging source-stream memory target in MiB.
+    #[serde(default)]
+    pub imaging_memory_target_mb: Option<usize>,
+    /// Optional shared imaging source-stream prepare-buffer budget in MiB.
+    #[serde(default)]
+    pub imaging_prepare_buffer_mb: Option<usize>,
+    /// Optional shared imaging source-stream row-block override.
+    #[serde(default)]
+    pub imaging_row_block_rows: Option<usize>,
+    /// Optional shared imaging source-stream prepare worker count.
+    #[serde(default)]
+    pub imaging_prepare_workers: Option<usize>,
     /// Write PNG preview sidecars for the CASA image products.
     #[serde(default = "default_write_preview_pngs")]
     pub write_preview_pngs: bool,
@@ -1009,6 +1048,19 @@ impl ImagerRunTaskRequest {
             w_term_mode: config.w_term_mode.into(),
             w_project_planes: config.w_project_planes,
             dirty_only: config.dirty_only,
+            standard_mfs_acceleration: config.standard_mfs_acceleration,
+            standard_mfs_backend: config.standard_mfs_backend.clone(),
+            standard_mfs_grid_threads: config.standard_mfs_grid_threads.clone(),
+            standard_mfs_tile_anchor: config.standard_mfs_tile_anchor.clone(),
+            standard_mfs_residual_backend: config.standard_mfs_residual_backend.clone(),
+            standard_mfs_initial_dirty_backend: config.standard_mfs_initial_dirty_backend.clone(),
+            standard_mfs_metal_grouped_input_cache: config.standard_mfs_metal_grouped_input_cache,
+            standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
+            standard_mfs_prepare_buffer_mb: config.standard_mfs_prepare_buffer_mb,
+            imaging_memory_target_mb: config.imaging_memory_target_mb,
+            imaging_prepare_buffer_mb: config.imaging_prepare_buffer_mb,
+            imaging_row_block_rows: config.imaging_row_block_rows,
+            imaging_prepare_workers: config.imaging_prepare_workers,
             write_preview_pngs: config.write_preview_pngs,
         }
     }
@@ -1122,13 +1174,19 @@ impl ImagerRunTaskRequest {
             force_standard_gridder: false,
             w_project_planes: self.w_project_planes,
             dirty_only: self.dirty_only,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
-            standard_mfs_backend: None,
-            standard_mfs_grid_threads: None,
-            standard_mfs_tile_anchor: None,
-            standard_mfs_residual_backend: None,
-            standard_mfs_initial_dirty_backend: None,
-            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_acceleration: self.standard_mfs_acceleration,
+            standard_mfs_backend: self.standard_mfs_backend.clone(),
+            standard_mfs_grid_threads: self.standard_mfs_grid_threads.clone(),
+            standard_mfs_tile_anchor: self.standard_mfs_tile_anchor.clone(),
+            standard_mfs_residual_backend: self.standard_mfs_residual_backend.clone(),
+            standard_mfs_initial_dirty_backend: self.standard_mfs_initial_dirty_backend.clone(),
+            standard_mfs_metal_grouped_input_cache: self.standard_mfs_metal_grouped_input_cache,
+            standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
+            standard_mfs_prepare_buffer_mb: self.standard_mfs_prepare_buffer_mb,
+            imaging_memory_target_mb: self.imaging_memory_target_mb,
+            imaging_prepare_buffer_mb: self.imaging_prepare_buffer_mb,
+            imaging_row_block_rows: self.imaging_row_block_rows,
+            imaging_prepare_workers: self.imaging_prepare_workers,
             write_preview_pngs: self.write_preview_pngs,
         })
     }
@@ -1753,7 +1811,7 @@ mod tests {
         ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest,
         ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
-    use crate::{CliConfig, SaveModelMode, SpectralMode};
+    use crate::{CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy};
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
@@ -1944,6 +2002,19 @@ mod tests {
             w_term_mode: Default::default(),
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
             write_preview_pngs: true,
         };
         let config = request.to_cli_config().unwrap();
@@ -2005,6 +2076,19 @@ mod tests {
             w_term_mode: Default::default(),
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
             write_preview_pngs: true,
         };
         let config = request.to_cli_config().unwrap();
@@ -2249,6 +2333,19 @@ mod tests {
             w_term_mode: Default::default(),
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
             write_preview_pngs: true,
         };
 
@@ -2410,6 +2507,19 @@ mod tests {
             w_term_mode: Default::default(),
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
             write_preview_pngs: true,
         };
         let standard_config = standard.to_cli_config().unwrap();
@@ -2556,6 +2666,19 @@ mod tests {
             w_term_mode: Default::default(),
             w_project_planes: None,
             dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
             write_preview_pngs: true,
         };
 
