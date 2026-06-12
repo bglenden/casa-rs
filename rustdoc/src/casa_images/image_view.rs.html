@@ -4084,12 +4084,12 @@
 <a href=#4084 id=4084 data-nosnippet>4084</a>                &amp;&amp; line.contains(<span class="string">" MJD)"</span>)
 <a href=#4085 id=4085 data-nosnippet>4085</a>                &amp;&amp; line.contains(<span class="string">'/'</span>)
 <a href=#4086 id=4086 data-nosnippet>4086</a>        }));
-<a href=#4087 id=4087 data-nosnippet>4087</a>        <span class="macro">assert!</span>(observation.lines.iter().any(|line| {
-<a href=#4088 id=4088 data-nosnippet>4088</a>            line.contains(<span class="string">"telescope position: frame=ITRF "</span>)
-<a href=#4089 id=4089 data-nosnippet>4089</a>                &amp;&amp; line.contains(<span class="string">" x="</span>)
-<a href=#4090 id=4090 data-nosnippet>4090</a>                &amp;&amp; line.contains(<span class="string">" y="</span>)
-<a href=#4091 id=4091 data-nosnippet>4091</a>                &amp;&amp; line.contains(<span class="string">" z="</span>)
-<a href=#4092 id=4092 data-nosnippet>4092</a>        }));
+<a href=#4087 id=4087 data-nosnippet>4087</a>        <span class="macro">assert!</span>(
+<a href=#4088 id=4088 data-nosnippet>4088</a>            observation
+<a href=#4089 id=4089 data-nosnippet>4089</a>                .lines
+<a href=#4090 id=4090 data-nosnippet>4090</a>                .iter()
+<a href=#4091 id=4091 data-nosnippet>4091</a>                .any(|line| { line == <span class="string">"telescope position: &lt;none&gt;" </span>})
+<a href=#4092 id=4092 data-nosnippet>4092</a>        );
 <a href=#4093 id=4093 data-nosnippet>4093</a>        <span class="macro">assert!</span>(observation.lines.iter().any(|line| {
 <a href=#4094 id=4094 data-nosnippet>4094</a>            line.contains(<span class="string">"pointing center: "</span>) &amp;&amp; line.contains(<span class="string">"hms"</span>) &amp;&amp; line.contains(<span class="string">"dms"</span>)
 <a href=#4095 id=4095 data-nosnippet>4095</a>        }));
