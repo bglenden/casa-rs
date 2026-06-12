@@ -20,14 +20,14 @@ use num_complex::{Complex32, Complex64};
 use crate::{
     ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsPairCollapseTransform,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock, StandardMfsRoutedVisibilityRow,
-    StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
-    StandardMfsVisibilityPolarization, VisibilityBatch,
+    StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization, VisibilityBatch,
     gridder::{
         PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
         StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
     },
     profile,
+    types::StandardMfsRoutedSampleRunBlock,
 };
 #[cfg(target_os = "macos")]
 use crate::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
@@ -2211,6 +2211,7 @@ struct StandardMfsTileQueueSample {
 }
 
 impl StandardMfsTileQueueSample {
+    #[allow(dead_code)]
     #[inline]
     fn from_routed(sample: StandardMfsRoutedSample, psf_only: bool, input_seq: u64) -> Self {
         let flags = if psf_only {
@@ -5471,6 +5472,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         Some(tile_id)
     }
 
+    #[allow(dead_code)]
     fn routed_samples_single_owner_tile(
         &self,
         samples: &[StandardMfsRoutedSample],
@@ -5635,6 +5637,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         Ok(accumulation)
     }
 
+    #[allow(dead_code)]
     fn push_routed_dirty_samples_to_run_accumulator(
         &self,
         samples: &[StandardMfsRoutedSample],
@@ -6111,6 +6114,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(dead_code)]
     pub(crate) fn accumulate_dirty_grids_direct_routed_run_replay(
         &self,
         replay_routed_runs: &mut dyn FnMut(
@@ -6482,6 +6486,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(dead_code)]
     pub(crate) fn accumulate_psf_grid_direct_routed_run_replay(
         &self,
         replay_routed_runs: &mut dyn FnMut(
@@ -8403,6 +8408,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(dead_code)]
     pub(crate) fn accumulate_residual_grid_direct_routed_run_replay(
         &self,
         replay_routed_runs: &mut dyn FnMut(
@@ -8720,6 +8726,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         Ok(accumulation)
     }
 
+    #[allow(dead_code)]
     fn push_routed_residual_samples_to_run_accumulator(
         &self,
         samples: &[StandardMfsRoutedSample],

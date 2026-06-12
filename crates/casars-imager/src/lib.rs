@@ -42,13 +42,13 @@ use casa_imaging::{
     StandardMfsMetalGroupedInputCachePrefill, StandardMfsModelPredictor,
     StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBuilder,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
-    WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
-    restore_standard_mfs_model, run_imaging, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
+    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
+    WTermMode, WeightDensityMode, WeightingMode, estimate_psf_sidelobe_from_psf,
+    primary_beam_voltage_pattern, restore_standard_mfs_model, run_imaging,
+    run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
     run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
@@ -2572,25 +2572,27 @@ fn prepare_mfs_mosaic_source_row_block_plane(
         .then(|| cube_setup_context_for_selection(selection, derived_engine))
         .transpose()?;
     let prepared_input = prepare_source_row_block_plane_inner(
-        ms,
-        config,
-        selection,
-        ddid_info,
-        spectral_window,
-        polarization,
-        geometry_rows,
-        data_column,
-        flag_column,
-        flag_row,
-        weight_column,
-        weight_spectrum,
-        derived_engine,
-        None,
-        cube_context,
-        finish,
-        None,
-        true,
-        true,
+        SourceRowBlockPlaneDescriptor {
+            ms,
+            config,
+            selection,
+            ddid_info,
+            spectral_window,
+            polarization,
+            geometry_rows,
+            data_column,
+            flag_column,
+            flag_row,
+            weight_column,
+            weight_spectrum,
+            derived_engine,
+            standard_mfs_table_values: None,
+            cube_context,
+            finish,
+            cube_row_spectral_reusable_plan: None,
+            build_cube_briggs_density_samples: true,
+            build_cube_mosaic_metadata: true,
+        },
         accumulate_timings,
     )?;
     prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
@@ -2720,25 +2722,27 @@ fn prepare_mosaic_cube_one_channel_source_row_block(
     let stage_started_at = Instant::now();
     let cube_context = cube_setup_context_for_selection(selection, derived_engine)?;
     let prepared_input = prepare_source_row_block_plane_inner(
-        ms,
-        config,
-        selection,
-        ddid_info,
-        spectral_window,
-        polarization,
-        geometry_rows,
-        data_column,
-        flag_column,
-        flag_row,
-        weight_column,
-        weight_spectrum,
-        derived_engine,
-        None,
-        Some(cube_context),
-        SourceRowBlockFinish::Cube,
-        cube_row_spectral_reusable_plan,
-        build_cube_briggs_density_samples,
-        build_cube_mosaic_metadata,
+        SourceRowBlockPlaneDescriptor {
+            ms,
+            config,
+            selection,
+            ddid_info,
+            spectral_window,
+            polarization,
+            geometry_rows,
+            data_column,
+            flag_column,
+            flag_row,
+            weight_column,
+            weight_spectrum,
+            derived_engine,
+            standard_mfs_table_values: None,
+            cube_context: Some(cube_context),
+            finish: SourceRowBlockFinish::Cube,
+            cube_row_spectral_reusable_plan,
+            build_cube_briggs_density_samples,
+            build_cube_mosaic_metadata,
+        },
         accumulate_timings,
     )?;
     prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
@@ -2763,6 +2767,28 @@ enum SourceRowBlockFinish {
     StandardMfs { batch_size: usize },
     MfsMosaic,
     Cube,
+}
+
+struct SourceRowBlockPlaneDescriptor<'a> {
+    ms: &'a MeasurementSet,
+    config: &'a CliConfig,
+    selection: &'a SelectedRowsContext,
+    ddid_info: &'a [Option<(usize, usize)>],
+    spectral_window: &'a casa_ms::subtables::spectral_window::MsSpectralWindow<'a>,
+    polarization: &'a casa_ms::subtables::polarization::MsPolarization<'a>,
+    geometry_rows: &'a [PreparedGeometryRow],
+    data_column: Option<&'a SelectedMainDataSource>,
+    flag_column: &'a SelectedMainArrayColumn,
+    flag_row: &'a [bool],
+    weight_column: &'a SelectedMainArrayColumn,
+    weight_spectrum: Option<&'a SelectedMainArrayColumn>,
+    derived_engine: Option<&'a MsCalEngine>,
+    standard_mfs_table_values: Option<&'a PreparedSelectionTableValues>,
+    cube_context: Option<CubeSetupContext<'a>>,
+    finish: SourceRowBlockFinish,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
+    build_cube_briggs_density_samples: bool,
+    build_cube_mosaic_metadata: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2815,29 +2841,31 @@ fn new_source_row_block_prepared_selection(
     Ok(prepared)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn prepare_source_row_block_plane_inner(
-    ms: &MeasurementSet,
-    config: &CliConfig,
-    selection: &SelectedRowsContext,
-    ddid_info: &[Option<(usize, usize)>],
-    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
-    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
-    geometry_rows: &[PreparedGeometryRow],
-    data_column: Option<&SelectedMainDataSource>,
-    flag_column: &SelectedMainArrayColumn,
-    flag_row: &[bool],
-    weight_column: &SelectedMainArrayColumn,
-    weight_spectrum: Option<&SelectedMainArrayColumn>,
-    derived_engine: Option<&MsCalEngine>,
-    standard_mfs_table_values: Option<&PreparedSelectionTableValues>,
-    cube_context: Option<CubeSetupContext<'_>>,
-    finish: SourceRowBlockFinish,
-    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
-    build_cube_briggs_density_samples: bool,
-    build_cube_mosaic_metadata: bool,
+    descriptor: SourceRowBlockPlaneDescriptor<'_>,
     accumulate_timings: &mut AccumulateRowTimings,
 ) -> Result<PreparedInput, String> {
+    let SourceRowBlockPlaneDescriptor {
+        ms,
+        config,
+        selection,
+        ddid_info,
+        spectral_window,
+        polarization,
+        geometry_rows,
+        data_column,
+        flag_column,
+        flag_row,
+        weight_column,
+        weight_spectrum,
+        derived_engine,
+        standard_mfs_table_values,
+        cube_context,
+        finish,
+        cube_row_spectral_reusable_plan,
+        build_cube_briggs_density_samples,
+        build_cube_mosaic_metadata,
+    } = descriptor;
     let thread_count = standard_mfs_density_prepare_threads(geometry_rows.len());
     if thread_count <= 1 || geometry_rows.len() < 2 {
         let mut prepared = new_source_row_block_prepared_selection(
@@ -14320,25 +14348,27 @@ fn prepare_processing_buffer(
         }
     };
     let prepared_input = prepare_source_row_block_plane_inner(
-        ms,
-        config,
-        &block_selection,
-        ddid_info,
-        spectral_window,
-        polarization,
-        &buffer.geometry_rows,
-        Some(&buffer.data_column),
-        &buffer.flag_column,
-        flag_row,
-        &buffer.weight_column,
-        buffer.weight_spectrum.as_ref(),
-        derived_engine,
-        standard_mfs_table_values.as_ref(),
-        cube_context,
-        finish,
-        None,
-        true,
-        true,
+        SourceRowBlockPlaneDescriptor {
+            ms,
+            config,
+            selection: &block_selection,
+            ddid_info,
+            spectral_window,
+            polarization,
+            geometry_rows: &buffer.geometry_rows,
+            data_column: Some(&buffer.data_column),
+            flag_column: &buffer.flag_column,
+            flag_row,
+            weight_column: &buffer.weight_column,
+            weight_spectrum: buffer.weight_spectrum.as_ref(),
+            derived_engine,
+            standard_mfs_table_values: standard_mfs_table_values.as_ref(),
+            cube_context,
+            finish,
+            cube_row_spectral_reusable_plan: None,
+            build_cube_briggs_density_samples: true,
+            build_cube_mosaic_metadata: true,
+        },
         accumulate_timings,
     )?;
     let plane = match prepared_input {
@@ -16016,122 +16046,6 @@ where
     Ok(streamed_samples)
 }
 
-#[allow(dead_code, clippy::too_many_arguments)]
-fn stream_standard_mfs_routed_sample_essentials_run_blocks<F>(
-    ms: &MeasurementSet,
-    config: &CliConfig,
-    data_column_kind: VisibilityDataColumn,
-    selection: &SelectedRowsContext,
-    table_values: &PreparedSelectionTableValues,
-    active_selected_rows: &[SelectedMainRow],
-    derived_engine: Option<&MsCalEngine>,
-    channel_axes: Arc<MsImagingChannelAxisCatalog>,
-    channel_read_range: Option<SelectedChannelReadRange>,
-    geometry_columns: &PreparedGeometryColumnCache,
-    row_block_rows: usize,
-    prepare_started_at: Instant,
-    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
-    accumulate_timings: &mut AccumulateRowTimings,
-    pass_stats: &mut StandardMfsStreamingPassStats,
-    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
-    mut consume: F,
-) -> Result<usize, String>
-where
-    F: FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>,
-{
-    let mut streamed_samples = 0usize;
-    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
-        config,
-        table_values,
-        selection.phase_center.clone(),
-        false,
-    )?;
-    let mut routed_runs = StandardMfsRoutedSampleRunBlock::default();
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let stage_started_at = Instant::now();
-        let (block, read_timings) = read_ms_imaging_essentials_block(
-            ms,
-            data_column_kind,
-            Arc::clone(&channel_axes),
-            geometry_columns,
-            row_chunk,
-            channel_read_range,
-        )?;
-        let get_ms_values_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
-        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
-            data_column: read_timings.data_column,
-            flag_column: read_timings.flag_column,
-            weight_column: read_timings.weight_column,
-            weight_spectrum: read_timings.weight_spectrum,
-            geometry_rows: read_timings.uvw_column,
-        });
-
-        let stage_started_at = Instant::now();
-        let before_accumulate = *accumulate_timings;
-        routed_runs.clear();
-        let mut block_candidate_samples = 0usize;
-        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
-        for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
-            accumulate_timings.rows_seen += 1;
-            if row.spw_id != selected_row.spw_id {
-                return Err(format!(
-                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
-                    selected_row.row_index, selected_row.spw_id, row.spw_id
-                ));
-            }
-            let run_start = routed_runs.begin_run();
-            let counts = prepared.stream_standard_mfs_routed_essentials_row_samples(
-                selected_row,
-                row,
-                derived_engine,
-                planned_sample_builder,
-                &mut |sample| {
-                    routed_runs.push_sample(sample);
-                    Ok(())
-                },
-            )?;
-            routed_runs.finish_run(run_start);
-            let _ = row_slot;
-            block_candidate_samples += counts.candidate_samples;
-            block_detail.add(counts.detail);
-        }
-        let consumer_started_at = Instant::now();
-        consume(&routed_runs).map_err(|error| error.to_string())?;
-        pass_stats.add_consumer(consumer_started_at.elapsed());
-        let prepare_processing_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
-        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
-        let planned_tap_visits = routed_runs
-            .samples()
-            .iter()
-            .map(|sample| usize::from(sample.tap_count))
-            .sum();
-        pass_stats.add_planned_sample_counts(
-            block_candidate_samples,
-            routed_runs.len(),
-            planned_tap_visits,
-        );
-        pass_stats.add_planned_sample_detail(block_detail);
-        pass_stats.record_density_block(
-            routed_runs.len(),
-            get_ms_values_elapsed,
-            prepare_processing_elapsed,
-        );
-        streamed_samples += routed_runs.len();
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/ms_essentials_routed_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
-                accumulate_timings.rows_seen,
-                active_selected_rows.len(),
-                streamed_samples,
-                prepare_started_at.elapsed().as_secs_f64(),
-            );
-        }
-    }
-    Ok(streamed_samples)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn stream_standard_mfs_routed_visibility_essentials_run_blocks<F>(
     ms: &MeasurementSet,
@@ -16861,25 +16775,27 @@ fn prepare_cube_without_trace_in_source_row_blocks(
         let stage_started_at = Instant::now();
         let before_accumulate = combined_accumulate_timings;
         let prepared_input = prepare_source_row_block_plane_inner(
-            ms,
-            config,
-            selection,
-            ddid_info,
-            spectral_window,
-            polarization,
-            &processing_buffer.geometry_rows,
-            Some(&processing_buffer.data_column),
-            &processing_buffer.flag_column,
-            flag_row,
-            &processing_buffer.weight_column,
-            processing_buffer.weight_spectrum.as_ref(),
-            derived_engine,
-            None,
-            Some(cube_context.clone()),
-            SourceRowBlockFinish::Cube,
-            None,
-            true,
-            true,
+            SourceRowBlockPlaneDescriptor {
+                ms,
+                config,
+                selection,
+                ddid_info,
+                spectral_window,
+                polarization,
+                geometry_rows: &processing_buffer.geometry_rows,
+                data_column: Some(&processing_buffer.data_column),
+                flag_column: &processing_buffer.flag_column,
+                flag_row,
+                weight_column: &processing_buffer.weight_column,
+                weight_spectrum: processing_buffer.weight_spectrum.as_ref(),
+                derived_engine,
+                standard_mfs_table_values: None,
+                cube_context: Some(cube_context.clone()),
+                finish: SourceRowBlockFinish::Cube,
+                cube_row_spectral_reusable_plan: None,
+                build_cube_briggs_density_samples: true,
+                build_cube_mosaic_metadata: true,
+            },
             &mut combined_accumulate_timings,
         )?;
         prepared_samples += prepared_input_visibility_sample_count(&prepared_input);
