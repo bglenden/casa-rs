@@ -2426,7 +2426,8 @@ where
 /// is invoked once for the initial dirty/PSF pass and once for each exact
 /// residual-refresh pass. Each invocation must stream samples in a stable
 /// MeasurementSet order.
-pub fn run_standard_mfs_weighted_sample_streaming_with_execution_config<F>(
+#[cfg(test)]
+fn run_standard_mfs_weighted_sample_streaming_with_execution_config<F>(
     request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     mut replay_weighted_samples: F,
@@ -2450,7 +2451,8 @@ where
 /// This is the preferred frontend/core boundary for trace-free streaming: the
 /// frontend can hand one bounded row block of compact weighted samples to the
 /// core, avoiding a dynamic callback crossing for every scalar sample.
-pub fn run_standard_mfs_weighted_sample_block_streaming_with_execution_config<F>(
+#[cfg(test)]
+fn run_standard_mfs_weighted_sample_block_streaming_with_execution_config<F>(
     request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     mut replay_weighted_samples: F,
@@ -2480,7 +2482,8 @@ where
 /// Planned sample blocks are the shared single-worker and fixed-tile work-unit
 /// shape: they are bounded to row-block lifetime and already carry compact
 /// standard-gridder tap identity.
-pub fn run_standard_mfs_planned_sample_block_streaming_with_execution_config<F>(
+#[cfg(test)]
+fn run_standard_mfs_planned_sample_block_streaming_with_execution_config<F>(
     request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     mut replay_weighted_samples: F,
