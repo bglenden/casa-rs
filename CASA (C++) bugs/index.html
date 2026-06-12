@@ -646,6 +646,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#wave-3-heavy-benchmark-repro" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wave 3 heavy benchmark repro
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -773,6 +784,26 @@ CASA reported one minor iteration, but the model flux was <code>0.0569704 Jy</co
 peak was <code>0.299844 Jy/beam</code>, so one strict-gain component at <code>gain=0.1</code> would account for
 only about <code>0.0299844 Jy</code>. The reported model flux is therefore consistent with two committed
 Hogbom components in that minor-cycle call.</p>
+<h3 id="wave-3-heavy-benchmark-repro">Wave 3 heavy benchmark repro<a class="headerlink" href="#wave-3-heavy-benchmark-repro" title="Permanent link">&para;</a></h3>
+<p>The same behavior appeared again during the ImPerformance Wave 3 standard-MFS heavy
+review on the retained Wave 2 medium VLA dataset:</p>
+<ul>
+<li>dataset: <code>/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms</code></li>
+<li>setup: <code>specmode='mfs'</code>, <code>gridder='standard'</code>, <code>deconvolver='hogbom'</code>,
+  <code>imsize=1024</code>, <code>cell='0.25arcsec'</code>, <code>spw='0:0~63'</code>, Briggs <code>robust=0.5</code>,
+  <code>gain=0.1</code>, <code>threshold='0Jy'</code>, <code>niter=1</code>, <code>cycleniter=1</code></li>
+<li>observed result: CASA reported <code>iterdone = 1</code>, but the output <code>.model</code> image
+  contained two nonzero clean components:</li>
+<li><code>(510, 510) = 9.177456855773926</code></li>
+<li><code>(508, 507) = 8.556220054626465</code></li>
+</ul>
+<p>In a strict one-component casa-rs comparison this made the one-cycle residual RMS
+difference jump to <code>3.65e-2</code>. Running casa-rs with its explicit CASA-compatible
+Hogbom accounting mode reproduced both components and reduced the residual RMS
+difference to <code>7.64e-5</code>, matching the dirty gridding numerical floor. On the full
+<code>niter=500</code>, <code>cycleniter=50</code> heavy row, the same CASA-compatible mode reduced the
+CASA/casa-rs product differences to <code>.model</code> RMS <code>1.71e-7</code>, <code>.residual</code> RMS
+<code>5.68e-5</code>, and <code>.image</code> RMS <code>5.87e-5</code>.</p>
 
 
 

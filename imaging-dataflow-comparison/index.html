@@ -697,14 +697,14 @@ Most near-term collapse pressure is therefore in the adapter/orchestration
 layer, not in the pure core boundary.</p>
 <div class="codehilite"><pre><span></span><code><span class="nt">flowchart</span><span class="w"> </span><span class="nt">TB</span>
 <span class="w">    </span><span class="nt">surface</span><span class="cp">[</span><span class="s2">&quot;Task/API surfaces&lt;br/&gt;Python mfs(), CLI/JSON, GUI task tab&quot;</span><span class="cp">]</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">runconfig</span><span class="cp">[</span><span class="s2">&quot;Request validation and mode dispatch&lt;br/&gt;casars-imager::run_from_config()&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">runconfig</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">readms</span><span class="cp">[</span><span class="s2">&quot;MS read, row/channel selection, flagging&lt;br/&gt;prepare_plane_input_inner()&lt;br/&gt;DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">readms</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">prep</span><span class="cp">[</span><span class="s2">&quot;Prepared visibility samples&lt;br/&gt;MFS or cube batches&lt;br/&gt;uvw, frequency, Stokes, PB metadata&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">runconfig</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">readms</span><span class="cp">[</span><span class="s2">&quot;Bounded MS source stream&lt;br/&gt;read_visibility_source_columns()&lt;br/&gt;DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">readms</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">prep</span><span class="cp">[</span><span class="s2">&quot;Bounded visibility blocks&lt;br/&gt;MFS or cube adapters&lt;br/&gt;uvw, frequency, Stokes, PB metadata&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">prep</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">dispatch</span><span class="cp">[</span><span class="s2">&quot;Processing-mode dispatch&lt;br/&gt;adapter-owned control-flow split&quot;</span><span class="cp">]</span>
 
 <span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span><span class="cp">[</span><span class="s2">&quot;MFS imaging operations&lt;br/&gt;run_imaging()&lt;br/&gt;standard/W-term path and mosaic branch&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mtmfs</span><span class="cp">[</span><span class="s2">&quot;MTMFS Taylor-term operations&lt;br/&gt;run_mtmfs()&lt;br/&gt;separate core entrypoint, standard gridder only&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">cube</span><span class="cp">[</span><span class="s2">&quot;Standard cube plane loop&lt;br/&gt;run_cube()&lt;br/&gt;per-channel calls into run_imaging()&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mcube</span><span class="cp">[</span><span class="s2">&quot;Mosaic cube plane loop&lt;br/&gt;run_frontend_cube()&lt;br/&gt;frontend-owned per-channel calls into run_imaging()&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">cube</span><span class="cp">[</span><span class="s2">&quot;Standard cube consumers&lt;br/&gt;bounded one-plane stream adapters&lt;br/&gt;unsupported retained routes reject before MS reads&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mcube</span><span class="cp">[</span><span class="s2">&quot;Mosaic cube consumers&lt;br/&gt;bounded one-plane stream adapters&lt;br/&gt;unsupported retained routes reject before MS reads&quot;</span><span class="cp">]</span>
 
 <span class="w">    </span><span class="nt">cube</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span>
 <span class="w">    </span><span class="nt">mcube</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span>
@@ -720,7 +720,7 @@ layer, not in the pure core boundary.</p>
 <span class="w">    </span><span class="nt">refresh</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">deconv</span>
 <span class="w">    </span><span class="nt">deconv</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">result</span><span class="cp">[</span><span class="s2">&quot;Result objects&lt;br/&gt;ImagingResult, MtmfsResult, CubeImagingResult&quot;</span><span class="cp">]</span>
 <span class="w">    </span><span class="nt">result</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">write</span><span class="cp">[</span><span class="s2">&quot;Product emission&lt;br/&gt;write_products()&lt;br/&gt;image/model/residual/PSF/sumwt/PB/pbcor/mask/previews&quot;</span><span class="cp">]</span>
-<span class="w">    </span><span class="nt">result</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">modelcol</span><span class="cp">[</span><span class="s2">&quot;MODEL_DATA writeback&lt;br/&gt;write_model_column()&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">result</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">modelcol</span><span class="cp">[</span><span class="s2">&quot;MODEL_DATA writeback&lt;br/&gt;requires bounded stream writer&lt;br/&gt;unsupported routes reject before MS reads&quot;</span><span class="cp">]</span>
 
 <span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">io</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">e7f0ff</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">315f9b</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
 <span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">op</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">e9f8e5</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">3c7a36</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
@@ -731,17 +731,19 @@ layer, not in the pure core boundary.</p>
 <span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">runconfig</span><span class="o">,</span><span class="nt">prep</span><span class="o">,</span><span class="nt">result</span><span class="w"> </span><span class="nt">op</span><span class="o">;</span>
 <span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">mfs</span><span class="o">,</span><span class="nt">mtmfs</span><span class="o">,</span><span class="nt">cube</span><span class="o">,</span><span class="nt">mcube</span><span class="o">,</span><span class="nt">stdproj</span><span class="o">,</span><span class="nt">mosaicproj</span><span class="o">,</span><span class="nt">deconv</span><span class="w"> </span><span class="nt">mode</span><span class="o">;</span>
 <span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">weighting</span><span class="o">,</span><span class="nt">fft</span><span class="o">,</span><span class="nt">normalize</span><span class="o">,</span><span class="nt">refresh</span><span class="w"> </span><span class="nt">hot</span><span class="o">;</span>
-<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">dispatch</span><span class="o">,</span><span class="nt">mcube</span><span class="o">,</span><span class="nt">write</span><span class="w"> </span><span class="nt">pressure</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">dispatch</span><span class="o">,</span><span class="nt">cube</span><span class="o">,</span><span class="nt">mcube</span><span class="o">,</span><span class="nt">modelcol</span><span class="o">,</span><span class="nt">write</span><span class="w"> </span><span class="nt">pressure</span><span class="o">;</span>
 </code></pre></div>
 
 <p>Refactoring signals visible here:</p>
 <ul>
-<li><code>casars-imager</code> owns preparation, mode dispatch, cube orchestration,
-  coordinate construction, masks, product writing, and model-column writing.
+<li><code>casars-imager</code> owns source-stream planning, mode dispatch, coordinate
+  construction, masks, product writing, and bounded model-column writeback.
   That is a large adapter surface even though the pure core boundary is clean.</li>
-<li>The cube split is meaningful for standard cube imaging, but the mosaic cube
-  path loops in the frontend and repeatedly calls MFS <code>run_imaging()</code>. That is a
-  likely future target for a shared <code>PlaneRunPlan</code> or <code>CubeModeRunner</code>.</li>
+<li>The old retained full-visibility preparation route has been removed from
+  production dispatch. Standard MFS, W-projection, mosaic MFS, and supported
+  one-plane cube consumers must read through the bounded source stream; modes
+  without a stream consumer fail during planning before large visibility-column
+  reads.</li>
 <li>Gridder terminology is split across Python task input (<code>standard</code>,
   <code>wproject</code>, <code>mosaic</code>, <code>awproject</code>, <code>awp2</code>, <code>awphpg</code>) and the Rust core
   (<code>GridderMode::Standard</code>, <code>GridderMode::Mosaic</code>, plus <code>WTermMode</code>). That split
@@ -893,7 +895,7 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>MS selection and column I/O</td>
-<td><code>casars-imager::prepare_plane_input*</code></td>
+<td><code>casars-imager</code> bounded source stream readers</td>
 <td><code>SynthesisImager::selectData</code>, <code>VisibilityIterator</code>, helpers</td>
 <td><code>ReadMSAlgorithm</code>, per-job MS staging</td>
 <td>I/O overlap work belongs here, before gridder optimization.</td>
@@ -935,10 +937,10 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>Cube path</td>
-<td><code>run_cube()</code> for standard, <code>run_frontend_cube()</code> for mosaic/non-standard</td>
+<td>bounded one-plane stream consumers where implemented; unsupported retained routes reject before visibility reads</td>
 <td>parallel cube helper and cube C++ algorithms</td>
 <td>SPW partitioning and image-solver workflow</td>
-<td>The frontend cube loop is a likely Rust refactor target.</td>
+<td>Multi-channel cube still needs a stream-native runner rather than a retained full-materialization fallback.</td>
 </tr>
 <tr>
 <td>Mosaic/A/AW path</td>
@@ -956,7 +958,7 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>Residual refresh / prediction</td>
-<td>core major-cycle refresh plus optional <code>write_model_column()</code></td>
+<td>core major-cycle refresh plus bounded stream model prediction/writeback where implemented</td>
 <td><code>runMajorCycle</code>, <code>predictModel</code>, <code>VisibilityIterator::Model</code> writes</td>
 <td><code>ResidualAlgorithm</code>, <code>PredictAlgorithm</code>, <code>WriteMSAlgorithm</code></td>
 <td>This is the bridge where I/O, degrid, grid, and MS writes collide.</td>
@@ -1016,7 +1018,7 @@ hypothesis is:</p>
 resource ownership.</p>
 <p>Likely <code>casa-rs</code> measurement points:</p>
 <ul>
-<li>MS column loads in <code>prepare_plane_input_inner()</code></li>
+<li>MS column loads in the bounded source stream readers</li>
 <li>weighting density construction</li>
 <li>standard gridder and W/screen projector sample loops</li>
 <li>FFT and normalization</li>
