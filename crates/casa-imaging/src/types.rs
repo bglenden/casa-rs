@@ -1033,12 +1033,6 @@ pub struct StandardMfsRoutedSampleRunBlock {
 }
 
 impl StandardMfsRoutedSampleRunBlock {
-    /// Remove all samples and run ranges while retaining allocated capacity.
-    pub fn clear(&mut self) {
-        self.samples.clear();
-        self.runs.clear();
-    }
-
     /// Return the routed scalar samples in stable input order.
     pub fn samples(&self) -> &[StandardMfsRoutedSample] {
         &self.samples
@@ -1047,34 +1041,6 @@ impl StandardMfsRoutedSampleRunBlock {
     /// Return contiguous run ranges into [`Self::samples`].
     pub fn runs(&self) -> &[Range<usize>] {
         &self.runs
-    }
-
-    /// Start a new run, returning the current sample offset.
-    pub fn begin_run(&self) -> usize {
-        self.samples.len()
-    }
-
-    /// Append one routed scalar sample to the current run under construction.
-    pub fn push_sample(&mut self, sample: StandardMfsRoutedSample) {
-        self.samples.push(sample);
-    }
-
-    /// Finish a run that began at `start`, recording it if it is non-empty.
-    pub fn finish_run(&mut self, start: usize) {
-        let end = self.samples.len();
-        if start < end {
-            self.runs.push(start..end);
-        }
-    }
-
-    /// Return the total number of routed scalar samples.
-    pub fn len(&self) -> usize {
-        self.samples.len()
-    }
-
-    /// Return true when there are no routed scalar samples.
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
     }
 }
 

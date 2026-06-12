@@ -2636,6 +2636,16 @@ mod tests {
         }
     }
 
+    fn casa_regionmanager_probe_unavailable(stderr: &[u8]) -> bool {
+        let stderr = String::from_utf8_lossy(stderr);
+        stderr.contains("No module named 'casatools'")
+            || stderr.contains("No module named casatools")
+            || (stderr.contains("ImportError")
+                && (stderr.contains("casatools")
+                    || stderr.contains("Library not loaded")
+                    || stderr.contains("dlopen(")))
+    }
+
     struct PerfEnvGuard;
 
     impl Drop for PerfEnvGuard {
@@ -4157,6 +4167,13 @@ if not (rg.ispixelregion(casa_pixel_region) or rg.isworldregion(casa_pixel_regio
             .arg(&casa_pixel_region_path)
             .output()
             .unwrap();
+        if !output.status.success() && casa_regionmanager_probe_unavailable(&output.stderr) {
+            eprintln!(
+                "skipping CASA CRTF interop test: casatools regionmanager is not loadable\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         assert!(
             output.status.success(),
             "CASA CRTF interop probe failed\nstdout:\n{}\nstderr:\n{}",
