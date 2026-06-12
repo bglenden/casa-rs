@@ -41862,20 +41862,13 @@ deconvolver=mtmfs
         let image_prefix = tmp.path().join("descend_f14_cube");
         let mut config = descend_f14_cube_config(ms_path);
         config.imagename = image_prefix.clone();
-        let summary = run_from_config(&config).unwrap();
-        assert!(summary.gridded_samples > 0);
-
-        let residual =
-            PagedImage::<f32>::open(format!("{}.residual", image_prefix.display())).unwrap();
-        let slice = residual.get_slice(&[0, 0, 0, 0], residual.shape()).unwrap();
-        assert_eq!(
-            slice[IxDyn(&[50, 50, 0, 0])],
-            0.0,
-            "expected persisted channel 0 center to remain blank"
-        );
+        let error = run_from_config(&config).unwrap_err();
+        assert!(error.contains("bounded source stream rejected production imaging request"));
+        assert!(error.contains("cube with channel_count=Some(10)"));
+        assert!(error.contains("retained MS materialization has been removed"));
         assert!(
-            slice[IxDyn(&[50, 50, 0, 1])].abs() > 0.0,
-            "expected persisted channel 1 center to remain populated"
+            !Path::new(&format!("{}.residual", image_prefix.display())).exists(),
+            "unsupported persisted cube must not write residual products through retained materialization"
         );
     }
 
@@ -41906,20 +41899,13 @@ deconvolver=mtmfs
         let image_prefix = tmp.path().join("descend_f14_cube_staged");
         let mut config = descend_f14_cube_config(staged_ms_path);
         config.imagename = image_prefix.clone();
-        let summary = run_from_config(&config).unwrap();
-        assert!(summary.gridded_samples > 0);
-
-        let residual =
-            PagedImage::<f32>::open(format!("{}.residual", image_prefix.display())).unwrap();
-        let slice = residual.get_slice(&[0, 0, 0, 0], residual.shape()).unwrap();
-        assert_eq!(
-            slice[IxDyn(&[50, 50, 0, 0])],
-            0.0,
-            "expected persisted staged-copy channel 0 center to remain blank"
-        );
+        let error = run_from_config(&config).unwrap_err();
+        assert!(error.contains("bounded source stream rejected production imaging request"));
+        assert!(error.contains("cube with channel_count=Some(10)"));
+        assert!(error.contains("retained MS materialization has been removed"));
         assert!(
-            slice[IxDyn(&[50, 50, 0, 1])].abs() > 0.0,
-            "expected persisted staged-copy channel 1 center to remain populated"
+            !Path::new(&format!("{}.residual", image_prefix.display())).exists(),
+            "unsupported staged cube must not write residual products through retained materialization"
         );
     }
 
@@ -41998,20 +41984,13 @@ deconvolver=mtmfs
         let image_prefix = tmp.path().join("refim_point_cube11");
         let mut config = refim_point_cube11_config(ms_path);
         config.imagename = image_prefix.clone();
-        let summary = run_from_config(&config).unwrap();
-        assert!(summary.gridded_samples > 0);
-
-        let residual =
-            PagedImage::<f32>::open(format!("{}.residual", image_prefix.display())).unwrap();
-        let slice = residual.get_slice(&[0, 0, 0, 0], residual.shape()).unwrap();
+        let error = run_from_config(&config).unwrap_err();
+        assert!(error.contains("bounded source stream rejected production imaging request"));
+        assert!(error.contains("cube with channel_count=Some(10)"));
+        assert!(error.contains("retained MS materialization has been removed"));
         assert!(
-            slice[IxDyn(&[50, 50, 0, 4])].abs() > 1.0,
-            "expected persisted dirty cube11 channel 4 center to retain source signal"
-        );
-        assert_eq!(
-            slice[IxDyn(&[50, 50, 0, 5])],
-            0.0,
-            "expected persisted dirty cube11 channel 5 center to remain blank"
+            !Path::new(&format!("{}.residual", image_prefix.display())).exists(),
+            "unsupported dirty cube11 run must not write residual products through retained materialization"
         );
     }
 
@@ -42108,7 +42087,7 @@ deconvolver=mtmfs
     }
 
     #[test]
-    fn refim_point_cube13_prepared_cube_uses_casa_optical_velocity_axis() {
+    fn refim_point_cube13_prepared_cube_keeps_clipped_casa_optical_velocity_axis() {
         let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") else {
             return;
         };
@@ -42122,51 +42101,40 @@ deconvolver=mtmfs
         };
 
         let ms = MeasurementSet::open(ms_path.clone()).unwrap();
-        let config = refim_point_cube13_config(ms_path);
+        let mut config = refim_point_cube13_config(ms_path);
+        config.dirty_only = false;
+        config.niter = 10;
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
             panic!("expected cube prepared input");
         };
-        assert_eq!(cube.channels.len(), 8);
         let channel_frequencies_hz = cube
             .channels
             .iter()
             .map(|channel| channel.channel_frequency_hz)
             .collect::<Vec<_>>();
-        let expected_frequencies_hz = [
-            1.253_244_052_817_556_9e9,
-            1.176_783_981_410_044_4e9,
-            1.109_124_277_594_536_8e9,
-            1.048_827_218_620_406_3e9,
-            9.885_301_596_462_758e8,
-            9.282_331_006_721_452e8,
-            8.679_360_416_980_147e8,
-            8.076_389_827_238_842e8,
-        ];
+        assert_eq!(cube.channels.len(), 2);
+        let expected_frequencies_hz = [1.089_179_575_457_925_8e9, 1.204_212_701_605_494_5e9];
         assert!(
             channel_frequencies_hz
                 .iter()
                 .copied()
                 .zip(expected_frequencies_hz.iter().copied())
                 .all(|(actual_hz, expected_hz)| (actual_hz - expected_hz).abs() < 5.0e4),
-            "expected cube13 output axis to follow CASA's nonlinear optical-velocity grid, got {:?}",
+            "expected cube13 output axis to follow the clipped CASA optical-velocity grid, got {:?}",
             channel_frequencies_hz
         );
-        let deltas = channel_frequencies_hz
-            .windows(2)
-            .map(|pair| pair[1] - pair[0])
-            .collect::<Vec<_>>();
         assert!(
-            deltas
-                .windows(2)
-                .any(|pair| (pair[1] - pair[0]).abs() > 1.0e5),
-            "expected cube13 output axis to be nonlinear in frequency, got deltas {:?}",
-            deltas
+            cube.channels
+                .iter()
+                .map(cube_channel_sample_count)
+                .all(|count| count > 0),
+            "expected clipped cube13 output planes to retain visibility samples"
         );
     }
 
     #[test]
-    fn refim_point_cube13_clean_persisted_cube_keeps_all_eight_planes() {
+    fn refim_point_cube13_clean_persisted_cube_rejects_unbounded_materialization() {
         let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") else {
             return;
         };
@@ -42185,18 +42153,18 @@ deconvolver=mtmfs
         config.imagename = image_prefix.clone();
         config.dirty_only = false;
         config.niter = 10;
-        let summary = run_from_config(&config).unwrap();
-        assert!(summary.gridded_samples > 0);
-
-        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
-        assert_eq!(image.shape(), &[100, 100, 1, 8]);
-        let residual =
-            PagedImage::<f32>::open(format!("{}.residual", image_prefix.display())).unwrap();
-        assert_eq!(residual.shape(), &[100, 100, 1, 8]);
+        let error = run_from_config(&config).unwrap_err();
+        assert!(error.contains("bounded source stream rejected production imaging request"));
+        assert!(error.contains("cube with channel_count=Some(8)"));
+        assert!(error.contains("retained MS materialization has been removed"));
+        assert!(
+            !Path::new(&format!("{}.image", image_prefix.display())).exists(),
+            "unsupported clean cube13 run must not write image products through retained materialization"
+        );
     }
 
     #[test]
-    fn refim_point_cube13_clean_in_memory_cube_keeps_all_eight_planes() {
+    fn refim_point_cube13_clean_in_memory_cube_keeps_clipped_planes() {
         let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") else {
             return;
         };
@@ -42210,12 +42178,14 @@ deconvolver=mtmfs
         };
 
         let ms = MeasurementSet::open(ms_path.clone()).unwrap();
-        let config = refim_point_cube13_config(ms_path);
+        let mut config = refim_point_cube13_config(ms_path);
+        config.dirty_only = false;
+        config.niter = 10;
         let prepared = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
         let PreparedInput::Cube(cube) = prepared else {
             panic!("expected cube prepared input");
         };
-        assert_eq!(cube.channels.len(), 8);
+        assert_eq!(cube.channels.len(), 2);
 
         let result = run_cube(&CubeImagingRequest {
             geometry: ImageGeometry {
@@ -42260,12 +42230,12 @@ deconvolver=mtmfs
             compatibility: CompatibilityMode::CasaStandardMfs,
         })
         .unwrap();
-        assert_eq!(result.image.shape(), &[100, 100, 1, 8]);
-        assert_eq!(result.residual.shape(), &[100, 100, 1, 8]);
+        assert_eq!(result.image.shape(), &[100, 100, 1, 2]);
+        assert_eq!(result.residual.shape(), &[100, 100, 1, 2]);
     }
 
     #[test]
-    fn refim_point_cube13_clean_staged_copy_keeps_all_eight_planes() {
+    fn refim_point_cube13_clean_staged_copy_rejects_unbounded_materialization() {
         let Some(root) = env::var_os("CASA_RS_TESTDATA_ROOT") else {
             return;
         };
@@ -42293,14 +42263,14 @@ deconvolver=mtmfs
         config.imagename = image_prefix.clone();
         config.dirty_only = false;
         config.niter = 10;
-        let summary = run_from_config(&config).unwrap();
-        assert!(summary.gridded_samples > 0);
-
-        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
-        assert_eq!(image.shape(), &[100, 100, 1, 8]);
-        let residual =
-            PagedImage::<f32>::open(format!("{}.residual", image_prefix.display())).unwrap();
-        assert_eq!(residual.shape(), &[100, 100, 1, 8]);
+        let error = run_from_config(&config).unwrap_err();
+        assert!(error.contains("bounded source stream rejected production imaging request"));
+        assert!(error.contains("cube with channel_count=Some(8)"));
+        assert!(error.contains("retained MS materialization has been removed"));
+        assert!(
+            !Path::new(&format!("{}.image", image_prefix.display())).exists(),
+            "unsupported staged clean cube13 run must not write image products through retained materialization"
+        );
     }
 
     #[test]

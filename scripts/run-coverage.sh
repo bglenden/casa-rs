@@ -60,13 +60,28 @@ run_llvm_cov() {
   # lifecycle, and direct terminal overlay plumbing that is not meaningfully
   # line-coverable in a CI coverage run; the underlying app/runtime behavior
   # remains covered through focused module tests.
+  # The casa-imaging execution backend mixes CPU execution with macOS Metal
+  # backend plumbing and embedded shader source in one internal file. CI-like
+  # coverage cannot line-cover that hardware/runtime path directly; the shipped
+  # behavior remains checked by casa-imaging unit tests and slow imager parity.
   local ignored_files
-  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
+  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-imaging/src/execution\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
 
-  # Run test binaries serially; the normal test gate keeps its parallelism,
-  # while coverage avoids profile-runtime races on CI.
+  local feature_args=()
+  if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
+    --tier slow-parity \
+    --require measurementset/vla/ngc5921.ms \
+    --require unittest/tclean/refim_twochan.ms \
+    --require unittest/tclean/refim_point.ms; then
+    echo "==> Including slow parity suites in coverage"
+    feature_args=(--features casa-ms/slow-tests,casars-imager/slow-tests)
+  else
+    echo "coverage warning: slow parity datasets unavailable; coverage omits slow parity suites" >&2
+  fi
+
   cargo llvm-cov \
     --workspace \
+    "${feature_args[@]}" \
     --exclude casars-python \
     --exclude casa-test-support \
     --ignore-filename-regex "$ignored_files" \
