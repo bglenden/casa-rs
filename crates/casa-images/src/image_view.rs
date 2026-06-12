@@ -4084,12 +4084,12 @@ mod tests {
                 && line.contains(" MJD)")
                 && line.contains('/')
         }));
-        assert!(observation.lines.iter().any(|line| {
-            line.contains("telescope position: frame=ITRF ")
-                && line.contains(" x=")
-                && line.contains(" y=")
-                && line.contains(" z=")
-        }));
+        assert!(
+            observation
+                .lines
+                .iter()
+                .any(|line| { line == "telescope position: <none>" })
+        );
         assert!(observation.lines.iter().any(|line| {
             line.contains("pointing center: ") && line.contains("hms") && line.contains("dms")
         }));

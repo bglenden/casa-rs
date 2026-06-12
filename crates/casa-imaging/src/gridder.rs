@@ -43,7 +43,7 @@ pub(crate) enum DensityCellConvention {
 }
 
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 pub(crate) struct DensityGridCoordinateParams {
     pub(crate) center_x: f64,
     pub(crate) center_y: f64,
@@ -381,7 +381,7 @@ impl StandardGridder {
         [self.du_lambda, self.dv_lambda]
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn oversampling(&self) -> usize {
         self.oversampling
     }
@@ -394,7 +394,7 @@ impl StandardGridder {
         [self.geometry.nx(), self.geometry.ny()]
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn density_grid_coordinate_params(&self) -> DensityGridCoordinateParams {
         DensityGridCoordinateParams {
             center_x: self.density_center_x,
@@ -470,7 +470,7 @@ impl StandardGridder {
         ])
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn positive_tap_grid_coordinates(
         &self,
         u_lambda: f64,
@@ -481,7 +481,7 @@ impl StandardGridder {
         (x.is_finite() && y.is_finite()).then_some([x as f32, y as f32])
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn positive_tap_axis_weights(
         &self,
         taps: &PositiveTapSet,
@@ -495,7 +495,7 @@ impl StandardGridder {
         )
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn normalized_tap_weights(&self) -> &[[f32; STANDARD_GRIDDER_TAP_COUNT]] {
         &self.normalized_tap_weights
     }
@@ -1851,7 +1851,7 @@ pub(crate) struct ScreenProjector {
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 pub(crate) struct ScreenProjectorCompactKernel {
     pub(crate) values: Vec<Complex32>,
     pub(crate) tap_width: usize,
@@ -1935,12 +1935,12 @@ impl ScreenProjector {
         (tap_sum, center_tap, first_tap)
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn kernel_weight_width(&self) -> usize {
         self.phased_kernel_weights.dim().0
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn compact_phased_kernel_weights(&self) -> ScreenProjectorCompactKernel {
         let support = self.support as isize;
         let tap_width = self.support * 2 + 1;

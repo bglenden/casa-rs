@@ -731,6 +731,12 @@ fn hogbom_mfs_nmajor_fullsummary_task_return_tracks_casa_on_refim_twochan() {
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     };
 
@@ -5856,6 +5862,12 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     };
 
@@ -6102,6 +6114,12 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     };
 
@@ -6243,6 +6261,12 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     };
 
@@ -6403,6 +6427,12 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     };
 
@@ -6649,6 +6679,12 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
             standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
             write_preview_pngs: false,
         }
     };
@@ -6822,6 +6858,12 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     };
     let _ = run_from_config(&cubedata_config).expect("run rust cubedata dirty cube");
@@ -9274,6 +9316,12 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9360,6 +9408,12 @@ fn run_rust_imager_outlierfile_with_niter(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
 }
@@ -9425,6 +9479,12 @@ fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9496,6 +9556,12 @@ fn run_rust_imager_startmodel(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9644,6 +9710,12 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9720,6 +9792,12 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9793,6 +9871,12 @@ fn run_rust_imager_case_with_mtmfs(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
     .map(|_| ())
@@ -9941,6 +10025,12 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
 }
@@ -10064,6 +10154,12 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
 }
@@ -10237,6 +10333,12 @@ fn run_rust_imager_spectral_cube_case_with_options_and_weighting(
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: None,
+        imaging_prepare_buffer_mb: None,
+        imaging_row_block_rows: None,
+        imaging_prepare_workers: None,
         write_preview_pngs: false,
     })
 }

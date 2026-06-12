@@ -63,10 +63,21 @@ run_llvm_cov() {
   local ignored_files
   ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
 
-  # Run test binaries serially; the normal test gate keeps its parallelism,
-  # while coverage avoids profile-runtime races on CI.
+  local feature_args=()
+  if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
+    --tier slow-parity \
+    --require measurementset/vla/ngc5921.ms \
+    --require unittest/tclean/refim_twochan.ms \
+    --require unittest/tclean/refim_point.ms; then
+    echo "==> Including slow parity suites in coverage"
+    feature_args=(--features casa-ms/slow-tests,casars-imager/slow-tests)
+  else
+    echo "coverage warning: slow parity datasets unavailable; coverage omits slow parity suites" >&2
+  fi
+
   cargo llvm-cov \
     --workspace \
+    "${feature_args[@]}" \
     --exclude casars-python \
     --exclude casa-test-support \
     --ignore-filename-regex "$ignored_files" \

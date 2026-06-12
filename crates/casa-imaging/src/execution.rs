@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal imaging execution plans and CPU workspaces.
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 use std::env;
 use std::{
     cmp::Ordering as CmpOrdering,
@@ -29,7 +29,7 @@ use crate::{
     profile,
     types::StandardMfsRoutedSampleRunBlock,
 };
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 use crate::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
 
 /// Internal backend selection for standard MFS execution.
@@ -9291,20 +9291,20 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct StandardMfsMetalExecutor<'a> {
     gridder: &'a StandardGridder,
     partition: StandardMfsFixedTilePartition,
     backend: MetalDirtyBackend,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 const _: () = {
     assert!(STANDARD_GRIDDER_SUPPORT == 3);
     assert!(STANDARD_GRIDDER_TAP_COUNT == 7);
 };
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl<'a> StandardMfsMetalExecutor<'a> {
     pub(crate) fn new_with_resident_bytes(
         gridder: &'a StandardGridder,
@@ -9627,7 +9627,7 @@ impl<'a> StandardMfsMetalExecutor<'a> {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalDirtySample {
@@ -9643,7 +9643,7 @@ struct MetalDirtySample {
     y_weights: [f32; STANDARD_GRIDDER_TAP_COUNT],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalResidualSample {
@@ -9656,7 +9656,7 @@ struct MetalResidualSample {
     _pad1: [f32; 2],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalMtmfsSample {
@@ -9677,7 +9677,7 @@ struct MetalMtmfsSample {
     _pad1: [f32; 2],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalMtmfsParams {
@@ -9689,7 +9689,7 @@ struct MetalMtmfsParams {
     _pad0: [u32; 3],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalMtmfsGroupedResidualLane {
@@ -9707,7 +9707,7 @@ struct MetalMtmfsGroupedResidualLane {
     residual1_im: f32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct MtmfsMetalPsfAccumulation {
     pub(crate) psf_grids: Vec<Array2<Complex32>>,
     pub(crate) normalization_sumwt: f64,
@@ -9716,12 +9716,12 @@ pub(crate) struct MtmfsMetalPsfAccumulation {
     pub(crate) skipped_samples: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct MtmfsMetalResidualAccumulation {
     pub(crate) residual_grids: Vec<Array2<Complex32>>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct MtmfsMetalInputCache {
     // Keep this field before `samples` so the no-copy Metal buffer is dropped
     // before the host Vec whose allocation backs it.
@@ -9734,7 +9734,7 @@ pub(crate) struct MtmfsMetalInputCache {
     pub(crate) skipped_samples: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MtmfsMetalInputCache {
     pub(crate) fn sample_count(&self) -> usize {
         self.samples.len()
@@ -9748,7 +9748,7 @@ impl MtmfsMetalInputCache {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug)]
 struct MtmfsMetalGroupedChunk {
     sample_start: usize,
@@ -9760,7 +9760,7 @@ struct MtmfsMetalGroupedChunk {
     group_scan_tests: u64,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MtmfsMetalGroupedChunk {
     fn is_empty(&self) -> bool {
         self.sample_count == 0 || self.group_descs.is_empty()
@@ -9772,7 +9772,7 @@ impl MtmfsMetalGroupedChunk {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalResidualRowRunDesc {
@@ -9793,7 +9793,7 @@ struct MetalResidualRowRunDesc {
     _pad1: [u32; 2],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalResidualRowRunLane {
@@ -9806,7 +9806,7 @@ struct MetalResidualRowRunLane {
     _pad1: [f32; 2],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalResidualGroupedLane {
@@ -9820,7 +9820,7 @@ struct MetalResidualGroupedLane {
     _pad0: f32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalInitialDirtyGroupedLane {
@@ -9834,7 +9834,7 @@ struct MetalInitialDirtyGroupedLane {
     dirty_valid: f32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalInitialDirtyRunAccum {
@@ -9844,7 +9844,7 @@ struct MetalInitialDirtyRunAccum {
     skipped: u32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalResidualGroupedTileDesc {
@@ -9857,7 +9857,7 @@ struct MetalResidualGroupedTileDesc {
     _pad0: [u32; 2],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug)]
 struct MetalResidualGroupedTilePartition {
     grid_width: usize,
@@ -9867,7 +9867,7 @@ struct MetalResidualGroupedTilePartition {
     tile_count_y: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalResidualGroupedTilePartition {
     fn new(grid_width: usize, grid_height: usize, edge: usize) -> Result<Self, ImagingError> {
         if grid_width == 0 || grid_height == 0 {
@@ -9959,7 +9959,7 @@ impl MetalResidualGroupedTilePartition {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalTileParams {
@@ -9971,7 +9971,7 @@ struct MetalTileParams {
     _pad0: [u32; 3],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalResidualParams {
@@ -9983,7 +9983,7 @@ struct MetalResidualParams {
     _pad0: [u32; 3],
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalResidualRowRunParams {
@@ -10009,7 +10009,7 @@ struct MetalResidualRowRunParams {
     _pad1: f32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MetalResidualRowRunDiagnosticMode {
     Exact,
@@ -10019,7 +10019,7 @@ enum MetalResidualRowRunDiagnosticMode {
     TapPlanOnly,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalResidualRowRunDiagnosticMode {
     fn from_env() -> Result<Self, ImagingError> {
         match env::var("CASA_RS_STANDARD_MFS_METAL_ROW_RUN_DIAGNOSTIC") {
@@ -10069,27 +10069,27 @@ impl MetalResidualRowRunDiagnosticMode {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 type MetalResidualRunReplay<'a> = dyn FnMut(
         &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>
     + 'a;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 type MetalBuffer = objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 type MetalPipeline =
     objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>>;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MetalInputBufferCopyMode {
     Copy,
     NoCopy,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalResidualDispatchBuffers<'a> {
     sample_buffer: &'a MetalBuffer,
     params_buffer: &'a MetalBuffer,
@@ -10102,7 +10102,7 @@ struct MetalResidualDispatchBuffers<'a> {
     grid_im: &'a MetalBuffer,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalResidualRowRunSharedBuffers<'a> {
     tap_weights: &'a MetalBuffer,
     density: &'a MetalBuffer,
@@ -10112,7 +10112,7 @@ struct MetalResidualRowRunSharedBuffers<'a> {
     grid_im: &'a MetalBuffer,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Default)]
 struct MetalResidualRowRunChunk {
     runs: Vec<MetalResidualRowRunDesc>,
@@ -10124,7 +10124,7 @@ struct MetalResidualRowRunChunk {
     max_lane_count: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalResidualRowRunChunk {
     fn clear(&mut self) {
         self.runs.clear();
@@ -10149,7 +10149,7 @@ impl MetalResidualRowRunChunk {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn build_mtmfs_metal_grouped_chunks(
     samples: &[MetalMtmfsSample],
     grid_width: usize,
@@ -10266,7 +10266,7 @@ fn build_mtmfs_metal_grouped_chunks(
     Ok(chunks)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug)]
 struct MetalResidualGroupedRowRunChunk {
     row_runs: MetalResidualRowRunChunk,
@@ -10279,7 +10279,7 @@ struct MetalResidualGroupedRowRunChunk {
     group_scan_tests: u64,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalResidualGroupedRowRunChunk {
     fn new(tile_count: usize) -> Self {
         Self {
@@ -10393,7 +10393,7 @@ impl MetalResidualGroupedRowRunChunk {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MetalResidualGroupedInputCacheKey {
     lane_layout_version: u32,
@@ -10417,10 +10417,10 @@ struct MetalResidualGroupedInputCacheKey {
     density_v_scale_bits: u32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 const METAL_RESIDUAL_ROW_RUN_LANE_LAYOUT_VERSION: u32 = 2;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug)]
 struct MetalResidualGroupedCachedChunk {
     params: MetalResidualRowRunParams,
@@ -10429,7 +10429,7 @@ struct MetalResidualGroupedCachedChunk {
     buffers: Option<MetalResidualGroupedCachedBuffers>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalResidualGroupedChunkMetrics {
     runs: usize,
@@ -10442,7 +10442,7 @@ struct MetalResidualGroupedChunkMetrics {
     staged_bytes: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalResidualGroupedChunkMetrics {
     fn from_chunk(chunk: &MetalResidualGroupedRowRunChunk) -> Self {
         Self {
@@ -10458,7 +10458,7 @@ impl MetalResidualGroupedChunkMetrics {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug)]
 struct MetalResidualGroupedCachedBuffers {
     run: MetalBuffer,
@@ -10472,11 +10472,11 @@ struct MetalResidualGroupedCachedBuffers {
     params: MetalBuffer,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 type MetalCommandBuffer =
     objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>>;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalInitialDirtyGroupedPendingDispatch {
     command_buffer: MetalCommandBuffer,
     _run: MetalBuffer,
@@ -10492,7 +10492,7 @@ struct MetalInitialDirtyGroupedPendingDispatch {
     metrics: MetalResidualGroupedChunkMetrics,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 /// Opaque grouped row-run cache for the experimental Metal standard-MFS path.
 ///
 /// The cache owns host-side grouped row/channel payloads for one standard-MFS
@@ -10509,7 +10509,7 @@ pub struct StandardMfsMetalGroupedInputCache {
     host_bytes: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl StandardMfsMetalGroupedInputCache {
     fn matches(&self, key: MetalResidualGroupedInputCacheKey) -> bool {
         self.key == Some(key) && !self.chunks.is_empty()
@@ -10543,7 +10543,7 @@ impl StandardMfsMetalGroupedInputCache {
 /// This lets a MeasurementSet frontend append routed row/channel runs while it
 /// is already streaming the density pass. Finalization is delayed until the
 /// streaming weighting plan has computed Uniform/Briggs density statistics.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub struct StandardMfsMetalGroupedInputCachePrefill {
     gridder: StandardGridder,
     backend: MetalDirtyBackend,
@@ -10557,7 +10557,7 @@ pub struct StandardMfsMetalGroupedInputCachePrefill {
     logical_lanes: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl StandardMfsMetalGroupedInputCachePrefill {
     /// Create an empty prefill builder for one standard-MFS image geometry.
     pub fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
@@ -10704,7 +10704,7 @@ impl StandardMfsMetalGroupedInputCachePrefill {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalGroupedAppendDetail {
     setup: Duration,
@@ -10715,7 +10715,7 @@ struct MetalGroupedAppendDetail {
     group_finalize: Duration,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone)]
 struct MetalRowRunParts<'a> {
     row: &'a StandardMfsRoutedVisibilityRow,
@@ -10727,7 +10727,7 @@ struct MetalRowRunParts<'a> {
     dv_lambda: f64,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct StandardMfsMetalGroupedInputCacheFill {
     key: MetalResidualGroupedInputCacheKey,
     partition: MetalResidualGroupedTilePartition,
@@ -10755,7 +10755,7 @@ pub(crate) struct StandardMfsMetalGroupedInputCacheFill {
     append_detail: MetalGroupedAppendDetail,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct MetalInitialDirtyGroupedState {
     fill: StandardMfsMetalGroupedInputCacheFill,
     density: MetalBuffer,
@@ -10772,7 +10772,7 @@ pub(crate) struct MetalInitialDirtyGroupedState {
     chunk_finalize_dispatch: Duration,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Clone, Copy, Debug, Default)]
 struct MetalInitialDirtyGroupedFinishMetrics {
     wait: Duration,
@@ -10784,14 +10784,14 @@ struct MetalInitialDirtyGroupedFinishMetrics {
     group_descs: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn grouped_row_run_params_from_fill(
     fill: &StandardMfsMetalGroupedInputCacheFill,
 ) -> Result<MetalResidualRowRunParams, ImagingError> {
     grouped_row_run_params_from_fill_and_chunk(fill, &fill.chunk)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn grouped_row_run_params_from_fill_and_chunk(
     fill: &StandardMfsMetalGroupedInputCacheFill,
     chunk: &MetalResidualGroupedRowRunChunk,
@@ -10852,17 +10852,17 @@ fn grouped_row_run_params_from_fill_and_chunk(
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 /// Placeholder grouped input cache on platforms without Metal.
 #[derive(Debug, Default)]
 pub struct StandardMfsMetalGroupedInputCache;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 /// Placeholder grouped input cache prefill on platforms without Metal.
 #[derive(Debug)]
 pub struct StandardMfsMetalGroupedInputCachePrefill;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 impl StandardMfsMetalGroupedInputCachePrefill {
     /// Return an unsupported error on non-macOS platforms.
     pub fn new(_geometry: ImageGeometry) -> Result<Self, ImagingError> {
@@ -10919,7 +10919,7 @@ impl StandardMfsMetalGroupedInputCachePrefill {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Default)]
 struct MetalResidualRefreshTimings {
     model_pack: Duration,
@@ -10942,7 +10942,7 @@ struct MetalResidualRefreshTimings {
     staged_bytes: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Default)]
 struct MetalResidualRowRunRefreshTimings {
     model_pack: Duration,
@@ -10978,7 +10978,7 @@ struct MetalResidualRowRunRefreshTimings {
     input_cache_host_bytes: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Default)]
 struct MetalResidualDispatchTiming {
     sample_buffer: Duration,
@@ -10989,7 +10989,7 @@ struct MetalResidualDispatchTiming {
     kernel: Duration,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Default)]
 struct MtmfsMetalTermTimings {
     input_buffer: Duration,
@@ -11008,7 +11008,7 @@ struct MtmfsMetalTermTimings {
     staged_bytes: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Default)]
 struct MtmfsMetalDispatchTiming {
     sample_buffer: Duration,
@@ -11019,7 +11019,7 @@ struct MtmfsMetalDispatchTiming {
     kernel: Duration,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn record_metal_grouped_residual_dispatch(
     chunk_number: usize,
     metrics: MetalResidualGroupedChunkMetrics,
@@ -11076,7 +11076,7 @@ fn record_metal_grouped_residual_dispatch(
     timings.lane_refs = timings.lane_refs.saturating_add(metrics.lane_refs);
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct MetalComplex32 {
@@ -11084,7 +11084,7 @@ struct MetalComplex32 {
     im: f32,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalDirtyBackend {
     device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>,
     queue: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>>,
@@ -11139,7 +11139,7 @@ struct MetalDirtyBackend {
     >,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[allow(clippy::too_many_arguments)]
 fn mtmfs_metal_sample(
     gridder: &StandardGridder,
@@ -11193,7 +11193,7 @@ fn mtmfs_metal_sample(
     }))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn mtmfs_metal_weight_base(span: TapAxisSpan) -> Result<u32, ImagingError> {
     span.weight_index
         .checked_mul(STANDARD_GRIDDER_TAP_COUNT)
@@ -11203,7 +11203,7 @@ fn mtmfs_metal_weight_base(span: TapAxisSpan) -> Result<u32, ImagingError> {
         })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn mtmfs_taylor_power(taylor_x: f32, order: usize) -> f32 {
     if order == 0 {
         1.0
@@ -11212,7 +11212,7 @@ fn mtmfs_taylor_power(taylor_x: f32, order: usize) -> f32 {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn read_mtmfs_term_grids(
     grid_re: &[u32],
     grid_im: &[u32],
@@ -11239,7 +11239,7 @@ fn read_mtmfs_term_grids(
     grids
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl MetalDirtyBackend {
     fn new() -> Result<Self, ImagingError> {
         Self::new_with_initial_dirty_grouped(false)
@@ -16066,7 +16066,7 @@ impl MetalDirtyBackend {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn metal_error(
     context: &str,
     error: objc2::rc::Retained<objc2_foundation::NSError>,
@@ -16076,7 +16076,7 @@ fn metal_error(
     ))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn metal_density_convention_code(convention: DensityCellConvention) -> u32 {
     match convention {
         DensityCellConvention::VisImagingWeight => 0,
@@ -16085,7 +16085,7 @@ fn metal_density_convention_code(convention: DensityCellConvention) -> u32 {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn metal_pair_transform_code(transform: StandardMfsPairCollapseTransform) -> u32 {
     match transform {
         StandardMfsPairCollapseTransform::HalfSum => 0,
@@ -16095,7 +16095,7 @@ fn metal_pair_transform_code(transform: StandardMfsPairCollapseTransform) -> u32
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn standard_mfs_metal_residual_chunk_samples() -> usize {
     const DEFAULT_CHUNK_SAMPLES: usize = 16_000_000;
     env::var("CASA_RS_STANDARD_MFS_METAL_CHUNK_SAMPLES")
@@ -16105,7 +16105,7 @@ fn standard_mfs_metal_residual_chunk_samples() -> usize {
         .unwrap_or(DEFAULT_CHUNK_SAMPLES)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn standard_mfs_metal_residual_staging_sample_stride() -> usize {
     env::var("CASA_RS_STANDARD_MFS_METAL_STAGING_SAMPLE_STRIDE")
         .ok()
@@ -16113,7 +16113,7 @@ fn standard_mfs_metal_residual_staging_sample_stride() -> usize {
         .unwrap_or(0)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn standard_mfs_metal_group_tile_edge() -> usize {
     const DEFAULT_GROUP_TILE_EDGE: usize = 1;
     env::var("CASA_RS_STANDARD_MFS_METAL_GROUP_TILE_EDGE")
@@ -16123,7 +16123,7 @@ fn standard_mfs_metal_group_tile_edge() -> usize {
         .unwrap_or(DEFAULT_GROUP_TILE_EDGE)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn standard_mfs_metal_resident_grouped_input_buffers_enabled() -> bool {
     env::var("CASA_RS_STANDARD_MFS_METAL_RESIDENT_GROUPED_INPUT_BUFFERS")
         .map(|value| {
@@ -16135,7 +16135,7 @@ fn standard_mfs_metal_resident_grouped_input_buffers_enabled() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn mtmfs_metal_grouped_terms_enabled() -> bool {
     env::var("CASA_RS_MTMFS_METAL_GROUPED_TERMS")
         .map(|value| {
@@ -16147,11 +16147,11 @@ fn mtmfs_metal_grouped_terms_enabled() -> bool {
         .unwrap_or(true)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {}
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 const METAL_DIRTY_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -18731,7 +18731,49 @@ mod tests {
         StandardMfsVisibilityPolarization, VisibilityBatch, gridder::StandardGridder,
     };
     use num_complex::{Complex32, Complex64};
-    use std::{mem::size_of, sync::Arc, time::Duration};
+    use std::{
+        ffi::OsString,
+        mem::size_of,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var(self.key, previous);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn standard_mfs_plan_buckets_gridder_accepted_samples() {
@@ -18818,6 +18860,223 @@ mod tests {
             partition.resident_tile_bytes(StandardMfsTileId(3), 2),
             Some(19 * 19 * 2 * std::mem::size_of::<num_complex::Complex64>())
         );
+    }
+
+    #[test]
+    fn fixed_tile_partition_rejects_invalid_geometry_and_bounds() {
+        let error = StandardMfsFixedTilePartition::new([0, 32], [16, 16], 3).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("standard MFS tile grid shape must be non-empty"),
+            "{error}"
+        );
+
+        let error = StandardMfsFixedTilePartition::new([32, 32], [0, 16], 3).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("standard MFS tile shape must be non-empty"),
+            "{error}"
+        );
+
+        let error =
+            StandardMfsFixedTilePartition::new_with_origin([32, 32], [16, 16], 3, [32, 0], "test")
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("standard MFS tile origin must be inside the grid"),
+            "{error}"
+        );
+
+        let error = StandardMfsFixedTilePartition::new_with_axis_bounds(
+            [32, 32],
+            [16, 16],
+            3,
+            [0, 0],
+            "test",
+            vec![1, 16, 32],
+            vec![0, 16, 32],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("standard MFS x-tile bounds must span the full grid"),
+            "{error}"
+        );
+
+        let error = StandardMfsFixedTilePartition::new_with_axis_bounds(
+            [32, 32],
+            [16, 16],
+            3,
+            [0, 0],
+            "test",
+            vec![0, 16, 32],
+            vec![0, 16, 16, 32],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("standard MFS y-tile bounds must be strictly increasing"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn fixed_tile_partition_supports_irregular_axis_bounds_and_missing_tiles() {
+        let partition = StandardMfsFixedTilePartition::new_with_axis_bounds(
+            [32, 32],
+            [16, 16],
+            2,
+            [0, 0],
+            "irregular",
+            vec![0, 7, 32],
+            vec![0, 11, 32],
+        )
+        .unwrap();
+
+        assert_eq!(partition.tile_count(), 4);
+        assert_eq!(partition.tile_shape(), [16, 16]);
+        assert_eq!(partition.tile_origin(), [0, 0]);
+        assert_eq!(partition.anchor_label(), "irregular");
+        assert_eq!(partition.owner(6, 10), Some(StandardMfsTileId(0)));
+        assert_eq!(partition.owner(7, 10), Some(StandardMfsTileId(2)));
+        assert_eq!(partition.owner(6, 11), Some(StandardMfsTileId(1)));
+        assert_eq!(partition.owner(31, 31), Some(StandardMfsTileId(3)));
+        assert_eq!(partition.owner(32, 31), None);
+        assert!(partition.tile(StandardMfsTileId(4)).is_none());
+        assert_eq!(partition.resident_tile_bytes(StandardMfsTileId(4), 2), None);
+
+        let upper_right = partition.tile(StandardMfsTileId(3)).unwrap();
+        assert_eq!(upper_right.interior.x0, 7);
+        assert_eq!(upper_right.interior.y0, 11);
+        assert_eq!(upper_right.halo.x0, 5);
+        assert_eq!(upper_right.halo.y0, 9);
+        assert_eq!(upper_right.halo.x1, 32);
+        assert_eq!(upper_right.halo.y1, 32);
+        assert_eq!(
+            partition.resident_tile_bytes(StandardMfsTileId(3), 3),
+            Some(27 * 23 * 3 * size_of::<Complex64>())
+        );
+    }
+
+    #[test]
+    fn fixed_tile_partition_offset_origin_bounds_cover_grid_once() {
+        assert_eq!(super::tile_count_1d(0, 16, 1), 0);
+        assert_eq!(super::tile_count_1d(65, 16, 0), 5);
+        assert_eq!(super::tile_count_1d(65, 16, 1), 5);
+        assert_eq!(super::tile_bounds_1d(0, 65, 16, 1), (0, 1));
+        assert_eq!(super::tile_bounds_1d(1, 65, 16, 1), (1, 17));
+        assert_eq!(super::tile_bounds_1d(4, 65, 16, 1), (49, 65));
+        assert_eq!(
+            super::tile_bounds_from_origin(65, 16, 1),
+            vec![0, 1, 17, 33, 49, 65]
+        );
+
+        let partition =
+            StandardMfsFixedTilePartition::new_with_origin([65, 65], [16, 16], 0, [1, 1], "one")
+                .unwrap();
+        assert_eq!(partition.tile_count(), 25);
+        assert_eq!(partition.owner(0, 0), Some(StandardMfsTileId(0)));
+        assert_eq!(partition.owner(1, 1), Some(StandardMfsTileId(6)));
+        assert_eq!(partition.owner(64, 64), Some(StandardMfsTileId(24)));
+    }
+
+    #[test]
+    fn standard_mfs_tile_bucket_sample_rejects_invalid_tap_metadata() {
+        let sample = super::StandardMfsTileBucketSample {
+            sample_id: 0,
+            center_x: 6,
+            center_y: 6,
+            kernel_u: 0,
+            kernel_v: 0,
+            support_id: 1,
+            flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
+            grid_weight: 1.0,
+            tap_count: 49,
+        };
+        let error = sample.positive_taps().unwrap_err();
+        assert!(
+            error.to_string().contains("unsupported tap support id 1"),
+            "{error}"
+        );
+
+        let sample = super::StandardMfsTileBucketSample {
+            support_id: 0,
+            center_x: 2,
+            center_y: 6,
+            ..sample
+        };
+        let error = sample.positive_taps().unwrap_err();
+        assert!(
+            error.to_string().contains("invalid x tap center"),
+            "{error}"
+        );
+
+        let sample = super::StandardMfsTileBucketSample {
+            center_x: 6,
+            center_y: 2,
+            ..sample
+        };
+        let error = sample.positive_taps().unwrap_err();
+        assert!(
+            error.to_string().contains("invalid y tap center"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn standard_mfs_environment_parsers_reject_empty_and_invalid_values() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _probe = EnvVarGuard::remove(super::STANDARD_MFS_TILE_BUCKET_PROBE_ENV);
+        let _edge = EnvVarGuard::remove(super::STANDARD_MFS_TILE_EDGE_ENV);
+        let _threads = EnvVarGuard::remove(super::STANDARD_MFS_GRID_THREADS_ENV);
+        let _force = EnvVarGuard::remove(super::STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV);
+        let _flush = EnvVarGuard::remove(super::STANDARD_MFS_TILE_FLUSH_ENV);
+        let _inbox = EnvVarGuard::remove("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN");
+
+        assert!(!super::standard_mfs_tile_bucket_probe_enabled());
+        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(64)), 64);
+        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(0)), 256);
+        assert_eq!(super::standard_mfs_grid_threads(), 1);
+        assert!(!super::standard_mfs_force_tiled_one_worker());
+        assert!(!super::standard_mfs_per_block_flush_enabled());
+        assert_eq!(super::standard_mfs_tile_inbox_ready_sample_min(), 1024);
+
+        let _probe = EnvVarGuard::set(super::STANDARD_MFS_TILE_BUCKET_PROBE_ENV, "off");
+        let _edge = EnvVarGuard::set(super::STANDARD_MFS_TILE_EDGE_ENV, "not-a-number");
+        let _threads = EnvVarGuard::set(super::STANDARD_MFS_GRID_THREADS_ENV, "0");
+        let _force = EnvVarGuard::set(super::STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV, "no");
+        let _flush = EnvVarGuard::set(super::STANDARD_MFS_TILE_FLUSH_ENV, "block");
+        let _inbox = EnvVarGuard::set("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN", "0");
+
+        assert!(!super::standard_mfs_tile_bucket_probe_enabled());
+        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(64)), 64);
+        assert_eq!(super::standard_mfs_grid_threads(), 1);
+        assert!(!super::standard_mfs_force_tiled_one_worker());
+        assert!(!super::standard_mfs_per_block_flush_enabled());
+        assert_eq!(super::standard_mfs_tile_inbox_ready_sample_min(), 1024);
+    }
+
+    #[test]
+    fn standard_mfs_environment_parsers_accept_explicit_overrides() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _probe = EnvVarGuard::set(super::STANDARD_MFS_TILE_BUCKET_PROBE_ENV, "yes");
+        let _edge = EnvVarGuard::set(super::STANDARD_MFS_TILE_EDGE_ENV, "48");
+        let _threads = EnvVarGuard::set(super::STANDARD_MFS_GRID_THREADS_ENV, "3");
+        let _force = EnvVarGuard::set(super::STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV, "on");
+        let _flush = EnvVarGuard::set(super::STANDARD_MFS_TILE_FLUSH_ENV, "per-block");
+        let _inbox = EnvVarGuard::set("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN", "7");
+
+        assert!(super::standard_mfs_tile_bucket_probe_enabled());
+        assert_eq!(super::standard_mfs_tile_edge_with_config(Some(64)), 48);
+        assert_eq!(super::standard_mfs_grid_threads(), 3);
+        assert!(super::standard_mfs_force_tiled_one_worker());
+        assert!(super::standard_mfs_per_block_flush_enabled());
+        assert_eq!(super::standard_mfs_tile_inbox_ready_sample_min(), 7);
     }
 
     #[test]
