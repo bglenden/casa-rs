@@ -1,0 +1,56 @@
+{
+  "id": "wave3-standard-mfs-clark-heavy-wave2",
+  "mode_id": "standard-mfs-single-term",
+  "description": "Wave 3 #276 Clark-clean regression row matching the retained Wave 2 standard-MFS paired audit: 32 GiB VLA medium MS, 64 channels, 1024 image, Briggs, niter=500.",
+  "dataset": {
+    "key": "wave1-vla-single-medium",
+    "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "field": "0",
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 64,
+    "imsize": 1024,
+    "cell_arcsec": 0.25,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "clark",
+    "nterms": 1,
+    "niter": 500,
+    "gain": 0.1,
+    "threshold_jy": 0.0,
+    "minor_cycle_length": 50
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "wave3-clark-heavy-wave2-regression",
+    "storage_label": "external-ssd-wave1",
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "evidence_role": "after_multi_worker_cpu"
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ]
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".psf",
+      ".model"
+    ],
+    "max_elements_per_product": 2000000
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "id": "wave3-mosaic-cube-alma-large-width1024-clean-block-detail-probe-auto",
+  "mode_id": "mosaic-cube-one-channel",
+  "description": "Wave 3 #284 full-width block-detail diagnostic using the large ALMA mosaic MS, all seven fields, specmode=cube nchan=1 width=1024, uniform weighting, Clark clean, full 1280 image geometry, auto acceleration defaults, and a bounded 2-block DATA replay after full density/setup.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cube",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 1,
+    "start": "0",
+    "width": "1024",
+    "interpolation": "nearest",
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "uniform",
+    "robust": 0.5,
+    "perchanweightdensity": true,
+    "deconvolver": "clark",
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 1000,
+    "minor_cycle_length": 1000,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "auto"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "wave3-mosaic-cube-large-width1024-clean-block-detail-probe-auto",
+    "storage_label": "external-ssd-wave1-large",
+    "ms_staging": "direct",
+    "skip_casa": "1",
+    "skip_profile": "1",
+    "phase_probe": "0",
+    "evidence_role": "full_width_clean_block_detail_probe_auto",
+    "stream_log": true,
+    "env": {
+      "CASA_RS_IMAGING_PROGRESS": "1",
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1",
+      "CASA_RS_STANDARD_MFS_PROFILE_BLOCK_DETAIL": "1",
+      "CASA_RS_MOSAIC_CUBE_STREAM_PROBE": "dirty-blocks:2"
+    }
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".model",
+      ".psf",
+      ".weight",
+      ".sumwt",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}

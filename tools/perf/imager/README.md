@@ -21,6 +21,11 @@ imager.
 - `tools/perf/imager/wave1_dataset_registry.json`
   - records the VLA/ALMA, single-field/mosaic, small/medium, and one large
     ALMA mosaic/cube simulated-dataset plan for #248
+- `tools/perf/imager/wave3_single_plane_matrix.json`
+  - records the all-single-plane mode matrix for #274, including smoke,
+    medium, and stress rows plus the review evidence contract used by #273
+- `tools/perf/imager/wave3_matrix.py`
+  - validates and enumerates the Wave 3 matrix without requiring local datasets
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -62,6 +67,26 @@ staged MeasurementSet.
 For Wave 1, native `simobserve` is the primary benchmark dataset generator.
 CASA C++ generation remains the small-case oracle for selected parity and
 performance checks.
+
+To enumerate the Wave 3 all-single-plane matrix:
+
+```sh
+python3 tools/perf/imager/wave3_matrix.py --format text
+```
+
+The Wave 3 matrix intentionally includes modes that are not yet executable by
+`scripts/bench-imager-vs-casa.sh`. `run_workload.py --dry-run` accepts those
+manifests and marks them `dry_run_only` in `run_support`; real execution remains
+limited to rows the delegated benchmark script supports. Every result carries a
+`human_review` gate, and completed comparison runs write per-product review
+panels with identical color limits for the casa-rs and CASA images plus a
+separate difference panel.
+
+The #276 standard-MFS smoke row is available as:
+
+```sh
+tools/perf/imager/run_workload.py --dry-run wave3-standard-mfs-single-term-smoke
+```
 
 To compare native `simobserve` with CASA on a selected dataset:
 
@@ -148,6 +173,10 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_ROBUST`
   - Briggs robustness parameter passed to both Rust and CASA when weighting is `briggs`
 - `IMAGER_BENCH_NITER`
+- `IMAGER_BENCH_HOGBOM_ITERATION_MODE`
+  - `strict` uses casa-rs' corrected Hogbom component accounting
+  - `casa` reproduces CASA's documented inclusive Hogbom off-by-one behavior;
+    use this for Rust-vs-CASA Hogbom product comparisons
 - `IMAGER_BENCH_GAIN`
 - `IMAGER_BENCH_THRESHOLD_JY`
 - `IMAGER_BENCH_NSIGMA`
@@ -180,17 +209,21 @@ Required top-level fields:
 - `dataset`: `key`, plus either `path` or `root_env` and `relative_path`
 - `imaging`: CASA-like mode parameters
 
-Supported `imaging` values for the #252 harness slice:
+Supported `imaging` values for executable #252-era benchmark rows:
 
 - `mode`: `dirty` or `clean`
 - `specmode`: `mfs` or `cube`
 - `gridder`: `standard` or `mosaic`
 - `interpolation`: `nearest` or `linear`
+- `hogbom_iteration_mode`: `strict` or `casa`; Wave 3 Hogbom CASA-comparison
+  rows use `casa`, while the imager application default remains `strict`
 - `wterm`: `none`
 
-Unsupported modes fail before timing claims are written. In particular,
-W-projection and AW/widefield manifests should be rejected by this ticket until
-their benchmark support is added or delegated to the owning follow-up.
+Wave 3 dry runs additionally accept `specmode=cubedata`, `gridder=wproject`,
+and the known AW/widefield aliases (`widefield`, `awproject`, `awp2`,
+`awphpg`) so the full matrix can be reviewed before each mode ticket adds real
+execution support. Those rows are marked `run_support.status=dry_run_only` and
+fail before timing claims if requested as real runs.
 
 ## Result JSON
 
@@ -200,7 +233,8 @@ their benchmark support is added or delegated to the owning follow-up.
 - `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
   hash, and the exact delegated command/env
 - dataset key/path, selected mode, image shape, channel count, weighting,
-  deconvolver, `niter`, run label, storage label, and repeat count
+  deconvolver, Hogbom iteration mode, `niter`, run label, storage label, and
+  repeat count
 - Rust CLI per-run wallclock and median wallclock
 - CASA `tclean` per-run wallclock and median wallclock when CASA ran
 - parsed Rust and CASA stage medians when present
@@ -210,6 +244,9 @@ their benchmark support is added or delegated to the owning follow-up.
   writeback
 - preserved product prefixes when a real run is executed
 - CASA-backed product-comparison metrics for configured product suffixes
+- review panels for compared products when CASA Python has matplotlib
+- `human_review`, which remains `pending` until Brian accepts the numeric
+  table and panels for the mode ticket
 - a clear `dry_run`, `completed`, or `failed` status
 
 ### Failure semantics

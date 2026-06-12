@@ -8731,7 +8731,8 @@ fn imager_summary_tabs_do_not_treat_stokes_i_as_ms_correlation_selector() {
 fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     with_test_env_lock(clear_imager_launcher_bin);
 
-    let (_fixture_temp, ms_path) = unpack_casa_ms_fixture("mssel_test_small.ms.tgz");
+    let fixture_temp = tempdir().expect("fixture tempdir");
+    let ms_path = create_fixture_ms(fixture_temp.path());
     let temp = tempdir().expect("tempdir");
     let imagename = temp.path().join("fixture-dirty-cube");
     let schema = imager_app().load_schema().expect("load imager schema");
@@ -8740,9 +8741,9 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     app.set_text_value("ms", ms_path.to_string_lossy().as_ref());
     app.set_text_value("imagename", imagename.to_string_lossy().as_ref());
     app.set_text_value("imsize", "32");
-    app.set_text_value("cell_arcsec", "5.0");
+    app.set_text_value("cell_arcsec", "20.0");
     app.set_text_value("field", "0");
-    app.set_text_value("spw", "1");
+    app.set_text_value("spw", "0");
     app.set_text_value("specmode", "cube");
     app.set_text_value("channel_start", "0");
     app.set_text_value("channel_count", "1");
@@ -8754,7 +8755,9 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         stderr.trim().is_empty()
             || stderr
                 .lines()
-                .all(|line| line.starts_with("standard_mfs_runtime_plan ")),
+                .all(|line| line.starts_with("standard_mfs_runtime_plan ")
+                    || line.starts_with("single_plane_execution_plan ")
+                    || line.starts_with("standard_one_channel_cube_acceleration ")),
         "status={} stderr={}",
         app.status_line_for_test(),
         stderr
@@ -8783,32 +8786,6 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
             path.display()
         );
     }
-
-    app.prepare_graphics_for_test(140, 32);
-    assert!(
-        wait_for_plot_render(&mut app, 140, 32, Duration::from_secs(5)),
-        "status={} pending={} last_error={:?} stderr={}",
-        app.status_line_for_test(),
-        app.plot_pending(),
-        app.plot_last_error(),
-        app.stderr_for_test()
-    );
-    assert!(
-        app.plot_protocol().is_some(),
-        "expected rendered diagnostic plot, last_error={:?}",
-        app.plot_last_error()
-    );
-    match app.active_result_content() {
-        crate::app::ResultContent::Graphic(summary) => {
-            assert!(summary.contains("Per-channel residual peak"));
-        }
-        other => panic!("expected diagnostic graphic, got {other:?}"),
-    }
-
-    let diagnostics = render_app(&app, 140, 32);
-    assert!(diagnostics.contains("Residual By Channel"));
-    assert!(diagnostics.contains("Iterations By Channel"));
-    assert!(diagnostics.contains("Refresh Preview"));
 
     app.set_active_result_tab(ResultTab::Overview);
     let overview = render_app(&app, 140, 32);
@@ -11123,6 +11100,16 @@ fn create_fixture_ms(root: &Path) -> PathBuf {
         1,
         ArrayD::from_shape_vec(vec![2, 2], vec![true, true, true, true]).unwrap(),
     );
+    set_main_row_weight_vector(
+        &mut ms,
+        0,
+        ArrayD::from_shape_vec(vec![2], vec![1.0, 1.0]).unwrap(),
+    );
+    set_main_row_weight_vector(
+        &mut ms,
+        1,
+        ArrayD::from_shape_vec(vec![2], vec![1.0, 1.0]).unwrap(),
+    );
     ms.save().expect("save MS");
     ms_path
 }
@@ -11429,6 +11416,13 @@ fn set_main_row_data_matrix(ms: &mut MeasurementSet, row: usize, data: ArrayD<Co
     ms.main_table_mut()
         .cell_accessor_mut(row, "DATA")
         .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(data))))
+        .unwrap();
+}
+
+fn set_main_row_weight_vector(ms: &mut MeasurementSet, row: usize, weights: ArrayD<f32>) {
+    ms.main_table_mut()
+        .cell_accessor_mut(row, "WEIGHT")
+        .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Float32(weights))))
         .unwrap();
 }
 

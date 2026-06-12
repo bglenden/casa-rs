@@ -124,3 +124,25 @@ CASA reported one minor iteration, but the model flux was `0.0569704 Jy`; the di
 peak was `0.299844 Jy/beam`, so one strict-gain component at `gain=0.1` would account for
 only about `0.0299844 Jy`. The reported model flux is therefore consistent with two committed
 Hogbom components in that minor-cycle call.
+
+### Wave 3 heavy benchmark repro
+
+The same behavior appeared again during the ImPerformance Wave 3 standard-MFS heavy
+review on the retained Wave 2 medium VLA dataset:
+
+- dataset: `/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms`
+- setup: `specmode='mfs'`, `gridder='standard'`, `deconvolver='hogbom'`,
+  `imsize=1024`, `cell='0.25arcsec'`, `spw='0:0~63'`, Briggs `robust=0.5`,
+  `gain=0.1`, `threshold='0Jy'`, `niter=1`, `cycleniter=1`
+- observed result: CASA reported `iterdone = 1`, but the output `.model` image
+  contained two nonzero clean components:
+  1. `(510, 510) = 9.177456855773926`
+  2. `(508, 507) = 8.556220054626465`
+
+In a strict one-component casa-rs comparison this made the one-cycle residual RMS
+difference jump to `3.65e-2`. Running casa-rs with its explicit CASA-compatible
+Hogbom accounting mode reproduced both components and reduced the residual RMS
+difference to `7.64e-5`, matching the dirty gridding numerical floor. On the full
+`niter=500`, `cycleniter=50` heavy row, the same CASA-compatible mode reduced the
+CASA/casa-rs product differences to `.model` RMS `1.71e-7`, `.residual` RMS
+`5.68e-5`, and `.image` RMS `5.87e-5`.

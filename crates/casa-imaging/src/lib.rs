@@ -24,7 +24,7 @@
 //! - staged Hogbom major/minor-cycle CLEAN with explicit stop reasons
 //! - PSF-cutoff beam fitting with interpolation and retry semantics
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 mod beam;
 mod cube;
@@ -40,7 +40,9 @@ mod weighting;
 use std::{
     env,
     fs::OpenOptions,
+    hash::{BuildHasherDefault, Hasher},
     io::Write,
+    sync::atomic::{AtomicUsize, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -55,23 +57,27 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
+#[cfg(target_os = "macos")]
+use execution::{
+    MtmfsMetalInputCache, StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill,
+};
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyAccumulation, StandardMfsDirtyCpuExecutor,
     StandardMfsPlannedSample, StandardMfsTiledCpuExecutor, StandardMfsTiledResidualAccumulation,
     StandardMfsVisibilityPlan, finite_visibility,
 };
-#[cfg(target_os = "macos")]
-use execution::{StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill};
 pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
-    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder,
-    StandardMfsTapCensus, StandardMfsTapSkipReason, WProjectSamplePlan, WProjector,
-    hetarray_screen_conv_size_for_support,
+    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
+    ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
+    WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
 };
 pub use weighting::StandardMfsStreamingWeightingPlan;
 use weighting::{
-    apply_weighting, apply_weighting_to_owned_batches, apply_weighting_with_density_source,
+    VisibilitySampleRangeRef, apply_weighting, apply_weighting_to_owned_batches,
+    apply_weighting_to_owned_batches_by_sample_groups,
+    apply_weighting_to_owned_batches_by_sample_range_groups, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
@@ -83,7 +89,9 @@ enum CubePredictionLambdaMode {
 
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
+
 const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
+const MOSAIC_PROJECTOR_BUILD_THREADS: usize = 4;
 const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
@@ -112,19 +120,19 @@ pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest, CubeImagingDiagnostics,
     CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
-    ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingStageTimings,
-    MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch,
-    PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
-    ResidualSampleDiagnostics, RestoringBeamMode, StandardMfsPairCollapseTransform,
-    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics,
-    WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode,
-    WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
+    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry,
+    ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingStageTimings, MinorCycleTrace,
+    MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch, PlaneStokes,
+    PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics, ResidualSampleDiagnostics,
+    RestoringBeamMode, StandardMfsPairCollapseTransform, StandardMfsPlannedWeightedSample,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsRoutableSample, StandardMfsRoutedSample,
+    StandardMfsRoutedSampleRunBlock, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsRoutedVisibilityRunBlock,
+    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
+    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
+    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
 
 /// FFT-backed predictor for a standard MFS component model.
@@ -412,7 +420,7 @@ impl StandardMfsPlannedSampleBuilder {
 ///
 /// These values are deliberately separate from [`ImagingRequest`] so callers
 /// can tune memory residency without changing the imaging contract itself.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StandardMfsExecutionConfig {
     /// Optional byte budget for resident fixed-tile stage grids.
     ///
@@ -445,6 +453,13 @@ pub struct StandardMfsExecutionConfig {
     /// plan. `CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE` remains a debug
     /// override for performance screening.
     pub metal_grouped_input_cache: bool,
+    /// Optional frontend-computed maximum absolute W coordinate, in wavelengths.
+    ///
+    /// W-projection needs this value before kernels can be built. Supplying it
+    /// lets streaming frontends compute the range from bounded row geometry
+    /// instead of replaying and materializing every weighted visibility block
+    /// once solely for a metadata scan.
+    pub w_project_max_abs_w_lambda: Option<f64>,
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -853,9 +868,17 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = request.initial_model.is_some();
     let can_start_from_combined_dirty_pass =
-        !has_initial_model && matches!(request.w_term_mode, WTermMode::None);
+        !has_initial_model && matches!(request.w_term_mode, WTermMode::None | WTermMode::WProject);
     let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
-        if use_metal_executor {
+        if request.w_term_mode == WTermMode::WProject {
+            compute_dirty_psf_and_residual_w_project(
+                request.geometry,
+                weighted_batches,
+                gridder,
+                request.w_project_planes,
+                &mut stage_timings,
+            )?
+        } else if use_metal_executor {
             compute_dirty_psf_and_residual_standard_metal(
                 weighted_batches,
                 gridder,
@@ -1076,9 +1099,10 @@ where
             "streaming standard MFS clean requires gridder='standard'".to_string(),
         ));
     }
-    if !matches!(request.w_term_mode, WTermMode::None) {
+    if !matches!(request.w_term_mode, WTermMode::None | WTermMode::WProject) {
         return Err(ImagingError::Unsupported(
-            "streaming standard MFS clean does not support W-term gridding".to_string(),
+            "streaming standard MFS clean supports only w_term_mode='none' or 'wproject'"
+                .to_string(),
         ));
     }
     if request.deconvolver == Deconvolver::Mtmfs {
@@ -1095,30 +1119,82 @@ where
     let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
     let mut stage_timings = ImagingStageTimings::default();
 
-    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
-        compute_dirty_psf_and_residual_standard_tiled_replay(
-            &gridder,
-            execution_config,
-            &mut replay_weighted_batches,
-            &mut stage_timings,
-        )?
-    } else {
-        let psf_state = compute_psf_standard_tiled_replay(
-            &gridder,
-            execution_config,
-            &mut replay_weighted_batches,
-            &mut stage_timings,
-        )?;
-        let residual = compute_residual_standard_tiled_replay(
+    let w_project_context = if request.w_term_mode == WTermMode::WProject {
+        let prepare_started = Instant::now();
+        let max_abs_w_lambda = match execution_config.w_project_max_abs_w_lambda {
+            Some(value) if value.is_finite() && value > 0.0 => value,
+            _ => scan_w_project_replay(&mut replay_weighted_batches)?,
+        };
+        let projector = WProjector::new(
             request.geometry,
             &gridder,
-            &model,
-            &psf_state,
-            execution_config,
-            &mut replay_weighted_batches,
-            &mut stage_timings,
+            max_abs_w_lambda,
+            request.w_project_planes,
         )?;
-        (psf_state, residual, 0.0)
+        stage_timings.psf_grid += prepare_started.elapsed();
+        Some((projector, max_abs_w_lambda))
+    } else {
+        None
+    };
+
+    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
+        if request.w_term_mode == WTermMode::WProject {
+            let (projector, max_abs_w_lambda) = w_project_context.as_ref().ok_or_else(|| {
+                ImagingError::InvalidRequest("missing wproject execution context".to_string())
+            })?;
+            compute_dirty_psf_and_residual_w_project_replay(
+                &gridder,
+                projector,
+                *max_abs_w_lambda,
+                &mut replay_weighted_batches,
+                &mut stage_timings,
+            )?
+        } else {
+            compute_dirty_psf_and_residual_standard_tiled_replay(
+                &gridder,
+                execution_config,
+                &mut replay_weighted_batches,
+                &mut stage_timings,
+            )?
+        }
+    } else {
+        if request.w_term_mode == WTermMode::WProject {
+            let (projector, max_abs_w_lambda) = w_project_context.as_ref().ok_or_else(|| {
+                ImagingError::InvalidRequest("missing wproject execution context".to_string())
+            })?;
+            let psf_state = compute_psf_w_project_replay(
+                &gridder,
+                projector,
+                &mut replay_weighted_batches,
+                &mut stage_timings,
+            )?;
+            let residual = compute_residual_w_project_replay(
+                &gridder,
+                &model,
+                &psf_state,
+                projector,
+                &mut replay_weighted_batches,
+                &mut stage_timings,
+            )?;
+            (psf_state, residual, *max_abs_w_lambda)
+        } else {
+            let psf_state = compute_psf_standard_tiled_replay(
+                &gridder,
+                execution_config,
+                &mut replay_weighted_batches,
+                &mut stage_timings,
+            )?;
+            let residual = compute_residual_standard_tiled_replay(
+                request.geometry,
+                &gridder,
+                &model,
+                &psf_state,
+                execution_config,
+                &mut replay_weighted_batches,
+                &mut stage_timings,
+            )?;
+            (psf_state, residual, 0.0)
+        }
     };
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf,
@@ -1138,15 +1214,29 @@ where
      -> Result<Array2<f32>, ImagingError> {
         let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
         let refresh_started = Instant::now();
-        let residual = compute_residual_standard_tiled_replay(
-            request.geometry,
-            &gridder,
-            model,
-            &psf_state,
-            execution_config,
-            &mut replay_weighted_batches,
-            stage_timings,
-        )?;
+        let residual = if request.w_term_mode == WTermMode::WProject {
+            let (projector, _) = w_project_context.as_ref().ok_or_else(|| {
+                ImagingError::InvalidRequest("missing wproject execution context".to_string())
+            })?;
+            compute_residual_w_project_replay(
+                &gridder,
+                model,
+                &psf_state,
+                projector,
+                &mut replay_weighted_batches,
+                stage_timings,
+            )?
+        } else {
+            compute_residual_standard_tiled_replay(
+                request.geometry,
+                &gridder,
+                model,
+                &psf_state,
+                execution_config,
+                &mut replay_weighted_batches,
+                stage_timings,
+            )?
+        };
         let refresh_elapsed = refresh_started.elapsed();
         let accounted = before.accounted_delta(stage_timings);
         stage_timings.major_cycle_refresh += refresh_elapsed;
@@ -1257,6 +1347,1076 @@ where
             image_units: "Jy/beam".to_string(),
         },
     })
+}
+
+/// Gridder-specific metadata carried by one streamed single-plane visibility block.
+///
+/// This is the shared app/core stream contract for one-output-plane imaging:
+/// every mode should read MeasurementSet rows into bounded visibility blocks,
+/// then attach only the gridder metadata needed by that mode's core consumer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SinglePlaneGridderMetadata {
+    /// No per-sample gridder metadata is required for the standard gridder.
+    Standard,
+    /// Mosaic PB/pointing metadata aligned with the visibility block.
+    Mosaic(GroupedVisibilityMetadataBatch),
+}
+
+/// Bounded visibility block for one-output-plane imaging.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SinglePlaneVisibilityBlock {
+    /// Scalar visibility samples prepared from a bounded MS row block.
+    pub visibility: VisibilityBatch,
+    /// Optional gridder metadata aligned with this block.
+    pub gridder_metadata: SinglePlaneGridderMetadata,
+}
+
+/// Logical consumer pass for replayable one-output-plane visibility streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SinglePlaneStreamPass {
+    /// Density accumulation for uniform/Briggs-style weighting.
+    WeightingDensity,
+    /// Initial PSF/residual gridding.
+    InitialDirty,
+    /// Major-cycle residual refresh.
+    ResidualRefresh,
+}
+
+impl SinglePlaneStreamPass {
+    /// Stable lowercase label for logs and benchmark artifacts.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::WeightingDensity => "weighting_density",
+            Self::InitialDirty => "initial_dirty",
+            Self::ResidualRefresh => "residual_refresh",
+        }
+    }
+
+    /// Returns true when the frontend must read actual complex visibility values.
+    pub fn needs_visibility_values(self) -> bool {
+        !matches!(self, Self::WeightingDensity)
+    }
+}
+
+/// Run mosaic-gridder MFS imaging from a replayable bounded single-plane stream.
+///
+/// The callback is invoked once for the density pass when robust or uniform
+/// weighting is requested, once for the initial dirty/PSF pass, and once for
+/// each major-cycle residual refresh. Each invocation must replay the same
+/// unweighted visibility samples in stable MeasurementSet order. This function
+/// is the mosaic consumer of the shared single-plane stream; it must not own
+/// MeasurementSet reading or full-plane materialization policy.
+pub fn run_mosaic_mfs_from_single_plane_stream<F>(
+    mut request: ImagingRequest,
+    weight_density_mode: WeightDensityMode,
+    mut replay_unweighted_blocks: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        SinglePlaneStreamPass,
+        &mut dyn FnMut(SinglePlaneVisibilityBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    let GridderMode::Mosaic(config) = request.gridder_mode.clone() else {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MFS requires gridder='mosaic'".to_string(),
+        ));
+    };
+    validate_mosaic_streaming_config(&config)?;
+    if request.w_term_mode != WTermMode::None {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MFS currently supports only w_term_mode='none'".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MFS does not support deconvolver='mtmfs'".to_string(),
+        ));
+    }
+    if matches!(request.weighting, WeightingMode::BriggsBwTaper { .. }) {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MFS does not yet support BriggsBwTaper per-plane density".to_string(),
+        ));
+    }
+    request.visibility_batches.clear();
+
+    let gridder = StandardGridder::new_unpadded(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let conv_sampling = mosaic_projector_sampling(request.geometry);
+    let mut stage_timings = ImagingStageTimings::default();
+
+    let weighting_started = Instant::now();
+    let mut weighting_plans = BTreeMap::<(u64, u64), MosaicStreamingWeightingPlan>::new();
+    let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
+    let density_context = MosaicStreamingDensityContext {
+        geometry: request.geometry,
+        weighting: request.weighting,
+        selected_frequency_range_hz: request.selected_frequency_range_hz,
+        weight_density_mode,
+        _config: &config,
+        _gridder: &gridder,
+        _conv_sampling: conv_sampling,
+    };
+    if request.weighting != WeightingMode::Natural {
+        let mut density_blocks = 0usize;
+        let mut density_samples = 0usize;
+        replay_unweighted_blocks(SinglePlaneStreamPass::WeightingDensity, &mut |block| {
+            let SinglePlaneGridderMetadata::Mosaic(metadata) = block.gridder_metadata else {
+                return Err(ImagingError::InvalidRequest(
+                    "streaming mosaic MFS requires mosaic metadata blocks".to_string(),
+                ));
+            };
+            let block_started = Instant::now();
+            let block_samples = block.visibility.len();
+            let block_groups = metadata.groups.len();
+            accumulate_mosaic_streaming_density(
+                &density_context,
+                &block.visibility,
+                &metadata,
+                &mut weighting_plans,
+                mosaic_parallel_threads,
+            )?;
+            density_blocks += 1;
+            density_samples += block_samples;
+            if profile::standard_mfs_profile_block_detail_enabled() {
+                eprintln!(
+                    "mosaic_streaming_density_block block={} samples={} metadata_groups={} weighting_plans={} threads={} elapsed_ms={:.3}",
+                    density_blocks,
+                    block_samples,
+                    block_groups,
+                    weighting_plans.len(),
+                    mosaic_parallel_threads.min(block_groups).max(1),
+                    profile::millis(block_started.elapsed()),
+                );
+            }
+            Ok(())
+        })?;
+        let finish_started = Instant::now();
+        for plan in weighting_plans.values_mut() {
+            plan.finish_density_pass();
+        }
+        if profile::standard_mfs_profile_block_detail_enabled() {
+            eprintln!(
+                "mosaic_streaming_density_finish blocks={} samples={} weighting_plans={} elapsed_ms={:.3}",
+                density_blocks,
+                density_samples,
+                weighting_plans.len(),
+                profile::millis(finish_started.elapsed()),
+            );
+        }
+    }
+    stage_timings.weighting += weighting_started.elapsed();
+
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut accumulated_mosaic_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut pointing_weights = MosaicPointingWeightAccumulator::default();
+    let mut pointing_weight_summaries = Vec::new();
+    let mut reported_sumwt = 0.0f64;
+    let mut normalization_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut max_abs_w_lambda = 0.0f64;
+    let mut dirty_projector_cache = MosaicProjectorCache::new();
+    let mut residual_projector_cache = MosaicProjectorCache::new();
+
+    let dirty_started = Instant::now();
+    stream_weighted_mosaic_groups(
+        &request,
+        &config,
+        &gridder,
+        &weighting_plans,
+        &mut replay_unweighted_blocks,
+        SinglePlaneStreamPass::InitialDirty,
+        |groups| {
+            pointing_weights.accumulate(request.geometry, &config, &groups);
+            max_abs_w_lambda = max_abs_w_lambda.max(max_abs_w_lambda_for_mosaic_groups(&groups));
+            let dirty_projectors = prepare_mosaic_dirty_projector_pairs(
+                &request,
+                &config,
+                &gridder,
+                &groups,
+                conv_sampling,
+                &mut dirty_projector_cache,
+            )?;
+            let parallel = compute_mosaic_dirty_parallel(
+                &request,
+                &config,
+                &gridder,
+                &groups,
+                conv_sampling,
+                mosaic_parallel_threads.min(groups.len()).max(1),
+                None,
+                Some(&dirty_projectors),
+            )?;
+            add_complex64_grid(&mut psf_grid, &parallel.psf_grid);
+            add_complex64_grid(&mut accumulated_residual_grid, &parallel.residual_grid);
+            add_complex64_grid(&mut accumulated_mosaic_weight_grid, &parallel.weight_grid);
+            reported_sumwt += parallel.reported_sumwt;
+            normalization_sumwt += parallel.normalization_sumwt;
+            gridded_samples += parallel.gridded_samples;
+            skipped_samples += parallel.skipped_samples;
+            pointing_weight_summaries.extend(parallel.pointing_weight_summaries);
+            Ok(())
+        },
+    )?;
+    log_mosaic_pointing_weight_summaries("stream_initial_dirty", &pointing_weight_summaries);
+    stage_timings.psf_grid += dirty_started.elapsed();
+
+    if !(normalization_sumwt.is_finite() && normalization_sumwt > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic normalization sumwt is non-finite or zero".to_string(),
+        ));
+    }
+    if !(reported_sumwt.is_finite() && reported_sumwt > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic reported sumwt is non-finite or zero".to_string(),
+        ));
+    }
+
+    let weight_image_for_mask = pointing_weights.build_image(request.geometry, &config)?;
+    let fft_started = Instant::now();
+    dump_mosaic_complex_grid("psf_prefft", request.reffreq_hz, &psf_grid);
+    dump_mosaic_complex_grid(
+        "residual_prefft",
+        request.reffreq_hz,
+        &accumulated_residual_grid,
+    );
+    dump_mosaic_complex_grid(
+        "weight_prefft",
+        request.reffreq_hz,
+        &accumulated_mosaic_weight_grid,
+    );
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
+    let raw_weight = centered_ifft2_f64(&accumulated_mosaic_weight_grid);
+    stage_timings.psf_fft += fft_started.elapsed();
+
+    let normalize_started = Instant::now();
+    let mut accumulated_psf = gridder.corrected_mosaic_image_from_grid_f64(&raw_psf, conv_sampling);
+    let mut accumulated_residual =
+        gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
+    let normalization_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_weight);
+    let fft_sumwt_scale = (nx * ny) as f32 / normalization_sumwt as f32;
+    accumulated_residual.mapv_inplace(|value| value * fft_sumwt_scale);
+    accumulated_psf.mapv_inplace(|value| value * fft_sumwt_scale);
+    let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+    trace_mosaic_weight_image("rust_stream_pre_scale_weight", &normalization_weight_image);
+    trace_mosaic_weight_image("rust_stream_weight", &weight_image);
+    normalize_mosaic_residual_by_weight(&mut accumulated_residual, &weight_image, config.pb_limit)?;
+    let psf_peak = peak_abs_value(&accumulated_psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    accumulated_psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += normalize_started.elapsed();
+
+    let reported_sumwt = reported_sumwt as f32;
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &accumulated_psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let mosaic_clean_mask = build_mosaic_clean_mask(
+        &weight_image_for_mask,
+        config.pb_limit,
+        request.clean_mask.as_ref(),
+    )?;
+    let clean_request = request_for_mosaic_clean_mask(&request, mosaic_clean_mask);
+    let clean_mask_pixels = clean_request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak =
+        peak_abs_value_masked(&accumulated_residual, clean_request.clean_mask.as_ref());
+    let psf_state = PsfState {
+        psf: accumulated_psf,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt,
+        psf_peak,
+        gridded_samples,
+        skipped_samples,
+    };
+    let mut model = request
+        .initial_model
+        .take()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let mut warnings = Vec::<String>::new();
+    let controller_started = Instant::now();
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        compute_mosaic_residual_streaming(
+            &clean_request,
+            &config,
+            &gridder,
+            &weighting_plans,
+            &mut replay_unweighted_blocks,
+            &mut residual_projector_cache,
+            conv_sampling,
+            model,
+            &psf_state,
+            &weight_image,
+            stage_timings,
+        )
+    };
+    let clean_state = if clean_request.clean.niter > 0 {
+        run_cotton_schwab_controller_with_refresh(
+            &clean_request,
+            &psf_state,
+            &mut stage_timings,
+            &mut refresh_residual,
+            &mut model,
+            accumulated_residual,
+            max_psf_sidelobe_level,
+            initial_peak,
+            &mut warnings,
+        )?
+    } else {
+        CottonSchwabState {
+            residual: accumulated_residual,
+            major_cycles: 0,
+            minor_iterations: 0,
+            clean_stop_reason: None,
+            minor_cycle_traces: Vec::new(),
+            final_cycle_threshold_jy_per_beam: 0.0,
+        }
+    };
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_started.elapsed().saturating_sub(accounted);
+    let residual = clean_state.residual;
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    warnings.extend(beam_warnings);
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                clean_request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth: (request.selected_frequency_range_hz[1]
+                - request.selected_frequency_range_hz[0])
+                / request.reffreq_hz,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: Some(weight_image),
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+fn validate_mosaic_streaming_config(config: &MosaicGridderConfig) -> Result<(), ImagingError> {
+    if !(config.phase_center_direction_rad[0].is_finite()
+        && config.phase_center_direction_rad[1].is_finite())
+    {
+        return Err(ImagingError::InvalidRequest(
+            "mosaic phase-center direction must be finite radians".to_string(),
+        ));
+    }
+    match config.primary_beam_model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => {
+            if !(dish_diameter_m.is_finite() && dish_diameter_m > 0.0) {
+                return Err(ImagingError::InvalidRequest(
+                    "primary-beam dish diameter must be finite and > 0 m".to_string(),
+                ));
+            }
+            if !(blockage_diameter_m.is_finite() && blockage_diameter_m >= 0.0) {
+                return Err(ImagingError::InvalidRequest(
+                    "primary-beam blockage diameter must be finite and >= 0 m".to_string(),
+                ));
+            }
+            if blockage_diameter_m >= dish_diameter_m {
+                return Err(ImagingError::InvalidRequest(
+                    "primary-beam blockage diameter must be smaller than the dish diameter"
+                        .to_string(),
+                ));
+            }
+        }
+        PrimaryBeamModel::EvlaLBandCommon => {}
+    }
+    if !(config.pb_limit.is_finite() && config.pb_limit != 0.0) {
+        return Err(ImagingError::InvalidRequest(
+            "mosaic pb_limit must be finite and non-zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn mosaic_pointing_key(pointing_direction_rad: [f64; 2]) -> (u64, u64) {
+    (
+        pointing_direction_rad[0].to_bits(),
+        pointing_direction_rad[1].to_bits(),
+    )
+}
+
+fn mosaic_reported_sumwt_from_grid_weight(grid_weight: f32, _sumwt_factor: f32) -> f64 {
+    f64::from(grid_weight)
+}
+
+struct MosaicStreamingDensityContext<'a> {
+    geometry: ImageGeometry,
+    weighting: WeightingMode,
+    selected_frequency_range_hz: [f64; 2],
+    weight_density_mode: WeightDensityMode,
+    _config: &'a MosaicGridderConfig,
+    _gridder: &'a StandardGridder,
+    _conv_sampling: usize,
+}
+
+fn accumulate_mosaic_streaming_density(
+    context: &MosaicStreamingDensityContext<'_>,
+    batch: &VisibilityBatch,
+    metadata: &GroupedVisibilityMetadataBatch,
+    weighting_plans: &mut BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+    thread_count: usize,
+) -> Result<(), ImagingError> {
+    metadata.validate_len(batch.len())?;
+    if context.weight_density_mode == WeightDensityMode::PerPlane {
+        return accumulate_mosaic_streaming_density_serial(
+            context,
+            batch,
+            metadata.groups.as_slice(),
+            weighting_plans,
+        );
+    }
+    let actual_threads = thread_count.min(metadata.groups.len()).max(1);
+    if actual_threads == 1 {
+        return accumulate_mosaic_streaming_density_serial(
+            context,
+            batch,
+            metadata.groups.as_slice(),
+            weighting_plans,
+        );
+    }
+
+    let chunk_len = metadata.groups.len().div_ceil(actual_threads);
+    let mut local_maps = Vec::with_capacity(actual_threads);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(actual_threads);
+        for groups in metadata.groups.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut local = BTreeMap::<(u64, u64), MosaicStreamingWeightingPlan>::new();
+                accumulate_mosaic_streaming_density_serial(context, batch, groups, &mut local)
+                    .map(|()| local)
+            }));
+        }
+        for handle in handles {
+            local_maps.push(
+                handle
+                    .join()
+                    .expect("streaming mosaic density worker panicked"),
+            );
+        }
+    });
+    for local in local_maps {
+        for (key, local_plan) in local? {
+            match weighting_plans.get_mut(&key) {
+                Some(plan) => plan.merge_density_accumulator(local_plan)?,
+                None => {
+                    weighting_plans.insert(key, local_plan);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn accumulate_mosaic_streaming_density_serial(
+    context: &MosaicStreamingDensityContext<'_>,
+    batch: &VisibilityBatch,
+    groups: &[GroupedVisibilityMetadata],
+    weighting_plans: &mut BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+) -> Result<(), ImagingError> {
+    for group in groups {
+        let key = mosaic_pointing_key(group.pointing_direction_rad);
+        let plan = match weighting_plans.get_mut(&key) {
+            Some(plan) => plan,
+            None => {
+                weighting_plans.insert(
+                    key,
+                    MosaicStreamingWeightingPlan::new(
+                        context.geometry,
+                        context.weighting,
+                        context.selected_frequency_range_hz,
+                        context.weight_density_mode,
+                    )?,
+                );
+                weighting_plans
+                    .get_mut(&key)
+                    .expect("inserted mosaic weighting plan")
+            }
+        };
+        plan.accumulate_density_group(batch, group)?;
+    }
+    Ok(())
+}
+
+fn weight_mosaic_streaming_batch(
+    request: &ImagingRequest,
+    batch: VisibilityBatch,
+    metadata: &GroupedVisibilityMetadataBatch,
+    weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+) -> Result<VisibilityBatch, ImagingError> {
+    metadata.validate_len(batch.len())?;
+    if request.weighting == WeightingMode::Natural {
+        return Ok(batch);
+    }
+    let mut weighted = batch;
+    for group in &metadata.groups {
+        let key = mosaic_pointing_key(group.pointing_direction_rad);
+        let plan = weighting_plans.get(&key).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "streaming mosaic weighting plan missing pointing density".to_string(),
+            )
+        })?;
+        for range in &group.sample_ranges {
+            if range.end > weighted.len() || range.start > range.end {
+                return Err(ImagingError::InvalidRequest(
+                    "grouped mosaic metadata range exceeds visibility batch".to_string(),
+                ));
+            }
+            for sample_index in range.start..range.end {
+                weighted.weight[sample_index] = plan.weight_sample(
+                    weighted.u_lambda[sample_index],
+                    weighted.v_lambda[sample_index],
+                    weighted.weight[sample_index],
+                )?;
+            }
+        }
+    }
+    Ok(weighted)
+}
+
+fn stream_weighted_mosaic_groups<F, C>(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    _gridder: &StandardGridder,
+    weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+    replay_unweighted_blocks: &mut F,
+    pass: SinglePlaneStreamPass,
+    mut consume_groups: C,
+) -> Result<(), ImagingError>
+where
+    F: FnMut(
+        SinglePlaneStreamPass,
+        &mut dyn FnMut(SinglePlaneVisibilityBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+    C: FnMut(Vec<MosaicPointingGroup>) -> Result<(), ImagingError>,
+{
+    replay_unweighted_blocks(pass, &mut |block| {
+        let SinglePlaneGridderMetadata::Mosaic(metadata) = block.gridder_metadata else {
+            return Err(ImagingError::InvalidRequest(
+                "streaming mosaic MFS requires mosaic metadata blocks".to_string(),
+            ));
+        };
+        let weighted =
+            weight_mosaic_streaming_batch(request, block.visibility, &metadata, weighting_plans)?;
+        let groups = build_mosaic_pointing_groups_from_grouped(&[weighted], &[metadata], false)?;
+        if profile::standard_mfs_profile_detail_enabled() {
+            let samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+            eprintln!(
+                "mosaic_streaming_group_block groups={} samples={} pb_limit={}",
+                groups.len(),
+                samples,
+                config.pb_limit,
+            );
+        }
+        consume_groups(groups)
+    })
+}
+
+type MosaicPointingWeightKey = (u64, u64, u64, (u8, u64, u64));
+type MosaicPointingWeightValue = ([f64; 2], PrimaryBeamModel, f64, f64);
+
+#[derive(Default)]
+struct MosaicPointingWeightAccumulator {
+    pointing_weights: BTreeMap<MosaicPointingWeightKey, MosaicPointingWeightValue>,
+}
+
+impl MosaicPointingWeightAccumulator {
+    fn accumulate(
+        &mut self,
+        geometry: ImageGeometry,
+        config: &MosaicGridderConfig,
+        groups: &[MosaicPointingGroup],
+    ) {
+        for group in groups {
+            if !mosaic_pointing_contributes_by_simple_pb_center(
+                geometry,
+                config.phase_center_direction_rad,
+                group.pointing_direction_rad,
+            ) {
+                continue;
+            }
+            let mut group_weight = 0.0f64;
+            for sample_index in 0..group.batch.len() {
+                if !group.batch.gridable[sample_index] {
+                    continue;
+                }
+                let weight = group.batch.weight[sample_index];
+                if weight.is_finite() && weight > 0.0 {
+                    group_weight += f64::from(weight);
+                }
+            }
+            if !(group_weight.is_finite() && group_weight > 0.0) {
+                continue;
+            }
+            let key = (
+                group.pointing_direction_rad[0].to_bits(),
+                group.pointing_direction_rad[1].to_bits(),
+                group.frequency_hz.to_bits(),
+                primary_beam_model_key(group.primary_beam_model),
+            );
+            let entry = self.pointing_weights.entry(key).or_insert((
+                group.pointing_direction_rad,
+                group.primary_beam_model,
+                group.frequency_hz,
+                0.0,
+            ));
+            entry.3 += group_weight;
+        }
+    }
+
+    fn build_image(
+        self,
+        geometry: ImageGeometry,
+        config: &MosaicGridderConfig,
+    ) -> Result<Array2<f32>, ImagingError> {
+        let pointing_weights = self
+            .pointing_weights
+            .into_values()
+            .filter(|(_, _, _, pointing_weight)| {
+                pointing_weight.is_finite() && *pointing_weight > 0.0
+            })
+            .collect::<Vec<_>>();
+        let thread_count = mosaic_pointing_weight_image_thread_count(pointing_weights.len());
+        let start = Instant::now();
+        let weight_image = if thread_count > 1 {
+            build_mosaic_pointing_weight_image_parallel(
+                geometry,
+                config,
+                &pointing_weights,
+                thread_count,
+            )
+        } else {
+            build_mosaic_pointing_weight_image_serial(geometry, config, &pointing_weights)
+        };
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mosaic_pointing_weight_image_build entries={} threads={} elapsed_ms={:.3}",
+                pointing_weights.len(),
+                thread_count,
+                start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        if weight_image
+            .iter()
+            .copied()
+            .any(|value| value.is_finite() && value > 0.0)
+        {
+            Ok(weight_image)
+        } else {
+            Err(ImagingError::Normalization(
+                "streaming mosaic weight image has no finite positive samples".to_string(),
+            ))
+        }
+    }
+}
+
+fn build_mosaic_pointing_weight_image_serial(
+    geometry: ImageGeometry,
+    config: &MosaicGridderConfig,
+    pointing_weights: &[MosaicPointingWeightValue],
+) -> Array2<f32> {
+    let mut weight_image = Array2::<f32>::zeros((geometry.nx(), geometry.ny()));
+    for &(pointing_direction_rad, primary_beam_model, frequency_hz, pointing_weight) in
+        pointing_weights
+    {
+        accumulate_mosaic_pointing_weight_image(
+            &mut weight_image,
+            geometry,
+            config,
+            pointing_direction_rad,
+            primary_beam_model,
+            frequency_hz,
+            pointing_weight,
+        );
+    }
+    weight_image
+}
+
+fn build_mosaic_pointing_weight_image_parallel(
+    geometry: ImageGeometry,
+    config: &MosaicGridderConfig,
+    pointing_weights: &[MosaicPointingWeightValue],
+    thread_count: usize,
+) -> Array2<f32> {
+    let actual_threads = thread_count.max(1).min(pointing_weights.len().max(1));
+    let chunk_len = pointing_weights.len().div_ceil(actual_threads);
+    let partials = thread::scope(|scope| {
+        pointing_weights
+            .chunks(chunk_len)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    build_mosaic_pointing_weight_image_serial(geometry, config, chunk)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().expect("mosaic weight-image worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    let mut weight_image = Array2::<f32>::zeros((geometry.nx(), geometry.ny()));
+    for partial in partials {
+        Zip::from(&mut weight_image)
+            .and(&partial)
+            .for_each(|target, &value| *target += value);
+    }
+    weight_image
+}
+
+fn mosaic_pointing_weight_image_thread_count(work_items: usize) -> usize {
+    thread::available_parallelism()
+        .map_or(1, |value| value.get())
+        .min(MOSAIC_PROJECTOR_BUILD_THREADS)
+        .min(work_items)
+        .max(1)
+}
+
+fn accumulate_mosaic_pointing_weight_image(
+    weight_image: &mut Array2<f32>,
+    geometry: ImageGeometry,
+    config: &MosaicGridderConfig,
+    pointing_direction_rad: [f64; 2],
+    primary_beam_model: PrimaryBeamModel,
+    frequency_hz: f64,
+    pointing_weight: f64,
+) {
+    if !(pointing_weight.is_finite() && pointing_weight > 0.0) {
+        return;
+    }
+    let [pointing_x, pointing_y] = mosaic_pointing_pixel_position(
+        geometry,
+        config.phase_center_direction_rad,
+        pointing_direction_rad,
+    );
+    if mosaic_weight_trace_enabled() {
+        eprintln!(
+            "CASA_RS_W3_MOSAIC_PB_POINTING label=rust_stream pointing_x={pointing_x:.12e} pointing_y={pointing_y:.12e} frequency_hz={frequency_hz:.9e} pointing_weight={pointing_weight:.17e}"
+        );
+    }
+    let voltage_pattern = MosaicWeightImageVoltagePattern::new(primary_beam_model);
+    let (x_range, y_range) = mosaic_weight_image_pixel_bounds(
+        geometry,
+        primary_beam_model,
+        pointing_x,
+        pointing_y,
+        frequency_hz,
+    );
+    for x in x_range {
+        let l = (x as f64 - pointing_x) * geometry.cell_size_rad[0].abs();
+        for y in y_range.clone() {
+            let m = (y as f64 - pointing_y) * geometry.cell_size_rad[1].abs();
+            let radius_rad = (l * l + m * m).sqrt();
+            let vp = voltage_pattern.evaluate(l, m, frequency_hz);
+            if (x == 640 || x % 160 == 0) && (y == 640 || y % 160 == 0) {
+                trace_mosaic_pb_sample(MosaicPbTraceSample {
+                    label: "rust_stream",
+                    primary_beam_model,
+                    pointing_x,
+                    pointing_y,
+                    x,
+                    y,
+                    radius_rad,
+                    frequency_hz,
+                    vp,
+                });
+            }
+            let pb = vp * vp;
+            weight_image[(x, y)] += (pointing_weight as f32) * pb * pb;
+        }
+    }
+}
+
+fn mosaic_weight_image_pixel_bounds(
+    geometry: ImageGeometry,
+    primary_beam_model: PrimaryBeamModel,
+    pointing_x: f64,
+    pointing_y: f64,
+    frequency_hz: f64,
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    let full = 0..geometry.nx();
+    let full_y = 0..geometry.ny();
+    let Some(max_radius_arcsec_at_100ghz) =
+        primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model)
+    else {
+        return (full, full_y);
+    };
+    if !(pointing_x.is_finite()
+        && pointing_y.is_finite()
+        && frequency_hz.is_finite()
+        && frequency_hz > 0.0
+        && geometry.cell_size_rad[0].is_finite()
+        && geometry.cell_size_rad[0] != 0.0
+        && geometry.cell_size_rad[1].is_finite()
+        && geometry.cell_size_rad[1] != 0.0)
+    {
+        return (full, full_y);
+    }
+    let max_radius_rad =
+        (max_radius_arcsec_at_100ghz * (100.0e9 / frequency_hz) / 3600.0).to_radians();
+    if !(max_radius_rad.is_finite() && max_radius_rad > 0.0) {
+        return (full, full_y);
+    }
+    let x_radius = max_radius_rad / geometry.cell_size_rad[0].abs();
+    let y_radius = max_radius_rad / geometry.cell_size_rad[1].abs();
+    let x_start = (pointing_x - x_radius).floor().max(0.0) as usize;
+    let y_start = (pointing_y - y_radius).floor().max(0.0) as usize;
+    let x_end = (pointing_x + x_radius)
+        .ceil()
+        .min(geometry.nx().saturating_sub(1) as f64) as usize
+        + 1;
+    let y_end = (pointing_y + y_radius)
+        .ceil()
+        .min(geometry.ny().saturating_sub(1) as f64) as usize
+        + 1;
+    (x_start..x_end.max(x_start), y_start..y_end.max(y_start))
+}
+
+enum MosaicWeightImageVoltagePattern {
+    Airy(AiryVoltageLookup),
+    Model(PrimaryBeamModel),
+}
+
+impl MosaicWeightImageVoltagePattern {
+    fn new(primary_beam_model: PrimaryBeamModel) -> Self {
+        match primary_beam_model {
+            PrimaryBeamModel::Airy {
+                dish_diameter_m,
+                blockage_diameter_m,
+            } => Self::Airy(AiryVoltageLookup::new(dish_diameter_m, blockage_diameter_m)),
+            PrimaryBeamModel::EvlaLBandCommon => Self::Model(primary_beam_model),
+        }
+    }
+
+    fn evaluate(&self, l_rad: f64, m_rad: f64, frequency_hz: f64) -> f32 {
+        match self {
+            Self::Airy(lookup) => lookup.evaluate_offsets(l_rad, m_rad, frequency_hz),
+            Self::Model(primary_beam_model) => primary_beam_voltage_pattern_for_offsets(
+                *primary_beam_model,
+                l_rad,
+                m_rad,
+                frequency_hz,
+            ),
+        }
+    }
+}
+
+fn max_abs_w_lambda_for_mosaic_groups(groups: &[MosaicPointingGroup]) -> f64 {
+    groups
+        .iter()
+        .flat_map(|group| group.batch.w_lambda.iter())
+        .fold(0.0f64, |max_value, value| max_value.max(value.abs()))
+}
+
+fn normalize_mosaic_residual_by_weight(
+    residual: &mut Array2<f32>,
+    weight_image: &Array2<f32>,
+    pb_limit: f32,
+) -> Result<(), ImagingError> {
+    let weight_peak = weight_image
+        .iter()
+        .copied()
+        .fold(0.0f32, |peak, value| peak.max(value));
+    if !(weight_peak.is_finite() && weight_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic residual weight peak is non-finite or zero".to_string(),
+        ));
+    }
+    let pb_limit_threshold = pb_limit.abs() * pb_limit.abs() * weight_peak;
+    for ((x, y), weight_value) in weight_image.indexed_iter() {
+        let sensitivity = weight_value.max(0.0);
+        if sensitivity > pb_limit_threshold {
+            residual[(x, y)] /= (sensitivity * weight_peak).sqrt();
+        } else {
+            residual[(x, y)] = 0.0;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_mosaic_residual_streaming<F>(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+    replay_unweighted_blocks: &mut F,
+    projector_cache: &mut MosaicProjectorCache,
+    conv_sampling: usize,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    weight_image: &Array2<f32>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError>
+where
+    F: FnMut(
+        SinglePlaneStreamPass,
+        &mut dyn FnMut(SinglePlaneVisibilityBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let refresh_started = Instant::now();
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let model_for_prediction =
+            flat_sky_mosaic_model_for_prediction(model, weight_image, config.pb_limit)?;
+        let transformed =
+            centered_fft2(&gridder.apodize_mosaic_model(&model_for_prediction, conv_sampling));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let degrid_started = Instant::now();
+    let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
+    stream_weighted_mosaic_groups(
+        request,
+        config,
+        gridder,
+        weighting_plans,
+        replay_unweighted_blocks,
+        SinglePlaneStreamPass::ResidualRefresh,
+        |groups| {
+            let residual_projectors = prepare_mosaic_residual_projectors(
+                request,
+                config,
+                gridder,
+                &groups,
+                conv_sampling,
+                projector_cache,
+            )?;
+            let parallel = compute_mosaic_residual_parallel(
+                request,
+                config,
+                gridder,
+                &groups,
+                conv_sampling,
+                model_grid.as_ref(),
+                mosaic_parallel_threads.min(groups.len()).max(1),
+                None,
+                Some(&residual_projectors),
+            )?;
+            profile::log_parallel_stage(profile::ParallelStageProfile {
+                stage: "mosaic_stream_residual_grid",
+                requested_threads: standard_mfs_grid_threads(),
+                actual_threads: parallel.worker_compute.len(),
+                chunking: "pointing-group",
+                chunk_len: groups.len().div_ceil(parallel.worker_compute.len().max(1)),
+                samples_total: groups.iter().map(|group| group.batch.len()).sum(),
+                samples_per_worker: parallel.worker_samples.clone(),
+                local_grid_bytes_per_worker: complex64_grid_bytes(grid_nx, grid_ny, 1),
+                local_grid_count: 1,
+                local_alloc_zero_by_worker: parallel.worker_alloc.clone(),
+                worker_compute_by_worker: parallel.worker_compute.clone(),
+                join_duration: parallel.join_elapsed,
+                merge_duration: parallel.merge_elapsed,
+                stage_duration: parallel.elapsed,
+            });
+            add_complex64_grid(&mut accumulated_residual_grid, &parallel.residual_grid);
+            Ok(())
+        },
+    )?;
+    timings.degrid_grid = degrid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
+    timings.fft += fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let accumulated_residual_image =
+        gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
+    timings.normalize += normalize_started.elapsed();
+
+    let normalize_started = Instant::now();
+    let fft_sumwt_scale =
+        (request.geometry.nx() * request.geometry.ny()) as f32 / psf_state.normalization_sumwt;
+    let mut residual = accumulated_residual_image;
+    residual.mapv_inplace(|value| value * fft_sumwt_scale);
+    normalize_mosaic_residual_by_weight(&mut residual, weight_image, config.pb_limit)?;
+    timings.normalize += normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    stage_timings.major_cycle_refresh += refresh_started.elapsed();
+    Ok(residual)
 }
 
 /// Run standard-MFS CLEAN from replayable weighted samples.
@@ -1854,9 +3014,9 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
                 .to_string(),
         ));
     }
-    if !(standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1) {
+    if !standard_mfs_fixed_tile_backend_enabled() {
         return Err(ImagingError::Unsupported(
-            "routed visibility-run streaming standard MFS clean requires the fixed-tile multi-worker backend"
+            "routed visibility-run streaming standard MFS clean requires the fixed-tile backend"
                 .to_string(),
         ));
     }
@@ -3693,6 +4853,44 @@ fn standard_mfs_metal_backend_enabled() -> bool {
     )
 }
 
+fn standard_mfs_mtmfs_metal_backend_enabled() -> bool {
+    if standard_mfs_metal_backend_enabled() {
+        return true;
+    }
+    matches!(
+        standard_mfs_residual_backend_selection_from_env(),
+        Ok(Some(
+            StandardMfsBackendSelection::Metal
+                | StandardMfsBackendSelection::MetalRowRun
+                | StandardMfsBackendSelection::MetalRowRunGrouped
+        ))
+    )
+}
+
+fn w_project_initial_dirty_metal_backend_enabled() -> bool {
+    standard_mfs_metal_backend_enabled()
+        || matches!(
+            standard_mfs_initial_dirty_backend_selection_from_env(),
+            Ok(Some(
+                StandardMfsBackendSelection::Metal
+                    | StandardMfsBackendSelection::MetalRowRun
+                    | StandardMfsBackendSelection::MetalRowRunGrouped
+            ))
+        )
+}
+
+fn w_project_residual_metal_backend_enabled() -> bool {
+    standard_mfs_mtmfs_metal_backend_enabled()
+}
+
+fn mosaic_initial_dirty_metal_backend_enabled() -> bool {
+    w_project_initial_dirty_metal_backend_enabled()
+}
+
+fn mosaic_residual_metal_backend_enabled() -> bool {
+    w_project_residual_metal_backend_enabled()
+}
+
 fn standard_mfs_metal_grouped_input_cache_enabled(planned_default: bool) -> bool {
     env::var("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE")
         .map(|value| {
@@ -3834,6 +5032,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
     }
 
     let gridder = StandardGridder::new(request.geometry)?;
+    let mut acceleration_backend = MtmfsAccelerationBackend::new(request, &gridder)?;
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
     let weighting_request = ImagingRequest {
@@ -3856,15 +5055,22 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
     };
     let weighted_batches = apply_weighting(&weighting_request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
+    acceleration_backend.prepare_weighted_batches(request, &weighted_batches)?;
 
-    let psf_state =
-        compute_mtmfs_psf_terms(request, &weighted_batches, &gridder, &mut stage_timings)?;
+    let psf_state = compute_mtmfs_psf_terms(
+        request,
+        &weighted_batches,
+        &gridder,
+        &acceleration_backend,
+        &mut stage_timings,
+    )?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model_terms = vec![Array2::<f32>::zeros((nx, ny)); request.nterms];
     let mut residual_terms = compute_mtmfs_residual_terms(
         request,
         &weighted_batches,
         &gridder,
+        &acceleration_backend,
         &model_terms,
         &psf_state,
         &mut stage_timings,
@@ -3985,6 +5191,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             request,
             &weighted_batches,
             &gridder,
+            &acceleration_backend,
             &model_terms,
             &psf_state,
             &mut stage_timings,
@@ -4019,6 +5226,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             request,
             &weighted_batches,
             &gridder,
+            &acceleration_backend,
             &model_terms,
             &psf_state,
             &mut stage_timings,
@@ -4131,6 +5339,712 @@ struct MosaicPointingGroup {
     sample_frequency_hz: Vec<f64>,
 }
 
+fn empty_visibility_batch_with_capacity(capacity: usize) -> VisibilityBatch {
+    VisibilityBatch {
+        u_lambda: Vec::with_capacity(capacity),
+        v_lambda: Vec::with_capacity(capacity),
+        w_lambda: Vec::with_capacity(capacity),
+        weight: Vec::with_capacity(capacity),
+        sumwt_factor: Vec::with_capacity(capacity),
+        gridable: Vec::with_capacity(capacity),
+        visibility: Vec::with_capacity(capacity),
+    }
+}
+
+fn append_visibility_batch_range(
+    target: &mut VisibilityBatch,
+    source: &VisibilityBatch,
+    range: VisibilitySampleRange,
+) -> Result<(), ImagingError> {
+    if range.start > range.end || range.end > source.len() {
+        return Err(ImagingError::InvalidRequest(
+            "mosaic grouped metadata references an unknown sample range".to_string(),
+        ));
+    }
+    target
+        .u_lambda
+        .extend_from_slice(&source.u_lambda[range.start..range.end]);
+    target
+        .v_lambda
+        .extend_from_slice(&source.v_lambda[range.start..range.end]);
+    target
+        .w_lambda
+        .extend_from_slice(&source.w_lambda[range.start..range.end]);
+    target
+        .weight
+        .extend_from_slice(&source.weight[range.start..range.end]);
+    target
+        .sumwt_factor
+        .extend_from_slice(&source.sumwt_factor[range.start..range.end]);
+    target
+        .gridable
+        .extend_from_slice(&source.gridable[range.start..range.end]);
+    target
+        .visibility
+        .extend_from_slice(&source.visibility[range.start..range.end]);
+    Ok(())
+}
+
+struct MosaicGroupedRangeSpec {
+    pointing_direction_rad: [f64; 2],
+    frequency_hz: f64,
+    primary_beam_model: PrimaryBeamModel,
+    sample_count: usize,
+    ranges: Vec<VisibilitySampleRangeRef>,
+}
+
+enum MosaicStreamingWeightingPlan {
+    Standard(StandardMfsStreamingWeightingPlan),
+}
+
+impl MosaicStreamingWeightingPlan {
+    fn new(
+        geometry: ImageGeometry,
+        weighting: WeightingMode,
+        selected_frequency_range_hz: [f64; 2],
+        weight_density_mode: WeightDensityMode,
+    ) -> Result<Self, ImagingError> {
+        Ok(Self::Standard(
+            StandardMfsStreamingWeightingPlan::new_with_density_mode(
+                geometry,
+                weighting,
+                selected_frequency_range_hz,
+                weight_density_mode,
+            )?,
+        ))
+    }
+
+    fn finish_density_pass(&mut self) {
+        match self {
+            Self::Standard(plan) => plan.finish_density_pass(),
+        }
+    }
+
+    fn merge_density_accumulator(&mut self, other: Self) -> Result<(), ImagingError> {
+        match (self, other) {
+            (Self::Standard(plan), Self::Standard(other)) => plan.merge_density_accumulator(other),
+        }
+    }
+
+    fn accumulate_density_group(
+        &mut self,
+        batch: &VisibilityBatch,
+        group: &GroupedVisibilityMetadata,
+    ) -> Result<(), ImagingError> {
+        match self {
+            Self::Standard(plan) => {
+                for range in &group.sample_ranges {
+                    if range.end > batch.len() || range.start > range.end {
+                        return Err(ImagingError::InvalidRequest(
+                            "grouped mosaic metadata range exceeds visibility batch".to_string(),
+                        ));
+                    }
+                    for sample_index in range.start..range.end {
+                        plan.accumulate_density_sample(
+                            batch.u_lambda[sample_index],
+                            batch.v_lambda[sample_index],
+                            batch.weight[sample_index],
+                        );
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn weight_sample(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+        weight: f32,
+    ) -> Result<f32, ImagingError> {
+        match self {
+            Self::Standard(plan) => plan.weight_sample(u_lambda, v_lambda, weight),
+        }
+    }
+}
+
+fn materialize_mosaic_grouped_range_spec(
+    batches: &[VisibilityBatch],
+    spec: &MosaicGroupedRangeSpec,
+) -> Result<MosaicPointingGroup, ImagingError> {
+    let mut group = MosaicPointingGroup {
+        pointing_direction_rad: spec.pointing_direction_rad,
+        frequency_hz: spec.frequency_hz,
+        primary_beam_model: spec.primary_beam_model,
+        batch: empty_visibility_batch_with_capacity(spec.sample_count),
+        sample_frequency_hz: Vec::new(),
+    };
+    for range_ref in &spec.ranges {
+        let Some(batch) = batches.get(range_ref.batch_index) else {
+            return Err(ImagingError::InvalidRequest(
+                "grouped mosaic metadata references an unknown visibility batch".to_string(),
+            ));
+        };
+        append_visibility_batch_range(&mut group.batch, batch, range_ref.range)?;
+    }
+    Ok(group)
+}
+
+struct MosaicDirtyGroupContribution {
+    psf_grid: Array2<Complex64>,
+    residual_grid: Array2<Complex64>,
+    weight_grid: Array2<Complex64>,
+    metal_stats: MosaicMetalGridStats,
+    group_weight_grid_sum: f64,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+struct MosaicDirtyRangeContribution {
+    sample_start: usize,
+    samples_assigned: usize,
+    psf_grid: Array2<Complex64>,
+    residual_grid: Array2<Complex64>,
+    weight_support_sums: MosaicWeightGridAccumulator,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    alloc_elapsed: Duration,
+    compute_elapsed: Duration,
+}
+
+struct MosaicDirtyGroupSummary {
+    group_weight_grid_sum: f64,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+struct MosaicPointingWeightSummary {
+    pointing_direction_rad: [f64; 2],
+    frequency_hz: f64,
+    raw_samples: usize,
+    group_weight_grid_sum: f64,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+fn mosaic_pointing_weight_summary_from_contribution(
+    group: &MosaicPointingGroup,
+    group_weight_grid_sum: f64,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+) -> MosaicPointingWeightSummary {
+    MosaicPointingWeightSummary {
+        pointing_direction_rad: group.pointing_direction_rad,
+        frequency_hz: group.frequency_hz,
+        raw_samples: group.batch.len(),
+        group_weight_grid_sum,
+        reported_sumwt,
+        normalization_sumwt,
+        gridded_samples,
+        skipped_samples,
+    }
+}
+
+fn log_mosaic_pointing_weight_summaries(pass: &str, summaries: &[MosaicPointingWeightSummary]) {
+    if !profile::standard_mfs_profile_detail_enabled() || summaries.is_empty() {
+        return;
+    }
+    type PointingKey = (u64, u64, u64);
+    let mut totals = BTreeMap::<PointingKey, MosaicPointingWeightSummary>::new();
+    for summary in summaries {
+        let key = (
+            summary.pointing_direction_rad[0].to_bits(),
+            summary.pointing_direction_rad[1].to_bits(),
+            summary.frequency_hz.to_bits(),
+        );
+        totals
+            .entry(key)
+            .and_modify(|total| {
+                total.raw_samples += summary.raw_samples;
+                total.group_weight_grid_sum += summary.group_weight_grid_sum;
+                total.reported_sumwt += summary.reported_sumwt;
+                total.normalization_sumwt += summary.normalization_sumwt;
+                total.gridded_samples += summary.gridded_samples;
+                total.skipped_samples += summary.skipped_samples;
+            })
+            .or_insert_with(|| MosaicPointingWeightSummary {
+                pointing_direction_rad: summary.pointing_direction_rad,
+                frequency_hz: summary.frequency_hz,
+                raw_samples: summary.raw_samples,
+                group_weight_grid_sum: summary.group_weight_grid_sum,
+                reported_sumwt: summary.reported_sumwt,
+                normalization_sumwt: summary.normalization_sumwt,
+                gridded_samples: summary.gridded_samples,
+                skipped_samples: summary.skipped_samples,
+            });
+    }
+    for summary in totals.values() {
+        eprintln!(
+            "mosaic_pointing_weight_summary pass={} pointing_ra={:.12e} pointing_dec={:.12e} frequency_hz={:.9e} raw_samples={} gridded_samples={} skipped={} group_weight_sum={:.12e} reported_sumwt={:.12e} normalization_sumwt={:.12e}",
+            pass,
+            summary.pointing_direction_rad[0],
+            summary.pointing_direction_rad[1],
+            summary.frequency_hz,
+            summary.raw_samples,
+            summary.gridded_samples,
+            summary.skipped_samples,
+            summary.group_weight_grid_sum,
+            summary.reported_sumwt,
+            summary.normalization_sumwt,
+        );
+    }
+}
+
+struct MosaicDirtyProjectorPair {
+    projector: ScreenProjector,
+    weight_projector: ScreenProjector,
+    weight_plan: ScreenProjectSamplePlan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct MosaicWeightSupportKey {
+    min_ix: i32,
+    max_ix: i32,
+    min_iy: i32,
+    max_iy: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MosaicWeightSupportSum {
+    key: MosaicWeightSupportKey,
+    weight: f64,
+}
+
+#[derive(Clone, Debug)]
+struct MosaicWeightGridAccumulator {
+    full_support: MosaicWeightSupportKey,
+    full_weight_sum: f64,
+    cropped_weight_sums: BTreeMap<MosaicWeightSupportKey, f64>,
+    total_weight_sum: f64,
+}
+
+impl MosaicWeightGridAccumulator {
+    fn new(weight_projector: &ScreenProjector) -> Self {
+        let support = weight_projector.support() as i32;
+        Self {
+            full_support: MosaicWeightSupportKey {
+                min_ix: -support,
+                max_ix: support,
+                min_iy: -support,
+                max_iy: support,
+            },
+            full_weight_sum: 0.0,
+            cropped_weight_sums: BTreeMap::new(),
+            total_weight_sum: 0.0,
+        }
+    }
+
+    fn add_plan(&mut self, plan: &ScreenProjectSamplePlan, weight: f64) {
+        if !(weight.is_finite() && weight > 0.0) {
+            return;
+        }
+        let key = MosaicWeightSupportKey {
+            min_ix: plan.min_ix as i32,
+            max_ix: plan.max_ix as i32,
+            min_iy: plan.min_iy as i32,
+            max_iy: plan.max_iy as i32,
+        };
+        self.total_weight_sum += weight;
+        if key == self.full_support {
+            self.full_weight_sum += weight;
+        } else {
+            *self.cropped_weight_sums.entry(key).or_insert(0.0) += weight;
+        }
+    }
+
+    fn extend(&mut self, other: &Self) {
+        debug_assert_eq!(self.full_support, other.full_support);
+        self.full_weight_sum += other.full_weight_sum;
+        self.total_weight_sum += other.total_weight_sum;
+        for (&key, &weight) in &other.cropped_weight_sums {
+            *self.cropped_weight_sums.entry(key).or_insert(0.0) += weight;
+        }
+    }
+
+    fn support_sums(&self) -> Vec<MosaicWeightSupportSum> {
+        let mut sums = Vec::with_capacity(
+            usize::from(self.full_weight_sum > 0.0) + self.cropped_weight_sums.len(),
+        );
+        if self.full_weight_sum > 0.0 {
+            sums.push(MosaicWeightSupportSum {
+                key: self.full_support,
+                weight: self.full_weight_sum,
+            });
+        }
+        sums.extend(
+            self.cropped_weight_sums
+                .iter()
+                .filter(|(_, weight)| **weight > 0.0)
+                .map(|(&key, &weight)| MosaicWeightSupportSum { key, weight }),
+        );
+        sums
+    }
+}
+
+fn add_mosaic_weight_support_sample(
+    accumulator: &mut MosaicWeightGridAccumulator,
+    weight_projector: &ScreenProjector,
+    u_lambda: f64,
+    v_lambda: f64,
+    grid_weight: f64,
+) {
+    if let Some(weight_sample_plan) = weight_projector.plan_sample_for_grid(u_lambda, v_lambda) {
+        accumulator.add_plan(&weight_sample_plan, grid_weight);
+    }
+}
+
+fn add_mosaic_center_weight_grid_from_support_sums(
+    weight_projector: &ScreenProjector,
+    center_weight_plan: &ScreenProjectSamplePlan,
+    weight_grid: &mut Array2<Complex64>,
+    support_sums: &[MosaicWeightSupportSum],
+) {
+    for support_sum in support_sums {
+        if !(support_sum.weight.is_finite() && support_sum.weight > 0.0) {
+            continue;
+        }
+        let mut plan = *center_weight_plan;
+        plan.min_ix = support_sum.key.min_ix as isize;
+        plan.max_ix = support_sum.key.max_ix as isize;
+        plan.min_iy = support_sum.key.min_iy as isize;
+        plan.max_iy = support_sum.key.max_iy as isize;
+        weight_projector.grid_sample_planned_f64(
+            weight_grid,
+            &plan,
+            Complex64::new(support_sum.weight, 0.0),
+        );
+    }
+}
+
+struct MosaicResidualProjector {
+    projector: ScreenProjector,
+}
+
+struct MosaicResidualRangeContribution {
+    sample_start: usize,
+    samples_assigned: usize,
+    residual_grid: Array2<Complex64>,
+    alloc_elapsed: Duration,
+    compute_elapsed: Duration,
+}
+
+struct MosaicResidualGroupContribution {
+    residual_grid: Array2<Complex64>,
+    metal_stats: MosaicMetalGridStats,
+    worker_samples: Vec<usize>,
+    worker_compute: Vec<Duration>,
+    worker_alloc: Vec<Duration>,
+    join_elapsed: Duration,
+    merge_elapsed: Duration,
+    stage_elapsed: Duration,
+}
+
+struct MosaicResidualParallelContribution {
+    residual_grid: Array2<Complex64>,
+    worker_samples: Vec<usize>,
+    worker_alloc: Vec<Duration>,
+    worker_compute: Vec<Duration>,
+    join_elapsed: Duration,
+    merge_elapsed: Duration,
+    elapsed: Duration,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MosaicMetalSample {
+    loc: u32,
+    support: u32,
+    offset: [i32; 2],
+    range_x: [i32; 2],
+    range_y: [i32; 2],
+    weight: f32,
+    visibility_re: f32,
+    visibility_im: f32,
+    kernel_base: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct MosaicMetalSampleKey {
+    loc: u32,
+    support: u32,
+    offset: [i32; 2],
+    range_x: [i32; 2],
+    range_y: [i32; 2],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MosaicMetalSampleAccumulator {
+    weight: f64,
+    weighted_visibility_re: f64,
+    weighted_visibility_im: f64,
+}
+
+#[derive(Default)]
+struct MosaicMetalSampleHasher(u64);
+
+impl Hasher for MosaicMetalSampleHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = 0u64;
+            for (shift, byte) in chunk.iter().enumerate() {
+                word |= u64::from(*byte) << (shift * 8);
+            }
+            self.write_u64(word);
+        }
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = self.0.rotate_left(5) ^ value.wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    fn write_i8(&mut self, value: i8) {
+        self.write_u64(value as u8 as u64);
+    }
+
+    fn write_i16(&mut self, value: i16) {
+        self.write_u64(value as u16 as u64);
+    }
+
+    fn write_i32(&mut self, value: i32) {
+        self.write_u64(value as u32 as u64);
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.write_u64(value as u64);
+    }
+
+    fn write_isize(&mut self, value: isize) {
+        self.write_u64(value as u64);
+    }
+}
+
+type MosaicMetalSampleHashMap = HashMap<
+    MosaicMetalSampleKey,
+    MosaicMetalSampleAccumulator,
+    BuildHasherDefault<MosaicMetalSampleHasher>,
+>;
+
+struct MosaicMetalPreparedGroup {
+    samples: Vec<MosaicMetalSample>,
+    weight_support_sums: Vec<MosaicWeightSupportSum>,
+    group_weight_grid_sum: f64,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+impl MosaicMetalPreparedGroup {}
+
+impl MosaicMetalSample {
+    fn key(self) -> MosaicMetalSampleKey {
+        MosaicMetalSampleKey {
+            loc: self.loc,
+            support: self.support,
+            offset: self.offset,
+            range_x: self.range_x,
+            range_y: self.range_y,
+        }
+    }
+}
+
+impl MosaicMetalSampleKey {
+    fn into_sample(self, accumulator: MosaicMetalSampleAccumulator) -> Option<MosaicMetalSample> {
+        if !(accumulator.weight.is_finite() && accumulator.weight > 0.0) {
+            return None;
+        }
+        Some(MosaicMetalSample {
+            loc: self.loc,
+            support: self.support,
+            offset: self.offset,
+            range_x: self.range_x,
+            range_y: self.range_y,
+            weight: accumulator.weight as f32,
+            visibility_re: (accumulator.weighted_visibility_re / accumulator.weight) as f32,
+            visibility_im: (accumulator.weighted_visibility_im / accumulator.weight) as f32,
+            kernel_base: 0,
+        })
+    }
+}
+
+fn push_mosaic_metal_sample_aggregate(
+    aggregates: &mut MosaicMetalSampleHashMap,
+    sample: MosaicMetalSample,
+) {
+    let weight = f64::from(sample.weight);
+    let entry = aggregates
+        .entry(sample.key())
+        .or_insert(MosaicMetalSampleAccumulator {
+            weight: 0.0,
+            weighted_visibility_re: 0.0,
+            weighted_visibility_im: 0.0,
+        });
+    entry.weight += weight;
+    entry.weighted_visibility_re += f64::from(sample.visibility_re) * weight;
+    entry.weighted_visibility_im += f64::from(sample.visibility_im) * weight;
+}
+
+fn finish_mosaic_metal_sample_aggregates(
+    aggregates: MosaicMetalSampleHashMap,
+) -> Vec<MosaicMetalSample> {
+    let mut grouped = aggregates.into_iter().collect::<Vec<_>>();
+    grouped.sort_unstable_by_key(|(key, _)| *key);
+    grouped
+        .into_iter()
+        .filter_map(|(key, accumulator)| key.into_sample(accumulator))
+        .collect()
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct MosaicMetalParams {
+    sample_count: u32,
+    grid_width: u32,
+    grid_height: u32,
+    kernel_width: u32,
+    kernel_center: u32,
+    sampling: u32,
+    mode: u32,
+    model_present: u32,
+    partial_grid_count: u32,
+    partial_chunk_len: u32,
+    _pad0: u32,
+}
+
+const MOSAIC_METAL_MODE_DIRTY: u32 = 1;
+const MOSAIC_METAL_MODE_RESIDUAL: u32 = 2;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES: usize = 64 * 1024 * 1024;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MOSAIC_METAL_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 25_000;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MOSAIC_METAL_SINGLE_GRID_GROUPED_SAMPLE_LIMIT: usize = 128_000;
+const MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES: usize = 25_000;
+const MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES: usize = 10_000;
+const MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES: usize = 25_000;
+const MOSAIC_CPU_GROUPED_DIRTY_MIN_RAW_SAMPLES: usize = 10_000;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MosaicMetalGridStats {
+    calls: usize,
+    dirty_calls: usize,
+    residual_calls: usize,
+    samples: usize,
+    kernel_pack: Duration,
+    device_queue: Duration,
+    shader_compile: Duration,
+    pipeline: Duration,
+    buffer_alloc: Duration,
+    model_pack: Duration,
+    zero_outputs: Duration,
+    encode: Duration,
+    dispatch_wait: Duration,
+    reduce_wait: Duration,
+    readback: Duration,
+    total: Duration,
+}
+
+impl MosaicMetalGridStats {
+    fn add_assign(&mut self, other: Self) {
+        self.calls += other.calls;
+        self.dirty_calls += other.dirty_calls;
+        self.residual_calls += other.residual_calls;
+        self.samples += other.samples;
+        self.kernel_pack += other.kernel_pack;
+        self.device_queue += other.device_queue;
+        self.shader_compile += other.shader_compile;
+        self.pipeline += other.pipeline;
+        self.buffer_alloc += other.buffer_alloc;
+        self.model_pack += other.model_pack;
+        self.zero_outputs += other.zero_outputs;
+        self.encode += other.encode;
+        self.dispatch_wait += other.dispatch_wait;
+        self.reduce_wait += other.reduce_wait;
+        self.readback += other.readback;
+        self.total += other.total;
+    }
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn mosaic_metal_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
+    if sample_count <= MOSAIC_METAL_SINGLE_GRID_GROUPED_SAMPLE_LIMIT {
+        return 1;
+    }
+    let bytes_per_partial_grid = cell_count
+        .checked_mul(std::mem::size_of::<f32>())
+        .and_then(|bytes| bytes.checked_mul(4))
+        .unwrap_or(usize::MAX);
+    let max_by_memory = MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES
+        .checked_div(bytes_per_partial_grid)
+        .unwrap_or(1)
+        .max(1);
+    sample_count
+        .div_ceil(MOSAIC_METAL_TARGET_SAMPLES_PER_PARTIAL_GRID)
+        .clamp(1, max_by_memory.min(32))
+}
+
+fn mosaic_initial_dirty_metal_group_eligible(
+    _group: &MosaicPointingGroup,
+    prepared_group: Option<&MosaicMetalPreparedGroup>,
+) -> bool {
+    if !mosaic_initial_dirty_metal_backend_enabled() {
+        return false;
+    }
+    match prepared_group {
+        Some(prepared) => prepared.samples.len() >= MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES,
+        None => false,
+    }
+}
+
+struct MosaicDirtyParallelContribution {
+    psf_grid: Array2<Complex64>,
+    residual_grid: Array2<Complex64>,
+    weight_grid: Array2<Complex64>,
+    pointing_weight_summaries: Vec<MosaicPointingWeightSummary>,
+    reported_sumwt: f64,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    elapsed: Duration,
+    worker_samples: Vec<usize>,
+    worker_alloc: Vec<Duration>,
+    worker_compute: Vec<Duration>,
+    join_elapsed: Duration,
+    merge_elapsed: Duration,
+}
+
 fn run_mosaic_dirty_imaging(
     request: &ImagingRequest,
     config: &MosaicGridderConfig,
@@ -4146,11 +6060,51 @@ fn run_mosaic_dirty_imaging(
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
     let weighted_batches = apply_mosaic_weighting(request, config, &gridder)?;
-    stage_timings.weighting += weighting_started.elapsed();
+    let weighting_elapsed = weighting_started.elapsed();
+    stage_timings.weighting += weighting_elapsed;
     let conv_sampling = mosaic_projector_sampling(request.geometry);
-    let groups = build_mosaic_pointing_groups(&weighted_batches, &config.metadata_batches)?;
+    let trace_enabled = mosaic_trace_enabled();
+    let cell_trace_targets = mosaic_cell_trace_targets();
+    let group_started = Instant::now();
+    let retain_sample_frequency_hz = trace_enabled && !cell_trace_targets.is_empty();
+    let groups = if config.grouped_metadata_batches.is_empty() {
+        build_mosaic_pointing_groups(
+            &weighted_batches,
+            &config.metadata_batches,
+            retain_sample_frequency_hz,
+        )?
+    } else {
+        build_mosaic_pointing_groups_from_grouped(
+            &weighted_batches,
+            &config.grouped_metadata_batches,
+            retain_sample_frequency_hz,
+        )?
+    };
+    let group_elapsed = group_started.elapsed();
     if groups.is_empty() {
         return Err(ImagingError::NoUsableSamples);
+    }
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        let group_samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+        let (group_min, group_p50, group_max) = profile::min_p50_max_usize(
+            &groups
+                .iter()
+                .map(|group| group.batch.len())
+                .collect::<Vec<_>>(),
+        );
+        eprintln!(
+            "mosaic_dirty_setup weighting_ms={:.3} build_groups_ms={:.3} input_batches={} metadata_batches={} grouped_metadata_batches={} groups={} grouped_samples={} group_samples_min={} group_samples_p50={} group_samples_max={}",
+            profile::millis(weighting_elapsed),
+            profile::millis(group_elapsed),
+            weighted_batches.len(),
+            config.metadata_batches.len(),
+            config.grouped_metadata_batches.len(),
+            groups.len(),
+            group_samples,
+            group_min,
+            group_p50,
+            group_max,
+        );
     }
 
     let [nx, ny] = request.geometry.image_shape;
@@ -4169,143 +6123,271 @@ fn run_mosaic_dirty_imaging(
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
     let mut projector_cache = MosaicProjectorCache::new();
-    let trace_enabled = mosaic_trace_enabled();
-    let cell_trace_targets = mosaic_cell_trace_targets();
 
+    let weight_image_started = Instant::now();
     let pb_weight_image = build_mosaic_weight_image(request.geometry, config, &groups)?;
+    let weight_image_elapsed = weight_image_started.elapsed();
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_dirty_setup weight_image_ms={:.3}",
+            profile::millis(weight_image_elapsed),
+        );
+    }
 
-    for group in &groups {
-        if !mosaic_pointing_contributes_by_simple_pb_center(
-            request.geometry,
-            config.phase_center_direction_rad,
-            group.pointing_direction_rad,
-        ) {
+    let mosaic_parallel_threads = mosaic_parallel_thread_count(groups.len());
+    let mosaic_metal_group_cache = if !trace_enabled
+        && cell_trace_targets.is_empty()
+        && !dump_grids
+        && (mosaic_initial_dirty_metal_backend_enabled() || mosaic_residual_metal_backend_enabled())
+    {
+        let cache_started = Instant::now();
+        let cache = prepare_mosaic_metal_group_cache(
+            request,
+            config,
+            &gridder,
+            &groups,
+            conv_sampling,
+            mosaic_parallel_threads,
+        )?;
+        stage_timings.psf_grid += cache_started.elapsed();
+        Some(cache)
+    } else {
+        None
+    };
+    if !trace_enabled && cell_trace_targets.is_empty() && !dump_grids {
+        let parallel = compute_mosaic_dirty_parallel(
+            request,
+            config,
+            &gridder,
+            &groups,
+            conv_sampling,
+            mosaic_parallel_threads,
+            mosaic_metal_group_cache.as_deref(),
+            None,
+        )?;
+        psf_grid = parallel.psf_grid;
+        let fft_started = Instant::now();
+        let raw_residual = centered_ifft2_f64(&parallel.residual_grid);
+        let raw_weight = centered_ifft2_f64(&parallel.weight_grid);
+        stage_timings.psf_fft += fft_started.elapsed();
+        let normalize_started = Instant::now();
+        accumulated_residual_image =
+            gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
+        accumulated_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_weight);
+        stage_timings.psf_normalize += normalize_started.elapsed();
+        reported_sumwt = parallel.reported_sumwt;
+        normalization_sumwt = parallel.normalization_sumwt;
+        gridded_samples = parallel.gridded_samples;
+        skipped_samples = parallel.skipped_samples;
+        log_mosaic_pointing_weight_summaries("initial_dirty", &parallel.pointing_weight_summaries);
+        stage_timings.psf_grid += parallel.elapsed;
+        profile::log_parallel_stage(profile::ParallelStageProfile {
+            stage: "mosaic_dirty_grid",
+            requested_threads: standard_mfs_grid_threads(),
+            actual_threads: parallel.worker_compute.len(),
+            chunking: "pointing-group",
+            chunk_len: groups.len().div_ceil(parallel.worker_compute.len().max(1)),
+            samples_total: groups.iter().map(|group| group.batch.len()).sum(),
+            samples_per_worker: parallel.worker_samples,
+            local_grid_bytes_per_worker: complex64_grid_bytes(grid_nx, grid_ny, 3),
+            local_grid_count: 3,
+            local_alloc_zero_by_worker: parallel.worker_alloc,
+            worker_compute_by_worker: parallel.worker_compute,
+            join_duration: parallel.join_elapsed,
+            merge_duration: parallel.merge_elapsed,
+            stage_duration: parallel.elapsed,
+        });
+    } else {
+        for group in &groups {
+            if !mosaic_pointing_contributes_by_simple_pb_center(
+                request.geometry,
+                config.phase_center_direction_rad,
+                group.pointing_direction_rad,
+            ) {
+                if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+                    eprintln!(
+                        "mosaic skipping group outside image footprint dir={:?} freq_hz={:.6e}",
+                        group.pointing_direction_rad, group.frequency_hz
+                    );
+                }
+                continue;
+            }
+            let projector_started = Instant::now();
+            let projector = cached_mosaic_projector(
+                &mut projector_cache,
+                request.geometry,
+                &gridder,
+                config.phase_center_direction_rad,
+                group.pointing_direction_rad,
+                group.primary_beam_model,
+                group.frequency_hz,
+                conv_sampling,
+                2,
+                true,
+            )?;
+            let weight_projector = cached_mosaic_projector(
+                &mut projector_cache,
+                request.geometry,
+                &gridder,
+                config.phase_center_direction_rad,
+                group.pointing_direction_rad,
+                group.primary_beam_model,
+                group.frequency_hz,
+                conv_sampling,
+                4,
+                true,
+            )?;
+            let weight_plan = weight_projector
+                .plan_sample_for_grid(0.0, 0.0)
+                .ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "mosaic weight projector failed to plan the centered kernel".to_string(),
+                    )
+                })?;
+            let mut group_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+            let mut group_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+            stage_timings.psf_grid += projector_started.elapsed();
             if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
                 eprintln!(
-                    "mosaic skipping group outside image footprint dir={:?} freq_hz={:.6e}",
-                    group.pointing_direction_rad, group.frequency_hz
+                    "mosaic group dir={:?} freq_hz={:.6e} support={} sampling={} samples={}",
+                    group.pointing_direction_rad,
+                    group.frequency_hz,
+                    projector.support(),
+                    projector.sampling(),
+                    group.batch.len()
                 );
             }
-            continue;
-        }
-        let projector_started = Instant::now();
-        let projector = cached_mosaic_projector(
-            &mut projector_cache,
-            request.geometry,
-            &gridder,
-            config.phase_center_direction_rad,
-            group.pointing_direction_rad,
-            group.primary_beam_model,
-            group.frequency_hz,
-            conv_sampling,
-            2,
-        )?;
-        let weight_projector = cached_mosaic_projector(
-            &mut projector_cache,
-            request.geometry,
-            &gridder,
-            config.phase_center_direction_rad,
-            group.pointing_direction_rad,
-            group.primary_beam_model,
-            group.frequency_hz,
-            conv_sampling,
-            4,
-        )?;
-        let weight_plan = weight_projector.plan_sample(0.0, 0.0).ok_or_else(|| {
-            ImagingError::Normalization(
-                "mosaic weight projector failed to plan the centered kernel".to_string(),
-            )
-        })?;
-        let mut group_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
-        let mut group_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
-        stage_timings.psf_grid += projector_started.elapsed();
-        if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
-            eprintln!(
-                "mosaic group dir={:?} freq_hz={:.6e} support={} sampling={} samples={}",
-                group.pointing_direction_rad,
-                group.frequency_hz,
-                projector.support(),
-                projector.sampling(),
-                group.batch.len()
-            );
-        }
-        if trace_enabled {
-            append_mosaic_trace(format!(
-                "{{\"event\":\"group\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"support\":{},\"sampling\":{},\"samples\":{},\"imaging_kernel_sum_re\":{:.17e},\"imaging_kernel_sum_im\":{:.17e},\"weight_kernel_sum_re\":{:.17e},\"weight_kernel_sum_im\":{:.17e}}}",
-                group.pointing_direction_rad[0],
-                group.pointing_direction_rad[1],
-                group.frequency_hz,
-                projector.support(),
-                projector.sampling(),
-                group.batch.len(),
-                projector.normalization_sum().re,
-                projector.normalization_sum().im,
-                weight_projector.normalization_sum().re,
-                weight_projector.normalization_sum().im,
-            ));
-        }
-        let grid_started = Instant::now();
-        let mut logged_first_sample = !trace_enabled;
-        let mut trace_group_value_sum = Complex32::new(0.0, 0.0);
-        let mut trace_group_weight_sum = 0.0f64;
-        let mut trace_group_sample_count = 0usize;
-        let mut trace_group_center_count = 0usize;
-        let mut group_weight_grid_sum = 0.0f64;
-        for sample_index in 0..group.batch.len() {
-            if !group.batch.gridable[sample_index] {
-                skipped_samples += 1;
-                continue;
-            }
-            let weight = group.batch.weight[sample_index];
-            let sumwt_factor = group.batch.sumwt_factor[sample_index];
-            let visibility = group.batch.visibility[sample_index];
-            if !(weight.is_finite()
-                && weight > 0.0
-                && sumwt_factor.is_finite()
-                && sumwt_factor > 0.0
-                && visibility.re.is_finite()
-                && visibility.im.is_finite())
-            {
-                skipped_samples += 1;
-                continue;
-            }
-            let grid_weight = weight * sumwt_factor;
-            let Some(plan) = projector.plan_sample(
-                group.batch.u_lambda[sample_index],
-                group.batch.v_lambda[sample_index],
-            ) else {
-                skipped_samples += 1;
-                continue;
-            };
             if trace_enabled {
-                trace_group_value_sum += visibility * grid_weight;
-                trace_group_weight_sum += f64::from(grid_weight);
-                trace_group_sample_count += 1;
+                append_mosaic_trace(format!(
+                    "{{\"event\":\"group\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"support\":{},\"sampling\":{},\"samples\":{},\"imaging_kernel_sum_re\":{:.17e},\"imaging_kernel_sum_im\":{:.17e},\"weight_kernel_sum_re\":{:.17e},\"weight_kernel_sum_im\":{:.17e}}}",
+                    group.pointing_direction_rad[0],
+                    group.pointing_direction_rad[1],
+                    group.frequency_hz,
+                    projector.support(),
+                    projector.sampling(),
+                    group.batch.len(),
+                    projector.normalization_sum().re,
+                    projector.normalization_sum().im,
+                    weight_projector.normalization_sum().re,
+                    weight_projector.normalization_sum().im,
+                ));
             }
-            if trace_enabled && !cell_trace_targets.is_empty() {
-                let value = Complex64::new(visibility.re as f64, visibility.im as f64)
-                    * f64::from(grid_weight);
-                for &(target_x, target_y) in &cell_trace_targets {
-                    let ix = target_x - plan.loc_x;
-                    let iy = target_y - plan.loc_y;
-                    let Some(tap) = projector.trace_sample_tap_at(&plan, ix, iy) else {
-                        continue;
-                    };
-                    let contribution = value * Complex64::new(tap.re as f64, tap.im as f64);
-                    let sample_frequency_hz = group
-                        .sample_frequency_hz
-                        .get(sample_index)
-                        .copied()
-                        .unwrap_or(group.frequency_hz);
+            let grid_started = Instant::now();
+            let mut logged_first_sample = !trace_enabled;
+            let mut trace_group_value_sum = Complex32::new(0.0, 0.0);
+            let mut trace_group_weight_sum = 0.0f64;
+            let mut trace_group_sample_count = 0usize;
+            let mut trace_group_center_count = 0usize;
+            let mut weight_support_sums = MosaicWeightGridAccumulator::new(&weight_projector);
+            for sample_index in 0..group.batch.len() {
+                if !group.batch.gridable[sample_index] {
+                    skipped_samples += 1;
+                    continue;
+                }
+                let weight = group.batch.weight[sample_index];
+                let sumwt_factor = group.batch.sumwt_factor[sample_index];
+                let visibility = group.batch.visibility[sample_index];
+                if !(weight.is_finite()
+                    && weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0
+                    && visibility.re.is_finite()
+                    && visibility.im.is_finite())
+                {
+                    skipped_samples += 1;
+                    continue;
+                }
+                let grid_weight = weight * sumwt_factor;
+                let plan = if trace_enabled {
+                    projector.plan_sample(
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                    )
+                } else {
+                    projector.plan_sample_for_grid(
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                    )
+                };
+                let Some(plan) = plan else {
+                    skipped_samples += 1;
+                    continue;
+                };
+                if trace_enabled {
+                    trace_group_value_sum += visibility * grid_weight;
+                    trace_group_weight_sum += f64::from(grid_weight);
+                    trace_group_sample_count += 1;
+                }
+                if trace_enabled && !cell_trace_targets.is_empty() {
+                    let value = Complex64::new(visibility.re as f64, visibility.im as f64)
+                        * f64::from(grid_weight);
+                    for &(target_x, target_y) in &cell_trace_targets {
+                        let ix = target_x - plan.loc_x;
+                        let iy = target_y - plan.loc_y;
+                        let Some(tap) = projector.trace_sample_tap_at(&plan, ix, iy) else {
+                            continue;
+                        };
+                        let contribution = value * Complex64::new(tap.re as f64, tap.im as f64);
+                        let sample_frequency_hz = group
+                            .sample_frequency_hz
+                            .get(sample_index)
+                            .copied()
+                            .unwrap_or(group.frequency_hz);
+                        append_mosaic_trace(format!(
+                            "{{\"event\":\"cell_contribution\",\"target\":[{},{}],\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"plane_freq_hz\":{:.17e},\"sample_freq_hz\":{:.17e},\"sample_index\":{},\"u_lambda\":{:.17e},\"v_lambda\":{:.17e},\"w_lambda\":{:.17e},\"loc\":[{},{}],\"off\":[{},{}],\"tap_offset\":[{},{}],\"tap\":[{:.17e},{:.17e}],\"visibility\":[{:.17e},{:.17e}],\"weight\":{:.17e},\"sumwt_factor\":{:.17e},\"grid_weight\":{:.17e},\"weighted_value\":[{:.17e},{:.17e}],\"contribution\":[{:.17e},{:.17e}]}}",
+                            target_x,
+                            target_y,
+                            group.pointing_direction_rad[0],
+                            group.pointing_direction_rad[1],
+                            group.frequency_hz,
+                            request.reffreq_hz,
+                            sample_frequency_hz,
+                            sample_index,
+                            group.batch.u_lambda[sample_index],
+                            group.batch.v_lambda[sample_index],
+                            group.batch.w_lambda[sample_index],
+                            plan.loc_x,
+                            plan.loc_y,
+                            plan.off_x,
+                            plan.off_y,
+                            ix,
+                            iy,
+                            tap.re,
+                            tap.im,
+                            visibility.re,
+                            visibility.im,
+                            weight,
+                            sumwt_factor,
+                            grid_weight,
+                            value.re,
+                            value.im,
+                            contribution.re,
+                            contribution.im,
+                        ));
+                    }
+                }
+                if !logged_first_sample {
+                    let (tap_sum, center_tap, first_tap) =
+                        projector.trace_sample_taps(&plan).unwrap_or((
+                            Complex32::new(0.0, 0.0),
+                            Complex32::new(0.0, 0.0),
+                            Complex32::new(0.0, 0.0),
+                        ));
+                    let tap_matrix_json = projector
+                        .trace_sample_tap_matrix(&plan)
+                        .map(|taps| {
+                            taps.into_iter()
+                                .map(|(ix, iy, tap)| {
+                                    format!("[{ix},{iy},{:.17e},{:.17e}]", tap.re, tap.im)
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_default();
                     append_mosaic_trace(format!(
-                        "{{\"event\":\"cell_contribution\",\"target\":[{},{}],\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"plane_freq_hz\":{:.17e},\"sample_freq_hz\":{:.17e},\"sample_index\":{},\"u_lambda\":{:.17e},\"v_lambda\":{:.17e},\"w_lambda\":{:.17e},\"loc\":[{},{}],\"off\":[{},{}],\"tap_offset\":[{},{}],\"tap\":[{:.17e},{:.17e}],\"visibility\":[{:.17e},{:.17e}],\"weight\":{:.17e},\"sumwt_factor\":{:.17e},\"grid_weight\":{:.17e},\"weighted_value\":[{:.17e},{:.17e}],\"contribution\":[{:.17e},{:.17e}]}}",
-                        target_x,
-                        target_y,
+                        "{{\"event\":\"sample\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"sample_index\":{},\"u_lambda\":{:.17e},\"v_lambda\":{:.17e},\"w_lambda\":{:.17e},\"loc\":[{},{}],\"off\":[{},{}],\"normalization\":{:.17e},\"tap_sum\":[{:.17e},{:.17e}],\"center_tap\":[{:.17e},{:.17e}],\"first_tap\":[{:.17e},{:.17e}],\"taps\":[{}],\"visibility\":[{:.17e},{:.17e}],\"weight\":{:.17e},\"sumwt_factor\":{:.17e},\"grid_weight\":{:.17e}}}",
                         group.pointing_direction_rad[0],
                         group.pointing_direction_rad[1],
-                        group.frequency_hz,
-                        request.reffreq_hz,
-                        sample_frequency_hz,
                         sample_index,
                         group.batch.u_lambda[sample_index],
                         group.batch.v_lambda[sample_index],
@@ -4314,144 +6396,111 @@ fn run_mosaic_dirty_imaging(
                         plan.loc_y,
                         plan.off_x,
                         plan.off_y,
-                        ix,
-                        iy,
-                        tap.re,
-                        tap.im,
+                        plan.normalization,
+                        tap_sum.re,
+                        tap_sum.im,
+                        center_tap.re,
+                        center_tap.im,
+                        first_tap.re,
+                        first_tap.im,
+                        tap_matrix_json,
                         visibility.re,
                         visibility.im,
                         weight,
                         sumwt_factor,
                         grid_weight,
-                        value.re,
-                        value.im,
-                        contribution.re,
-                        contribution.im,
                     ));
+                    logged_first_sample = true;
                 }
-            }
-            if !logged_first_sample {
-                let (tap_sum, center_tap, first_tap) =
-                    projector.trace_sample_taps(&plan).unwrap_or((
-                        Complex32::new(0.0, 0.0),
-                        Complex32::new(0.0, 0.0),
-                        Complex32::new(0.0, 0.0),
-                    ));
-                let tap_matrix_json = projector
-                    .trace_sample_tap_matrix(&plan)
-                    .map(|taps| {
-                        taps.into_iter()
-                            .map(|(ix, iy, tap)| {
-                                format!("[{ix},{iy},{:.17e},{:.17e}]", tap.re, tap.im)
-                            })
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    })
-                    .unwrap_or_default();
-                append_mosaic_trace(format!(
-                    "{{\"event\":\"sample\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"sample_index\":{},\"u_lambda\":{:.17e},\"v_lambda\":{:.17e},\"w_lambda\":{:.17e},\"loc\":[{},{}],\"off\":[{},{}],\"normalization\":{:.17e},\"tap_sum\":[{:.17e},{:.17e}],\"center_tap\":[{:.17e},{:.17e}],\"first_tap\":[{:.17e},{:.17e}],\"taps\":[{}],\"visibility\":[{:.17e},{:.17e}],\"weight\":{:.17e},\"sumwt_factor\":{:.17e},\"grid_weight\":{:.17e}}}",
-                    group.pointing_direction_rad[0],
-                    group.pointing_direction_rad[1],
-                    sample_index,
+                let grid_weight64 = f64::from(grid_weight);
+                projector.grid_sample_planned_f64(
+                    &mut psf_grid,
+                    &plan,
+                    Complex64::new(grid_weight64, 0.0),
+                );
+                projector.grid_sample_planned_f64(
+                    &mut group_residual_grid,
+                    &plan,
+                    Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
+                );
+                add_mosaic_weight_support_sample(
+                    &mut weight_support_sums,
+                    &weight_projector,
                     group.batch.u_lambda[sample_index],
                     group.batch.v_lambda[sample_index],
-                    group.batch.w_lambda[sample_index],
-                    plan.loc_x,
-                    plan.loc_y,
-                    plan.off_x,
-                    plan.off_y,
-                    plan.normalization,
-                    tap_sum.re,
-                    tap_sum.im,
-                    center_tap.re,
-                    center_tap.im,
-                    first_tap.re,
-                    first_tap.im,
-                    tap_matrix_json,
-                    visibility.re,
-                    visibility.im,
-                    weight,
-                    sumwt_factor,
-                    grid_weight,
-                ));
-                logged_first_sample = true;
+                    grid_weight64,
+                );
+                if plan.center_in_bounds {
+                    normalization_sumwt += grid_weight64;
+                    reported_sumwt +=
+                        mosaic_reported_sumwt_from_grid_weight(grid_weight, sumwt_factor);
+                    trace_group_center_count += 1;
+                }
+                gridded_samples += 1;
             }
-            let grid_weight64 = f64::from(grid_weight);
-            projector.grid_sample_planned_f64(
-                &mut psf_grid,
-                &plan,
-                Complex64::new(grid_weight64, 0.0),
-            );
-            projector.grid_sample_planned_f64(
-                &mut group_residual_grid,
-                &plan,
-                Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
-            );
-            group_weight_grid_sum += grid_weight64;
-            let reported = f64::from(grid_weight);
-            if plan.center_in_bounds {
-                normalization_sumwt += reported;
-                reported_sumwt += reported;
-                trace_group_center_count += 1;
-            }
-            gridded_samples += 1;
-        }
-        if group_weight_grid_sum > 0.0 {
-            weight_projector.grid_sample_planned_f64(
-                &mut group_weight_grid,
+            let support_sums = weight_support_sums.support_sums();
+            trace_mosaic_weight_support_contributions(
+                group,
+                &weight_projector,
                 &weight_plan,
-                Complex64::new(group_weight_grid_sum, 0.0),
+                &support_sums,
+                &cell_trace_targets,
             );
+            add_mosaic_center_weight_grid_from_support_sums(
+                &weight_projector,
+                &weight_plan,
+                &mut group_weight_grid,
+                &support_sums,
+            );
+            if let Some(residual_grid) = accumulated_residual_grid.as_mut() {
+                Zip::from(residual_grid)
+                    .and(&group_residual_grid)
+                    .for_each(|accumulated, value| *accumulated += *value);
+            }
+            if let Some(weight_grid) = accumulated_mosaic_weight_grid.as_mut() {
+                Zip::from(weight_grid)
+                    .and(&group_weight_grid)
+                    .for_each(|accumulated, value| *accumulated += *value);
+            }
+            if trace_enabled {
+                append_mosaic_trace(format!(
+                    "{{\"event\":\"group_aggregate\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"samples\":{},\"center_samples\":{},\"grid_weight_sum\":{:.17e},\"weighted_visibility_sum\":[{:.17e},{:.17e}]}}",
+                    group.pointing_direction_rad[0],
+                    group.pointing_direction_rad[1],
+                    group.frequency_hz,
+                    trace_group_sample_count,
+                    trace_group_center_count,
+                    trace_group_weight_sum,
+                    trace_group_value_sum.re,
+                    trace_group_value_sum.im,
+                ));
+            }
+            let raw_group_residual = centered_ifft2_f64(&group_residual_grid);
+            let group_residual_image =
+                gridder.corrected_mosaic_image_from_grid_f64(&raw_group_residual, conv_sampling);
+            let raw_group_weight = centered_ifft2_f64(&group_weight_grid);
+            let group_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_group_weight);
+            if trace_enabled {
+                append_mosaic_trace(format!(
+                    "{{\"event\":\"group_image\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"pixels\":{}}}",
+                    group.pointing_direction_rad[0],
+                    group.pointing_direction_rad[1],
+                    group.frequency_hz,
+                    mosaic_trace_group_pixels_json(&group_residual_image, &group_weight_image),
+                ));
+            }
+            Zip::from(&mut accumulated_residual_image)
+                .and(&group_residual_image)
+                .for_each(|accumulated, residual_value| {
+                    *accumulated += *residual_value;
+                });
+            Zip::from(&mut accumulated_weight_image)
+                .and(&group_weight_image)
+                .for_each(|accumulated, weight_value| {
+                    *accumulated += *weight_value;
+                });
+            stage_timings.psf_grid += grid_started.elapsed();
         }
-        if let Some(residual_grid) = accumulated_residual_grid.as_mut() {
-            Zip::from(residual_grid)
-                .and(&group_residual_grid)
-                .for_each(|accumulated, value| *accumulated += *value);
-        }
-        if let Some(weight_grid) = accumulated_mosaic_weight_grid.as_mut() {
-            Zip::from(weight_grid)
-                .and(&group_weight_grid)
-                .for_each(|accumulated, value| *accumulated += *value);
-        }
-        if trace_enabled {
-            append_mosaic_trace(format!(
-                "{{\"event\":\"group_aggregate\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"samples\":{},\"center_samples\":{},\"grid_weight_sum\":{:.17e},\"weighted_visibility_sum\":[{:.17e},{:.17e}]}}",
-                group.pointing_direction_rad[0],
-                group.pointing_direction_rad[1],
-                group.frequency_hz,
-                trace_group_sample_count,
-                trace_group_center_count,
-                trace_group_weight_sum,
-                trace_group_value_sum.re,
-                trace_group_value_sum.im,
-            ));
-        }
-        let raw_group_residual = centered_ifft2_f64(&group_residual_grid);
-        let group_residual_image =
-            gridder.corrected_mosaic_image_from_grid_f64(&raw_group_residual, conv_sampling);
-        let raw_group_weight = centered_ifft2_f64(&group_weight_grid);
-        let group_weight_image =
-            gridder.corrected_mosaic_image_from_grid_f64(&raw_group_weight, conv_sampling);
-        if trace_enabled {
-            append_mosaic_trace(format!(
-                "{{\"event\":\"group_image\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"pixels\":{}}}",
-                group.pointing_direction_rad[0],
-                group.pointing_direction_rad[1],
-                group.frequency_hz,
-                mosaic_trace_group_pixels_json(&group_residual_image, &group_weight_image),
-            ));
-        }
-        Zip::from(&mut accumulated_residual_image)
-            .and(&group_residual_image)
-            .for_each(|accumulated, residual_value| {
-                *accumulated += *residual_value;
-            });
-        Zip::from(&mut accumulated_weight_image)
-            .and(&group_weight_image)
-            .for_each(|accumulated, weight_value| {
-                *accumulated += *weight_value;
-            });
-        stage_timings.psf_grid += grid_started.elapsed();
     }
 
     if !(normalization_sumwt.is_finite() && normalization_sumwt > 0.0) {
@@ -4481,7 +6530,7 @@ fn run_mosaic_dirty_imaging(
     let mut accumulated_residual = accumulated_residual_image;
     let normalization_weight_image = accumulated_weight_image;
     let fft_sumwt_scale =
-        (request.geometry.nx() * request.geometry.ny()) as f32 / reported_sumwt as f32;
+        (request.geometry.nx() * request.geometry.ny()) as f32 / normalization_sumwt as f32;
     accumulated_residual.mapv_inplace(|value| value * fft_sumwt_scale);
     accumulated_psf.mapv_inplace(|value| value * fft_sumwt_scale);
     if trace_enabled {
@@ -4501,6 +6550,18 @@ fn run_mosaic_dirty_imaging(
         ));
     }
     let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+    trace_mosaic_weight_image("rust_pre_scale_weight", &normalization_weight_image);
+    trace_mosaic_weight_image("rust_weight", &weight_image);
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_weight_normalization reported_sumwt={:.9e} normalization_sumwt={:.9e} fft_sumwt_scale={:.9e} pre_scale_weight_peak={:.9e} post_scale_weight_peak={:.9e}",
+            reported_sumwt,
+            normalization_sumwt,
+            fft_sumwt_scale,
+            peak_abs_value(&normalization_weight_image),
+            peak_abs_value(&weight_image),
+        );
+    }
     if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
         let pre_weight_peak = peak_abs_value(&accumulated_residual);
         let pre_weight_peak_loc = peak_location_masked(&accumulated_residual, None);
@@ -4606,6 +6667,7 @@ fn run_mosaic_dirty_imaging(
             max_psf_sidelobe_level,
             initial_peak,
             &mut warnings,
+            mosaic_metal_group_cache.as_deref(),
         )?
     } else {
         CottonSchwabState {
@@ -4711,6 +6773,7 @@ fn primary_beam_model_key(model: PrimaryBeamModel) -> (u8, u64, u64) {
 fn build_mosaic_pointing_groups(
     batches: &[VisibilityBatch],
     metadata_batches: &[VisibilityMetadataBatch],
+    retain_sample_frequency_hz: bool,
 ) -> Result<Vec<MosaicPointingGroup>, ImagingError> {
     let mut group_indices = BTreeMap::<(u64, u64, u64, (u8, u64, u64)), usize>::new();
     let mut groups = Vec::<MosaicPointingGroup>::new();
@@ -4733,15 +6796,7 @@ fn build_mosaic_pointing_groups(
                         pointing_direction_rad,
                         frequency_hz,
                         primary_beam_model: metadata.primary_beam_model,
-                        batch: VisibilityBatch {
-                            u_lambda: Vec::new(),
-                            v_lambda: Vec::new(),
-                            w_lambda: Vec::new(),
-                            weight: Vec::new(),
-                            sumwt_factor: Vec::new(),
-                            gridable: Vec::new(),
-                            visibility: Vec::new(),
-                        },
+                        batch: empty_visibility_batch_with_capacity(0),
                         sample_frequency_hz: Vec::new(),
                     });
                     index
@@ -4758,12 +6813,1681 @@ fn build_mosaic_pointing_groups(
                 .push(batch.sumwt_factor[sample_index]);
             entry.batch.gridable.push(batch.gridable[sample_index]);
             entry.batch.visibility.push(batch.visibility[sample_index]);
-            entry
-                .sample_frequency_hz
-                .push(metadata.sample_frequency_hz[sample_index]);
+            if retain_sample_frequency_hz {
+                entry
+                    .sample_frequency_hz
+                    .push(metadata.sample_frequency_hz[sample_index]);
+            }
         }
     }
     Ok(groups)
+}
+
+fn build_mosaic_pointing_groups_from_grouped(
+    batches: &[VisibilityBatch],
+    metadata_batches: &[GroupedVisibilityMetadataBatch],
+    retain_sample_frequency_hz: bool,
+) -> Result<Vec<MosaicPointingGroup>, ImagingError> {
+    if retain_sample_frequency_hz {
+        return Err(ImagingError::InvalidRequest(
+            "grouped mosaic metadata does not carry per-sample frequencies needed for cell trace"
+                .to_string(),
+        ));
+    }
+    type MosaicGroupKey = (u64, u64, u64, (u8, u64, u64));
+    let profile_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let spec_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let mut specs = BTreeMap::<MosaicGroupKey, MosaicGroupedRangeSpec>::new();
+    for (batch_index, metadata) in metadata_batches.iter().enumerate() {
+        for metadata_group in &metadata.groups {
+            let pointing_direction_rad = metadata_group.pointing_direction_rad;
+            let frequency_hz = metadata_group.beam_frequency_hz;
+            let key = (
+                pointing_direction_rad[0].to_bits(),
+                pointing_direction_rad[1].to_bits(),
+                frequency_hz.to_bits(),
+                primary_beam_model_key(metadata_group.primary_beam_model),
+            );
+            let sample_count = metadata_group
+                .sample_ranges
+                .iter()
+                .map(|range| range.end.saturating_sub(range.start))
+                .sum::<usize>();
+            let spec = specs.entry(key).or_insert_with(|| MosaicGroupedRangeSpec {
+                pointing_direction_rad,
+                frequency_hz,
+                primary_beam_model: metadata_group.primary_beam_model,
+                sample_count: 0,
+                ranges: Vec::new(),
+            });
+            spec.sample_count += sample_count;
+            spec.ranges.extend(
+                metadata_group
+                    .sample_ranges
+                    .iter()
+                    .copied()
+                    .map(|range| VisibilitySampleRangeRef { batch_index, range }),
+            );
+        }
+    }
+    let spec_elapsed = spec_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let specs = specs.into_values().collect::<Vec<_>>();
+    let materialize_started =
+        profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let thread_count = mosaic_parallel_thread_count(specs.len());
+    let groups = if thread_count <= 1 || specs.len() < 2 {
+        specs
+            .iter()
+            .map(|spec| materialize_mosaic_grouped_range_spec(batches, spec))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let chunk_len = specs.len().div_ceil(thread_count);
+        let mut worker_results = Vec::<(usize, Vec<MosaicPointingGroup>)>::new();
+        thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for (chunk_index, chunk) in specs.chunks(chunk_len).enumerate() {
+                handles.push(scope.spawn(move || {
+                    let groups = chunk
+                        .iter()
+                        .map(|spec| materialize_mosaic_grouped_range_spec(batches, spec))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok::<_, ImagingError>((chunk_index, groups))
+                }));
+            }
+            for handle in handles {
+                worker_results.push(handle.join().map_err(|_| {
+                    ImagingError::Unsupported(
+                        "grouped mosaic materialization worker panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<(), ImagingError>(())
+        })?;
+        worker_results.sort_by_key(|(chunk_index, _)| *chunk_index);
+        worker_results
+            .into_iter()
+            .flat_map(|(_, groups)| groups)
+            .collect()
+    };
+    let materialize_elapsed =
+        materialize_started.map_or(Duration::ZERO, |started| started.elapsed());
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        let total_ranges = specs.iter().map(|spec| spec.ranges.len()).sum::<usize>();
+        eprintln!(
+            "mosaic_grouped_materialize specs={} ranges={} requested_threads={} actual_threads={} spec_ms={:.3} materialize_ms={:.3} total_ms={:.3}",
+            specs.len(),
+            total_ranges,
+            standard_mfs_grid_threads(),
+            thread_count.min(specs.len()).max(1),
+            profile::millis(spec_elapsed),
+            profile::millis(materialize_elapsed),
+            profile::millis(profile_started.map_or(Duration::ZERO, |started| started.elapsed())),
+        );
+    }
+    Ok(groups)
+}
+
+fn mosaic_parallel_thread_count(work_items: usize) -> usize {
+    standard_mfs_grid_threads()
+        .min(work_items)
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1)
+}
+
+fn prepare_mosaic_dirty_projector_pairs(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    cache: &mut MosaicProjectorCache,
+) -> Result<Vec<Option<MosaicDirtyProjectorPair>>, ImagingError> {
+    let started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let mut pairs = Vec::with_capacity(groups.len());
+    let mut prepared = 0usize;
+    for group in groups {
+        if !mosaic_pointing_contributes_by_simple_pb_center(
+            request.geometry,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+        ) {
+            pairs.push(None);
+            continue;
+        }
+        let projector = cached_mosaic_projector(
+            cache,
+            request.geometry,
+            gridder,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            group.primary_beam_model,
+            group.frequency_hz,
+            conv_sampling,
+            2,
+            true,
+        )?;
+        let weight_projector = cached_mosaic_projector(
+            cache,
+            request.geometry,
+            gridder,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            group.primary_beam_model,
+            group.frequency_hz,
+            conv_sampling,
+            4,
+            true,
+        )?;
+        let weight_plan = weight_projector
+            .plan_sample_for_grid(0.0, 0.0)
+            .ok_or_else(|| {
+                ImagingError::Normalization(
+                    "mosaic weight projector failed to plan the centered kernel".to_string(),
+                )
+            })?;
+        pairs.push(Some(MosaicDirtyProjectorPair {
+            projector,
+            weight_projector,
+            weight_plan,
+        }));
+        prepared += 1;
+    }
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_dirty_projector_pairs groups={} prepared={} cache_entries={} total_ms={:.3}",
+            groups.len(),
+            prepared,
+            cache.len(),
+            profile::millis(started.map_or(Duration::ZERO, |started| started.elapsed())),
+        );
+    }
+    Ok(pairs)
+}
+
+fn prepare_mosaic_residual_projectors(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    cache: &mut MosaicProjectorCache,
+) -> Result<Vec<Option<MosaicResidualProjector>>, ImagingError> {
+    let started = profile::standard_mfs_profile_detail_enabled().then(Instant::now);
+    let mut projectors = Vec::with_capacity(groups.len());
+    let mut prepared = 0usize;
+    for group in groups {
+        if !mosaic_pointing_contributes_by_simple_pb_center(
+            request.geometry,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+        ) {
+            projectors.push(None);
+            continue;
+        }
+        let projector = cached_mosaic_projector(
+            cache,
+            request.geometry,
+            gridder,
+            config.phase_center_direction_rad,
+            group.pointing_direction_rad,
+            group.primary_beam_model,
+            group.frequency_hz,
+            conv_sampling,
+            2,
+            true,
+        )?;
+        projectors.push(Some(MosaicResidualProjector { projector }));
+        prepared += 1;
+    }
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_residual_projectors groups={} prepared={} cache_entries={} total_ms={:.3}",
+            groups.len(),
+            prepared,
+            cache.len(),
+            profile::millis(started.map_or(Duration::ZERO, |started| started.elapsed())),
+        );
+    }
+    Ok(projectors)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_mosaic_dirty_parallel(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    thread_count: usize,
+    metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
+    dirty_projectors: Option<&[Option<MosaicDirtyProjectorPair>]>,
+) -> Result<MosaicDirtyParallelContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let chunk_len = groups.len().div_ceil(thread_count.max(1)).max(1);
+    let indexed_groups = groups.iter().enumerate().collect::<Vec<_>>();
+    let started = Instant::now();
+    let mut worker_results = Vec::new();
+    let join_started = Instant::now();
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in indexed_groups.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let alloc_started = Instant::now();
+                let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let mut weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let alloc_elapsed = alloc_started.elapsed();
+                let worker_started = Instant::now();
+                let mut pointing_weight_summaries = Vec::with_capacity(chunk.len());
+                let mut reported_sumwt = 0.0f64;
+                let mut normalization_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut skipped_samples = 0usize;
+                let mut worker_samples = 0usize;
+                let mut metal_stats = MosaicMetalGridStats::default();
+                for &(group_index, group) in chunk {
+                    worker_samples += group.batch.len();
+                    let prepared_metal = metal_group_cache
+                        .and_then(|cache| cache.get(group_index))
+                        .and_then(Option::as_ref);
+                    let dirty_projector = dirty_projectors
+                        .and_then(|projectors| projectors.get(group_index))
+                        .and_then(Option::as_ref);
+                    if mosaic_initial_dirty_metal_group_eligible(group, prepared_metal)
+                        && let Some(projectors) = dirty_projector
+                    {
+                        let contribution = compute_mosaic_dirty_group_contribution_metal(
+                            gridder,
+                            group,
+                            &projectors.projector,
+                            &projectors.weight_projector,
+                            &projectors.weight_plan,
+                            prepared_metal,
+                        )?;
+                        metal_stats.add_assign(contribution.metal_stats);
+                        add_complex64_grid(&mut psf_grid, &contribution.psf_grid);
+                        add_complex64_grid(&mut residual_grid, &contribution.residual_grid);
+                        add_complex64_grid(&mut weight_grid, &contribution.weight_grid);
+                        pointing_weight_summaries.push(mosaic_pointing_weight_summary_from_contribution(
+                            group,
+                            contribution.group_weight_grid_sum,
+                            contribution.reported_sumwt,
+                            contribution.normalization_sumwt,
+                            contribution.gridded_samples,
+                            contribution.skipped_samples,
+                        ));
+                        reported_sumwt += contribution.reported_sumwt;
+                        normalization_sumwt += contribution.normalization_sumwt;
+                        gridded_samples += contribution.gridded_samples;
+                        skipped_samples += contribution.skipped_samples;
+                        continue;
+                    }
+                    if let Some(projectors) = dirty_projector {
+                        let summary =
+                            accumulate_mosaic_dirty_group_contribution_grouped_cpu_into_with_projectors(
+                                group,
+                                &projectors.projector,
+                                &projectors.weight_projector,
+                                &projectors.weight_plan,
+                                prepared_metal,
+                                &mut psf_grid,
+                                &mut residual_grid,
+                                &mut weight_grid,
+                            )?;
+                        reported_sumwt += summary.reported_sumwt;
+                        pointing_weight_summaries.push(
+                            mosaic_pointing_weight_summary_from_contribution(
+                                group,
+                                summary.group_weight_grid_sum,
+                                summary.reported_sumwt,
+                                summary.normalization_sumwt,
+                                summary.gridded_samples,
+                                summary.skipped_samples,
+                            ),
+                        );
+                        normalization_sumwt += summary.normalization_sumwt;
+                        gridded_samples += summary.gridded_samples;
+                        skipped_samples += summary.skipped_samples;
+                        continue;
+                    }
+                    if !mosaic_initial_dirty_metal_backend_enabled()
+                        && group.batch.len() >= MOSAIC_CPU_GROUPED_DIRTY_MIN_RAW_SAMPLES
+                    {
+                        let summary = accumulate_mosaic_dirty_group_contribution_grouped_cpu_into(
+                            request,
+                            config,
+                            gridder,
+                            group,
+                            conv_sampling,
+                            prepared_metal,
+                            &mut psf_grid,
+                            &mut residual_grid,
+                            &mut weight_grid,
+                        )?;
+                        reported_sumwt += summary.reported_sumwt;
+                        pointing_weight_summaries.push(mosaic_pointing_weight_summary_from_contribution(
+                            group,
+                            summary.group_weight_grid_sum,
+                            summary.reported_sumwt,
+                            summary.normalization_sumwt,
+                            summary.gridded_samples,
+                            summary.skipped_samples,
+                        ));
+                        normalization_sumwt += summary.normalization_sumwt;
+                        gridded_samples += summary.gridded_samples;
+                        skipped_samples += summary.skipped_samples;
+                        continue;
+                    }
+                    let contribution = compute_mosaic_dirty_group_contribution(
+                        request,
+                        config,
+                        gridder,
+                        group,
+                        conv_sampling,
+                        thread_count,
+                        prepared_metal,
+                    )?;
+                    metal_stats.add_assign(contribution.metal_stats);
+                    add_complex64_grid(&mut psf_grid, &contribution.psf_grid);
+                    add_complex64_grid(&mut residual_grid, &contribution.residual_grid);
+                    add_complex64_grid(&mut weight_grid, &contribution.weight_grid);
+                    pointing_weight_summaries.push(mosaic_pointing_weight_summary_from_contribution(
+                        group,
+                        contribution.group_weight_grid_sum,
+                        contribution.reported_sumwt,
+                        contribution.normalization_sumwt,
+                        contribution.gridded_samples,
+                        contribution.skipped_samples,
+                    ));
+                    reported_sumwt += contribution.reported_sumwt;
+                    normalization_sumwt += contribution.normalization_sumwt;
+                    gridded_samples += contribution.gridded_samples;
+                    skipped_samples += contribution.skipped_samples;
+                }
+                Ok::<_, ImagingError>((
+                    worker_samples,
+                    alloc_elapsed,
+                    worker_started.elapsed(),
+                    psf_grid,
+                    residual_grid,
+                    weight_grid,
+                    pointing_weight_summaries,
+                    reported_sumwt,
+                    normalization_sumwt,
+                    gridded_samples,
+                    skipped_samples,
+                    metal_stats,
+                ))
+            }));
+        }
+        for handle in handles {
+            worker_results.push(handle.join().expect("mosaic dirty worker panicked")?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = join_started.elapsed();
+
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut reported_sumwt = 0.0f64;
+    let mut normalization_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut pointing_weight_summaries = Vec::new();
+    let mut worker_samples = Vec::with_capacity(worker_results.len());
+    let mut worker_alloc = Vec::with_capacity(worker_results.len());
+    let mut worker_compute = Vec::with_capacity(worker_results.len());
+    let mut metal_stats = MosaicMetalGridStats::default();
+    let merge_started = Instant::now();
+    for (
+        samples,
+        alloc,
+        compute,
+        local_psf_grid,
+        local_residual_grid,
+        local_weight_grid,
+        local_pointing_weight_summaries,
+        local_reported_sumwt,
+        local_normalization_sumwt,
+        local_gridded_samples,
+        local_skipped_samples,
+        local_metal_stats,
+    ) in worker_results
+    {
+        add_complex64_grid(&mut psf_grid, &local_psf_grid);
+        add_complex64_grid(&mut residual_grid, &local_residual_grid);
+        add_complex64_grid(&mut weight_grid, &local_weight_grid);
+        pointing_weight_summaries.extend(local_pointing_weight_summaries);
+        reported_sumwt += local_reported_sumwt;
+        normalization_sumwt += local_normalization_sumwt;
+        gridded_samples += local_gridded_samples;
+        skipped_samples += local_skipped_samples;
+        worker_samples.push(samples);
+        worker_alloc.push(alloc);
+        worker_compute.push(compute);
+        metal_stats.add_assign(local_metal_stats);
+    }
+    let merge_elapsed = merge_started.elapsed();
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        let total_worker_samples = worker_samples.iter().sum::<usize>();
+        let grouped_samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+        let metal_cache_prepared_groups = metal_group_cache
+            .map(|cache| cache.iter().filter(|group| group.is_some()).count())
+            .unwrap_or(0);
+        let metal_cache_prepared_ge_threshold = metal_group_cache
+            .map(|cache| {
+                cache
+                    .iter()
+                    .filter_map(|group| group.as_ref())
+                    .filter(|group| {
+                        group.samples.len() >= MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let metal_cache_prepared_below_threshold =
+            metal_cache_prepared_groups.saturating_sub(metal_cache_prepared_ge_threshold);
+        let metal_groups_missing_prepared =
+            groups.len().saturating_sub(metal_cache_prepared_groups);
+        eprintln!(
+            "mosaic_dirty_parallel groups={} grouped_samples={} total_worker_samples={} requested_threads={} chunk_len={} partition=group-contiguous actual_threads={} worker_samples={:?} worker_alloc_ms={:?} worker_ms={:?} metal_backend_enabled={} metal_cache_present={} metal_cache_prepared_groups={} metal_cache_prepared_ge_threshold={} metal_cache_prepared_below_threshold={} metal_groups_missing_prepared={} metal_threshold_prepared_samples={} metal_calls={} metal_dirty_calls={} metal_residual_calls={} metal_samples={} metal_kernel_pack_ms={:.3} metal_device_queue_ms={:.3} metal_shader_compile_ms={:.3} metal_pipeline_ms={:.3} metal_buffer_alloc_ms={:.3} metal_model_pack_ms={:.3} metal_zero_outputs_ms={:.3} metal_encode_ms={:.3} metal_dispatch_wait_ms={:.3} metal_reduce_wait_ms={:.3} metal_readback_ms={:.3} metal_total_ms={:.3} join_ms={:.3} merge_ms={:.3} total_ms={:.3}",
+            groups.len(),
+            grouped_samples,
+            total_worker_samples,
+            thread_count,
+            chunk_len,
+            worker_samples.len(),
+            worker_samples,
+            worker_alloc
+                .iter()
+                .map(|elapsed| profile::millis(*elapsed))
+                .collect::<Vec<_>>(),
+            worker_compute
+                .iter()
+                .map(|elapsed| profile::millis(*elapsed))
+                .collect::<Vec<_>>(),
+            mosaic_initial_dirty_metal_backend_enabled(),
+            metal_group_cache.is_some(),
+            metal_cache_prepared_groups,
+            metal_cache_prepared_ge_threshold,
+            metal_cache_prepared_below_threshold,
+            metal_groups_missing_prepared,
+            MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES,
+            metal_stats.calls,
+            metal_stats.dirty_calls,
+            metal_stats.residual_calls,
+            metal_stats.samples,
+            profile::millis(metal_stats.kernel_pack),
+            profile::millis(metal_stats.device_queue),
+            profile::millis(metal_stats.shader_compile),
+            profile::millis(metal_stats.pipeline),
+            profile::millis(metal_stats.buffer_alloc),
+            profile::millis(metal_stats.model_pack),
+            profile::millis(metal_stats.zero_outputs),
+            profile::millis(metal_stats.encode),
+            profile::millis(metal_stats.dispatch_wait),
+            profile::millis(metal_stats.reduce_wait),
+            profile::millis(metal_stats.readback),
+            profile::millis(metal_stats.total),
+            profile::millis(join_elapsed),
+            profile::millis(merge_elapsed),
+            profile::millis(started.elapsed()),
+        );
+    }
+
+    Ok(MosaicDirtyParallelContribution {
+        psf_grid,
+        residual_grid,
+        weight_grid,
+        pointing_weight_summaries,
+        reported_sumwt,
+        normalization_sumwt,
+        gridded_samples,
+        skipped_samples,
+        elapsed: started.elapsed(),
+        worker_samples,
+        worker_alloc,
+        worker_compute,
+        join_elapsed,
+        merge_elapsed,
+    })
+}
+
+fn compute_mosaic_dirty_group_contribution(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    conv_sampling: usize,
+    thread_count: usize,
+    prepared_metal: Option<&MosaicMetalPreparedGroup>,
+) -> Result<MosaicDirtyGroupContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    if !mosaic_pointing_contributes_by_simple_pb_center(
+        request.geometry,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+    ) {
+        return Ok(MosaicDirtyGroupContribution {
+            psf_grid,
+            residual_grid,
+            weight_grid,
+            metal_stats: MosaicMetalGridStats::default(),
+            group_weight_grid_sum: 0.0,
+            reported_sumwt: 0.0,
+            normalization_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: group.batch.len(),
+        });
+    }
+    let projector = build_mosaic_projector(
+        request.geometry,
+        gridder,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.primary_beam_model,
+        group.frequency_hz,
+        conv_sampling,
+        2,
+        true,
+    )?;
+    let weight_projector = build_mosaic_projector(
+        request.geometry,
+        gridder,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.primary_beam_model,
+        group.frequency_hz,
+        conv_sampling,
+        4,
+        true,
+    )?;
+    let weight_plan = weight_projector
+        .plan_sample_for_grid(0.0, 0.0)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "mosaic weight projector failed to plan the centered kernel".to_string(),
+            )
+        })?;
+    let actual_threads = mosaic_parallel_thread_count(group.batch.len()).min(thread_count);
+    if mosaic_initial_dirty_metal_group_eligible(group, prepared_metal) {
+        return compute_mosaic_dirty_group_contribution_metal(
+            gridder,
+            group,
+            &projector,
+            &weight_projector,
+            &weight_plan,
+            prepared_metal,
+        );
+    }
+    if group.batch.len() >= MOSAIC_CPU_GROUPED_DIRTY_MIN_RAW_SAMPLES {
+        return compute_mosaic_dirty_group_contribution_grouped_cpu(
+            gridder,
+            group,
+            &projector,
+            &weight_projector,
+            &weight_plan,
+            prepared_metal,
+        );
+    }
+    if actual_threads > 1 {
+        return compute_mosaic_dirty_group_contribution_sample_ranges(
+            gridder,
+            group,
+            &projector,
+            &weight_projector,
+            &weight_plan,
+            actual_threads,
+        );
+    }
+    let mut reported_sumwt = 0.0f64;
+    let mut normalization_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut weight_support_sums = MosaicWeightGridAccumulator::new(&weight_projector);
+    for sample_index in 0..group.batch.len() {
+        if !group.batch.gridable[sample_index] {
+            skipped_samples += 1;
+            continue;
+        }
+        let weight = group.batch.weight[sample_index];
+        let sumwt_factor = group.batch.sumwt_factor[sample_index];
+        let visibility = group.batch.visibility[sample_index];
+        if !(weight.is_finite()
+            && weight > 0.0
+            && sumwt_factor.is_finite()
+            && sumwt_factor > 0.0
+            && visibility.re.is_finite()
+            && visibility.im.is_finite())
+        {
+            skipped_samples += 1;
+            continue;
+        }
+        let grid_weight = weight * sumwt_factor;
+        let Some(plan) = projector.plan_sample_for_grid(
+            group.batch.u_lambda[sample_index],
+            group.batch.v_lambda[sample_index],
+        ) else {
+            skipped_samples += 1;
+            continue;
+        };
+        let grid_weight64 = f64::from(grid_weight);
+        projector.grid_sample_planned_f64(&mut psf_grid, &plan, Complex64::new(grid_weight64, 0.0));
+        projector.grid_sample_planned_f64(
+            &mut residual_grid,
+            &plan,
+            Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
+        );
+        add_mosaic_weight_support_sample(
+            &mut weight_support_sums,
+            &weight_projector,
+            group.batch.u_lambda[sample_index],
+            group.batch.v_lambda[sample_index],
+            grid_weight64,
+        );
+        if plan.center_in_bounds {
+            normalization_sumwt += grid_weight64;
+            reported_sumwt += mosaic_reported_sumwt_from_grid_weight(grid_weight, sumwt_factor);
+        }
+        gridded_samples += 1;
+    }
+    let support_sums = weight_support_sums.support_sums();
+    dump_mosaic_weight_support_sums(group, projector.support(), gridded_samples, &support_sums);
+    let cell_trace_targets = mosaic_cell_trace_targets();
+    trace_mosaic_weight_support_contributions(
+        group,
+        &weight_projector,
+        &weight_plan,
+        &support_sums,
+        &cell_trace_targets,
+    );
+    add_mosaic_center_weight_grid_from_support_sums(
+        &weight_projector,
+        &weight_plan,
+        &mut weight_grid,
+        &support_sums,
+    );
+    Ok(MosaicDirtyGroupContribution {
+        psf_grid,
+        residual_grid,
+        weight_grid,
+        metal_stats: MosaicMetalGridStats::default(),
+        group_weight_grid_sum: weight_support_sums.total_weight_sum,
+        reported_sumwt,
+        normalization_sumwt,
+        gridded_samples,
+        skipped_samples,
+    })
+}
+
+fn mosaic_grouped_sample_plan(sample: MosaicMetalSample) -> ScreenProjectSamplePlan {
+    let loc_x = isize::try_from(sample.loc & 0xffff).expect("u16 x fits in isize");
+    let loc_y = isize::try_from(sample.loc >> 16).expect("u16 y fits in isize");
+    ScreenProjectSamplePlan {
+        loc_x,
+        loc_y,
+        off_x: sample.offset[0] as isize,
+        off_y: sample.offset[1] as isize,
+        min_ix: sample.range_x[0] as isize,
+        max_ix: sample.range_x[1] as isize,
+        min_iy: sample.range_y[0] as isize,
+        max_iy: sample.range_y[1] as isize,
+        center_in_bounds: true,
+        normalization: 0.0,
+    }
+}
+
+fn accumulate_mosaic_grouped_dirty_cpu(
+    projector: &ScreenProjector,
+    samples: &[MosaicMetalSample],
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+) {
+    for sample in samples {
+        let plan = mosaic_grouped_sample_plan(*sample);
+        let weight = f64::from(sample.weight);
+        projector.grid_sample_planned_f64(psf_grid, &plan, Complex64::new(weight, 0.0));
+        projector.grid_sample_planned_f64(
+            residual_grid,
+            &plan,
+            Complex64::new(sample.visibility_re as f64, sample.visibility_im as f64) * weight,
+        );
+    }
+}
+
+fn accumulate_mosaic_grouped_residual_cpu(
+    projector: &ScreenProjector,
+    samples: &[MosaicMetalSample],
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex64>,
+) {
+    for sample in samples {
+        let plan = mosaic_grouped_sample_plan(*sample);
+        let predicted = model_grid
+            .map(|grid| projector.degrid_sample_planned(grid, &plan))
+            .unwrap_or_else(|| Complex32::new(0.0, 0.0));
+        let residual_visibility =
+            Complex32::new(sample.visibility_re, sample.visibility_im) - predicted;
+        let weight = f64::from(sample.weight);
+        projector.grid_sample_planned_f64(
+            residual_grid,
+            &plan,
+            Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64) * weight,
+        );
+    }
+}
+
+fn mosaic_metal_sample_from_plan(
+    plan: &ScreenProjectSamplePlan,
+    support: usize,
+    weight: f32,
+    visibility: Complex32,
+) -> Result<MosaicMetalSample, ImagingError> {
+    let loc_x = u16::try_from(plan.loc_x).map_err(|_| {
+        ImagingError::InvalidRequest("mosaic Metal sample x coordinate exceeds u16".to_string())
+    })?;
+    let loc_y = u16::try_from(plan.loc_y).map_err(|_| {
+        ImagingError::InvalidRequest("mosaic Metal sample y coordinate exceeds u16".to_string())
+    })?;
+    Ok(MosaicMetalSample {
+        loc: u32::from(loc_x) | (u32::from(loc_y) << 16),
+        support: u32::try_from(support).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal support exceeds u32".to_string())
+        })?,
+        offset: [
+            i32::try_from(plan.off_x).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "mosaic Metal x subpixel offset exceeds i32".to_string(),
+                )
+            })?,
+            i32::try_from(plan.off_y).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "mosaic Metal y subpixel offset exceeds i32".to_string(),
+                )
+            })?,
+        ],
+        range_x: [
+            i32::try_from(plan.min_ix).map_err(|_| {
+                ImagingError::InvalidRequest("mosaic Metal min x tap exceeds i32".to_string())
+            })?,
+            i32::try_from(plan.max_ix).map_err(|_| {
+                ImagingError::InvalidRequest("mosaic Metal max x tap exceeds i32".to_string())
+            })?,
+        ],
+        range_y: [
+            i32::try_from(plan.min_iy).map_err(|_| {
+                ImagingError::InvalidRequest("mosaic Metal min y tap exceeds i32".to_string())
+            })?,
+            i32::try_from(plan.max_iy).map_err(|_| {
+                ImagingError::InvalidRequest("mosaic Metal max y tap exceeds i32".to_string())
+            })?,
+        ],
+        weight,
+        visibility_re: visibility.re,
+        visibility_im: visibility.im,
+        kernel_base: 0,
+    })
+}
+
+fn complex32_grid_to_complex64(source: &Array2<Complex32>) -> Array2<Complex64> {
+    source.mapv(|value| Complex64::new(value.re as f64, value.im as f64))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_mosaic_metal_samples(
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    weight_projector: Option<&ScreenProjector>,
+) -> Result<MosaicMetalPreparedGroup, ImagingError> {
+    let started = Instant::now();
+    let mut samples = MosaicMetalSampleHashMap::with_capacity_and_hasher(
+        group.batch.len().min(1_048_576),
+        BuildHasherDefault::<MosaicMetalSampleHasher>::default(),
+    );
+    let mut weight_support_sums = weight_projector.map(MosaicWeightGridAccumulator::new);
+    let mut reported_sumwt = 0.0f64;
+    let mut normalization_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let trace_enabled = mosaic_trace_enabled();
+    let mut center_samples = 0usize;
+    if trace_enabled {
+        let weight_kernel_sum = weight_projector
+            .map(|projector| projector.normalization_sum())
+            .unwrap_or_else(|| Complex32::new(0.0, 0.0));
+        let weight_zero_plan =
+            weight_projector.and_then(|weight_projector| weight_projector.plan_sample(0.0, 0.0));
+        let (weight_zero_tap_sum, weight_zero_center_tap, weight_zero_first_tap) = weight_projector
+            .zip(weight_zero_plan.as_ref())
+            .and_then(|(weight_projector, weight_zero_plan)| {
+                weight_projector.trace_sample_taps(weight_zero_plan)
+            })
+            .unwrap_or((
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+            ));
+        let weight_zero_tap_matrix_json = weight_projector
+            .zip(weight_zero_plan.as_ref())
+            .and_then(|(weight_projector, weight_zero_plan)| {
+                weight_projector.trace_sample_tap_matrix(weight_zero_plan)
+            })
+            .map(|taps| {
+                taps.into_iter()
+                    .map(|(ix, iy, tap)| format!("[{ix},{iy},{:.17e},{:.17e}]", tap.re, tap.im))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        append_mosaic_trace(format!(
+            "{{\"event\":\"group\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"support\":{},\"sampling\":{},\"samples\":{},\"imaging_kernel_sum_re\":{:.17e},\"imaging_kernel_sum_im\":{:.17e},\"weight_kernel_sum_re\":{:.17e},\"weight_kernel_sum_im\":{:.17e},\"weight_zero_loc\":[{},{}],\"weight_zero_off\":[{},{}],\"weight_zero_normalization\":{:.17e},\"weight_zero_tap_sum\":[{:.17e},{:.17e}],\"weight_zero_center_tap\":[{:.17e},{:.17e}],\"weight_zero_first_tap\":[{:.17e},{:.17e}],\"weight_zero_taps\":[{}],\"path\":\"metal_collect\"}}",
+            group.pointing_direction_rad[0],
+            group.pointing_direction_rad[1],
+            group.frequency_hz,
+            projector.support(),
+            projector.sampling(),
+            group.batch.len(),
+            projector.normalization_sum().re,
+            projector.normalization_sum().im,
+            weight_kernel_sum.re,
+            weight_kernel_sum.im,
+            weight_zero_plan.as_ref().map_or(0, |plan| plan.loc_x),
+            weight_zero_plan.as_ref().map_or(0, |plan| plan.loc_y),
+            weight_zero_plan.as_ref().map_or(0, |plan| plan.off_x),
+            weight_zero_plan.as_ref().map_or(0, |plan| plan.off_y),
+            weight_zero_plan
+                .as_ref()
+                .map_or(0.0, |plan| plan.normalization),
+            weight_zero_tap_sum.re,
+            weight_zero_tap_sum.im,
+            weight_zero_center_tap.re,
+            weight_zero_center_tap.im,
+            weight_zero_first_tap.re,
+            weight_zero_first_tap.im,
+            weight_zero_tap_matrix_json,
+        ));
+    }
+    let mut logged_first_sample = !trace_enabled;
+    for sample_index in 0..group.batch.len() {
+        if !group.batch.gridable[sample_index] {
+            skipped_samples += 1;
+            continue;
+        }
+        let weight = group.batch.weight[sample_index];
+        let sumwt_factor = group.batch.sumwt_factor[sample_index];
+        let visibility = group.batch.visibility[sample_index];
+        if !(weight.is_finite()
+            && weight > 0.0
+            && sumwt_factor.is_finite()
+            && sumwt_factor > 0.0
+            && visibility.re.is_finite()
+            && visibility.im.is_finite())
+        {
+            skipped_samples += 1;
+            continue;
+        }
+        let grid_weight = weight * sumwt_factor;
+        let plan = if trace_enabled {
+            projector.plan_sample(
+                group.batch.u_lambda[sample_index],
+                group.batch.v_lambda[sample_index],
+            )
+        } else {
+            projector.plan_sample_for_grid(
+                group.batch.u_lambda[sample_index],
+                group.batch.v_lambda[sample_index],
+            )
+        };
+        let Some(plan) = plan else {
+            skipped_samples += 1;
+            continue;
+        };
+        if !logged_first_sample {
+            let weight_plan = weight_projector.and_then(|weight_projector| {
+                weight_projector.plan_sample(
+                    group.batch.u_lambda[sample_index],
+                    group.batch.v_lambda[sample_index],
+                )
+            });
+            let (tap_sum, center_tap, first_tap) = projector.trace_sample_taps(&plan).unwrap_or((
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+            ));
+            let (weight_tap_sum, weight_center_tap, weight_first_tap) = weight_projector
+                .zip(weight_plan.as_ref())
+                .and_then(|(weight_projector, weight_plan)| {
+                    weight_projector.trace_sample_taps(weight_plan)
+                })
+                .unwrap_or((
+                    Complex32::new(0.0, 0.0),
+                    Complex32::new(0.0, 0.0),
+                    Complex32::new(0.0, 0.0),
+                ));
+            let tap_matrix_json = projector
+                .trace_sample_tap_matrix(&plan)
+                .map(|taps| {
+                    taps.into_iter()
+                        .map(|(ix, iy, tap)| format!("[{ix},{iy},{:.17e},{:.17e}]", tap.re, tap.im))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let weight_tap_matrix_json = weight_projector
+                .zip(weight_plan.as_ref())
+                .and_then(|(weight_projector, weight_plan)| {
+                    weight_projector.trace_sample_tap_matrix(weight_plan)
+                })
+                .map(|taps| {
+                    taps.into_iter()
+                        .map(|(ix, iy, tap)| format!("[{ix},{iy},{:.17e},{:.17e}]", tap.re, tap.im))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            append_mosaic_trace(format!(
+                "{{\"event\":\"sample\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"sample_index\":{},\"u_lambda\":{:.17e},\"v_lambda\":{:.17e},\"w_lambda\":{:.17e},\"loc\":[{},{}],\"off\":[{},{}],\"normalization\":{:.17e},\"tap_sum\":[{:.17e},{:.17e}],\"center_tap\":[{:.17e},{:.17e}],\"first_tap\":[{:.17e},{:.17e}],\"taps\":[{}],\"weight_loc\":[{},{}],\"weight_off\":[{},{}],\"weight_normalization\":{:.17e},\"weight_tap_sum\":[{:.17e},{:.17e}],\"weight_center_tap\":[{:.17e},{:.17e}],\"weight_first_tap\":[{:.17e},{:.17e}],\"weight_taps\":[{}],\"visibility\":[{:.17e},{:.17e}],\"weight\":{:.17e},\"sumwt_factor\":{:.17e},\"grid_weight\":{:.17e},\"path\":\"metal_collect\"}}",
+                group.pointing_direction_rad[0],
+                group.pointing_direction_rad[1],
+                group.frequency_hz,
+                sample_index,
+                group.batch.u_lambda[sample_index],
+                group.batch.v_lambda[sample_index],
+                group.batch.w_lambda[sample_index],
+                plan.loc_x,
+                plan.loc_y,
+                plan.off_x,
+                plan.off_y,
+                plan.normalization,
+                tap_sum.re,
+                tap_sum.im,
+                center_tap.re,
+                center_tap.im,
+                first_tap.re,
+                first_tap.im,
+                tap_matrix_json,
+                weight_plan.as_ref().map_or(0, |plan| plan.loc_x),
+                weight_plan.as_ref().map_or(0, |plan| plan.loc_y),
+                weight_plan.as_ref().map_or(0, |plan| plan.off_x),
+                weight_plan.as_ref().map_or(0, |plan| plan.off_y),
+                weight_plan.as_ref().map_or(0.0, |plan| plan.normalization),
+                weight_tap_sum.re,
+                weight_tap_sum.im,
+                weight_center_tap.re,
+                weight_center_tap.im,
+                weight_first_tap.re,
+                weight_first_tap.im,
+                weight_tap_matrix_json,
+                visibility.re,
+                visibility.im,
+                weight,
+                sumwt_factor,
+                grid_weight,
+            ));
+            logged_first_sample = true;
+        }
+        let sample =
+            mosaic_metal_sample_from_plan(&plan, projector.support(), grid_weight, visibility)?;
+        push_mosaic_metal_sample_aggregate(&mut samples, sample);
+        let grid_weight64 = f64::from(grid_weight);
+        if let (Some(accumulator), Some(weight_projector)) =
+            (weight_support_sums.as_mut(), weight_projector)
+        {
+            add_mosaic_weight_support_sample(
+                accumulator,
+                weight_projector,
+                group.batch.u_lambda[sample_index],
+                group.batch.v_lambda[sample_index],
+                grid_weight64,
+            );
+        }
+        if plan.center_in_bounds {
+            normalization_sumwt += grid_weight64;
+            reported_sumwt += mosaic_reported_sumwt_from_grid_weight(grid_weight, sumwt_factor);
+            center_samples += 1;
+        }
+        gridded_samples += 1;
+    }
+    if trace_enabled {
+        append_mosaic_trace(format!(
+            "{{\"event\":\"group_aggregate\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"samples\":{},\"center_samples\":{},\"grid_weight_sum\":{:.17e},\"path\":\"metal_collect\"}}",
+            group.pointing_direction_rad[0],
+            group.pointing_direction_rad[1],
+            group.frequency_hz,
+            gridded_samples,
+            center_samples,
+            reported_sumwt,
+        ));
+    }
+    let finalize_started = Instant::now();
+    let samples = finish_mosaic_metal_sample_aggregates(samples);
+    let weight_support_sums = weight_support_sums
+        .map(|accumulator| accumulator.support_sums())
+        .unwrap_or_default();
+    dump_mosaic_weight_support_sums(
+        group,
+        projector.support(),
+        gridded_samples,
+        &weight_support_sums,
+    );
+    let group_weight_grid_sum = weight_support_sums
+        .iter()
+        .map(|support_sum| support_sum.weight)
+        .sum::<f64>();
+    let full_weight_grid_sum = weight_projector
+        .map(|weight_projector| {
+            let support = weight_projector.support() as i32;
+            weight_support_sums
+                .iter()
+                .filter(|support_sum| {
+                    support_sum.key.min_ix == -support
+                        && support_sum.key.max_ix == support
+                        && support_sum.key.min_iy == -support
+                        && support_sum.key.max_iy == support
+                })
+                .map(|support_sum| support_sum.weight)
+                .sum::<f64>()
+        })
+        .unwrap_or(0.0);
+    let cropped_weight_grid_sum = group_weight_grid_sum - full_weight_grid_sum;
+    let finalize_elapsed = finalize_started.elapsed();
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        let (weight_zero_offset_tap_sum, weight_center_tap) = weight_projector
+            .and_then(|weight_projector| {
+                let plan = weight_projector.plan_sample_for_grid(0.0, 0.0)?;
+                let (sum, center, _) = weight_projector.trace_sample_taps(&plan)?;
+                Some((sum, center))
+            })
+            .unwrap_or((Complex32::new(0.0, 0.0), Complex32::new(0.0, 0.0)));
+        let grouped_sample_ratio = if gridded_samples == 0 {
+            0.0
+        } else {
+            samples.len() as f64 / gridded_samples as f64
+        };
+        eprintln!(
+            "mosaic_metal_prepare pointing_ra={:.12e} pointing_dec={:.12e} frequency_hz={:.9e} raw_samples={} grouped_samples={} grouped_sample_ratio={:.6} gridded_samples={} skipped={} group_weight_sum={:.12e} full_weight_sum={:.12e} cropped_weight_sum={:.12e} weight_support_ranges={} weight_zero_offset_tap_sum=[{:.12e},{:.12e}] weight_center_tap=[{:.12e},{:.12e}] reported_sumwt={:.12e} normalization_sumwt={:.12e} support={} compact_tap_width={} grouping_ms={:.3} total_ms={:.3}",
+            group.pointing_direction_rad[0],
+            group.pointing_direction_rad[1],
+            group.frequency_hz,
+            gridded_samples,
+            samples.len(),
+            grouped_sample_ratio,
+            gridded_samples,
+            skipped_samples,
+            group_weight_grid_sum,
+            full_weight_grid_sum,
+            cropped_weight_grid_sum,
+            weight_support_sums.len(),
+            weight_zero_offset_tap_sum.re,
+            weight_zero_offset_tap_sum.im,
+            weight_center_tap.re,
+            weight_center_tap.im,
+            reported_sumwt,
+            normalization_sumwt,
+            projector.support(),
+            projector.support() * 2 + 1,
+            profile::millis(finalize_elapsed),
+            profile::millis(started.elapsed()),
+        );
+    }
+    Ok(MosaicMetalPreparedGroup {
+        samples,
+        weight_support_sums,
+        group_weight_grid_sum,
+        reported_sumwt,
+        normalization_sumwt,
+        gridded_samples,
+        skipped_samples,
+    })
+}
+
+fn prepare_mosaic_metal_group_cache(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    thread_count: usize,
+) -> Result<Vec<Option<MosaicMetalPreparedGroup>>, ImagingError> {
+    let started = Instant::now();
+    let chunk_len = groups.len().div_ceil(thread_count.max(1));
+    let indexed_groups = groups.iter().enumerate().collect::<Vec<_>>();
+    let mut worker_results = Vec::<Vec<(usize, Option<MosaicMetalPreparedGroup>)>>::new();
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in indexed_groups.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut prepared = Vec::with_capacity(chunk.len());
+                for &(group_index, group) in chunk {
+                    if !mosaic_pointing_contributes_by_simple_pb_center(
+                        request.geometry,
+                        config.phase_center_direction_rad,
+                        group.pointing_direction_rad,
+                    ) {
+                        prepared.push((group_index, None));
+                        continue;
+                    }
+                    let projector = build_mosaic_projector(
+                        request.geometry,
+                        gridder,
+                        config.phase_center_direction_rad,
+                        group.pointing_direction_rad,
+                        group.primary_beam_model,
+                        group.frequency_hz,
+                        conv_sampling,
+                        2,
+                        true,
+                    )?;
+                    let weight_projector = build_mosaic_projector(
+                        request.geometry,
+                        gridder,
+                        config.phase_center_direction_rad,
+                        group.pointing_direction_rad,
+                        group.primary_beam_model,
+                        group.frequency_hz,
+                        conv_sampling,
+                        4,
+                        true,
+                    )?;
+                    prepared.push((
+                        group_index,
+                        Some(collect_mosaic_metal_samples(
+                            group,
+                            &projector,
+                            Some(&weight_projector),
+                        )?),
+                    ));
+                }
+                Ok::<_, ImagingError>(prepared)
+            }));
+        }
+        for handle in handles {
+            worker_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("mosaic Metal cache worker panicked".to_string())
+            })??);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+
+    let mut cache = (0..groups.len()).map(|_| None).collect::<Vec<_>>();
+    for worker in worker_results {
+        for (group_index, prepared) in worker {
+            cache[group_index] = prepared;
+        }
+    }
+    if profile::standard_mfs_profile_detail_enabled() {
+        let prepared_groups = cache.iter().filter(|group| group.is_some()).count();
+        let grouped_samples = cache
+            .iter()
+            .filter_map(|group| group.as_ref())
+            .map(|group| group.samples.len())
+            .sum::<usize>();
+        let gridded_samples = cache
+            .iter()
+            .filter_map(|group| group.as_ref())
+            .map(|group| group.gridded_samples)
+            .sum::<usize>();
+        eprintln!(
+            "mosaic_metal_cache_prepare groups={} prepared_groups={} gridded_samples={} grouped_samples={} grouped_sample_ratio={:.6} total_ms={:.3}",
+            groups.len(),
+            prepared_groups,
+            gridded_samples,
+            grouped_samples,
+            if gridded_samples == 0 {
+                0.0
+            } else {
+                grouped_samples as f64 / gridded_samples as f64
+            },
+            profile::millis(started.elapsed()),
+        );
+    }
+    Ok(cache)
+}
+
+fn compute_mosaic_dirty_group_contribution_metal(
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    weight_projector: &ScreenProjector,
+    weight_plan: &ScreenProjectSamplePlan,
+    prepared_group: Option<&MosaicMetalPreparedGroup>,
+) -> Result<MosaicDirtyGroupContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let collected_prepared;
+    let prepared = match prepared_group {
+        Some(prepared) => prepared,
+        None => {
+            collected_prepared =
+                collect_mosaic_metal_samples(group, projector, Some(weight_projector))?;
+            &collected_prepared
+        }
+    };
+    if prepared.samples.is_empty() {
+        return Ok(MosaicDirtyGroupContribution {
+            psf_grid: Array2::<Complex64>::zeros((grid_nx, grid_ny)),
+            residual_grid: Array2::<Complex64>::zeros((grid_nx, grid_ny)),
+            weight_grid: Array2::<Complex64>::zeros((grid_nx, grid_ny)),
+            metal_stats: MosaicMetalGridStats::default(),
+            group_weight_grid_sum: prepared.group_weight_grid_sum,
+            reported_sumwt: prepared.reported_sumwt,
+            normalization_sumwt: prepared.normalization_sumwt,
+            gridded_samples: prepared.gridded_samples,
+            skipped_samples: prepared.skipped_samples,
+        });
+    }
+    let mut psf_grid32 = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid32 = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let metal_stats = accumulate_mosaic_grid_metal_samples(
+        projector,
+        &prepared.samples,
+        None,
+        &mut psf_grid32,
+        &mut residual_grid32,
+        MOSAIC_METAL_MODE_DIRTY,
+    )?;
+    let mut weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let cell_trace_targets = mosaic_cell_trace_targets();
+    trace_mosaic_weight_support_contributions(
+        group,
+        weight_projector,
+        weight_plan,
+        &prepared.weight_support_sums,
+        &cell_trace_targets,
+    );
+    add_mosaic_center_weight_grid_from_support_sums(
+        weight_projector,
+        weight_plan,
+        &mut weight_grid,
+        &prepared.weight_support_sums,
+    );
+    Ok(MosaicDirtyGroupContribution {
+        psf_grid: complex32_grid_to_complex64(&psf_grid32),
+        residual_grid: complex32_grid_to_complex64(&residual_grid32),
+        weight_grid,
+        metal_stats,
+        group_weight_grid_sum: prepared.group_weight_grid_sum,
+        reported_sumwt: prepared.reported_sumwt,
+        normalization_sumwt: prepared.normalization_sumwt,
+        gridded_samples: prepared.gridded_samples,
+        skipped_samples: prepared.skipped_samples,
+    })
+}
+
+fn compute_mosaic_dirty_group_contribution_grouped_cpu(
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    weight_projector: &ScreenProjector,
+    weight_plan: &ScreenProjectSamplePlan,
+    prepared_group: Option<&MosaicMetalPreparedGroup>,
+) -> Result<MosaicDirtyGroupContribution, ImagingError> {
+    let started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let collected_prepared;
+    let prepared = match prepared_group {
+        Some(prepared) => prepared,
+        None => {
+            collected_prepared =
+                collect_mosaic_metal_samples(group, projector, Some(weight_projector))?;
+            &collected_prepared
+        }
+    };
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let grid_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    accumulate_mosaic_grouped_dirty_cpu(
+        projector,
+        &prepared.samples,
+        &mut psf_grid,
+        &mut residual_grid,
+    );
+    let grid_elapsed = grid_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let mut weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let cell_trace_targets = mosaic_cell_trace_targets();
+    trace_mosaic_weight_support_contributions(
+        group,
+        weight_projector,
+        weight_plan,
+        &prepared.weight_support_sums,
+        &cell_trace_targets,
+    );
+    add_mosaic_center_weight_grid_from_support_sums(
+        weight_projector,
+        weight_plan,
+        &mut weight_grid,
+        &prepared.weight_support_sums,
+    );
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_grouped_cpu_dirty raw_samples={} grouped_samples={} grouped_sample_ratio={:.6} grid_ms={:.3} total_ms={:.3}",
+            prepared.gridded_samples,
+            prepared.samples.len(),
+            if prepared.gridded_samples == 0 {
+                0.0
+            } else {
+                prepared.samples.len() as f64 / prepared.gridded_samples as f64
+            },
+            profile::millis(grid_elapsed),
+            profile::millis(started.map_or(Duration::ZERO, |started| started.elapsed())),
+        );
+    }
+    Ok(MosaicDirtyGroupContribution {
+        psf_grid,
+        residual_grid,
+        weight_grid,
+        metal_stats: MosaicMetalGridStats::default(),
+        group_weight_grid_sum: prepared.group_weight_grid_sum,
+        reported_sumwt: prepared.reported_sumwt,
+        normalization_sumwt: prepared.normalization_sumwt,
+        gridded_samples: prepared.gridded_samples,
+        skipped_samples: prepared.skipped_samples,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_mosaic_dirty_group_contribution_grouped_cpu_into(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    conv_sampling: usize,
+    prepared_group: Option<&MosaicMetalPreparedGroup>,
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+    weight_grid: &mut Array2<Complex64>,
+) -> Result<MosaicDirtyGroupSummary, ImagingError> {
+    if !mosaic_pointing_contributes_by_simple_pb_center(
+        request.geometry,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+    ) {
+        return Ok(MosaicDirtyGroupSummary {
+            group_weight_grid_sum: 0.0,
+            reported_sumwt: 0.0,
+            normalization_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: group.batch.len(),
+        });
+    }
+    let projector = build_mosaic_projector(
+        request.geometry,
+        gridder,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.primary_beam_model,
+        group.frequency_hz,
+        conv_sampling,
+        2,
+        true,
+    )?;
+    let weight_projector = build_mosaic_projector(
+        request.geometry,
+        gridder,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.primary_beam_model,
+        group.frequency_hz,
+        conv_sampling,
+        4,
+        true,
+    )?;
+    let weight_plan = weight_projector
+        .plan_sample_for_grid(0.0, 0.0)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "mosaic weight projector failed to plan the centered kernel".to_string(),
+            )
+        })?;
+    accumulate_mosaic_dirty_group_contribution_grouped_cpu_into_with_projectors(
+        group,
+        &projector,
+        &weight_projector,
+        &weight_plan,
+        prepared_group,
+        psf_grid,
+        residual_grid,
+        weight_grid,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_mosaic_dirty_group_contribution_grouped_cpu_into_with_projectors(
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    weight_projector: &ScreenProjector,
+    weight_plan: &ScreenProjectSamplePlan,
+    prepared_group: Option<&MosaicMetalPreparedGroup>,
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+    weight_grid: &mut Array2<Complex64>,
+) -> Result<MosaicDirtyGroupSummary, ImagingError> {
+    let started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let collected_prepared;
+    let prepared = match prepared_group {
+        Some(prepared) => prepared,
+        None => {
+            collected_prepared =
+                collect_mosaic_metal_samples(group, projector, Some(weight_projector))?;
+            &collected_prepared
+        }
+    };
+    let grid_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    accumulate_mosaic_grouped_dirty_cpu(projector, &prepared.samples, psf_grid, residual_grid);
+    let grid_elapsed = grid_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let cell_trace_targets = mosaic_cell_trace_targets();
+    trace_mosaic_weight_support_contributions(
+        group,
+        weight_projector,
+        weight_plan,
+        &prepared.weight_support_sums,
+        &cell_trace_targets,
+    );
+    add_mosaic_center_weight_grid_from_support_sums(
+        weight_projector,
+        weight_plan,
+        weight_grid,
+        &prepared.weight_support_sums,
+    );
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_grouped_cpu_dirty_into raw_samples={} grouped_samples={} grouped_sample_ratio={:.6} grid_ms={:.3} total_ms={:.3}",
+            prepared.gridded_samples,
+            prepared.samples.len(),
+            if prepared.gridded_samples == 0 {
+                0.0
+            } else {
+                prepared.samples.len() as f64 / prepared.gridded_samples as f64
+            },
+            profile::millis(grid_elapsed),
+            profile::millis(started.map_or(Duration::ZERO, |started| started.elapsed())),
+        );
+    }
+    Ok(MosaicDirtyGroupSummary {
+        group_weight_grid_sum: prepared.group_weight_grid_sum,
+        reported_sumwt: prepared.reported_sumwt,
+        normalization_sumwt: prepared.normalization_sumwt,
+        gridded_samples: prepared.gridded_samples,
+        skipped_samples: prepared.skipped_samples,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_mosaic_dirty_group_contribution_sample_ranges(
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    weight_projector: &ScreenProjector,
+    weight_plan: &ScreenProjectSamplePlan,
+    thread_count: usize,
+) -> Result<MosaicDirtyGroupContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let chunk_len = group.batch.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let join_started = profile::maybe_profile_now();
+    let mut worker_results = Vec::<MosaicDirtyRangeContribution>::new();
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for sample_start in (0..group.batch.len()).step_by(chunk_len) {
+            let sample_end = (sample_start + chunk_len).min(group.batch.len());
+            handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
+                let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let mut reported_sumwt = 0.0f64;
+                let mut normalization_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut skipped_samples = 0usize;
+                let mut weight_support_sums = MosaicWeightGridAccumulator::new(weight_projector);
+                for sample_index in sample_start..sample_end {
+                    if !group.batch.gridable[sample_index] {
+                        skipped_samples += 1;
+                        continue;
+                    }
+                    let weight = group.batch.weight[sample_index];
+                    let sumwt_factor = group.batch.sumwt_factor[sample_index];
+                    let visibility = group.batch.visibility[sample_index];
+                    if !(weight.is_finite()
+                        && weight > 0.0
+                        && sumwt_factor.is_finite()
+                        && sumwt_factor > 0.0
+                        && visibility.re.is_finite()
+                        && visibility.im.is_finite())
+                    {
+                        skipped_samples += 1;
+                        continue;
+                    }
+                    let grid_weight = weight * sumwt_factor;
+                    let Some(plan) = projector.plan_sample_for_grid(
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                    ) else {
+                        skipped_samples += 1;
+                        continue;
+                    };
+                    let grid_weight64 = f64::from(grid_weight);
+                    projector.grid_sample_planned_f64(
+                        &mut psf_grid,
+                        &plan,
+                        Complex64::new(grid_weight64, 0.0),
+                    );
+                    projector.grid_sample_planned_f64(
+                        &mut residual_grid,
+                        &plan,
+                        Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
+                    );
+                    add_mosaic_weight_support_sample(
+                        &mut weight_support_sums,
+                        weight_projector,
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                        grid_weight64,
+                    );
+                    if plan.center_in_bounds {
+                        normalization_sumwt += grid_weight64;
+                        reported_sumwt +=
+                            mosaic_reported_sumwt_from_grid_weight(grid_weight, sumwt_factor);
+                    }
+                    gridded_samples += 1;
+                }
+                MosaicDirtyRangeContribution {
+                    sample_start,
+                    samples_assigned: sample_end - sample_start,
+                    psf_grid,
+                    residual_grid,
+                    weight_support_sums,
+                    reported_sumwt,
+                    normalization_sumwt,
+                    gridded_samples,
+                    skipped_samples,
+                    alloc_elapsed,
+                    compute_elapsed: profile::elapsed_since(compute_started),
+                }
+            }));
+        }
+        for handle in handles {
+            worker_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("mosaic dirty sample worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = profile::elapsed_since(join_started);
+
+    worker_results.sort_by_key(|result| result.sample_start);
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut reported_sumwt = 0.0f64;
+    let mut normalization_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut weight_support_sums = MosaicWeightGridAccumulator::new(weight_projector);
+    let merge_started = profile::maybe_profile_now();
+    for contribution in &worker_results {
+        add_complex64_grid(&mut psf_grid, &contribution.psf_grid);
+        add_complex64_grid(&mut residual_grid, &contribution.residual_grid);
+        weight_support_sums.extend(&contribution.weight_support_sums);
+        reported_sumwt += contribution.reported_sumwt;
+        normalization_sumwt += contribution.normalization_sumwt;
+        gridded_samples += contribution.gridded_samples;
+        skipped_samples += contribution.skipped_samples;
+    }
+    let support_sums = weight_support_sums.support_sums();
+    dump_mosaic_weight_support_sums(
+        group,
+        weight_projector.support(),
+        gridded_samples,
+        &support_sums,
+    );
+    add_mosaic_center_weight_grid_from_support_sums(
+        weight_projector,
+        weight_plan,
+        &mut weight_grid,
+        &support_sums,
+    );
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "mosaic_dirty_group_grid",
+        requested_threads: standard_mfs_grid_threads(),
+        actual_threads: worker_results.len(),
+        chunking: "sample-range",
+        chunk_len,
+        samples_total: group.batch.len(),
+        samples_per_worker: worker_results
+            .iter()
+            .map(|result| result.samples_assigned)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(grid_nx, grid_ny, 2),
+        local_grid_count: 2,
+        local_alloc_zero_by_worker: worker_results
+            .iter()
+            .map(|result| result.alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: worker_results
+            .iter()
+            .map(|result| result.compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    Ok(MosaicDirtyGroupContribution {
+        psf_grid,
+        residual_grid,
+        weight_grid,
+        metal_stats: MosaicMetalGridStats::default(),
+        group_weight_grid_sum: weight_support_sums.total_weight_sum,
+        reported_sumwt,
+        normalization_sumwt,
+        gridded_samples,
+        skipped_samples,
+    })
 }
 
 fn apply_mosaic_weighting(
@@ -4774,80 +8498,90 @@ fn apply_mosaic_weighting(
     if request.weighting == WeightingMode::Natural {
         return apply_weighting(request, gridder);
     }
+    if !config.grouped_metadata_batches.is_empty() {
+        if request.visibility_batches.len() != config.grouped_metadata_batches.len() {
+            return Err(ImagingError::InvalidRequest(
+                "grouped mosaic metadata batch count does not match visibility batch count"
+                    .to_string(),
+            ));
+        }
+        let mut grouped = BTreeMap::<(u64, u64), Vec<VisibilitySampleRangeRef>>::new();
+        for (batch_index, metadata) in config.grouped_metadata_batches.iter().enumerate() {
+            for group in &metadata.groups {
+                let pointing = group.pointing_direction_rad;
+                let entry = grouped
+                    .entry((pointing[0].to_bits(), pointing[1].to_bits()))
+                    .or_default();
+                for range in &group.sample_ranges {
+                    entry.push(VisibilitySampleRangeRef {
+                        batch_index,
+                        range: *range,
+                    });
+                }
+            }
+        }
+        let fractional_bandwidth =
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz);
+        let density_mode = match request.weighting {
+            WeightingMode::BriggsBwTaper { .. } => WeightDensityMode::PerPlane,
+            _ => WeightDensityMode::Combined,
+        };
+        let sample_groups = grouped.into_values().collect::<Vec<_>>();
+        return apply_weighting_to_owned_batches_by_sample_range_groups(
+            request.weighting,
+            density_mode,
+            None,
+            fractional_bandwidth,
+            request.visibility_batches.clone(),
+            &sample_groups,
+            gridder,
+        );
+    }
+
+    let mut grouped = BTreeMap::<(u64, u64), Vec<(usize, usize)>>::new();
     if request.visibility_batches.len() != config.metadata_batches.len() {
         return Err(ImagingError::InvalidRequest(
             "mosaic metadata batch count does not match visibility batch count".to_string(),
         ));
-    }
-
-    let mut grouped = BTreeMap::<(u64, u64), (Vec<(usize, usize)>, VisibilityBatch)>::new();
-    for (batch_index, (batch, metadata)) in request
-        .visibility_batches
-        .iter()
-        .zip(config.metadata_batches.iter())
-        .enumerate()
-    {
-        if batch.len() != metadata.pointing_direction_rad.len() {
-            return Err(ImagingError::InvalidRequest(
-                "mosaic metadata sample count does not match visibility batch sample count"
-                    .to_string(),
-            ));
-        }
-        for sample_index in 0..batch.len() {
-            let pointing = metadata.pointing_direction_rad[sample_index];
-            let entry = grouped
-                .entry((pointing[0].to_bits(), pointing[1].to_bits()))
-                .or_insert_with(|| {
-                    (
-                        Vec::new(),
-                        VisibilityBatch {
-                            u_lambda: Vec::new(),
-                            v_lambda: Vec::new(),
-                            w_lambda: Vec::new(),
-                            weight: Vec::new(),
-                            sumwt_factor: Vec::new(),
-                            gridable: Vec::new(),
-                            visibility: Vec::new(),
-                        },
-                    )
-                });
-            entry.0.push((batch_index, sample_index));
-            entry.1.u_lambda.push(batch.u_lambda[sample_index]);
-            entry.1.v_lambda.push(batch.v_lambda[sample_index]);
-            entry.1.w_lambda.push(batch.w_lambda[sample_index]);
-            entry.1.weight.push(batch.weight[sample_index]);
-            entry.1.sumwt_factor.push(batch.sumwt_factor[sample_index]);
-            entry.1.gridable.push(batch.gridable[sample_index]);
-            entry.1.visibility.push(batch.visibility[sample_index]);
+    } else {
+        for (batch_index, (batch, metadata)) in request
+            .visibility_batches
+            .iter()
+            .zip(config.metadata_batches.iter())
+            .enumerate()
+        {
+            if batch.len() != metadata.pointing_direction_rad.len() {
+                return Err(ImagingError::InvalidRequest(
+                    "mosaic metadata sample count does not match visibility batch sample count"
+                        .to_string(),
+                ));
+            }
+            for sample_index in 0..batch.len() {
+                let pointing = metadata.pointing_direction_rad[sample_index];
+                grouped
+                    .entry((pointing[0].to_bits(), pointing[1].to_bits()))
+                    .or_default()
+                    .push((batch_index, sample_index));
+            }
         }
     }
 
-    let mut weighted_batches = request.visibility_batches.clone();
     let fractional_bandwidth =
         fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz);
     let density_mode = match request.weighting {
         WeightingMode::BriggsBwTaper { .. } => WeightDensityMode::PerPlane,
         _ => WeightDensityMode::Combined,
     };
-    for (_pointing, (positions, group_batch)) in grouped {
-        let weighted_group = apply_weighting_with_density_source(
-            request.weighting,
-            density_mode,
-            None,
-            fractional_bandwidth,
-            std::slice::from_ref(&group_batch),
-            std::slice::from_ref(&group_batch),
-            gridder,
-        )?;
-        let weighted_group = &weighted_group[0];
-        for (group_index, (batch_index, sample_index)) in positions.into_iter().enumerate() {
-            weighted_batches[batch_index].weight[sample_index] = weighted_group.weight[group_index];
-            weighted_batches[batch_index].sumwt_factor[sample_index] =
-                weighted_group.sumwt_factor[group_index];
-        }
-    }
-
-    Ok(weighted_batches)
+    let sample_groups = grouped.into_values().collect::<Vec<_>>();
+    apply_weighting_to_owned_batches_by_sample_groups(
+        request.weighting,
+        density_mode,
+        None,
+        fractional_bandwidth,
+        request.visibility_batches.clone(),
+        &sample_groups,
+        gridder,
+    )
 }
 
 fn append_mosaic_trace(line: String) {
@@ -4874,6 +8608,20 @@ fn append_hogbom_trace(line: String) {
         }
         Err(error) => {
             eprintln!("failed to append CASA_RS_HOGBOM_TRACE: {error}");
+        }
+    }
+}
+
+fn append_clark_trace(line: String) {
+    let Some(path) = env::var_os("CASA_RS_CLARK_TRACE") else {
+        return;
+    };
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{line}");
+        }
+        Err(error) => {
+            eprintln!("failed to append CASA_RS_CLARK_TRACE: {error}");
         }
     }
 }
@@ -4958,6 +8706,126 @@ fn dump_mosaic_complex_grid(role: &str, frequency_hz: f64, grid: &Array2<Complex
     }
 }
 
+fn dump_mosaic_weight_support_sums(
+    group: &MosaicPointingGroup,
+    support: usize,
+    gridded_samples: usize,
+    support_sums: &[MosaicWeightSupportSum],
+) {
+    if support_sums.is_empty() {
+        return;
+    }
+    let Some(root) = env::var_os("CASA_RS_MOSAIC_SUPPORT_DUMP") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    if let Err(error) = std::fs::create_dir_all(&root) {
+        eprintln!(
+            "failed to create CASA_RS_MOSAIC_SUPPORT_DUMP directory {}: {error}",
+            root.display()
+        );
+        return;
+    }
+    let frequency_tag = format!("{:.0}", group.frequency_hz);
+    let pointing_ra_tag = format!("{:016x}", group.pointing_direction_rad[0].to_bits());
+    let pointing_dec_tag = format!("{:016x}", group.pointing_direction_rad[1].to_bits());
+    static SUPPORT_DUMP_INDEX: AtomicUsize = AtomicUsize::new(0);
+    let dump_index = SUPPORT_DUMP_INDEX.fetch_add(1, Ordering::Relaxed);
+    let path = root.join(format!(
+        "rust-weight_support-{dump_index:08}-{frequency_tag}-{pointing_ra_tag}-{pointing_dec_tag}.json"
+    ));
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            eprintln!(
+                "failed to open CASA_RS_MOSAIC_SUPPORT_DUMP file {}: {error}",
+                path.display()
+            );
+            return;
+        }
+    };
+    let total_weight = support_sums
+        .iter()
+        .map(|support_sum| support_sum.weight)
+        .sum::<f64>();
+    let _ = write!(
+        file,
+        "{{\"producer\":\"rust\",\"role\":\"weight_support\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"frequency_hz\":{:.17e},\"support\":{},\"samples\":{},\"total_weight\":{:.17e},\"bins\":[",
+        group.pointing_direction_rad[0],
+        group.pointing_direction_rad[1],
+        group.frequency_hz,
+        support,
+        gridded_samples,
+        total_weight,
+    );
+    for (index, support_sum) in support_sums.iter().enumerate() {
+        if index > 0 {
+            let _ = write!(file, ",");
+        }
+        let key = support_sum.key;
+        let _ = write!(
+            file,
+            "{{\"key\":\"{}:{}:{}:{}\",\"weight\":{:.17e}}}",
+            key.min_ix, key.max_ix, key.min_iy, key.max_iy, support_sum.weight
+        );
+    }
+    let _ = writeln!(file, "]}}");
+}
+
+fn trace_mosaic_weight_support_contributions(
+    group: &MosaicPointingGroup,
+    weight_projector: &ScreenProjector,
+    center_weight_plan: &ScreenProjectSamplePlan,
+    support_sums: &[MosaicWeightSupportSum],
+    cell_trace_targets: &[(isize, isize)],
+) {
+    if !mosaic_trace_enabled() || cell_trace_targets.is_empty() {
+        return;
+    }
+    for support_sum in support_sums {
+        if !(support_sum.weight.is_finite() && support_sum.weight > 0.0) {
+            continue;
+        }
+        let mut plan = *center_weight_plan;
+        plan.min_ix = support_sum.key.min_ix as isize;
+        plan.max_ix = support_sum.key.max_ix as isize;
+        plan.min_iy = support_sum.key.min_iy as isize;
+        plan.max_iy = support_sum.key.max_iy as isize;
+        for &(target_x, target_y) in cell_trace_targets {
+            let ix = target_x - plan.loc_x;
+            let iy = target_y - plan.loc_y;
+            let Some(tap) = weight_projector.trace_sample_tap_at(&plan, ix, iy) else {
+                continue;
+            };
+            let contribution = Complex64::new(tap.re as f64, tap.im as f64) * support_sum.weight;
+            append_mosaic_trace(format!(
+                "{{\"event\":\"weight_cell_contribution\",\"target\":[{},{}],\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"support_key\":\"{}:{}:{}:{}\",\"support_weight\":{:.17e},\"tap_offset\":[{},{}],\"tap\":[{:.17e},{:.17e}],\"contribution\":[{:.17e},{:.17e}]}}",
+                target_x,
+                target_y,
+                group.pointing_direction_rad[0],
+                group.pointing_direction_rad[1],
+                group.frequency_hz,
+                support_sum.key.min_ix,
+                support_sum.key.max_ix,
+                support_sum.key.min_iy,
+                support_sum.key.max_iy,
+                support_sum.weight,
+                ix,
+                iy,
+                tap.re,
+                tap.im,
+                contribution.re,
+                contribution.im,
+            ));
+        }
+    }
+}
+
 fn mosaic_trace_pixels_json(
     residual: &Array2<f32>,
     psf: &Array2<f32>,
@@ -5024,13 +8892,141 @@ fn mosaic_trace_group_pixels_json(residual: &Array2<f32>, weight: &Array2<f32>) 
     format!("[{}]", entries.join(","))
 }
 
+fn mosaic_weight_trace_enabled() -> bool {
+    env::var_os("CASA_RS_W3_MOSAIC_WEIGHT_TRACE").is_some()
+}
+
+fn multiscale_trace_sink() -> Option<String> {
+    env::var("CASA_RS_MULTISCALE_TRACE")
+        .ok()
+        .filter(|path| !path.is_empty())
+}
+
+fn append_multiscale_trace(path: &str, line: String) {
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn trace_mosaic_weight_image(label: &str, image: &Array2<f32>) {
+    if !mosaic_weight_trace_enabled() {
+        return;
+    }
+    let (nx, ny) = image.dim();
+    let mut count = 0usize;
+    let mut positive_count = 0usize;
+    let mut sum = 0.0f64;
+    let mut min_value = f32::INFINITY;
+    let mut max_value = f32::NEG_INFINITY;
+    let mut max_location = (0usize, 0usize);
+    for ((x, y), value) in image.indexed_iter() {
+        if !value.is_finite() {
+            continue;
+        }
+        count += 1;
+        if *value > 0.0 {
+            positive_count += 1;
+        }
+        sum += f64::from(*value);
+        if *value < min_value {
+            min_value = *value;
+        }
+        if *value > max_value {
+            max_value = *value;
+            max_location = (x, y);
+        }
+    }
+    eprintln!(
+        "CASA_RS_W3_MOSAIC_WEIGHT_TRACE label={} nx={} ny={} finite={} positive={} sum={:.17e} min={:.17e} max={:.17e} max_x={} max_y={}",
+        label,
+        nx,
+        ny,
+        count,
+        positive_count,
+        sum,
+        min_value,
+        max_value,
+        max_location.0,
+        max_location.1,
+    );
+    let step_x = (nx / 16).max(1);
+    let step_y = (ny / 16).max(1);
+    let mut x = 0usize;
+    while x < nx {
+        let mut y = 0usize;
+        while y < ny {
+            eprintln!(
+                "CASA_RS_W3_MOSAIC_WEIGHT_SAMPLE label={} x={} y={} value={:.17e}",
+                label,
+                x,
+                y,
+                image[(x, y)],
+            );
+            y = y.saturating_add(step_y);
+        }
+        x = x.saturating_add(step_x);
+    }
+    let center_x = nx / 2;
+    let center_y = ny / 2;
+    eprintln!(
+        "CASA_RS_W3_MOSAIC_WEIGHT_SAMPLE label={} x={} y={} value={:.17e}",
+        label,
+        center_x,
+        center_y,
+        image[(center_x, center_y)],
+    );
+}
+
+struct MosaicPbTraceSample {
+    label: &'static str,
+    primary_beam_model: PrimaryBeamModel,
+    pointing_x: f64,
+    pointing_y: f64,
+    x: usize,
+    y: usize,
+    radius_rad: f64,
+    frequency_hz: f64,
+    vp: f32,
+}
+
+fn trace_mosaic_pb_sample(sample: MosaicPbTraceSample) {
+    if !mosaic_weight_trace_enabled() {
+        return;
+    }
+    let radius_arcmin_ghz =
+        (sample.radius_rad.to_degrees() * 60.0 * (sample.frequency_hz / 1.0e9)) as f32 as f64;
+    let maximum_radius_arcmin_ghz =
+        primary_beam_max_radius_arcsec_at_100ghz(sample.primary_beam_model).unwrap_or(0.0) * 100.0
+            / 60.0;
+    let index = if radius_arcmin_ghz > maximum_radius_arcmin_ghz {
+        -1
+    } else {
+        (radius_arcmin_ghz * 9_999.0 / maximum_radius_arcmin_ghz)
+            .floor()
+            .clamp(0.0, 9_999.0) as i32
+    };
+    let pb = sample.vp * sample.vp;
+    let label = sample.label;
+    let pointing_x = sample.pointing_x;
+    let pointing_y = sample.pointing_y;
+    let x = sample.x;
+    let y = sample.y;
+    let radius_rad = sample.radius_rad;
+    let frequency_hz = sample.frequency_hz;
+    let vp = sample.vp;
+    eprintln!(
+        "CASA_RS_W3_MOSAIC_PB_SAMPLE label={label} pointing_x={pointing_x:.12e} pointing_y={pointing_y:.12e} x={x} y={y} radius_rad={radius_rad:.17e} radius_arcmin_ghz={radius_arcmin_ghz:.17e} frequency_hz={frequency_hz:.9e} index={index} vp={vp:.17e} pb={pb:.17e} pb2={:.17e}",
+        pb * pb
+    );
+}
+
 fn build_mosaic_weight_image(
     geometry: ImageGeometry,
     config: &MosaicGridderConfig,
     groups: &[MosaicPointingGroup],
 ) -> Result<Array2<f32>, ImagingError> {
     let mut pointing_weights =
-        BTreeMap::<(u64, u64, (u8, u64, u64)), ([f64; 2], PrimaryBeamModel, f64, f64)>::new();
+        BTreeMap::<MosaicPointingWeightKey, MosaicPointingWeightValue>::new();
     for group in groups {
         if !mosaic_pointing_contributes_by_simple_pb_center(
             geometry,
@@ -5055,37 +9051,62 @@ fn build_mosaic_weight_image(
         let key = (
             group.pointing_direction_rad[0].to_bits(),
             group.pointing_direction_rad[1].to_bits(),
+            group.frequency_hz.to_bits(),
             primary_beam_model_key(group.primary_beam_model),
         );
         let entry = pointing_weights.entry(key).or_insert((
             group.pointing_direction_rad,
             group.primary_beam_model,
-            0.0,
+            group.frequency_hz,
             0.0,
         ));
-        entry.2 += group.frequency_hz * group_weight;
         entry.3 += group_weight;
     }
 
     let mut weight_image = Array2::<f32>::zeros((geometry.nx(), geometry.ny()));
-    for (pointing_direction_rad, primary_beam_model, weighted_frequency_hz, pointing_weight) in
+    for (pointing_direction_rad, primary_beam_model, frequency_hz, pointing_weight) in
         pointing_weights.into_values()
     {
         if !(pointing_weight.is_finite() && pointing_weight > 0.0) {
             continue;
         }
-        let frequency_hz = weighted_frequency_hz / pointing_weight;
         let [pointing_x, pointing_y] = mosaic_pointing_pixel_position(
             geometry,
             config.phase_center_direction_rad,
             pointing_direction_rad,
         );
-        for x in 0..geometry.nx() {
+        if mosaic_weight_trace_enabled() {
+            eprintln!(
+                "CASA_RS_W3_MOSAIC_PB_POINTING label=rust_nonstream pointing_x={pointing_x:.12e} pointing_y={pointing_y:.12e} frequency_hz={frequency_hz:.9e} pointing_weight={pointing_weight:.17e}"
+            );
+        }
+        let voltage_pattern = MosaicWeightImageVoltagePattern::new(primary_beam_model);
+        let (x_range, y_range) = mosaic_weight_image_pixel_bounds(
+            geometry,
+            primary_beam_model,
+            pointing_x,
+            pointing_y,
+            frequency_hz,
+        );
+        for x in x_range {
             let l = (x as f64 - pointing_x) * geometry.cell_size_rad[0].abs();
-            for y in 0..geometry.ny() {
+            for y in y_range.clone() {
                 let m = (y as f64 - pointing_y) * geometry.cell_size_rad[1].abs();
                 let radius_rad = (l * l + m * m).sqrt();
-                let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
+                let vp = voltage_pattern.evaluate(l, m, frequency_hz);
+                if (x == 640 || x % 160 == 0) && (y == 640 || y % 160 == 0) {
+                    trace_mosaic_pb_sample(MosaicPbTraceSample {
+                        label: "rust_nonstream",
+                        primary_beam_model,
+                        pointing_x,
+                        pointing_y,
+                        x,
+                        y,
+                        radius_rad,
+                        frequency_hz,
+                        vp,
+                    });
+                }
                 let pb = vp * vp;
                 weight_image[(x, y)] += (pointing_weight as f32) * pb * pb;
             }
@@ -5165,11 +9186,10 @@ fn compute_mosaic_residual(
     psf_state: &PsfState,
     weight_image: &Array2<f32>,
     stage_timings: &mut ImagingStageTimings,
+    metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
 ) -> Result<Array2<f32>, ImagingError> {
     let refresh_started = Instant::now();
-    let [nx, ny] = request.geometry.image_shape;
     let [grid_nx, grid_ny] = gridder.grid_shape();
-    let mut accumulated_residual_image = Array2::<f32>::zeros((nx, ny));
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
         let model_fft_started = Instant::now();
@@ -5184,81 +9204,71 @@ fn compute_mosaic_residual(
     };
 
     let degrid_started = Instant::now();
-    for group in groups {
-        if !mosaic_pointing_contributes_by_simple_pb_center(
-            request.geometry,
-            config.phase_center_direction_rad,
-            group.pointing_direction_rad,
-        ) {
-            continue;
-        }
-        let projector = cached_mosaic_projector(
-            projector_cache,
-            request.geometry,
+    let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let residual_parallel_threads = mosaic_parallel_thread_count(groups.len());
+    if residual_parallel_threads > 1 {
+        let parallel = compute_mosaic_residual_parallel(
+            request,
+            config,
             gridder,
-            config.phase_center_direction_rad,
-            group.pointing_direction_rad,
-            group.primary_beam_model,
-            group.frequency_hz,
+            groups,
             conv_sampling,
-            2,
+            model_grid.as_ref(),
+            residual_parallel_threads,
+            metal_group_cache,
+            None,
         )?;
-        let mut group_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
-        for sample_index in 0..group.batch.len() {
-            if !group.batch.gridable[sample_index] {
-                continue;
-            }
-            let weight = group.batch.weight[sample_index];
-            let sumwt_factor = group.batch.sumwt_factor[sample_index];
-            let visibility = group.batch.visibility[sample_index];
-            if !(weight.is_finite()
-                && weight > 0.0
-                && sumwt_factor.is_finite()
-                && sumwt_factor > 0.0
-                && visibility.re.is_finite()
-                && visibility.im.is_finite())
-            {
-                continue;
-            }
-            let Some(plan) = projector.plan_sample(
-                group.batch.u_lambda[sample_index],
-                group.batch.v_lambda[sample_index],
-            ) else {
-                continue;
-            };
-            let predicted = model_grid
-                .as_ref()
-                .map(|grid| projector.degrid_sample_planned(grid, &plan))
-                .unwrap_or_else(|| Complex32::new(0.0, 0.0));
-            let residual_visibility = visibility - predicted;
-            let grid_weight = weight * sumwt_factor;
-            projector.grid_sample_planned_f64(
-                &mut group_residual_grid,
-                &plan,
-                Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64)
-                    * f64::from(grid_weight),
-            );
+        accumulated_residual_grid = parallel.residual_grid;
+        timings.degrid_grid = parallel.elapsed;
+        profile::log_parallel_stage(profile::ParallelStageProfile {
+            stage: "mosaic_residual_grid",
+            requested_threads: standard_mfs_grid_threads(),
+            actual_threads: parallel.worker_compute.len(),
+            chunking: "pointing-group",
+            chunk_len: groups.len().div_ceil(parallel.worker_compute.len().max(1)),
+            samples_total: groups.iter().map(|group| group.batch.len()).sum(),
+            samples_per_worker: parallel.worker_samples,
+            local_grid_bytes_per_worker: complex64_grid_bytes(grid_nx, grid_ny, 1),
+            local_grid_count: 1,
+            local_alloc_zero_by_worker: parallel.worker_alloc,
+            worker_compute_by_worker: parallel.worker_compute,
+            join_duration: parallel.join_elapsed,
+            merge_duration: parallel.merge_elapsed,
+            stage_duration: parallel.elapsed,
+        });
+    } else {
+        for (group_index, group) in groups.iter().enumerate() {
+            let prepared_metal = metal_group_cache
+                .and_then(|cache| cache.get(group_index))
+                .and_then(Option::as_ref);
+            let contribution = compute_mosaic_residual_group_contribution(
+                request,
+                config,
+                gridder,
+                group,
+                conv_sampling,
+                model_grid.as_ref(),
+                standard_mfs_grid_threads(),
+                Some(&mut *projector_cache),
+                prepared_metal,
+                None,
+            )?;
+            add_complex64_grid(&mut accumulated_residual_grid, &contribution.residual_grid);
         }
-        let fft_started = Instant::now();
-        let raw_group_residual = centered_ifft2_f64(&group_residual_grid);
-        timings.fft += fft_started.elapsed();
-        let normalize_started = Instant::now();
-        let group_residual_image =
-            gridder.corrected_mosaic_image_from_grid_f64(&raw_group_residual, conv_sampling);
-        Zip::from(&mut accumulated_residual_image)
-            .and(&group_residual_image)
-            .for_each(|accumulated, residual_value| {
-                *accumulated += *residual_value;
-            });
-        timings.normalize += normalize_started.elapsed();
+        timings.degrid_grid = degrid_started.elapsed();
     }
-    timings.degrid_grid = degrid_started
-        .elapsed()
-        .saturating_sub(timings.fft + timings.normalize);
+
+    let fft_started = Instant::now();
+    let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
+    timings.fft += fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let accumulated_residual_image =
+        gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
+    timings.normalize += normalize_started.elapsed();
 
     let normalize_started = Instant::now();
     let fft_sumwt_scale =
-        (request.geometry.nx() * request.geometry.ny()) as f32 / psf_state.reported_sumwt;
+        (request.geometry.nx() * request.geometry.ny()) as f32 / psf_state.normalization_sumwt;
     let mut residual = accumulated_residual_image;
     residual.mapv_inplace(|value| value * fft_sumwt_scale);
     let weight_peak = weight_image
@@ -5287,6 +9297,1457 @@ fn compute_mosaic_residual(
     stage_timings.major_cycle_refresh += refresh_started.elapsed();
     Ok(residual)
 }
+
+#[allow(clippy::too_many_arguments)]
+fn compute_mosaic_residual_parallel(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    model_grid: Option<&Array2<Complex32>>,
+    thread_count: usize,
+    metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
+    residual_projectors: Option<&[Option<MosaicResidualProjector>]>,
+) -> Result<MosaicResidualParallelContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let chunk_len = groups.len().div_ceil(thread_count.max(1)).max(1);
+    let indexed_groups = groups.iter().enumerate().collect::<Vec<_>>();
+    let started = Instant::now();
+    let mut worker_results = Vec::new();
+    let join_started = Instant::now();
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in indexed_groups.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let alloc_started = Instant::now();
+                let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let alloc_elapsed = alloc_started.elapsed();
+                let worker_started = Instant::now();
+                let mut worker_samples = 0usize;
+                let mut metal_stats = MosaicMetalGridStats::default();
+                for &(group_index, group) in chunk {
+                    worker_samples += group.batch.len();
+                    let prepared_metal = metal_group_cache
+                        .and_then(|cache| cache.get(group_index))
+                        .and_then(Option::as_ref);
+                    let residual_projector = residual_projectors
+                        .and_then(|projectors| projectors.get(group_index))
+                        .and_then(Option::as_ref)
+                        .map(|projector| &projector.projector);
+                    if let Some(projector) = residual_projector
+                        && group.batch.len() >= MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES
+                        && mosaic_pointing_contributes_by_simple_pb_center(
+                            request.geometry,
+                            config.phase_center_direction_rad,
+                            group.pointing_direction_rad,
+                        )
+                    {
+                        let collected_prepared;
+                        let prepared = match prepared_metal {
+                            Some(prepared) => prepared,
+                            None => {
+                                collected_prepared =
+                                    collect_mosaic_metal_samples(group, projector, None)?;
+                                &collected_prepared
+                            }
+                        };
+                        if mosaic_residual_metal_backend_enabled()
+                            && prepared.samples.len() >= MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES
+                        {
+                            let contribution = compute_mosaic_residual_group_grid_metal(
+                                gridder,
+                                group,
+                                projector,
+                                model_grid,
+                                Some(prepared),
+                            )?;
+                            metal_stats.add_assign(contribution.metal_stats);
+                            add_complex64_grid(&mut residual_grid, &contribution.residual_grid);
+                            continue;
+                        }
+                        accumulate_mosaic_residual_group_grid_grouped_cpu_into(
+                            projector,
+                            model_grid,
+                            prepared,
+                            &mut residual_grid,
+                        );
+                        continue;
+                    }
+                    let contribution = compute_mosaic_residual_group_contribution(
+                        request,
+                        config,
+                        gridder,
+                        group,
+                        conv_sampling,
+                        model_grid,
+                        thread_count,
+                        None,
+                        prepared_metal,
+                        residual_projector,
+                    )?;
+                    metal_stats.add_assign(contribution.metal_stats);
+                    add_complex64_grid(&mut residual_grid, &contribution.residual_grid);
+                }
+                Ok::<_, ImagingError>((
+                    worker_samples,
+                    alloc_elapsed,
+                    worker_started.elapsed(),
+                    residual_grid,
+                    metal_stats,
+                ))
+            }));
+        }
+        for handle in handles {
+            worker_results.push(handle.join().expect("mosaic residual worker panicked")?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = join_started.elapsed();
+
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut worker_samples = Vec::with_capacity(worker_results.len());
+    let mut worker_alloc = Vec::with_capacity(worker_results.len());
+    let mut worker_compute = Vec::with_capacity(worker_results.len());
+    let mut metal_stats = MosaicMetalGridStats::default();
+    let merge_started = Instant::now();
+    for (samples, alloc, compute, local_residual_grid, local_metal_stats) in worker_results {
+        add_complex64_grid(&mut residual_grid, &local_residual_grid);
+        worker_samples.push(samples);
+        worker_alloc.push(alloc);
+        worker_compute.push(compute);
+        metal_stats.add_assign(local_metal_stats);
+    }
+    let merge_elapsed = merge_started.elapsed();
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        let total_worker_samples = worker_samples.iter().sum::<usize>();
+        let grouped_samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
+        let residual_on_demand_candidate_groups = groups
+            .iter()
+            .filter(|group| {
+                group.batch.len() >= MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES
+                    && mosaic_pointing_contributes_by_simple_pb_center(
+                        request.geometry,
+                        config.phase_center_direction_rad,
+                        group.pointing_direction_rad,
+                    )
+            })
+            .count();
+        let residual_raw_below_grouped_threshold = groups
+            .iter()
+            .filter(|group| group.batch.len() < MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES)
+            .count();
+        let residual_pb_rejected_groups = groups
+            .iter()
+            .filter(|group| {
+                !mosaic_pointing_contributes_by_simple_pb_center(
+                    request.geometry,
+                    config.phase_center_direction_rad,
+                    group.pointing_direction_rad,
+                )
+            })
+            .count();
+        let metal_cache_prepared_groups = metal_group_cache
+            .map(|cache| cache.iter().filter(|group| group.is_some()).count())
+            .unwrap_or(0);
+        let metal_cache_prepared_ge_threshold = metal_group_cache
+            .map(|cache| {
+                cache
+                    .iter()
+                    .filter_map(|group| group.as_ref())
+                    .filter(|group| {
+                        group.samples.len() >= MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let metal_cache_prepared_below_threshold =
+            metal_cache_prepared_groups.saturating_sub(metal_cache_prepared_ge_threshold);
+        eprintln!(
+            "mosaic_residual_parallel groups={} grouped_samples={} total_worker_samples={} requested_threads={} chunk_len={} partition=group-contiguous actual_threads={} worker_samples={:?} worker_alloc_ms={:?} worker_ms={:?} metal_backend_enabled={} metal_cache_present={} metal_cache_prepared_groups={} metal_cache_prepared_ge_threshold={} metal_cache_prepared_below_threshold={} metal_on_demand_candidate_groups={} metal_raw_below_grouped_threshold={} metal_pb_rejected_groups={} metal_threshold_raw_samples={} metal_threshold_prepared_samples={} metal_calls={} metal_dirty_calls={} metal_residual_calls={} metal_samples={} metal_kernel_pack_ms={:.3} metal_device_queue_ms={:.3} metal_shader_compile_ms={:.3} metal_pipeline_ms={:.3} metal_buffer_alloc_ms={:.3} metal_model_pack_ms={:.3} metal_zero_outputs_ms={:.3} metal_encode_ms={:.3} metal_dispatch_wait_ms={:.3} metal_reduce_wait_ms={:.3} metal_readback_ms={:.3} metal_total_ms={:.3} join_ms={:.3} merge_ms={:.3} total_ms={:.3}",
+            groups.len(),
+            grouped_samples,
+            total_worker_samples,
+            thread_count,
+            chunk_len,
+            worker_samples.len(),
+            worker_samples,
+            worker_alloc
+                .iter()
+                .map(|elapsed| profile::millis(*elapsed))
+                .collect::<Vec<_>>(),
+            worker_compute
+                .iter()
+                .map(|elapsed| profile::millis(*elapsed))
+                .collect::<Vec<_>>(),
+            mosaic_residual_metal_backend_enabled(),
+            metal_group_cache.is_some(),
+            metal_cache_prepared_groups,
+            metal_cache_prepared_ge_threshold,
+            metal_cache_prepared_below_threshold,
+            residual_on_demand_candidate_groups,
+            residual_raw_below_grouped_threshold,
+            residual_pb_rejected_groups,
+            MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES,
+            MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES,
+            metal_stats.calls,
+            metal_stats.dirty_calls,
+            metal_stats.residual_calls,
+            metal_stats.samples,
+            profile::millis(metal_stats.kernel_pack),
+            profile::millis(metal_stats.device_queue),
+            profile::millis(metal_stats.shader_compile),
+            profile::millis(metal_stats.pipeline),
+            profile::millis(metal_stats.buffer_alloc),
+            profile::millis(metal_stats.model_pack),
+            profile::millis(metal_stats.zero_outputs),
+            profile::millis(metal_stats.encode),
+            profile::millis(metal_stats.dispatch_wait),
+            profile::millis(metal_stats.reduce_wait),
+            profile::millis(metal_stats.readback),
+            profile::millis(metal_stats.total),
+            profile::millis(join_elapsed),
+            profile::millis(merge_elapsed),
+            profile::millis(started.elapsed()),
+        );
+    }
+
+    Ok(MosaicResidualParallelContribution {
+        residual_grid,
+        worker_samples,
+        worker_alloc,
+        worker_compute,
+        join_elapsed,
+        merge_elapsed,
+        elapsed: started.elapsed(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_mosaic_residual_group_contribution(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    conv_sampling: usize,
+    model_grid: Option<&Array2<Complex32>>,
+    thread_count: usize,
+    projector_cache: Option<&mut MosaicProjectorCache>,
+    prepared_metal: Option<&MosaicMetalPreparedGroup>,
+    prepared_projector: Option<&ScreenProjector>,
+) -> Result<MosaicResidualGroupContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    if !mosaic_pointing_contributes_by_simple_pb_center(
+        request.geometry,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+    ) {
+        return Ok(MosaicResidualGroupContribution {
+            residual_grid: Array2::<Complex64>::zeros((grid_nx, grid_ny)),
+            metal_stats: MosaicMetalGridStats::default(),
+            worker_samples: Vec::new(),
+            worker_compute: Vec::new(),
+            worker_alloc: Vec::new(),
+            join_elapsed: Duration::ZERO,
+            merge_elapsed: Duration::ZERO,
+            stage_elapsed: Duration::ZERO,
+        });
+    }
+    let built_projector;
+    let cached_projector;
+    let projector = match prepared_projector {
+        Some(projector) => projector,
+        None => match projector_cache {
+            Some(cache) => {
+                cached_projector = cached_mosaic_projector(
+                    cache,
+                    request.geometry,
+                    gridder,
+                    config.phase_center_direction_rad,
+                    group.pointing_direction_rad,
+                    group.primary_beam_model,
+                    group.frequency_hz,
+                    conv_sampling,
+                    2,
+                    true,
+                )?;
+                &cached_projector
+            }
+            None => {
+                built_projector = build_mosaic_projector(
+                    request.geometry,
+                    gridder,
+                    config.phase_center_direction_rad,
+                    group.pointing_direction_rad,
+                    group.primary_beam_model,
+                    group.frequency_hz,
+                    conv_sampling,
+                    2,
+                    true,
+                )?;
+                &built_projector
+            }
+        },
+    };
+    if group.batch.len() >= MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES {
+        let collected_prepared;
+        let prepared = match prepared_metal {
+            Some(prepared) => Some(prepared),
+            None => {
+                collected_prepared = collect_mosaic_metal_samples(group, projector, None)?;
+                Some(&collected_prepared)
+            }
+        };
+        if mosaic_residual_metal_backend_enabled()
+            && prepared.is_some_and(|prepared| {
+                prepared.samples.len() >= MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES
+            })
+        {
+            return compute_mosaic_residual_group_grid_metal(
+                gridder, group, projector, model_grid, prepared,
+            );
+        }
+        if let Some(prepared) = prepared {
+            return compute_mosaic_residual_group_grid_grouped_cpu(
+                gridder, group, projector, model_grid, prepared,
+            );
+        }
+    }
+    let actual_threads = mosaic_parallel_thread_count(group.batch.len()).min(thread_count);
+    if actual_threads > 1 {
+        let contribution = compute_mosaic_residual_group_grid_sample_ranges(
+            gridder,
+            group,
+            projector,
+            model_grid,
+            actual_threads,
+        )?;
+        profile::log_parallel_stage(profile::ParallelStageProfile {
+            stage: "mosaic_residual_group_grid",
+            requested_threads: standard_mfs_grid_threads(),
+            actual_threads: contribution.worker_compute.len(),
+            chunking: "sample-range",
+            chunk_len: group.batch.len().div_ceil(actual_threads),
+            samples_total: group.batch.len(),
+            samples_per_worker: contribution.worker_samples.clone(),
+            local_grid_bytes_per_worker: complex64_grid_bytes(grid_nx, grid_ny, 1),
+            local_grid_count: 1,
+            local_alloc_zero_by_worker: contribution.worker_alloc.clone(),
+            worker_compute_by_worker: contribution.worker_compute.clone(),
+            join_duration: contribution.join_elapsed,
+            merge_duration: contribution.merge_elapsed,
+            stage_duration: contribution.stage_elapsed,
+        });
+        return Ok(contribution);
+    }
+    let started = Instant::now();
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    for sample_index in 0..group.batch.len() {
+        if !group.batch.gridable[sample_index] {
+            continue;
+        }
+        let weight = group.batch.weight[sample_index];
+        let sumwt_factor = group.batch.sumwt_factor[sample_index];
+        let visibility = group.batch.visibility[sample_index];
+        if !(weight.is_finite()
+            && weight > 0.0
+            && sumwt_factor.is_finite()
+            && sumwt_factor > 0.0
+            && visibility.re.is_finite()
+            && visibility.im.is_finite())
+        {
+            continue;
+        }
+        let Some(plan) = projector.plan_sample_for_grid(
+            group.batch.u_lambda[sample_index],
+            group.batch.v_lambda[sample_index],
+        ) else {
+            continue;
+        };
+        let predicted = model_grid
+            .map(|grid| projector.degrid_sample_planned(grid, &plan))
+            .unwrap_or_else(|| Complex32::new(0.0, 0.0));
+        let residual_visibility = visibility - predicted;
+        let grid_weight = weight * sumwt_factor;
+        projector.grid_sample_planned_f64(
+            &mut residual_grid,
+            &plan,
+            Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64)
+                * f64::from(grid_weight),
+        );
+    }
+    Ok(MosaicResidualGroupContribution {
+        residual_grid,
+        metal_stats: MosaicMetalGridStats::default(),
+        worker_samples: vec![group.batch.len()],
+        worker_compute: vec![started.elapsed()],
+        worker_alloc: Vec::new(),
+        join_elapsed: started.elapsed(),
+        merge_elapsed: Duration::ZERO,
+        stage_elapsed: started.elapsed(),
+    })
+}
+
+fn compute_mosaic_residual_group_grid_grouped_cpu(
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    prepared: &MosaicMetalPreparedGroup,
+) -> Result<MosaicResidualGroupContribution, ImagingError> {
+    let started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let alloc_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let alloc_elapsed = alloc_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let grid_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    accumulate_mosaic_grouped_residual_cpu(
+        projector,
+        &prepared.samples,
+        model_grid,
+        &mut residual_grid,
+    );
+    let grid_elapsed = grid_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let stage_elapsed = started.map_or(Duration::ZERO, |started| started.elapsed());
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_grouped_cpu_residual raw_samples={} grouped_samples={} grouped_sample_ratio={:.6} grid_ms={:.3} alloc_ms={:.3} total_ms={:.3}",
+            prepared.gridded_samples,
+            prepared.samples.len(),
+            if prepared.gridded_samples == 0 {
+                0.0
+            } else {
+                prepared.samples.len() as f64 / prepared.gridded_samples as f64
+            },
+            profile::millis(grid_elapsed),
+            profile::millis(alloc_elapsed),
+            profile::millis(stage_elapsed),
+        );
+    }
+    Ok(MosaicResidualGroupContribution {
+        residual_grid,
+        metal_stats: MosaicMetalGridStats::default(),
+        worker_samples: vec![group.batch.len()],
+        worker_compute: vec![grid_elapsed],
+        worker_alloc: vec![alloc_elapsed],
+        join_elapsed: stage_elapsed,
+        merge_elapsed: Duration::ZERO,
+        stage_elapsed,
+    })
+}
+
+fn accumulate_mosaic_residual_group_grid_grouped_cpu_into(
+    projector: &ScreenProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    prepared: &MosaicMetalPreparedGroup,
+    residual_grid: &mut Array2<Complex64>,
+) {
+    let started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    let grid_started = profile::standard_mfs_profile_block_detail_enabled().then(Instant::now);
+    accumulate_mosaic_grouped_residual_cpu(projector, &prepared.samples, model_grid, residual_grid);
+    let grid_elapsed = grid_started.map_or(Duration::ZERO, |started| started.elapsed());
+    let stage_elapsed = started.map_or(Duration::ZERO, |started| started.elapsed());
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "mosaic_grouped_cpu_residual_into raw_samples={} grouped_samples={} grouped_sample_ratio={:.6} grid_ms={:.3} total_ms={:.3}",
+            prepared.gridded_samples,
+            prepared.samples.len(),
+            if prepared.gridded_samples == 0 {
+                0.0
+            } else {
+                prepared.samples.len() as f64 / prepared.gridded_samples as f64
+            },
+            profile::millis(grid_elapsed),
+            profile::millis(stage_elapsed),
+        );
+    }
+}
+
+fn compute_mosaic_residual_group_grid_sample_ranges(
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    thread_count: usize,
+) -> Result<MosaicResidualGroupContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let chunk_len = group.batch.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let join_started = profile::maybe_profile_now();
+    let mut worker_results = Vec::<MosaicResidualRangeContribution>::new();
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for sample_start in (0..group.batch.len()).step_by(chunk_len) {
+            let sample_end = (sample_start + chunk_len).min(group.batch.len());
+            handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
+                let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                for sample_index in sample_start..sample_end {
+                    if !group.batch.gridable[sample_index] {
+                        continue;
+                    }
+                    let weight = group.batch.weight[sample_index];
+                    let sumwt_factor = group.batch.sumwt_factor[sample_index];
+                    let visibility = group.batch.visibility[sample_index];
+                    if !(weight.is_finite()
+                        && weight > 0.0
+                        && sumwt_factor.is_finite()
+                        && sumwt_factor > 0.0
+                        && visibility.re.is_finite()
+                        && visibility.im.is_finite())
+                    {
+                        continue;
+                    }
+                    let Some(plan) = projector.plan_sample_for_grid(
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                    ) else {
+                        continue;
+                    };
+                    let predicted = model_grid
+                        .map(|grid| projector.degrid_sample_planned(grid, &plan))
+                        .unwrap_or_else(|| Complex32::new(0.0, 0.0));
+                    let residual_visibility = visibility - predicted;
+                    let grid_weight = weight * sumwt_factor;
+                    projector.grid_sample_planned_f64(
+                        &mut residual_grid,
+                        &plan,
+                        Complex64::new(
+                            residual_visibility.re as f64,
+                            residual_visibility.im as f64,
+                        ) * f64::from(grid_weight),
+                    );
+                }
+                MosaicResidualRangeContribution {
+                    sample_start,
+                    samples_assigned: sample_end - sample_start,
+                    residual_grid,
+                    alloc_elapsed,
+                    compute_elapsed: profile::elapsed_since(compute_started),
+                }
+            }));
+        }
+        for handle in handles {
+            worker_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("mosaic residual sample worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = profile::elapsed_since(join_started);
+
+    worker_results.sort_by_key(|result| result.sample_start);
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let merge_started = profile::maybe_profile_now();
+    for contribution in &worker_results {
+        add_complex64_grid(&mut residual_grid, &contribution.residual_grid);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    Ok(MosaicResidualGroupContribution {
+        residual_grid,
+        metal_stats: MosaicMetalGridStats::default(),
+        worker_samples: worker_results
+            .iter()
+            .map(|result| result.samples_assigned)
+            .collect(),
+        worker_compute: worker_results
+            .iter()
+            .map(|result| result.compute_elapsed)
+            .collect(),
+        worker_alloc: worker_results
+            .iter()
+            .map(|result| result.alloc_elapsed)
+            .collect(),
+        join_elapsed,
+        merge_elapsed,
+        stage_elapsed: profile::elapsed_since(stage_started),
+    })
+}
+
+fn compute_mosaic_residual_group_grid_metal(
+    gridder: &StandardGridder,
+    group: &MosaicPointingGroup,
+    projector: &ScreenProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    prepared_group: Option<&MosaicMetalPreparedGroup>,
+) -> Result<MosaicResidualGroupContribution, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let collected_prepared;
+    let prepared = match prepared_group {
+        Some(prepared) => prepared,
+        None => {
+            collected_prepared = collect_mosaic_metal_samples(group, projector, None)?;
+            &collected_prepared
+        }
+    };
+    if prepared.samples.is_empty() {
+        return Ok(MosaicResidualGroupContribution {
+            residual_grid: Array2::<Complex64>::zeros((grid_nx, grid_ny)),
+            metal_stats: MosaicMetalGridStats::default(),
+            worker_samples: Vec::new(),
+            worker_compute: Vec::new(),
+            worker_alloc: Vec::new(),
+            join_elapsed: Duration::ZERO,
+            merge_elapsed: Duration::ZERO,
+            stage_elapsed: Duration::ZERO,
+        });
+    }
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let started = Instant::now();
+    let metal_stats = accumulate_mosaic_grid_metal_samples(
+        projector,
+        &prepared.samples,
+        model_grid,
+        &mut psf_grid,
+        &mut residual_grid,
+        MOSAIC_METAL_MODE_RESIDUAL,
+    )?;
+    Ok(MosaicResidualGroupContribution {
+        residual_grid: complex32_grid_to_complex64(&residual_grid),
+        metal_stats,
+        worker_samples: vec![prepared.samples.len()],
+        worker_compute: vec![started.elapsed()],
+        worker_alloc: Vec::new(),
+        join_elapsed: started.elapsed(),
+        merge_elapsed: Duration::ZERO,
+        stage_elapsed: started.elapsed(),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_mosaic_grid_metal_samples(
+    _projector: &ScreenProjector,
+    _samples: &[MosaicMetalSample],
+    _model_grid: Option<&Array2<Complex32>>,
+    _psf_grid: &mut Array2<Complex32>,
+    _residual_grid: &mut Array2<Complex32>,
+    _mode: u32,
+) -> Result<MosaicMetalGridStats, ImagingError> {
+    Err(ImagingError::Unsupported(
+        "mosaic backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_mosaic_grid_metal_samples(
+    projector: &ScreenProjector,
+    samples: &[MosaicMetalSample],
+    model_grid: Option<&Array2<Complex32>>,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+    mode: u32,
+) -> Result<MosaicMetalGridStats, ImagingError> {
+    use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
+
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
+        MTLLibrary, MTLResourceOptions, MTLSize,
+    };
+
+    let profile_detail = profile::standard_mfs_profile_detail_enabled();
+    let total_started = Instant::now();
+    let [grid_width, grid_height] = gridder_shape_from_complex32_grid(psf_grid);
+    let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+        ImagingError::InvalidRequest("mosaic Metal grid is too large".to_string())
+    })?;
+    if samples.is_empty() {
+        return Ok(MosaicMetalGridStats::default());
+    }
+    let partial_grid_count = mosaic_metal_partial_grid_count(samples.len(), cell_count);
+    let partial_chunk_len = samples.len().div_ceil(partial_grid_count);
+    let use_partial_grids = partial_grid_count > 1;
+    let sample_bytes = mem::size_of_val(samples);
+    let kernel_pack_started = Instant::now();
+    let compact_kernel = projector.compact_phased_kernel_weights();
+    let kernel_values = compact_kernel
+        .values
+        .iter()
+        .map(|value| WProjectMetalComplex {
+            re: value.re,
+            im: value.im,
+        })
+        .collect::<Vec<_>>();
+    let kernel_pack_elapsed = kernel_pack_started.elapsed();
+    let kernel_bytes = mem::size_of_val(kernel_values.as_slice());
+    let model_pack_started = Instant::now();
+    let model_values = if let Some(model_grid) = model_grid {
+        model_grid
+            .iter()
+            .map(|value| WProjectMetalComplex {
+                re: value.re,
+                im: value.im,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![WProjectMetalComplex { re: 0.0, im: 0.0 }]
+    };
+    let model_pack_elapsed = model_pack_started.elapsed();
+    let model_bytes = mem::size_of_val(model_values.as_slice());
+    let params = MosaicMetalParams {
+        sample_count: u32::try_from(samples.len()).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal sample count exceeds u32".to_string())
+        })?,
+        grid_width: u32::try_from(grid_width).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal grid width exceeds u32".to_string())
+        })?,
+        grid_height: u32::try_from(grid_height).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal grid height exceeds u32".to_string())
+        })?,
+        kernel_width: u32::try_from(compact_kernel.tap_width).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal tap width exceeds u32".to_string())
+        })?,
+        kernel_center: u32::try_from(compact_kernel.offset_bias).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal offset bias exceeds u32".to_string())
+        })?,
+        sampling: u32::try_from(compact_kernel.offset_count).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal offset count exceeds u32".to_string())
+        })?,
+        mode,
+        model_present: u32::from(model_grid.is_some()),
+        partial_grid_count: u32::try_from(partial_grid_count).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal partial grid count exceeds u32".to_string())
+        })?,
+        partial_chunk_len: u32::try_from(partial_chunk_len).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "mosaic Metal partial grid chunk length exceeds u32".to_string(),
+            )
+        })?,
+        _pad0: 0,
+    };
+
+    let device_queue_started = Instant::now();
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "mosaic backend 'metal' could not find a default Metal device".to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "mosaic backend 'metal' could not create a Metal command queue".to_string(),
+        )
+    })?;
+    let device_queue_elapsed = device_queue_started.elapsed();
+    let shader_compile_started = Instant::now();
+    let source = objc2_foundation::NSString::from_str(MOSAIC_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "mosaic backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let shader_compile_elapsed = shader_compile_started.elapsed();
+    let pipeline_started = Instant::now();
+    let entry_point = if use_partial_grids {
+        "mosaic_grid_chunked_samples"
+    } else {
+        "mosaic_grid_samples"
+    };
+    let function_name = objc2_foundation::NSString::from_str(entry_point);
+    let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
+        ImagingError::Unsupported(
+            "mosaic backend 'metal' shader entry point was not found".to_string(),
+        )
+    })?;
+    let pipeline = device
+        .newComputePipelineStateWithFunction_error(&function)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "mosaic backend 'metal' failed to create pipeline: {error:?}"
+            ))
+        })?;
+    let pipeline_elapsed = pipeline_started.elapsed();
+    let reduce_pipeline = if use_partial_grids {
+        let reduce_function_name =
+            objc2_foundation::NSString::from_str("mosaic_reduce_chunked_grids");
+        let reduce_function = library
+            .newFunctionWithName(&reduce_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "mosaic backend 'metal' reduction shader entry point was not found".to_string(),
+                )
+            })?;
+        Some(
+            device
+                .newComputePipelineStateWithFunction_error(&reduce_function)
+                .map_err(|error| {
+                    ImagingError::Unsupported(format!(
+                        "mosaic backend 'metal' failed to create reduction pipeline: {error:?}"
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
+    let storage_options = MTLResourceOptions::StorageModeShared;
+
+    let buffer_started = Instant::now();
+    let sample_buffer = unsafe {
+        let pointer =
+            NonNull::new(samples.as_ptr().cast::<c_void>() as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest("mosaic Metal sample pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                sample_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "mosaic backend 'metal' could not wrap sample buffer".to_string(),
+                )
+            })?
+    };
+    let kernel_buffer = unsafe {
+        let pointer = NonNull::new(kernel_values.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("mosaic Metal kernel pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                kernel_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "mosaic backend 'metal' could not wrap kernel buffer".to_string(),
+                )
+            })?
+    };
+    let model_buffer = unsafe {
+        let pointer = NonNull::new(model_values.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("mosaic Metal model pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                model_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "mosaic backend 'metal' could not wrap model buffer".to_string(),
+                )
+            })?
+    };
+    let params_buffer = unsafe {
+        let params_slice = slice::from_ref(&params);
+        let byte_len = mem::size_of_val(params_slice);
+        let pointer = NonNull::new(params_slice.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("mosaic Metal params pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "mosaic backend 'metal' could not allocate params buffer".to_string(),
+                )
+            })?
+    };
+    let output_bytes = cell_count
+        .checked_mul(mem::size_of::<u32>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("mosaic Metal output grid is too large".to_string())
+        })?;
+    let partial_output_bytes = output_bytes
+        .checked_mul(partial_grid_count)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "mosaic Metal partial output grid is too large".to_string(),
+            )
+        })?;
+    let psf_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "mosaic backend 'metal' could not allocate PSF real buffer".to_string(),
+            )
+        })?;
+    let psf_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "mosaic backend 'metal' could not allocate PSF imag buffer".to_string(),
+            )
+        })?;
+    let residual_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "mosaic backend 'metal' could not allocate residual real buffer".to_string(),
+            )
+        })?;
+    let residual_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "mosaic backend 'metal' could not allocate residual imag buffer".to_string(),
+            )
+        })?;
+    let partial_psf_re = if use_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "mosaic backend 'metal' could not allocate partial PSF real buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_psf_im = if use_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "mosaic backend 'metal' could not allocate partial PSF imag buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_residual_re = if use_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "mosaic backend 'metal' could not allocate partial residual real buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_residual_im = if use_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "mosaic backend 'metal' could not allocate partial residual imag buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let buffer_elapsed = buffer_started.elapsed();
+    let accum_psf_re = partial_psf_re.as_ref().unwrap_or(&psf_re);
+    let accum_psf_im = partial_psf_im.as_ref().unwrap_or(&psf_im);
+    let accum_residual_re = partial_residual_re.as_ref().unwrap_or(&residual_re);
+    let accum_residual_im = partial_residual_im.as_ref().unwrap_or(&residual_im);
+    let accum_output_bytes = if use_partial_grids {
+        partial_output_bytes
+    } else {
+        output_bytes
+    };
+    let zero_started = Instant::now();
+    unsafe {
+        ptr::write_bytes(
+            accum_psf_re.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_psf_im.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_residual_re.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_residual_im.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+    }
+    let zero_elapsed = zero_started.elapsed();
+
+    if profile_detail {
+        eprintln!(
+            "mosaic_metal_dispatch_begin mode={} entry={} samples={} grid={}x{} support={} full_kernel_width={} compact_tap_width={} offset_count={} partial_grids={} partial_chunk_len={} sample_bytes={} kernel_bytes={} model_bytes={} accum_output_bytes={}",
+            mode,
+            entry_point,
+            samples.len(),
+            grid_width,
+            grid_height,
+            projector.support(),
+            projector.kernel_weight_width(),
+            compact_kernel.tap_width,
+            compact_kernel.offset_count,
+            partial_grid_count,
+            partial_chunk_len,
+            sample_bytes,
+            kernel_bytes,
+            model_bytes,
+            accum_output_bytes * 4,
+        );
+    }
+
+    let encode_started = Instant::now();
+    let command_buffer = queue.commandBuffer().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "mosaic backend 'metal' could not create a command buffer".to_string(),
+        )
+    })?;
+    let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "mosaic backend 'metal' could not create a compute encoder".to_string(),
+        )
+    })?;
+    encoder.setComputePipelineState(&pipeline);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(&sample_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(&model_buffer), 0, 2);
+        encoder.setBuffer_offset_atIndex(Some(accum_psf_re), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(accum_psf_im), 0, 4);
+        encoder.setBuffer_offset_atIndex(Some(accum_residual_re), 0, 5);
+        encoder.setBuffer_offset_atIndex(Some(accum_residual_im), 0, 6);
+        encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 7);
+    }
+    let thread_count = samples.len();
+    let thread_width = pipeline.threadExecutionWidth().max(1);
+    let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+    let threads_per_group = thread_width.min(max_threads).min(thread_count).max(1);
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: thread_count,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: threads_per_group,
+            height: 1,
+            depth: 1,
+        },
+    );
+    encoder.endEncoding();
+    let encode_elapsed = encode_started.elapsed();
+    let dispatch_started = Instant::now();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    let dispatch_elapsed = dispatch_started.elapsed();
+    if command_buffer.status() == MTLCommandBufferStatus::Error {
+        let message = command_buffer
+            .error()
+            .map(|error| format!("{error:?}"))
+            .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+        return Err(ImagingError::Unsupported(format!(
+            "mosaic backend 'metal' command failed: {message}"
+        )));
+    }
+    let mut reduce_elapsed = Duration::ZERO;
+    if use_partial_grids {
+        let reduce_started = Instant::now();
+        let reduce_command_buffer = queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "mosaic backend 'metal' could not create a reduction command buffer".to_string(),
+            )
+        })?;
+        let reduce_encoder = reduce_command_buffer
+            .computeCommandEncoder()
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "mosaic backend 'metal' could not create a reduction compute encoder"
+                        .to_string(),
+                )
+            })?;
+        reduce_encoder
+            .setComputePipelineState(reduce_pipeline.as_ref().expect("reduction pipeline"));
+        unsafe {
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_psf_re), 0, 0);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_psf_im), 0, 1);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_residual_re), 0, 2);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_residual_im), 0, 3);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&psf_re), 0, 4);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&psf_im), 0, 5);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&residual_re), 0, 6);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&residual_im), 0, 7);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 8);
+        }
+        let reduce_thread_count = cell_count;
+        let reduce_thread_width = reduce_pipeline
+            .as_ref()
+            .expect("reduction pipeline")
+            .threadExecutionWidth()
+            .max(1);
+        let reduce_max_threads = reduce_pipeline
+            .as_ref()
+            .expect("reduction pipeline")
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let reduce_threads_per_group = reduce_thread_width
+            .min(reduce_max_threads)
+            .min(reduce_thread_count)
+            .max(1);
+        reduce_encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: reduce_thread_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: reduce_threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        reduce_encoder.endEncoding();
+        reduce_command_buffer.commit();
+        reduce_command_buffer.waitUntilCompleted();
+        reduce_elapsed = reduce_started.elapsed();
+        if reduce_command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = reduce_command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "mosaic backend 'metal' reduction command failed: {message}"
+            )));
+        }
+    }
+
+    let readback_started = Instant::now();
+    let residual_re_values =
+        unsafe { slice::from_raw_parts(residual_re.contents().as_ptr().cast::<f32>(), cell_count) };
+    let residual_im_values =
+        unsafe { slice::from_raw_parts(residual_im.contents().as_ptr().cast::<f32>(), cell_count) };
+    if mode == MOSAIC_METAL_MODE_DIRTY {
+        let psf_re_values =
+            unsafe { slice::from_raw_parts(psf_re.contents().as_ptr().cast::<f32>(), cell_count) };
+        let psf_im_values =
+            unsafe { slice::from_raw_parts(psf_im.contents().as_ptr().cast::<f32>(), cell_count) };
+        for (
+            (((psf_cell, &psf_re_value), &psf_im_value), residual_cell),
+            (&residual_re_value, &residual_im_value),
+        ) in psf_grid
+            .as_slice_memory_order_mut()
+            .expect("mosaic PSF grid should be contiguous")
+            .iter_mut()
+            .zip(psf_re_values)
+            .zip(psf_im_values)
+            .zip(
+                residual_grid
+                    .as_slice_memory_order_mut()
+                    .expect("mosaic residual grid should be contiguous")
+                    .iter_mut(),
+            )
+            .zip(residual_re_values.iter().zip(residual_im_values))
+        {
+            *psf_cell = Complex32::new(psf_re_value, psf_im_value);
+            *residual_cell = Complex32::new(residual_re_value, residual_im_value);
+        }
+    } else {
+        for (residual_cell, (&residual_re_value, &residual_im_value)) in residual_grid
+            .as_slice_memory_order_mut()
+            .expect("mosaic residual grid should be contiguous")
+            .iter_mut()
+            .zip(residual_re_values.iter().zip(residual_im_values))
+        {
+            *residual_cell = Complex32::new(residual_re_value, residual_im_value);
+        }
+    }
+    let readback_elapsed = readback_started.elapsed();
+
+    let stats = MosaicMetalGridStats {
+        calls: 1,
+        dirty_calls: usize::from(mode == MOSAIC_METAL_MODE_DIRTY),
+        residual_calls: usize::from(mode == MOSAIC_METAL_MODE_RESIDUAL),
+        samples: samples.len(),
+        kernel_pack: kernel_pack_elapsed,
+        device_queue: device_queue_elapsed,
+        shader_compile: shader_compile_elapsed,
+        pipeline: pipeline_elapsed,
+        buffer_alloc: buffer_elapsed,
+        model_pack: model_pack_elapsed,
+        zero_outputs: zero_elapsed,
+        encode: encode_elapsed,
+        dispatch_wait: dispatch_elapsed,
+        reduce_wait: reduce_elapsed,
+        readback: readback_elapsed,
+        total: total_started.elapsed(),
+    };
+
+    if profile_detail {
+        eprintln!(
+            "mosaic_metal_grid mode={} entry={} samples={} grid={}x{} support={} full_kernel_width={} compact_tap_width={} offset_count={} partial_grids={} partial_chunk_len={} sample_bytes={} kernel_bytes={} model_bytes={} output_bytes={} partial_output_bytes={} thread_width={} max_threads={} threads_per_group={} kernel_pack_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_alloc_ms={:.3} model_pack_ms={:.3} zero_outputs_ms={:.3} encode_ms={:.3} dispatch_wait_ms={:.3} reduce_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            mode,
+            entry_point,
+            samples.len(),
+            grid_width,
+            grid_height,
+            projector.support(),
+            projector.kernel_weight_width(),
+            compact_kernel.tap_width,
+            compact_kernel.offset_count,
+            partial_grid_count,
+            partial_chunk_len,
+            sample_bytes,
+            kernel_bytes,
+            model_bytes,
+            output_bytes * 4,
+            if use_partial_grids {
+                partial_output_bytes * 4
+            } else {
+                0
+            },
+            thread_width,
+            max_threads,
+            threads_per_group,
+            profile::millis(kernel_pack_elapsed),
+            profile::millis(device_queue_elapsed),
+            profile::millis(shader_compile_elapsed),
+            profile::millis(pipeline_elapsed),
+            profile::millis(buffer_elapsed),
+            profile::millis(model_pack_elapsed),
+            profile::millis(zero_elapsed),
+            profile::millis(encode_elapsed),
+            profile::millis(dispatch_elapsed),
+            profile::millis(reduce_elapsed),
+            profile::millis(readback_elapsed),
+            profile::millis(stats.total),
+        );
+    }
+    Ok(stats)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn gridder_shape_from_complex32_grid(grid: &Array2<Complex32>) -> [usize; 2] {
+    let dim = grid.dim();
+    [dim.0, dim.1]
+}
+
+#[cfg(target_os = "macos")]
+const MOSAIC_METAL_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct MosaicSample {
+    uint loc;
+    uint support;
+    int2 offset;
+    int2 range_x;
+    int2 range_y;
+    float weight;
+    float visibility_re;
+    float visibility_im;
+    uint kernel_base;
+};
+
+struct MosaicParams {
+    uint sample_count;
+    uint grid_width;
+    uint grid_height;
+    uint kernel_width;
+    uint kernel_center;
+    uint sampling;
+    uint mode;
+    uint model_present;
+    uint partial_grid_count;
+    uint partial_chunk_len;
+    uint _pad0;
+};
+
+static inline void mosaic_atomic_add_float(device atomic_float *address, float value) {
+    atomic_fetch_add_explicit(address, value, memory_order_relaxed);
+}
+
+static inline uint mosaic_sample_loc_x(MosaicSample sample) {
+    return sample.loc & 0xffffu;
+}
+
+static inline uint mosaic_sample_loc_y(MosaicSample sample) {
+    return sample.loc >> 16;
+}
+
+static inline uint mosaic_kernel_index(MosaicSample sample, constant MosaicParams &params, int ix, int iy) {
+    const uint offset_x = uint(sample.offset.x + int(params.kernel_center));
+    const uint offset_y = uint(sample.offset.y + int(params.kernel_center));
+    const uint tap_x = uint(ix + int(sample.support));
+    const uint tap_y = uint(iy + int(sample.support));
+    const uint offset_base =
+        (offset_y * params.sampling + offset_x) * params.kernel_width * params.kernel_width;
+    return sample.kernel_base + offset_base + tap_y * params.kernel_width + tap_x;
+}
+
+kernel void mosaic_grid_samples(
+    device const MosaicSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device const float2 *model [[buffer(2)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant MosaicParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const MosaicSample sample = samples[sample_index];
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    const bool needs_model = params.mode == 2u && params.model_present != 0u;
+    if (needs_model) {
+        for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
+            const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
+            for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
+                const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+                const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
+                const float2 cell = model[grid_x * params.grid_height + grid_y];
+                predicted_re += cwt.x * cell.x + cwt.y * cell.y;
+                predicted_im += cwt.x * cell.y - cwt.y * cell.x;
+            }
+        }
+    }
+
+    const bool write_psf = params.mode == 1u;
+    const bool write_residual = params.mode == 1u || params.mode == 2u;
+    const float residual_value_re = sample.visibility_re - predicted_re;
+    const float residual_value_im = sample.visibility_im - predicted_im;
+    for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
+        const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
+        for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
+            const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+            const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
+            const uint cell = grid_x * params.grid_height + grid_y;
+            if (write_psf) {
+                mosaic_atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+                mosaic_atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            }
+            if (write_residual) {
+                const float weighted_re =
+                    sample.weight * (residual_value_re * cwt.x - residual_value_im * cwt.y);
+                const float weighted_im =
+                    sample.weight * (residual_value_re * cwt.y + residual_value_im * cwt.x);
+                mosaic_atomic_add_float(&residual_re[cell], weighted_re);
+                mosaic_atomic_add_float(&residual_im[cell], weighted_im);
+            }
+        }
+    }
+}
+
+kernel void mosaic_grid_chunked_samples(
+    device const MosaicSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device const float2 *model [[buffer(2)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant MosaicParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const MosaicSample sample = samples[sample_index];
+    const uint partial_grid_index = min(
+        sample_index / max(params.partial_chunk_len, 1u),
+        params.partial_grid_count - 1u
+    );
+    const uint partial_grid_offset = partial_grid_index * params.grid_width * params.grid_height;
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    const bool needs_model = params.mode == 2u && params.model_present != 0u;
+    if (needs_model) {
+        for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
+            const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
+            for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
+                const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+                const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
+                const float2 cell = model[grid_x * params.grid_height + grid_y];
+                predicted_re += cwt.x * cell.x + cwt.y * cell.y;
+                predicted_im += cwt.x * cell.y - cwt.y * cell.x;
+            }
+        }
+    }
+
+    const bool write_psf = params.mode == 1u;
+    const bool write_residual = params.mode == 1u || params.mode == 2u;
+    const float residual_value_re = sample.visibility_re - predicted_re;
+    const float residual_value_im = sample.visibility_im - predicted_im;
+    for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
+        const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
+        for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
+            const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+            const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
+            const uint cell = partial_grid_offset + grid_x * params.grid_height + grid_y;
+            if (write_psf) {
+                mosaic_atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+                mosaic_atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            }
+            if (write_residual) {
+                const float weighted_re =
+                    sample.weight * (residual_value_re * cwt.x - residual_value_im * cwt.y);
+                const float weighted_im =
+                    sample.weight * (residual_value_re * cwt.y + residual_value_im * cwt.x);
+                mosaic_atomic_add_float(&residual_re[cell], weighted_re);
+                mosaic_atomic_add_float(&residual_im[cell], weighted_im);
+            }
+        }
+    }
+}
+
+kernel void mosaic_reduce_chunked_grids(
+    device const float *partial_psf_re [[buffer(0)]],
+    device const float *partial_psf_im [[buffer(1)]],
+    device const float *partial_residual_re [[buffer(2)]],
+    device const float *partial_residual_im [[buffer(3)]],
+    device float *psf_re [[buffer(4)]],
+    device float *psf_im [[buffer(5)]],
+    device float *residual_re [[buffer(6)]],
+    device float *residual_im [[buffer(7)]],
+    constant MosaicParams &params [[buffer(8)]],
+    uint cell [[thread_position_in_grid]]
+) {
+    const uint cell_count = params.grid_width * params.grid_height;
+    if (cell >= cell_count) {
+        return;
+    }
+
+    float sum_psf_re = 0.0f;
+    float sum_psf_im = 0.0f;
+    float sum_residual_re = 0.0f;
+    float sum_residual_im = 0.0f;
+    for (uint partial = 0; partial < params.partial_grid_count; ++partial) {
+        const uint index = partial * cell_count + cell;
+        sum_psf_re += partial_psf_re[index];
+        sum_psf_im += partial_psf_im[index];
+        sum_residual_re += partial_residual_re[index];
+        sum_residual_im += partial_residual_im[index];
+    }
+    psf_re[cell] = sum_psf_re;
+    psf_im[cell] = sum_psf_im;
+    residual_re[cell] = sum_residual_re;
+    residual_im[cell] = sum_residual_im;
+}
+"#;
 
 fn flat_sky_mosaic_model_for_prediction(
     model: &Array2<f32>,
@@ -5324,12 +10785,9 @@ fn cached_mosaic_projector(
     frequency_hz: f64,
     conv_sampling: usize,
     screen_power: u8,
+    apply_phase_gradient: bool,
 ) -> Result<ScreenProjector, ImagingError> {
-    let key = (
-        primary_beam_model_key(primary_beam_model),
-        frequency_hz.to_bits(),
-        screen_power,
-    );
+    let key = mosaic_projector_key(primary_beam_model, frequency_hz, screen_power);
     let base = if let Some(projector) = cache.get(&key) {
         projector.clone()
     } else {
@@ -5347,13 +10805,33 @@ fn cached_mosaic_projector(
         cache.insert(key, projector.clone());
         projector
     };
-    let pixel_offset =
-        mosaic_pointing_pixel_offset(geometry, phase_center_direction_rad, pointing_direction_rad);
-    let phase_gradient_rad_per_sample = [
-        -pixel_offset[0] * std::f64::consts::TAU / (geometry.nx() as f64 * conv_sampling as f64),
-        -pixel_offset[1] * std::f64::consts::TAU / (geometry.ny() as f64 * conv_sampling as f64),
-    ];
-    Ok(base.with_phase_gradient(phase_gradient_rad_per_sample))
+    if !apply_phase_gradient {
+        return Ok(base);
+    }
+    Ok(base
+        .clone()
+        .with_phase_gradient(mosaic_projector_phase_gradient_rad_per_sample(
+            geometry,
+            phase_center_direction_rad,
+            pointing_direction_rad,
+            conv_sampling,
+        )))
+}
+
+fn mosaic_projector_key(
+    primary_beam_model: PrimaryBeamModel,
+    frequency_hz: f64,
+    screen_power: u8,
+) -> MosaicProjectorKey {
+    (
+        primary_beam_model_key(primary_beam_model),
+        mosaic_projector_frequency_key_bits(frequency_hz),
+        screen_power,
+    )
+}
+
+fn mosaic_projector_frequency_key_bits(frequency_hz: f64) -> u64 {
+    frequency_hz.to_bits()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5368,42 +10846,104 @@ fn build_mosaic_projector(
     screen_power: u8,
     apply_phase_gradient: bool,
 ) -> Result<ScreenProjector, ImagingError> {
-    let projector = ScreenProjector::from_hetarray_screens(
-        geometry,
-        gridder,
-        conv_sampling,
-        mosaic_hetarray_screen_conv_size(geometry, primary_beam_model, frequency_hz),
-        |l, m| {
-            let radius_rad = (l * l + m * m).sqrt();
-            let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
-            let value = match screen_power {
-                1 => vp,
-                2 => vp * vp,
-                4 => {
+    let conv_size = hetarray_screen_conv_size(geometry);
+    let projector = match primary_beam_model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => {
+            let airy_lookup = AiryVoltageLookup::new(dish_diameter_m, blockage_diameter_m);
+            ScreenProjector::from_hetarray_screens(
+                geometry,
+                gridder,
+                conv_sampling,
+                conv_size,
+                |l, m| {
+                    let vp = airy_lookup.evaluate_offsets(l, m, frequency_hz);
+                    let value = match screen_power {
+                        1 => vp,
+                        2 => vp * vp,
+                        4 => {
+                            let pb = vp * vp;
+                            pb * pb
+                        }
+                        _ => unreachable!("unsupported mosaic screen power"),
+                    };
+                    Complex32::new(value, 0.0)
+                },
+                |l, m| {
+                    let vp = airy_lookup.evaluate_offsets(l, m, frequency_hz);
                     let pb = vp * vp;
-                    pb * pb
-                }
-                _ => unreachable!("unsupported mosaic screen power"),
-            };
-            Complex32::new(value, 0.0)
-        },
-        |l, m| {
-            let radius_rad = (l * l + m * m).sqrt();
-            let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
-            let pb = vp * vp;
-            Complex32::new(pb * pb, 0.0)
-        },
-    )?;
+                    Complex32::new(pb * pb, 0.0)
+                },
+            )?
+        }
+        PrimaryBeamModel::EvlaLBandCommon => ScreenProjector::from_hetarray_screens(
+            geometry,
+            gridder,
+            conv_sampling,
+            conv_size,
+            |l, m| {
+                let vp = primary_beam_voltage_pattern_for_offsets(
+                    primary_beam_model,
+                    l,
+                    m,
+                    frequency_hz,
+                );
+                let value = match screen_power {
+                    1 => vp,
+                    2 => vp * vp,
+                    4 => {
+                        let pb = vp * vp;
+                        pb * pb
+                    }
+                    _ => unreachable!("unsupported mosaic screen power"),
+                };
+                Complex32::new(value, 0.0)
+            },
+            |l, m| {
+                let vp = primary_beam_voltage_pattern_for_offsets(
+                    primary_beam_model,
+                    l,
+                    m,
+                    frequency_hz,
+                );
+                let pb = vp * vp;
+                Complex32::new(pb * pb, 0.0)
+            },
+        )?,
+    };
     if !apply_phase_gradient {
         return Ok(projector);
     }
+    let projector_sampling = projector.sampling();
+    Ok(
+        projector.with_phase_gradient(mosaic_projector_phase_gradient_rad_per_sample(
+            geometry,
+            phase_center_direction_rad,
+            pointing_direction_rad,
+            projector_sampling,
+        )),
+    )
+}
+
+fn mosaic_projector_phase_gradient_rad_per_sample(
+    geometry: ImageGeometry,
+    phase_center_direction_rad: [f64; 2],
+    pointing_direction_rad: [f64; 2],
+    conv_sampling: usize,
+) -> [f64; 2] {
     let pixel_offset =
         mosaic_pointing_pixel_offset(geometry, phase_center_direction_rad, pointing_direction_rad);
-    let phase_gradient_rad_per_sample = [
-        -pixel_offset[0] * std::f64::consts::TAU / (geometry.nx() as f64 * conv_sampling as f64),
-        -pixel_offset[1] * std::f64::consts::TAU / (geometry.ny() as f64 * conv_sampling as f64),
-    ];
-    Ok(projector.with_phase_gradient(phase_gradient_rad_per_sample))
+    // CASA's HetArrayConvFunc applies the pointing phase ramp to the final
+    // stored convolution function. MosaicFT passes mosaic.oversampling as
+    // convSamp; the HetArray temporary lattice uses internal convSampling=1
+    // and is resampled to this stored sampling before rephasing.
+    let conv_samp = conv_sampling as f64;
+    [
+        -pixel_offset[0] * std::f64::consts::TAU / (geometry.nx() as f64 * conv_samp),
+        -pixel_offset[1] * std::f64::consts::TAU / (geometry.ny() as f64 * conv_samp),
+    ]
 }
 
 fn mosaic_projector_sampling(geometry: ImageGeometry) -> usize {
@@ -5411,42 +10951,6 @@ fn mosaic_projector_sampling(geometry: ImageGeometry) -> usize {
     // which defaults to 10, after enforcing a minimum of 10.
     let _ = geometry;
     10
-}
-
-fn mosaic_hetarray_screen_conv_size(
-    geometry: ImageGeometry,
-    primary_beam_model: PrimaryBeamModel,
-    frequency_hz: f64,
-) -> usize {
-    let pb_support_pixels =
-        primary_beam_support_diameter_pixels(primary_beam_model, geometry, frequency_hz)
-            .floor()
-            .max(0.0) as usize;
-    hetarray_screen_conv_size_for_support(geometry, pb_support_pixels)
-}
-
-fn primary_beam_support_diameter_pixels(
-    primary_beam_model: PrimaryBeamModel,
-    geometry: ImageGeometry,
-    frequency_hz: f64,
-) -> f64 {
-    if !(frequency_hz.is_finite() && frequency_hz > 0.0) {
-        return 0.0;
-    }
-    let Some(max_radius_arcsec_at_100ghz) =
-        primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model)
-    else {
-        return 0.0;
-    };
-    let radius_rad = (max_radius_arcsec_at_100ghz / 3600.0).to_radians() * (100.0e9 / frequency_hz);
-    let pixel_rad = geometry.cell_size_rad[0]
-        .abs()
-        .min(geometry.cell_size_rad[1].abs());
-    if pixel_rad > 0.0 {
-        2.0 * radius_rad / pixel_rad
-    } else {
-        0.0
-    }
 }
 
 fn mosaic_pointing_contributes_by_simple_pb_center(
@@ -5531,6 +11035,30 @@ pub fn primary_beam_voltage_pattern(
     }
 }
 
+fn primary_beam_voltage_pattern_for_offsets(
+    primary_beam_model: PrimaryBeamModel,
+    l_rad: f64,
+    m_rad: f64,
+    frequency_hz: f64,
+) -> f32 {
+    match primary_beam_model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => airy_voltage_pattern_for_offsets(
+            l_rad,
+            m_rad,
+            frequency_hz,
+            dish_diameter_m,
+            blockage_diameter_m,
+        ),
+        PrimaryBeamModel::EvlaLBandCommon => {
+            let radius_rad = (l_rad * l_rad + m_rad * m_rad).sqrt();
+            evla_common_voltage_pattern(radius_rad, frequency_hz)
+        }
+    }
+}
+
 fn airy_voltage_pattern(
     radius_rad: f64,
     frequency_hz: f64,
@@ -5547,7 +11075,96 @@ fn airy_voltage_pattern(
     // CASA PBMath1D stores per-pixel radius terms as Float before looking up
     // the tabulated voltage pattern.
     let radius_arcmin_ghz = (radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
-    let maximum_radius_arcmin_ghz = casa_airy_max_radius_arcmin_ghz();
+    airy_voltage_pattern_from_arcmin_ghz(radius_arcmin_ghz, dish_diameter_m, blockage_diameter_m)
+}
+
+fn airy_voltage_pattern_for_offsets(
+    l_rad: f64,
+    m_rad: f64,
+    frequency_hz: f64,
+    dish_diameter_m: f64,
+    blockage_diameter_m: f64,
+) -> f32 {
+    if !(l_rad.is_finite() && m_rad.is_finite() && frequency_hz.is_finite() && frequency_hz > 0.0) {
+        return 0.0;
+    }
+    let l_deg = l_rad.to_degrees() as f32;
+    let m_deg = m_rad.to_degrees() as f32;
+    let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
+    let radius_arcmin_ghz = (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+    airy_voltage_pattern_from_arcmin_ghz(radius_arcmin_ghz, dish_diameter_m, blockage_diameter_m)
+}
+
+#[derive(Clone)]
+struct AiryVoltageLookup {
+    maximum_radius_arcmin_ghz: f64,
+    values: Vec<f32>,
+}
+
+impl AiryVoltageLookup {
+    fn new(dish_diameter_m: f64, blockage_diameter_m: f64) -> Self {
+        let maximum_radius_arcmin_ghz =
+            casa_airy_max_radius_arcmin_ghz(dish_diameter_m, blockage_diameter_m);
+        Self::new_with_maximum_radius(
+            maximum_radius_arcmin_ghz,
+            dish_diameter_m,
+            blockage_diameter_m,
+        )
+    }
+
+    fn new_with_maximum_radius(
+        maximum_radius_arcmin_ghz: f64,
+        dish_diameter_m: f64,
+        blockage_diameter_m: f64,
+    ) -> Self {
+        let sample_count_minus_one = 9_999.0;
+        let values = (0..=sample_count_minus_one as usize)
+            .map(|index| {
+                airy_voltage_pattern_from_table_index(
+                    index as f64,
+                    maximum_radius_arcmin_ghz,
+                    dish_diameter_m,
+                    blockage_diameter_m,
+                )
+            })
+            .collect();
+        Self {
+            maximum_radius_arcmin_ghz,
+            values,
+        }
+    }
+
+    fn evaluate_offsets(&self, l_rad: f64, m_rad: f64, frequency_hz: f64) -> f32 {
+        if !(l_rad.is_finite()
+            && m_rad.is_finite()
+            && frequency_hz.is_finite()
+            && frequency_hz > 0.0)
+        {
+            return 0.0;
+        }
+        let l_deg = l_rad.to_degrees() as f32;
+        let m_deg = m_rad.to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
+        let radius_arcmin_ghz =
+            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+        if radius_arcmin_ghz > self.maximum_radius_arcmin_ghz {
+            return 0.0;
+        }
+        let sample_count_minus_one = (self.values.len() - 1) as f64;
+        let index = (radius_arcmin_ghz * sample_count_minus_one / self.maximum_radius_arcmin_ghz)
+            .floor()
+            .clamp(0.0, sample_count_minus_one) as usize;
+        self.values[index]
+    }
+}
+
+fn airy_voltage_pattern_from_arcmin_ghz(
+    radius_arcmin_ghz: f64,
+    dish_diameter_m: f64,
+    blockage_diameter_m: f64,
+) -> f32 {
+    let maximum_radius_arcmin_ghz =
+        casa_airy_max_radius_arcmin_ghz(dish_diameter_m, blockage_diameter_m);
     if radius_arcmin_ghz > maximum_radius_arcmin_ghz {
         return 0.0;
     }
@@ -5555,6 +11172,21 @@ fn airy_voltage_pattern(
     let index = (radius_arcmin_ghz * sample_count_minus_one / maximum_radius_arcmin_ghz)
         .floor()
         .clamp(0.0, sample_count_minus_one);
+    airy_voltage_pattern_from_table_index(
+        index,
+        maximum_radius_arcmin_ghz,
+        dish_diameter_m,
+        blockage_diameter_m,
+    )
+}
+
+fn airy_voltage_pattern_from_table_index(
+    index: f64,
+    maximum_radius_arcmin_ghz: f64,
+    dish_diameter_m: f64,
+    blockage_diameter_m: f64,
+) -> f32 {
+    let sample_count_minus_one = 9_999.0;
     let dimensionless_max_radius =
         maximum_radius_arcmin_ghz * 7.016 / (1.566 * 60.0) * dish_diameter_m / 24.5;
     let x = index * dimensionless_max_radius / sample_count_minus_one;
@@ -5576,21 +11208,30 @@ fn primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model: PrimaryBeamModel
         PrimaryBeamModel::Airy {
             dish_diameter_m,
             blockage_diameter_m,
-        } => Some(airy_max_radius_arcsec_at_100ghz(
-            dish_diameter_m,
-            blockage_diameter_m,
-        )),
+        } => Some(
+            casa_airy_max_radius_arcmin_ghz(dish_diameter_m, blockage_diameter_m) * 60.0 / 100.0,
+        ),
         PrimaryBeamModel::EvlaLBandCommon => Some(58.0 * 60.0 / 100.0),
     }
 }
 
-fn airy_max_radius_arcsec_at_100ghz(dish_diameter_m: f64, blockage_diameter_m: f64) -> f64 {
-    let _ = (dish_diameter_m, blockage_diameter_m);
-    casa_airy_max_radius_arcmin_ghz() * 60.0 / 100.0
+fn casa_airy_max_radius_arcmin_ghz(dish_diameter_m: f64, blockage_diameter_m: f64) -> f64 {
+    if approx_eq(dish_diameter_m, 10.7, 1.0e-6) && approx_eq(blockage_diameter_m, 0.75, 1.0e-6) {
+        // CASA's HetArrayConvFunc ALMA 12m override builds PBMath1DAiry with
+        // support=max(150 arcsec, fov/5) at 100 GHz for typical Wave 3 images.
+        250.0
+    } else if approx_eq(dish_diameter_m, 6.25, 1.0e-6)
+        && approx_eq(blockage_diameter_m, 0.75, 1.0e-6)
+    {
+        // CASA's ACA override uses support=max(300 arcsec, fov/3) at 100 GHz.
+        500.0
+    } else {
+        1.784 * 60.0
+    }
 }
 
-fn casa_airy_max_radius_arcmin_ghz() -> f64 {
-    1.784 * 60.0
+fn approx_eq(left: f64, right: f64, tolerance: f64) -> bool {
+    (left - right).abs() <= tolerance
 }
 
 fn evla_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
@@ -5870,6 +11511,7 @@ fn run_mosaic_image_domain_controller(
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     warnings: &mut Vec<String>,
+    metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
 ) -> Result<CottonSchwabState, ImagingError> {
     if request.deconvolver == Deconvolver::Mtmfs {
         return Err(ImagingError::Unsupported(
@@ -5974,18 +11616,19 @@ fn run_mosaic_image_domain_controller(
                 let state = multiscale_state
                     .as_mut()
                     .expect("multiscale state should exist");
-                let probe = select_multiscale_candidate(state, request.clean_mask.as_ref())
-                    .map(|candidate| MinorCycleProbe {
-                        initial_scale_pixels: Some(
-                            effective_multiscale_scales(request)[candidate.scale_index],
-                        ),
-                        initial_candidate_strength_jy_per_beam: Some(candidate.strength),
-                        initial_candidate_position: Some([
-                            candidate.position.0,
-                            candidate.position.1,
-                        ]),
-                    })
-                    .unwrap_or_default();
+                let probe = select_multiscale_candidate(
+                    state,
+                    request.clean_mask.as_ref(),
+                    ImageWindow::full(residual.dim()),
+                )
+                .map(|candidate| MinorCycleProbe {
+                    initial_scale_pixels: Some(
+                        effective_multiscale_scales(request)[candidate.scale_index],
+                    ),
+                    initial_candidate_strength_jy_per_beam: Some(candidate.strength),
+                    initial_candidate_position: Some([candidate.position.0, candidate.position.1]),
+                })
+                .unwrap_or_default();
                 (
                     run_multiscale_minor_cycle(
                         request,
@@ -6055,6 +11698,7 @@ fn run_mosaic_image_domain_controller(
             psf_state,
             weight_image,
             stage_timings,
+            metal_group_cache,
         )?;
         major_cycles += 1;
         residual_needs_refresh = false;
@@ -6092,6 +11736,7 @@ fn run_mosaic_image_domain_controller(
             psf_state,
             weight_image,
             stage_timings,
+            metal_group_cache,
         )?;
         major_cycles += 1;
     }
@@ -6333,6 +11978,11 @@ fn run_clark_minor_cycle(
             peak_location_masked(&working_residual, request.clean_mask.as_ref())
         else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break_clark_trace(
+                cycle_component_updates,
+                "no_cleanable_pixels",
+                cycle_threshold_jy_per_beam,
+            );
             break;
         };
         let cycle_peak_abs = cycle_peak_value.abs();
@@ -6355,50 +12005,78 @@ fn run_clark_minor_cycle(
             request.clean_mask.as_ref(),
             selection_limit,
         );
+        append_clark_trace(format!(
+            "{{\"event\":\"subcycle_start\",\"subcycle\":{},\"cycle_update_start\":{},\"cycle_peak_abs\":{:.17e},\"max_exterior_abs\":{:.17e},\"factor\":{:.17e},\"flux_limit\":{:.17e},\"cycle_threshold\":{:.17e},\"selection_limit\":{:.17e},\"active_pixels\":{},\"cycle_reported_niter\":{},\"max_minor_iterations_this_cycle\":{},\"algorithm\":\"casa_lat_solve\"}}",
+            num_major_cycles,
+            cycle_component_updates,
+            cycle_peak_abs,
+            psf_patch.max_exterior_abs,
+            factor,
+            flux_limit,
+            cycle_threshold_jy_per_beam,
+            selection_limit,
+            active_pixels.len(),
+            cycle_reported_niter,
+            max_minor_iterations_this_cycle
+        ));
+        let mut cur_iter = 0usize;
         if active_pixels.is_empty() {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
-        }
-        let cycle_start_iterations = cycle_component_updates;
-        let remaining_iterations = cycle_reported_niter - cycle_component_updates;
-        let cycle_minor_limit = remaining_iterations.min(max_minor_iterations_this_cycle);
-        let mut cur_iter = 0usize;
-        let mut fmn = 0.0f32;
-        let fac = if flux_limit > 0.0 {
-            (flux_limit / cycle_peak_abs).powf(-1.0)
         } else {
-            0.0
-        };
-        let mut iter_flux_limit = flux_limit.max(cycle_threshold_jy_per_beam);
-        while cur_iter < cycle_minor_limit {
-            let Some((_, peak_pixel)) = peak_clark_active_pixel(&active_pixels) else {
-                break;
+            let cycle_start_iterations = cycle_component_updates;
+            let remaining_iterations = cycle_reported_niter - cycle_component_updates;
+            let cycle_minor_limit = remaining_iterations.min(max_minor_iterations_this_cycle);
+            let mut fmn = 0.0f32;
+            let fac = if flux_limit > 0.0 {
+                (flux_limit / cycle_peak_abs).powf(-1.0)
+            } else {
+                0.0
             };
-            let peak_abs = peak_pixel.value.abs();
-            if let Some(reason) = minor_cycle_stop_reason(
-                peak_abs,
-                request.clean.threshold_jy_per_beam,
-                iter_flux_limit,
-                nsigma_threshold_jy_per_beam,
-            ) {
-                stop_reason = Some(reason);
-                break;
+            let mut iter_flux_limit = flux_limit.max(cycle_threshold_jy_per_beam);
+            while cur_iter < cycle_minor_limit {
+                let Some((_, peak_pixel)) = peak_clark_active_pixel(&active_pixels) else {
+                    break;
+                };
+                let peak_abs = peak_pixel.value.abs();
+                if let Some(reason) = minor_cycle_stop_reason(
+                    peak_abs,
+                    request.clean.threshold_jy_per_beam,
+                    iter_flux_limit,
+                    nsigma_threshold_jy_per_beam,
+                ) {
+                    stop_reason = Some(reason);
+                    append_clark_trace(format!(
+                        "{{\"event\":\"stop\",\"cycle_update\":{},\"reason\":\"{:?}\",\"peak_abs\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                        cycle_component_updates, reason, peak_abs, iter_flux_limit
+                    ));
+                    break;
+                }
+                let component = request.clean.gain * peak_pixel.value;
+                append_clark_trace(format!(
+                    "{{\"event\":\"component\",\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                    cycle_component_updates,
+                    peak_pixel.x,
+                    peak_pixel.y,
+                    peak_pixel.value,
+                    component,
+                    iter_flux_limit
+                ));
+                model[(peak_pixel.x, peak_pixel.y)] += component;
+                delta_components.push(((peak_pixel.x, peak_pixel.y), component));
+                subtract_clark_component_from_active(
+                    &mut active_pixels,
+                    peak_pixel.x,
+                    peak_pixel.y,
+                    component,
+                    psf_patch,
+                );
+                cycle_component_updates += 1;
+                cur_iter += 1;
+                updated_model = true;
+                fmn += fac / (cycle_start_iterations as f32 + cur_iter as f32);
+                iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
             }
-            let component = request.clean.gain * peak_pixel.value;
-            model[(peak_pixel.x, peak_pixel.y)] += component;
-            delta_components.push(((peak_pixel.x, peak_pixel.y), component));
-            subtract_clark_component_from_active(
-                &mut active_pixels,
-                peak_pixel.x,
-                peak_pixel.y,
-                component,
-                psf_patch,
-            );
-            cycle_component_updates += 1;
-            cur_iter += 1;
-            updated_model = true;
-            fmn += fac / (cycle_start_iterations as f32 + cur_iter as f32);
-            iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
         }
         if cur_iter == 0 {
             stop_reason = Some(CleanStopReason::CycleThresholdReached);
@@ -6409,6 +12087,10 @@ fn run_clark_minor_cycle(
             subtract_shifted_psf(&mut working_residual, psf, (peak_x, peak_y), component);
         }
         let current_peak = peak_abs_value_masked(&working_residual, request.clean_mask.as_ref());
+        append_clark_trace(format!(
+            "{{\"event\":\"residual_refresh\",\"subcycle\":{},\"updates\":{},\"peak_abs\":{:.17e},\"previous_peak_abs\":{:.17e},\"factor_before\":{:.17e}}}",
+            num_major_cycles, cycle_component_updates, current_peak, max_res_previous, factor
+        ));
         if current_peak > max_res_previous {
             factor *= 3.0;
             max_minor_iterations_this_cycle = 10;
@@ -6433,6 +12115,17 @@ fn run_clark_minor_cycle(
     }
 }
 
+fn break_clark_trace(
+    cycle_component_updates: usize,
+    reason: &str,
+    cycle_threshold_jy_per_beam: f32,
+) {
+    append_clark_trace(format!(
+        "{{\"event\":\"stop\",\"cycle_update\":{},\"reason\":\"{}\",\"cycle_threshold\":{:.17e}}}",
+        cycle_component_updates, reason, cycle_threshold_jy_per_beam
+    ));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_multiscale_minor_cycle(
     request: &ImagingRequest,
@@ -6445,8 +12138,9 @@ fn run_multiscale_minor_cycle(
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
 ) -> HogbomMinorCycleOutcome {
+    let full_window = ImageWindow::full(residual.dim());
     let Some(cycle_candidate) =
-        select_multiscale_candidate(multiscale_state, request.clean_mask.as_ref())
+        select_multiscale_candidate(multiscale_state, request.clean_mask.as_ref(), full_window)
     else {
         return HogbomMinorCycleOutcome {
             updated_model: false,
@@ -6482,11 +12176,14 @@ fn run_multiscale_minor_cycle(
     let mut updated_model = false;
     let mut stop_reason = None;
     let mut delta_model = Array2::<f32>::zeros(model.dim());
+    let mut dirty_window = full_window;
     let minor_started = Instant::now();
     while cycle_component_updates < cycle_reported_niter {
-        let Some(candidate) =
-            select_multiscale_candidate(multiscale_state, request.clean_mask.as_ref())
-        else {
+        let Some(candidate) = select_multiscale_candidate(
+            multiscale_state,
+            request.clean_mask.as_ref(),
+            dirty_window,
+        ) else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -6518,12 +12215,16 @@ fn run_multiscale_minor_cycle(
             candidate.position,
             component,
         );
+        let component_window =
+            ImageWindow::from_casa_shifted_support(residual.dim(), candidate.position);
         subtract_multiscale_component(
             multiscale_state,
             candidate.scale_index,
             candidate.position,
             component,
+            component_window,
         );
+        dirty_window = component_window;
         cycle_component_updates += 1;
         updated_model = true;
     }
@@ -6566,6 +12267,44 @@ struct MultiscaleState {
     scale_masks: Option<Vec<Array2<bool>>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ImageWindow {
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+impl ImageWindow {
+    fn full(shape: (usize, usize)) -> Self {
+        Self {
+            x0: 0,
+            y0: 0,
+            x1: shape.0.saturating_sub(1),
+            y1: shape.1.saturating_sub(1),
+        }
+    }
+
+    fn from_casa_shifted_support(shape: (usize, usize), position: (usize, usize)) -> Self {
+        let half_x = shape.0 / 2;
+        let half_y = shape.1 / 2;
+        Self {
+            x0: position.0.saturating_sub(half_x),
+            y0: position.1.saturating_sub(half_y),
+            x1: position
+                .0
+                .saturating_add(half_x)
+                .saturating_sub(1)
+                .min(shape.0.saturating_sub(1)),
+            y1: position
+                .1
+                .saturating_add(half_y)
+                .saturating_sub(1)
+                .min(shape.1.saturating_sub(1)),
+        }
+    }
+}
+
 fn refresh_multiscale_dirty_conv_scales(state: &mut MultiscaleState, residual: &Array2<f32>) {
     state.dirty_conv_scales = state
         .scales
@@ -6579,6 +12318,43 @@ struct ClarkActivePixel {
     x: usize,
     y: usize,
     value: f32,
+}
+
+struct ClarkActiveSet {
+    pixels: Vec<ClarkActivePixel>,
+    pixel_to_active_index: Vec<usize>,
+    image_ny: usize,
+}
+
+impl ClarkActiveSet {
+    const MISSING_INDEX: usize = usize::MAX;
+
+    fn new(image_shape: (usize, usize)) -> Self {
+        Self {
+            pixels: Vec::new(),
+            pixel_to_active_index: vec![Self::MISSING_INDEX; image_shape.0 * image_shape.1],
+            image_ny: image_shape.1,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.pixels.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pixels.is_empty()
+    }
+
+    fn push(&mut self, pixel: ClarkActivePixel) {
+        let index = self.pixels.len();
+        self.pixel_to_active_index[pixel.x * self.image_ny + pixel.y] = index;
+        self.pixels.push(pixel);
+    }
+
+    fn active_index(&self, x: usize, y: usize) -> Option<usize> {
+        let index = self.pixel_to_active_index[x * self.image_ny + y];
+        (index != Self::MISSING_INDEX).then_some(index)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6748,6 +12524,7 @@ fn run_multiscale_cotton_schwab(
     let mut min_residual_peak_jy_per_beam = initial_peak;
     let mut divergence_warned = false;
     let mut residual_needs_refresh = false;
+    let multiscale_trace = multiscale_trace_sink();
 
     while reported_minor_iterations < request.clean.niter {
         if request
@@ -6759,9 +12536,12 @@ fn run_multiscale_cotton_schwab(
             break;
         }
         let cycle_setup_started = Instant::now();
-        let Some(cycle_candidate) =
-            select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
-        else {
+        let full_window = ImageWindow::full(residual.dim());
+        let Some(cycle_candidate) = select_multiscale_candidate(
+            &multiscale_state,
+            request.clean_mask.as_ref(),
+            full_window,
+        ) else {
             stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
@@ -6784,6 +12564,8 @@ fn run_multiscale_cotton_schwab(
         let remaining_reported = request.clean.niter - reported_minor_iterations;
         let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
         let start_reported_iteration = reported_minor_iterations;
+        final_cycle_threshold_jy_per_beam =
+            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
         let probe = MinorCycleProbe {
             initial_scale_pixels: Some(scales[cycle_candidate.scale_index]),
             initial_candidate_strength_jy_per_beam: Some(cycle_candidate.strength),
@@ -6792,18 +12574,40 @@ fn run_multiscale_cotton_schwab(
                 cycle_candidate.position.1,
             ]),
         };
+        if let Some(trace) = &multiscale_trace {
+            append_multiscale_trace(
+                trace,
+                format!(
+                    "{{\"event\":\"cycle_start\",\"cycle_index\":{},\"start_reported_iteration\":{},\"cycle_reported_niter\":{},\"cycle_peak\":{:.17e},\"cycle_threshold\":{:.17e},\"nsigma_threshold\":{:.17e},\"initial_scale\":{:.17e},\"initial_x\":{},\"initial_y\":{},\"initial_strength\":{:.17e},\"initial_dirty_value\":{:.17e},\"initial_peak_psf\":{:.17e},\"model_flux\":{:.17e}}}",
+                    minor_cycle_traces.len(),
+                    start_reported_iteration,
+                    cycle_reported_niter,
+                    cycle_peak,
+                    final_cycle_threshold_jy_per_beam,
+                    cycle_nsigma_threshold_jy_per_beam,
+                    scales[cycle_candidate.scale_index],
+                    cycle_candidate.position.0,
+                    cycle_candidate.position.1,
+                    cycle_candidate.strength,
+                    cycle_candidate.dirty_value,
+                    cycle_candidate.peak_psf,
+                    model.iter().copied().sum::<f32>(),
+                ),
+            );
+        }
         let initial_cycle_component = cycle_candidate.strength.abs();
         let mut cycle_component_updates = 0usize;
         let mut updated_model = false;
         let mut cycle_stop_reason = None::<CleanStopReason>;
-        final_cycle_threshold_jy_per_beam =
-            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+        let mut dirty_window = full_window;
         let minor_started = Instant::now();
         while cycle_component_updates < cycle_reported_niter {
-            let Some(candidate) =
-                select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
-            else {
+            let Some(candidate) = select_multiscale_candidate(
+                &multiscale_state,
+                request.clean_mask.as_ref(),
+                dirty_window,
+            ) else {
                 cycle_stop_reason = Some(CleanStopReason::NoCleanablePixels);
                 break;
             };
@@ -6823,18 +12627,42 @@ fn run_multiscale_cotton_schwab(
             }
 
             let component = request.clean.gain * candidate.strength;
+            if let Some(trace) = &multiscale_trace {
+                append_multiscale_trace(
+                    trace,
+                    format!(
+                        "{{\"event\":\"component\",\"cycle_index\":{},\"cycle_update\":{},\"reported_iteration\":{},\"scale\":{:.17e},\"x\":{},\"y\":{},\"strength\":{:.17e},\"dirty_value\":{:.17e},\"peak_psf\":{:.17e},\"component\":{:.17e},\"component_abs\":{:.17e},\"cycle_threshold\":{:.17e}}}",
+                        minor_cycle_traces.len(),
+                        cycle_component_updates,
+                        start_reported_iteration + cycle_component_updates,
+                        scales[candidate.scale_index],
+                        candidate.position.0,
+                        candidate.position.1,
+                        candidate.strength,
+                        candidate.dirty_value,
+                        candidate.peak_psf,
+                        component,
+                        component_abs,
+                        final_cycle_threshold_jy_per_beam,
+                    ),
+                );
+            }
             add_shifted_kernel(
                 model,
                 &multiscale_state.scales[candidate.scale_index],
                 candidate.position,
                 component,
             );
+            let component_window =
+                ImageWindow::from_casa_shifted_support(residual.dim(), candidate.position);
             subtract_multiscale_component(
                 &mut multiscale_state,
                 candidate.scale_index,
                 candidate.position,
                 component,
+                component_window,
             );
+            dirty_window = component_window;
             cycle_component_updates += 1;
             minor_iterations += 1;
             updated_model = true;
@@ -6848,6 +12676,25 @@ fn run_multiscale_cotton_schwab(
             cycle_stop_reason,
             updated_model,
         );
+        if let Some(trace) = &multiscale_trace {
+            let stop_reason = cycle_stop_reason
+                .map(|reason| format!("{reason:?}"))
+                .unwrap_or_else(|| "null".to_string());
+            append_multiscale_trace(
+                trace,
+                format!(
+                    "{{\"event\":\"cycle_end\",\"cycle_index\":{},\"actual_updates\":{},\"reported_updates\":{},\"stop_reason\":\"{}\",\"updated_model\":{},\"minor_iterations\":{},\"reported_minor_iterations_before\":{},\"model_flux\":{:.17e}}}",
+                    minor_cycle_traces.len(),
+                    cycle_component_updates,
+                    reported_updates,
+                    stop_reason,
+                    updated_model,
+                    minor_iterations,
+                    reported_minor_iterations,
+                    model.iter().copied().sum::<f32>(),
+                ),
+            );
+        }
         minor_cycle_traces.push(make_minor_cycle_trace(
             minor_cycle_traces.len(),
             start_reported_iteration,
@@ -6923,6 +12770,8 @@ struct MultiscaleCandidate {
     scale_index: usize,
     position: (usize, usize),
     strength: f32,
+    dirty_value: f32,
+    peak_psf: f32,
 }
 
 fn effective_multiscale_scales(request: &ImagingRequest) -> Vec<f32> {
@@ -7022,6 +12871,7 @@ fn apply_casa_multiscale_edge_mask(mask: &mut Array2<bool>, scale_size: f32) {
 fn select_multiscale_candidate(
     state: &MultiscaleState,
     mask: Option<&Array2<bool>>,
+    window: ImageWindow,
 ) -> Option<MultiscaleCandidate> {
     let mut best = None::<(MultiscaleCandidate, f32)>;
     for scale_index in 0..state.dirty_conv_scales.len() {
@@ -7030,9 +12880,11 @@ fn select_multiscale_candidate(
             .as_ref()
             .map(|scale_masks| &scale_masks[scale_index])
             .or(mask);
-        let Some((position, value)) =
-            peak_location_masked(&state.dirty_conv_scales[scale_index], search_mask)
-        else {
+        let Some((position, value)) = peak_location_masked_in_window(
+            &state.dirty_conv_scales[scale_index],
+            search_mask,
+            window,
+        ) else {
             continue;
         };
         let peak_psf = state.peak_psf_conv_scales[scale_index];
@@ -7050,6 +12902,8 @@ fn select_multiscale_candidate(
                     scale_index,
                     position,
                     strength,
+                    dirty_value: value,
+                    peak_psf,
                 },
                 score,
             ));
@@ -7063,13 +12917,15 @@ fn subtract_multiscale_component(
     optimum_scale: usize,
     position: (usize, usize),
     scale_factor: f32,
+    window: ImageWindow,
 ) {
     for scale_index in 0..state.dirty_conv_scales.len() {
-        subtract_shifted_kernel(
+        subtract_shifted_kernel_in_window(
             &mut state.dirty_conv_scales[scale_index],
             &state.psf_conv_scales[scale_index][optimum_scale],
             position,
             scale_factor,
+            window,
         );
     }
 }
@@ -7212,8 +13068,8 @@ fn collect_clark_active_pixels(
     residual: &Array2<f32>,
     mask: Option<&Array2<bool>>,
     flux_limit: f32,
-) -> Vec<ClarkActivePixel> {
-    let mut active = Vec::new();
+) -> ClarkActiveSet {
+    let mut active = ClarkActiveSet::new(residual.dim());
     for ((x, y), value) in residual.indexed_iter() {
         if value.abs() < flux_limit {
             continue;
@@ -7230,11 +13086,9 @@ fn collect_clark_active_pixels(
     active
 }
 
-fn peak_clark_active_pixel(
-    active_pixels: &[ClarkActivePixel],
-) -> Option<(usize, ClarkActivePixel)> {
+fn peak_clark_active_pixel(active_pixels: &ClarkActiveSet) -> Option<(usize, ClarkActivePixel)> {
     let mut best = None::<(usize, ClarkActivePixel)>;
-    for (index, pixel) in active_pixels.iter().copied().enumerate() {
+    for (index, pixel) in active_pixels.pixels.iter().copied().enumerate() {
         match best {
             None => best = Some((index, pixel)),
             Some((_, current)) if pixel.value.abs() > current.value.abs() => {
@@ -7247,31 +13101,40 @@ fn peak_clark_active_pixel(
 }
 
 fn subtract_clark_component_from_active(
-    active_pixels: &mut [ClarkActivePixel],
+    active_pixels: &mut ClarkActiveSet,
     peak_x: usize,
     peak_y: usize,
     component: f32,
     psf_patch: &ClarkPsfPatch,
 ) {
-    for pixel in active_pixels {
-        let Some(patch_x) = pixel
-            .x
-            .checked_add(psf_patch.radius_x)
-            .and_then(|value| value.checked_sub(peak_x))
+    let (patch_nx, patch_ny) = psf_patch.patch.dim();
+    let image_nx = active_pixels.pixel_to_active_index.len() / active_pixels.image_ny;
+    for patch_x in 0..patch_nx {
+        let Some(pixel_x) = peak_x
+            .checked_add(patch_x)
+            .and_then(|value| value.checked_sub(psf_patch.radius_x))
         else {
             continue;
         };
-        let Some(patch_y) = pixel
-            .y
-            .checked_add(psf_patch.radius_y)
-            .and_then(|value| value.checked_sub(peak_y))
-        else {
-            continue;
-        };
-        if patch_x >= psf_patch.patch.dim().0 || patch_y >= psf_patch.patch.dim().1 {
+        if pixel_x >= image_nx {
             continue;
         }
-        pixel.value -= component * psf_patch.patch[(patch_x, patch_y)];
+        for patch_y in 0..patch_ny {
+            let Some(pixel_y) = peak_y
+                .checked_add(patch_y)
+                .and_then(|value| value.checked_sub(psf_patch.radius_y))
+            else {
+                continue;
+            };
+            if pixel_y >= active_pixels.image_ny {
+                continue;
+            }
+            let Some(active_index) = active_pixels.active_index(pixel_x, pixel_y) else {
+                continue;
+            };
+            active_pixels.pixels[active_index].value -=
+                component * psf_patch.patch[(patch_x, patch_y)];
+        }
     }
 }
 
@@ -7305,6 +13168,102 @@ struct MtmfsPsfState {
     skipped_samples: usize,
 }
 
+#[derive(Debug)]
+struct MtmfsPsfGridAccumulation {
+    psf_grids: Vec<Array2<Complex32>>,
+    normalization_sumwt: f64,
+    reported_sumwt_terms: Vec<f64>,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+#[derive(Debug)]
+struct MtmfsResidualGridAccumulation {
+    residual_grids: Vec<Array2<Complex32>>,
+}
+
+struct MtmfsAccelerationBackend<'a> {
+    #[cfg(target_os = "macos")]
+    metal: Option<StandardMfsMetalExecutor<'a>>,
+    #[cfg(target_os = "macos")]
+    metal_input_cache: Option<MtmfsMetalInputCache>,
+    _gridder_lifetime: std::marker::PhantomData<&'a StandardGridder>,
+}
+
+impl<'a> MtmfsAccelerationBackend<'a> {
+    fn new(request: &MtmfsRequest, gridder: &'a StandardGridder) -> Result<Self, ImagingError> {
+        let _ = gridder;
+        if standard_mfs_mtmfs_metal_backend_enabled() && request.w_term_mode != WTermMode::WProject
+        {
+            #[cfg(target_os = "macos")]
+            {
+                return Ok(Self {
+                    metal: Some(StandardMfsMetalExecutor::new_with_resident_bytes(
+                        gridder, None,
+                    )?),
+                    metal_input_cache: None,
+                    _gridder_lifetime: std::marker::PhantomData,
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "MTMFS Metal backend requires macOS Metal and is not available on this platform"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(Self {
+            #[cfg(target_os = "macos")]
+            metal: None,
+            #[cfg(target_os = "macos")]
+            metal_input_cache: None,
+            _gridder_lifetime: std::marker::PhantomData,
+        })
+    }
+
+    fn prepare_weighted_batches(
+        &mut self,
+        request: &MtmfsRequest,
+        batches: &[VisibilityBatch],
+    ) -> Result<(), ImagingError> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(metal) = self.metal.as_ref() {
+                self.metal_input_cache = Some(metal.prepare_mtmfs_input_cache(
+                    batches,
+                    &request.sample_frequency_batches_hz,
+                    request.reffreq_hz,
+                    2 * request.nterms - 1,
+                )?);
+                if let Some(cache) = self.metal_input_cache.as_ref() {
+                    eprintln!(
+                        "mtmfs_runtime_plan backend=metal-sample-cache terms={} psf_terms={} samples={} cache_host_bytes={} gridded_samples={} skipped_samples={}",
+                        request.nterms,
+                        2 * request.nterms - 1,
+                        cache.sample_count(),
+                        cache.host_bytes(),
+                        cache.gridded_samples,
+                        cache.skipped_samples
+                    );
+                }
+            }
+        }
+        let _ = (request, batches);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn metal(&self) -> Option<&StandardMfsMetalExecutor<'a>> {
+        self.metal.as_ref()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn metal_input_cache(&self) -> Option<&MtmfsMetalInputCache> {
+        self.metal_input_cache.as_ref()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct PsfComputationTimings {
     grid: Duration,
@@ -7320,12 +13279,29 @@ struct ResidualComputationTimings {
     normalize: Duration,
 }
 
-fn mtmfs_taylor_weight(frequency_hz: f64, reffreq_hz: f64, order: usize) -> f32 {
-    if order == 0 {
-        return 1.0;
+fn fill_mtmfs_taylor_weights(
+    weights: &mut Vec<f32>,
+    frequency_hz: f64,
+    reffreq_hz: f64,
+    count: usize,
+) {
+    weights.clear();
+    let scaled = ((frequency_hz - reffreq_hz) / reffreq_hz) as f32;
+    let mut value = 1.0f32;
+    for _ in 0..count {
+        weights.push(value);
+        value *= scaled;
     }
-    let scaled = (frequency_hz - reffreq_hz) / reffreq_hz;
-    scaled.powi(order as i32) as f32
+}
+
+fn mtmfs_worker_threads(work_items: usize) -> usize {
+    if work_items <= 1 {
+        return 1;
+    }
+    if !(standard_mfs_fixed_tile_backend_enabled() || standard_mfs_metal_backend_enabled()) {
+        return 1;
+    }
+    standard_mfs_grid_threads().min(work_items).max(1)
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -7333,74 +13309,60 @@ fn compute_mtmfs_psf_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    acceleration_backend: &MtmfsAccelerationBackend<'_>,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<MtmfsPsfState, ImagingError> {
+    let _ = acceleration_backend;
     if request.w_term_mode == WTermMode::WProject {
         return compute_mtmfs_psf_terms_w_project(request, batches, gridder, stage_timings);
     }
     let term_count = 2 * request.nterms - 1;
-    let [nx, ny] = gridder.grid_shape();
-    let mut psf_grids = (0..term_count)
-        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
-        .collect::<Vec<_>>();
-    let mut normalization_sumwt = 0.0f64;
-    let mut reported_sumwt_terms = vec![0.0f64; term_count];
-    let mut gridded_samples = 0usize;
-    let mut skipped_samples = 0usize;
     let mut timings = PsfComputationTimings::default();
 
     let grid_started = Instant::now();
-    for (batch_index, batch) in batches.iter().enumerate() {
-        let frequencies_hz = request
-            .sample_frequency_batches_hz
-            .get(batch_index)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
-                ))
+    let worker_threads = mtmfs_worker_threads(batches.len());
+    let accumulation = if cfg!(target_os = "macos") && standard_mfs_mtmfs_metal_backend_enabled() {
+        #[cfg(target_os = "macos")]
+        {
+            let executor = acceleration_backend.metal().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no Metal executor was prepared"
+                        .to_string(),
+                )
             })?;
-        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
-            if !batch.gridable[index] {
-                skipped_samples += 1;
-                continue;
+            let cache = acceleration_backend.metal_input_cache().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no input cache was prepared".to_string(),
+                )
+            })?;
+            let metal = executor.accumulate_mtmfs_psf_grids_from_cache(cache, term_count)?;
+            MtmfsPsfGridAccumulation {
+                psf_grids: metal.psf_grids,
+                normalization_sumwt: metal.normalization_sumwt,
+                reported_sumwt_terms: metal.reported_sumwt_terms,
+                gridded_samples: metal.gridded_samples,
+                skipped_samples: metal.skipped_samples,
             }
-            let weight = batch.weight[index];
-            let sumwt_factor = batch.sumwt_factor[index];
-            if !(weight.is_finite()
-                && weight > 0.0
-                && sumwt_factor.is_finite()
-                && sumwt_factor > 0.0
-                && frequency_hz.is_finite()
-                && frequency_hz > 0.0)
-            {
-                skipped_samples += 1;
-                continue;
-            }
-            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
-            else {
-                skipped_samples += 1;
-                continue;
-            };
-            normalization_sumwt += 2.0 * f64::from(weight);
-            for order in 0..term_count {
-                let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
-                let psf_weight = Complex32::new(weight * factor, 0.0);
-                gridder.grid_sample_product_planned(
-                    &mut psf_grids[order],
-                    &plan.positive,
-                    psf_weight,
-                );
-                gridder.grid_sample_product_planned(
-                    &mut psf_grids[order],
-                    &plan.negative,
-                    psf_weight,
-                );
-                reported_sumwt_terms[order] +=
-                    f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
-            }
-            gridded_samples += 1;
         }
-    }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err(ImagingError::Unsupported(
+                "MTMFS Metal backend requires macOS Metal and is not available on this platform"
+                    .to_string(),
+            ));
+        }
+    } else if worker_threads > 1 {
+        accumulate_mtmfs_psf_grids_parallel(request, batches, gridder, term_count, worker_threads)?
+    } else {
+        accumulate_mtmfs_psf_grid_range(request, batches, gridder, term_count, 0, batches.len())?
+    };
+    let MtmfsPsfGridAccumulation {
+        psf_grids,
+        normalization_sumwt,
+        reported_sumwt_terms,
+        gridded_samples,
+        skipped_samples,
+    } = accumulation;
     timings.grid = grid_started.elapsed();
 
     if normalization_sumwt <= 0.0
@@ -7449,6 +13411,175 @@ fn compute_mtmfs_psf_terms(
     })
 }
 
+fn accumulate_mtmfs_psf_grids_parallel(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    term_count: usize,
+    worker_threads: usize,
+) -> Result<MtmfsPsfGridAccumulation, ImagingError> {
+    let chunk_size = batches.len().div_ceil(worker_threads);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start in (0..batches.len()).step_by(chunk_size) {
+            let end = (start + chunk_size).min(batches.len());
+            handles.push(scope.spawn(move || {
+                accumulate_mtmfs_psf_grid_range(request, batches, gridder, term_count, start, end)
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest("MTMFS PSF worker thread panicked".to_string())
+                })?
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    merge_mtmfs_psf_accumulations(partials, term_count, gridder.grid_shape())
+}
+
+fn accumulate_mtmfs_psf_grid_range(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    term_count: usize,
+    start_batch: usize,
+    end_batch: usize,
+) -> Result<MtmfsPsfGridAccumulation, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grids = (0..term_count)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt_terms = vec![0.0f64; term_count];
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut taylor_weights = Vec::<f32>::with_capacity(term_count);
+
+    for (batch_index, batch) in batches.iter().enumerate().take(end_batch).skip(start_batch) {
+        let frequencies_hz = request
+            .sample_frequency_batches_hz
+            .get(batch_index)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                ))
+            })?;
+        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
+            if !batch.gridable[index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[index];
+            let sumwt_factor = batch.sumwt_factor[index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0
+                && frequency_hz.is_finite()
+                && frequency_hz > 0.0)
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) = gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            else {
+                skipped_samples += 1;
+                continue;
+            };
+            let scaled = ((frequency_hz - request.reffreq_hz) / request.reffreq_hz) as f32;
+            normalization_sumwt += 2.0 * f64::from(weight);
+            if term_count == 3 {
+                for (order, factor) in [1.0, scaled, scaled * scaled].into_iter().enumerate() {
+                    let psf_weight = Complex32::new(weight * factor, 0.0);
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.positive,
+                        psf_weight,
+                    );
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.negative,
+                        psf_weight,
+                    );
+                    reported_sumwt_terms[order] +=
+                        f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
+                }
+            } else {
+                fill_mtmfs_taylor_weights(
+                    &mut taylor_weights,
+                    frequency_hz,
+                    request.reffreq_hz,
+                    term_count,
+                );
+                for (order, &factor) in taylor_weights.iter().enumerate() {
+                    let psf_weight = Complex32::new(weight * factor, 0.0);
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.positive,
+                        psf_weight,
+                    );
+                    gridder.grid_sample_product_planned(
+                        &mut psf_grids[order],
+                        &plan.negative,
+                        psf_weight,
+                    );
+                    reported_sumwt_terms[order] +=
+                        f64::from(weight) * f64::from(factor) * f64::from(sumwt_factor);
+                }
+            }
+            gridded_samples += 1;
+        }
+    }
+
+    Ok(MtmfsPsfGridAccumulation {
+        psf_grids,
+        normalization_sumwt,
+        reported_sumwt_terms,
+        gridded_samples,
+        skipped_samples,
+    })
+}
+
+fn merge_mtmfs_psf_accumulations(
+    partials: Vec<MtmfsPsfGridAccumulation>,
+    term_count: usize,
+    [nx, ny]: [usize; 2],
+) -> Result<MtmfsPsfGridAccumulation, ImagingError> {
+    let mut merged = MtmfsPsfGridAccumulation {
+        psf_grids: (0..term_count)
+            .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+            .collect(),
+        normalization_sumwt: 0.0,
+        reported_sumwt_terms: vec![0.0; term_count],
+        gridded_samples: 0,
+        skipped_samples: 0,
+    };
+    for partial in partials {
+        if partial.psf_grids.len() != term_count || partial.reported_sumwt_terms.len() != term_count
+        {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS PSF worker returned an unexpected Taylor-term count".to_string(),
+            ));
+        }
+        for (target, source) in merged.psf_grids.iter_mut().zip(partial.psf_grids.iter()) {
+            *target += source;
+        }
+        for (target, source) in merged
+            .reported_sumwt_terms
+            .iter_mut()
+            .zip(partial.reported_sumwt_terms.iter())
+        {
+            *target += *source;
+        }
+        merged.normalization_sumwt += partial.normalization_sumwt;
+        merged.gridded_samples += partial.gridded_samples;
+        merged.skipped_samples += partial.skipped_samples;
+    }
+    Ok(merged)
+}
+
 #[allow(clippy::needless_range_loop)]
 fn compute_mtmfs_psf_terms_w_project(
     request: &MtmfsRequest,
@@ -7469,13 +13600,19 @@ fn compute_mtmfs_psf_terms_w_project(
         .map(|_| Array2::<Complex32>::zeros((nx, ny)))
         .collect::<Vec<_>>();
     let mut reported_sumwt_terms = vec![0.0f64; term_count];
+    let mut taylor_weights = Vec::<f32>::with_capacity(term_count);
 
     let grid_started = Instant::now();
     for sample in &prepared.samples {
         let frequency_hz =
             mtmfs_sample_frequency(request, sample.batch_index, sample.sample_index)?;
-        for order in 0..term_count {
-            let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
+        fill_mtmfs_taylor_weights(
+            &mut taylor_weights,
+            frequency_hz,
+            request.reffreq_hz,
+            term_count,
+        );
+        for (order, &factor) in taylor_weights.iter().enumerate().take(term_count) {
             let psf_weight = Complex32::new(sample.weight * factor, 0.0);
             prepared.projector.grid_sample_planned(
                 &mut psf_grids[order],
@@ -7540,10 +13677,12 @@ fn compute_mtmfs_residual_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    acceleration_backend: &MtmfsAccelerationBackend<'_>,
     model_terms: &[Array2<f32>],
     psf_state: &MtmfsPsfState,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Vec<Array2<f32>>, ImagingError> {
+    let _ = acceleration_backend;
     if request.w_term_mode == WTermMode::WProject {
         return compute_mtmfs_residual_terms_w_project(
             request,
@@ -7554,10 +13693,6 @@ fn compute_mtmfs_residual_terms(
             stage_timings,
         );
     }
-    let [nx, ny] = gridder.grid_shape();
-    let mut residual_grids = (0..request.nterms)
-        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
-        .collect::<Vec<_>>();
     let mut timings = ResidualComputationTimings::default();
     let model_grids = if model_terms
         .iter()
@@ -7575,69 +13710,57 @@ fn compute_mtmfs_residual_terms(
     };
 
     let degrid_grid_started = Instant::now();
-    for (batch_index, batch) in batches.iter().enumerate() {
-        let frequencies_hz = request
-            .sample_frequency_batches_hz
-            .get(batch_index)
-            .ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
-                ))
+    let worker_threads = mtmfs_worker_threads(batches.len());
+    let residual_grids = if cfg!(target_os = "macos") && standard_mfs_mtmfs_metal_backend_enabled()
+    {
+        #[cfg(target_os = "macos")]
+        {
+            let executor = acceleration_backend.metal().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no Metal executor was prepared"
+                        .to_string(),
+                )
             })?;
-        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
-            let weight = batch.weight[index];
-            let observed_visibility = batch.visibility[index];
-            let gridable = batch.gridable[index];
-            let planned_sample = if gridable
-                && weight.is_finite()
-                && weight > 0.0
-                && observed_visibility.re.is_finite()
-                && observed_visibility.im.is_finite()
-                && frequency_hz.is_finite()
-                && frequency_hz > 0.0
-            {
-                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
-            } else {
-                None
-            };
-            let Some(plan) = planned_sample.as_ref() else {
-                continue;
-            };
-            let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
-                model_grids
-                    .iter()
-                    .map(|grid| {
-                        gridder.degrid_sample_product_planned_normalized(grid, &plan.positive)
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![Complex32::new(0.0, 0.0); request.nterms]
-            };
-            for (residual_order, residual_grid) in
-                residual_grids.iter_mut().enumerate().take(request.nterms)
-            {
-                let observed_term = observed_visibility
-                    * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
-                let mut predicted_term = Complex32::new(0.0, 0.0);
-                for (model_order, predicted_visibility) in predicted_visibility_terms
-                    .iter()
-                    .enumerate()
-                    .take(request.nterms)
-                {
-                    let factor = mtmfs_taylor_weight(
-                        frequency_hz,
-                        request.reffreq_hz,
-                        residual_order + model_order,
-                    );
-                    predicted_term += *predicted_visibility * factor;
-                }
-                let residual_visibility = observed_term - predicted_term;
-                let residual = residual_visibility * weight;
-                gridder.grid_sample_product_planned(residual_grid, &plan.positive, residual);
-                gridder.grid_sample_product_planned(residual_grid, &plan.negative, residual.conj());
-            }
+            let cache = acceleration_backend.metal_input_cache().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "MTMFS Metal backend was selected but no input cache was prepared".to_string(),
+                )
+            })?;
+            executor
+                .accumulate_mtmfs_residual_grids_from_cache(
+                    cache,
+                    request.nterms,
+                    model_grids.as_deref(),
+                )?
+                .residual_grids
         }
-    }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err(ImagingError::Unsupported(
+                "MTMFS Metal backend requires macOS Metal and is not available on this platform"
+                    .to_string(),
+            ));
+        }
+    } else if worker_threads > 1 {
+        accumulate_mtmfs_residual_grids_parallel(
+            request,
+            batches,
+            gridder,
+            model_grids.as_deref(),
+            worker_threads,
+        )?
+        .residual_grids
+    } else {
+        accumulate_mtmfs_residual_grid_range(
+            request,
+            batches,
+            gridder,
+            model_grids.as_deref(),
+            0,
+            batches.len(),
+        )?
+        .residual_grids
+    };
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -7703,38 +13826,41 @@ fn compute_mtmfs_residual_terms_w_project(
     };
 
     let degrid_started = Instant::now();
+    let mut taylor_weights = Vec::<f32>::with_capacity(2 * request.nterms);
+    let mut predicted_visibility_terms = Vec::<Complex32>::with_capacity(request.nterms);
     for sample in &prepared.samples {
         let frequency_hz =
             mtmfs_sample_frequency(request, sample.batch_index, sample.sample_index)?;
-        let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
-            model_grids
-                .iter()
-                .map(|grid| {
+        fill_mtmfs_taylor_weights(
+            &mut taylor_weights,
+            frequency_hz,
+            request.reffreq_hz,
+            2 * request.nterms,
+        );
+        predicted_visibility_terms.clear();
+        if let Some(model_grids) = model_grids.as_ref() {
+            for grid in model_grids.iter().take(request.nterms) {
+                predicted_visibility_terms.push(
                     prepared
                         .projector
-                        .degrid_sample_planned(grid, &sample.positive_plan)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            vec![Complex32::new(0.0, 0.0); request.nterms]
-        };
+                        .degrid_sample_planned(grid, &sample.positive_plan),
+                );
+            }
+        }
         for (residual_order, residual_grid) in
             residual_grids.iter_mut().enumerate().take(request.nterms)
         {
-            let observed_term = sample.visibility
-                * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
+            let observed_term = sample.visibility * taylor_weights[residual_order];
             let mut predicted_term = Complex32::new(0.0, 0.0);
-            for (model_order, predicted_visibility) in predicted_visibility_terms
-                .iter()
-                .enumerate()
-                .take(request.nterms)
-            {
-                let factor = mtmfs_taylor_weight(
-                    frequency_hz,
-                    request.reffreq_hz,
-                    residual_order + model_order,
-                );
-                predicted_term += *predicted_visibility * factor;
+            if model_grids.is_some() {
+                for (model_order, predicted_visibility) in predicted_visibility_terms
+                    .iter()
+                    .enumerate()
+                    .take(request.nterms)
+                {
+                    predicted_term +=
+                        *predicted_visibility * taylor_weights[residual_order + model_order];
+                }
             }
             let residual = (observed_term - predicted_term) * sample.weight;
             prepared
@@ -7768,6 +13894,200 @@ fn compute_mtmfs_residual_terms_w_project(
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
     Ok(residual_terms)
+}
+
+fn accumulate_mtmfs_residual_grids_parallel(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model_grids: Option<&[Array2<Complex32>]>,
+    worker_threads: usize,
+) -> Result<MtmfsResidualGridAccumulation, ImagingError> {
+    let chunk_size = batches.len().div_ceil(worker_threads);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start in (0..batches.len()).step_by(chunk_size) {
+            let end = (start + chunk_size).min(batches.len());
+            handles.push(scope.spawn(move || {
+                accumulate_mtmfs_residual_grid_range(
+                    request,
+                    batches,
+                    gridder,
+                    model_grids,
+                    start,
+                    end,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "MTMFS residual worker thread panicked".to_string(),
+                    )
+                })?
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    merge_mtmfs_residual_accumulations(partials, request.nterms, gridder.grid_shape())
+}
+
+fn accumulate_mtmfs_residual_grid_range(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model_grids: Option<&[Array2<Complex32>]>,
+    start_batch: usize,
+    end_batch: usize,
+) -> Result<MtmfsResidualGridAccumulation, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grids = (0..request.nterms)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut taylor_weights = Vec::<f32>::with_capacity(2 * request.nterms);
+    let mut predicted_visibility_terms = Vec::<Complex32>::with_capacity(request.nterms);
+
+    for (batch_index, batch) in batches.iter().enumerate().take(end_batch).skip(start_batch) {
+        let frequencies_hz = request
+            .sample_frequency_batches_hz
+            .get(batch_index)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "missing MTMFS sample-frequency batch for visibility batch {batch_index}"
+                ))
+            })?;
+        for (index, &frequency_hz) in frequencies_hz.iter().enumerate().take(batch.len()) {
+            let weight = batch.weight[index];
+            let observed_visibility = batch.visibility[index];
+            let gridable = batch.gridable[index];
+            let planned_sample = if gridable
+                && weight.is_finite()
+                && weight > 0.0
+                && observed_visibility.re.is_finite()
+                && observed_visibility.im.is_finite()
+                && frequency_hz.is_finite()
+                && frequency_hz > 0.0
+            {
+                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+            } else {
+                None
+            };
+            let Some(plan) = planned_sample.as_ref() else {
+                continue;
+            };
+            if request.nterms == 2 {
+                let scaled = ((frequency_hz - request.reffreq_hz) / request.reffreq_hz) as f32;
+                let taylor0 = 1.0f32;
+                let taylor1 = scaled;
+                let taylor2 = scaled * scaled;
+                let (predicted0, predicted1) = if let Some(model_grids) = model_grids {
+                    (
+                        gridder.degrid_sample_product_planned_normalized(
+                            &model_grids[0],
+                            &plan.positive,
+                        ),
+                        gridder.degrid_sample_product_planned_normalized(
+                            &model_grids[1],
+                            &plan.positive,
+                        ),
+                    )
+                } else {
+                    (Complex32::new(0.0, 0.0), Complex32::new(0.0, 0.0))
+                };
+                let residual0 =
+                    observed_visibility * taylor0 - (predicted0 * taylor0 + predicted1 * taylor1);
+                let residual1 =
+                    observed_visibility * taylor1 - (predicted0 * taylor1 + predicted1 * taylor2);
+                let residual0 = residual0 * weight;
+                let residual1 = residual1 * weight;
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[0],
+                    &plan.positive,
+                    residual0,
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[0],
+                    &plan.negative,
+                    residual0.conj(),
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[1],
+                    &plan.positive,
+                    residual1,
+                );
+                gridder.grid_sample_product_planned(
+                    &mut residual_grids[1],
+                    &plan.negative,
+                    residual1.conj(),
+                );
+                continue;
+            }
+            fill_mtmfs_taylor_weights(
+                &mut taylor_weights,
+                frequency_hz,
+                request.reffreq_hz,
+                2 * request.nterms,
+            );
+            predicted_visibility_terms.clear();
+            if let Some(model_grids) = model_grids {
+                for grid in model_grids.iter().take(request.nterms) {
+                    predicted_visibility_terms.push(
+                        gridder.degrid_sample_product_planned_normalized(grid, &plan.positive),
+                    );
+                }
+            }
+            for (residual_order, residual_grid) in
+                residual_grids.iter_mut().enumerate().take(request.nterms)
+            {
+                let observed_term = observed_visibility * taylor_weights[residual_order];
+                let mut predicted_term = Complex32::new(0.0, 0.0);
+                if model_grids.is_some() {
+                    for (model_order, predicted_visibility) in predicted_visibility_terms
+                        .iter()
+                        .enumerate()
+                        .take(request.nterms)
+                    {
+                        predicted_term +=
+                            *predicted_visibility * taylor_weights[residual_order + model_order];
+                    }
+                }
+                let residual_visibility = observed_term - predicted_term;
+                let residual = residual_visibility * weight;
+                gridder.grid_sample_product_planned(residual_grid, &plan.positive, residual);
+                gridder.grid_sample_product_planned(residual_grid, &plan.negative, residual.conj());
+            }
+        }
+    }
+
+    Ok(MtmfsResidualGridAccumulation { residual_grids })
+}
+
+fn merge_mtmfs_residual_accumulations(
+    partials: Vec<MtmfsResidualGridAccumulation>,
+    term_count: usize,
+    [nx, ny]: [usize; 2],
+) -> Result<MtmfsResidualGridAccumulation, ImagingError> {
+    let mut merged = MtmfsResidualGridAccumulation {
+        residual_grids: (0..term_count)
+            .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+            .collect(),
+    };
+    for partial in partials {
+        if partial.residual_grids.len() != term_count {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS residual worker returned an unexpected Taylor-term count".to_string(),
+            ));
+        }
+        for (target, source) in merged
+            .residual_grids
+            .iter_mut()
+            .zip(partial.residual_grids.iter())
+        {
+            *target += source;
+        }
+    }
+    Ok(merged)
 }
 
 fn mtmfs_sample_frequency(
@@ -7913,9 +14233,54 @@ fn find_mtmfs_component(
     clean_mask: Option<&Array2<bool>>,
 ) -> Option<((usize, usize), Vec<f32>, f32)> {
     let (nx, ny) = residual_terms.first()?.dim();
+    let worker_threads = mtmfs_worker_threads(nx);
+    if worker_threads <= 1 {
+        return find_mtmfs_component_range(
+            residual_terms,
+            hessian,
+            inv_hessian,
+            clean_mask,
+            0,
+            nx,
+            ny,
+        );
+    }
+    let chunk_size = nx.div_ceil(worker_threads);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start_x in (0..nx).step_by(chunk_size) {
+            let end_x = (start_x + chunk_size).min(nx);
+            handles.push(scope.spawn(move || {
+                find_mtmfs_component_range(
+                    residual_terms,
+                    hessian,
+                    inv_hessian,
+                    clean_mask,
+                    start_x,
+                    end_x,
+                    ny,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok().flatten())
+            .max_by(|left, right| left.2.total_cmp(&right.2))
+    })
+}
+
+fn find_mtmfs_component_range(
+    residual_terms: &[Array2<f32>],
+    hessian: &[Vec<f32>],
+    inv_hessian: &[Vec<f32>],
+    clean_mask: Option<&Array2<bool>>,
+    start_x: usize,
+    end_x: usize,
+    ny: usize,
+) -> Option<((usize, usize), Vec<f32>, f32)> {
     let mut best = None::<((usize, usize), Vec<f32>, f32)>;
     let mut best_penalty = -1.0f32;
-    for x in 0..nx {
+    for x in start_x..end_x {
         for y in 0..ny {
             if clean_mask.is_some_and(|mask| !mask[(x, y)]) {
                 continue;
@@ -8058,8 +14423,9 @@ fn run_mtmfs_multiscale_minor_cycle(
         request.small_scale_bias,
         request.clean_mask.as_ref(),
     );
+    let full_window = ImageWindow::full(principal_terms[0].dim());
     let Some(first_candidate) =
-        select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
+        select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref(), full_window)
     else {
         return (
             HogbomMinorCycleOutcome {
@@ -8108,9 +14474,11 @@ fn run_mtmfs_multiscale_minor_cycle(
     let mut stop_reason = None;
     let minor_started = Instant::now();
     while cycle_component_updates < cycle_component_budget {
-        let Some(candidate) =
-            select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
-        else {
+        let Some(candidate) = select_multiscale_candidate(
+            &multiscale_state,
+            request.clean_mask.as_ref(),
+            full_window,
+        ) else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -9626,6 +15994,21 @@ fn add_complex64_grid(target: &mut Array2<Complex64>, source: &Array2<Complex64>
     });
 }
 
+fn add_complex32_grid(target: &mut Array2<Complex32>, source: &Array2<Complex32>) {
+    if let (Some(target), Some(source)) = (
+        target.as_slice_memory_order_mut(),
+        source.as_slice_memory_order(),
+    ) {
+        for (target, source) in target.iter_mut().zip(source.iter()) {
+            *target += *source;
+        }
+        return;
+    }
+    Zip::from(target).and(source).for_each(|target, source| {
+        *target += *source;
+    });
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct ResidualGridAccumulation {
     valid_samples: usize,
@@ -10461,6 +16844,122 @@ struct WProjectPreparedData {
     gridded_samples: usize,
 }
 
+struct WProjectMetalPreparedData {
+    requested_plane_count: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+    normalization_sumwt: f32,
+    reported_sumwt: f32,
+    gridded_samples: usize,
+}
+
+struct WProjectMetalPreparedLocal {
+    sample_start: usize,
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+    worker_elapsed: Duration,
+}
+
+#[derive(Debug, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct WProjectMetalStreamingChunk {
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+    boundary_merges: usize,
+    prepare_elapsed: Duration,
+}
+
+#[derive(Debug, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct WProjectMetalStreamingStats {
+    chunk_count: usize,
+    sample_count: usize,
+    skipped_samples: usize,
+    gridded_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+    boundary_merges: usize,
+    prepare_elapsed: Duration,
+    sample_buffer_bytes: usize,
+    encode_elapsed: Duration,
+    dispatch_wait_elapsed: Duration,
+}
+
+fn log_w_project_prepare_profile(mode: &str, prepared: &WProjectPreparedData, elapsed: Duration) {
+    if !profile::standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    let [grid_width, grid_height] = prepared.projector.grid_shape();
+    eprintln!(
+        "wproject_prepare mode={} samples={} skipped={} grid={}x{} planes={} requested_planes={:?} max_abs_w_lambda={:.6e} kernel_width={} sampling={} elapsed_ms={:.3}",
+        mode,
+        prepared.samples.len(),
+        prepared.skipped_samples.len(),
+        grid_width,
+        grid_height,
+        prepared.projector.plane_count(),
+        prepared.requested_plane_count,
+        prepared.max_abs_w_lambda,
+        prepared.projector.kernel_weight_width(),
+        prepared.projector.sampling(),
+        profile::millis(elapsed),
+    );
+}
+
+fn log_w_project_metal_prepare_profile(
+    mode: &str,
+    prepared: &WProjectMetalPreparedData,
+    elapsed: Duration,
+) {
+    if !profile::standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    let [grid_width, grid_height] = prepared.projector.grid_shape();
+    let atomic_updates = prepared.tap_visits.saturating_mul(match mode {
+        "dirty" => 4,
+        "psf" => 2,
+        "residual" => 2,
+        _ => 0,
+    });
+    let avg_taps_per_sample = prepared.tap_visits as f64 / prepared.samples.len().max(1) as f64;
+    let grouped_sample_ratio =
+        prepared.samples.len() as f64 / prepared.gridded_samples.max(1) as f64;
+    eprintln!(
+        "wproject_metal_prepare mode={} samples={} gridded_samples={} grouped_sample_ratio={:.6} skipped={} grid={}x{} planes={} requested_planes={:?} max_abs_w_lambda={:.6e} kernel_width={} sampling={} max_support={} avg_taps_per_sample={:.3} tap_visits={} atomic_updates={} elapsed_ms={:.3}",
+        mode,
+        prepared.samples.len(),
+        prepared.gridded_samples,
+        grouped_sample_ratio,
+        prepared.skipped_samples,
+        grid_width,
+        grid_height,
+        prepared.projector.plane_count(),
+        prepared.requested_plane_count,
+        prepared.max_abs_w_lambda,
+        prepared.projector.kernel_weight_width(),
+        prepared.projector.sampling(),
+        prepared.max_support,
+        avg_taps_per_sample,
+        prepared.tap_visits,
+        atomic_updates,
+        profile::millis(elapsed),
+    );
+}
+
 fn compute_psf_w_project(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -10468,21 +16967,31 @@ fn compute_psf_w_project(
     w_project_planes: Option<usize>,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<PsfState, ImagingError> {
+    if !w_project_initial_dirty_metal_backend_enabled() {
+        return compute_psf_w_project_streaming(
+            geometry,
+            batches,
+            gridder,
+            w_project_planes,
+            stage_timings,
+        );
+    }
     let prepare_started = Instant::now();
     let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let prepare_elapsed = prepare_started.elapsed();
+    log_w_project_prepare_profile("psf", &prepared, prepare_elapsed);
     let mut timings = PsfComputationTimings {
-        grid: prepare_started.elapsed(),
+        grid: prepare_elapsed,
         ..PsfComputationTimings::default()
     };
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
 
     let grid_started = Instant::now();
-    for sample in &prepared.samples {
-        let psf_weight = Complex32::new(sample.weight, 0.0);
-        prepared
-            .projector
-            .grid_sample_planned(&mut psf_grid, &sample.positive_plan, psf_weight);
+    if w_project_initial_dirty_metal_backend_enabled() {
+        accumulate_w_project_psf_grid_metal(&prepared, &mut psf_grid)?;
+    } else {
+        accumulate_w_project_psf_grid(&prepared, &mut psf_grid)?;
     }
     timings.grid += grid_started.elapsed();
 
@@ -10519,7 +17028,182 @@ fn compute_psf_w_project(
     })
 }
 
-fn compute_residual_w_project(
+fn compute_dirty_psf_and_residual_w_project(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    if !w_project_initial_dirty_metal_backend_enabled() {
+        return compute_dirty_psf_and_residual_w_project_streaming(
+            geometry,
+            batches,
+            gridder,
+            w_project_planes,
+            stage_timings,
+        );
+    }
+    let prepare_started = Instant::now();
+    let prepared = prepare_w_project_metal_data(geometry, batches, gridder, w_project_planes)?;
+    let prepare_elapsed = prepare_started.elapsed();
+    log_w_project_metal_prepare_profile("dirty", &prepared, prepare_elapsed);
+    let mut timings = PsfComputationTimings {
+        grid: prepare_elapsed,
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    if w_project_initial_dirty_metal_backend_enabled() {
+        accumulate_w_project_grid_metal_samples(
+            &prepared.projector,
+            &prepared.samples,
+            Duration::ZERO,
+            None,
+            &mut psf_grid,
+            &mut residual_grid,
+            W_PROJECT_METAL_MODE_DIRTY,
+        )?;
+    } else {
+        unreachable!("wproject dirty Metal path should have returned streaming CPU earlier");
+    }
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    timings.grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    if prepared.normalization_sumwt <= 0.0 || prepared.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2(&psf_grid);
+    timings.fft = psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf =
+        gridder.corrected_w_project_image_from_grid(&raw_psf, prepared.projector.sampling());
+    psf.mapv_inplace(|value| 2.0 * value / prepared.normalization_sumwt);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual =
+        gridder.corrected_w_project_image_from_grid(&raw_residual, prepared.projector.sampling());
+    residual.mapv_inplace(|value| 2.0 * value / prepared.normalization_sumwt / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: prepared.normalization_sumwt,
+            reported_sumwt: prepared.reported_sumwt,
+            psf_peak,
+            gridded_samples: prepared.gridded_samples,
+            skipped_samples: prepared.skipped_samples,
+        },
+        residual,
+    ))
+}
+
+fn compute_psf_w_project_streaming(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let prepare_started = Instant::now();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    let accumulation = accumulate_w_project_psf_grid_streaming(batches, &projector, &mut psf_grid)?;
+    timings.grid += grid_started.elapsed();
+
+    let psf_state =
+        psf_grid_to_w_project_state(gridder, &projector, &psf_grid, accumulation, &mut timings)?;
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+    Ok(psf_state)
+}
+
+fn compute_dirty_psf_and_residual_w_project_streaming(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    let prepare_started = Instant::now();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    let accumulation = accumulate_w_project_dirty_grids_streaming(
+        batches,
+        &projector,
+        &mut psf_grid,
+        &mut residual_grid,
+    )?;
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    timings.grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    let psf_state =
+        psf_grid_to_w_project_state(gridder, &projector, &psf_grid, accumulation, &mut timings)?;
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual =
+        gridder.corrected_w_project_image_from_grid(&raw_residual, projector.sampling());
+    residual.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+    Ok((psf_state, residual))
+}
+
+fn compute_residual_w_project_streaming(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
@@ -10529,9 +17213,76 @@ fn compute_residual_w_project(
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     let prepare_started = Instant::now();
-    let prepared = prepare_w_project_data(geometry, batches, gridder, w_project_planes)?;
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
     let mut timings = ResidualComputationTimings {
         degrid_grid: prepare_started.elapsed(),
+        ..ResidualComputationTimings::default()
+    };
+    let model_nonzero = model.iter().any(|value| value.abs() > 0.0);
+    let model_grid = if model_nonzero {
+        let model_fft_started = Instant::now();
+        let transformed =
+            centered_fft2(&gridder.apodize_w_project_model(model, projector.sampling()));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let degrid_started = Instant::now();
+    accumulate_w_project_residual_grid_streaming(
+        batches,
+        &projector,
+        model_grid.as_ref(),
+        &mut residual_grid,
+    )?;
+    timings.degrid_grid += degrid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_w_project_image_from_grid(&raw, projector.sampling());
+    image.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(image)
+}
+
+fn compute_residual_w_project(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    w_project_planes: Option<usize>,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    if !w_project_residual_metal_backend_enabled() {
+        return compute_residual_w_project_streaming(
+            geometry,
+            batches,
+            gridder,
+            model,
+            psf_state,
+            w_project_planes,
+            stage_timings,
+        );
+    }
+    let prepare_started = Instant::now();
+    let prepared = prepare_w_project_metal_data(geometry, batches, gridder, w_project_planes)?;
+    let prepare_elapsed = prepare_started.elapsed();
+    log_w_project_metal_prepare_profile("residual", &prepared, prepare_elapsed);
+    let mut timings = ResidualComputationTimings {
+        degrid_grid: prepare_elapsed,
         ..ResidualComputationTimings::default()
     };
     let model_nonzero = model.iter().any(|value| value.abs() > 0.0);
@@ -10547,20 +17298,20 @@ fn compute_residual_w_project(
     };
 
     let degrid_started = Instant::now();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
     let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
-    for sample in &prepared.samples {
-        let predicted = model_grid.as_ref().map_or_else(
-            || Complex32::new(0.0, 0.0),
-            |grid| {
-                prepared
-                    .projector
-                    .degrid_sample_planned(grid, &sample.positive_plan)
-            },
-        );
-        let residual = (sample.visibility - predicted) * sample.weight;
-        prepared
-            .projector
-            .grid_sample_planned(&mut residual_grid, &sample.positive_plan, residual);
+    if w_project_residual_metal_backend_enabled() {
+        accumulate_w_project_grid_metal_samples(
+            &prepared.projector,
+            &prepared.samples,
+            Duration::ZERO,
+            model_grid.as_ref(),
+            &mut psf_grid,
+            &mut residual_grid,
+            W_PROJECT_METAL_MODE_RESIDUAL,
+        )?;
+    } else {
+        unreachable!("wproject residual Metal path should have returned streaming CPU earlier");
     }
     timings.degrid_grid += degrid_started.elapsed();
 
@@ -10579,62 +17330,2976 @@ fn compute_residual_w_project(
     Ok(image)
 }
 
+fn scan_w_project_replay<F>(replay_weighted_batches: &mut F) -> Result<f64, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let mut raw_sample_count = 0usize;
+    let mut max_abs_w_lambda = 0.0f64;
+    replay_weighted_batches(&mut |batches| {
+        for batch in &batches {
+            for sample_index in 0..batch.len() {
+                let sample = RawWProjectSample {
+                    batch_index: 0,
+                    sample_index,
+                    u_lambda: batch.u_lambda[sample_index],
+                    v_lambda: batch.v_lambda[sample_index],
+                    w_lambda: batch.w_lambda[sample_index],
+                    weight: batch.weight[sample_index],
+                    visibility: batch.visibility[sample_index],
+                    sumwt_factor: batch.sumwt_factor[sample_index],
+                };
+                if batch.gridable[sample_index] && raw_w_project_sample_is_valid(sample) {
+                    raw_sample_count += 1;
+                    max_abs_w_lambda = max_abs_w_lambda.max(sample.w_lambda.abs());
+                }
+            }
+        }
+        Ok(())
+    })?;
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    Ok(max_abs_w_lambda)
+}
+
+fn compute_psf_w_project_replay<F>(
+    gridder: &StandardGridder,
+    projector: &WProjector,
+    replay_weighted_batches: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let mut timings = PsfComputationTimings::default();
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    let mut accumulation = WProjectGridAccumulation::default();
+    replay_weighted_batches(&mut |batches| {
+        accumulation.add(accumulate_w_project_psf_grid_streaming(
+            &batches,
+            projector,
+            &mut psf_grid,
+        )?);
+        Ok(())
+    })?;
+    timings.grid += grid_started.elapsed();
+
+    let psf_state =
+        psf_grid_to_w_project_state(gridder, projector, &psf_grid, accumulation, &mut timings)?;
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+    Ok(psf_state)
+}
+
+fn compute_dirty_psf_and_residual_w_project_replay<F>(
+    gridder: &StandardGridder,
+    projector: &WProjector,
+    max_abs_w_lambda: f64,
+    replay_weighted_batches: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let mut timings = PsfComputationTimings::default();
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let grid_started = Instant::now();
+    let accumulation = if w_project_initial_dirty_metal_backend_enabled() {
+        accumulate_w_project_grid_metal_streaming_replay(
+            projector,
+            None,
+            &mut psf_grid,
+            &mut residual_grid,
+            W_PROJECT_METAL_MODE_DIRTY,
+            replay_weighted_batches,
+        )?
+    } else {
+        let mut accumulation = WProjectGridAccumulation::default();
+        replay_weighted_batches(&mut |batches| {
+            accumulation.add(accumulate_w_project_dirty_grids_streaming(
+                &batches,
+                projector,
+                &mut psf_grid,
+                &mut residual_grid,
+            )?);
+            Ok(())
+        })?;
+        accumulation
+    };
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    timings.grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    let psf_state =
+        psf_grid_to_w_project_state(gridder, projector, &psf_grid, accumulation, &mut timings)?;
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual =
+        gridder.corrected_w_project_image_from_grid(&raw_residual, projector.sampling());
+    residual.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+    Ok((psf_state, residual, max_abs_w_lambda))
+}
+
+fn compute_residual_w_project_replay<F>(
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    projector: &WProjector,
+    replay_weighted_batches: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let mut timings = ResidualComputationTimings::default();
+    let model_nonzero = model.iter().any(|value| value.abs() > 0.0);
+    let model_grid = if model_nonzero {
+        let model_fft_started = Instant::now();
+        let transformed =
+            centered_fft2(&gridder.apodize_w_project_model(model, projector.sampling()));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+
+    let degrid_started = Instant::now();
+    if w_project_residual_metal_backend_enabled() {
+        let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        accumulate_w_project_grid_metal_streaming_replay(
+            projector,
+            model_grid.as_ref(),
+            &mut psf_grid,
+            &mut residual_grid,
+            W_PROJECT_METAL_MODE_RESIDUAL,
+            replay_weighted_batches,
+        )?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            accumulate_w_project_residual_grid_streaming(
+                &batches,
+                projector,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?;
+            Ok(())
+        })?;
+    }
+    timings.degrid_grid += degrid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_w_project_image_from_grid(&raw, projector.sampling());
+    image.mapv_inplace(|value| 2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(image)
+}
+
+fn w_project_grid_threads(sample_count: usize) -> usize {
+    let requested_threads = standard_mfs_grid_threads();
+    requested_threads
+        .min(sample_count)
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WProjectGridAccumulation {
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+impl WProjectGridAccumulation {
+    fn add(&mut self, other: Self) {
+        self.normalization_sumwt += other.normalization_sumwt;
+        self.reported_sumwt += other.reported_sumwt;
+        self.gridded_samples += other.gridded_samples;
+        self.skipped_samples += other.skipped_samples;
+    }
+}
+
+fn psf_grid_to_w_project_state(
+    gridder: &StandardGridder,
+    projector: &WProjector,
+    psf_grid: &Array2<Complex32>,
+    accumulation: WProjectGridAccumulation,
+    timings: &mut PsfComputationTimings,
+) -> Result<PsfState, ImagingError> {
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2(psf_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf = gridder.corrected_w_project_image_from_grid(&raw_psf, projector.sampling());
+    psf.mapv_inplace(|value| 2.0 * value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = normalize_started.elapsed();
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: accumulation.normalization_sumwt as f32,
+        reported_sumwt: accumulation.reported_sumwt as f32,
+        psf_peak,
+        gridded_samples: accumulation.gridded_samples,
+        skipped_samples: accumulation.skipped_samples,
+    })
+}
+
+fn accumulate_w_project_psf_grid_streaming(
+    batches: &[VisibilityBatch],
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+) -> Result<WProjectGridAccumulation, ImagingError> {
+    let thread_count = w_project_grid_threads(batches.iter().map(VisibilityBatch::len).sum());
+    if thread_count <= 1 {
+        return Ok(accumulate_w_project_psf_grid_streaming_serial(
+            batches, 0, projector, psf_grid,
+        ));
+    }
+    let [nx, ny] = projector.grid_shape();
+    let local_results = accumulate_w_project_streaming_parallel(
+        "wproject_psf",
+        batches,
+        thread_count,
+        || {
+            (
+                Array2::<Complex32>::zeros((nx, ny)),
+                Array2::<Complex32>::zeros((0, 0)),
+            )
+        },
+        |batch, batch_index, sample_index, (psf_grid, _)| {
+            accumulate_w_project_psf_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+            )
+        },
+    )?;
+    let mut accumulation = WProjectGridAccumulation::default();
+    let merge_started = Instant::now();
+    for (local_accumulation, (local_psf_grid, _)) in &local_results {
+        accumulation.add(*local_accumulation);
+        add_complex32_grid(psf_grid, local_psf_grid);
+    }
+    log_w_project_streaming_merge_profile(
+        "wproject_psf",
+        local_results.len(),
+        merge_started.elapsed(),
+    );
+    Ok(accumulation)
+}
+
+fn accumulate_w_project_dirty_grids_streaming(
+    batches: &[VisibilityBatch],
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<WProjectGridAccumulation, ImagingError> {
+    let thread_count = w_project_grid_threads(batches.iter().map(VisibilityBatch::len).sum());
+    if thread_count <= 1 {
+        return Ok(accumulate_w_project_dirty_grids_streaming_serial(
+            batches,
+            0,
+            projector,
+            psf_grid,
+            residual_grid,
+        ));
+    }
+    let [nx, ny] = projector.grid_shape();
+    let local_results = accumulate_w_project_streaming_parallel(
+        "wproject_dirty",
+        batches,
+        thread_count,
+        || {
+            (
+                Array2::<Complex32>::zeros((nx, ny)),
+                Array2::<Complex32>::zeros((nx, ny)),
+            )
+        },
+        |batch, batch_index, sample_index, (psf_grid, residual_grid)| {
+            accumulate_w_project_dirty_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+                residual_grid,
+            )
+        },
+    )?;
+    let mut accumulation = WProjectGridAccumulation::default();
+    let merge_started = Instant::now();
+    for (local_accumulation, (local_psf_grid, local_residual_grid)) in &local_results {
+        accumulation.add(*local_accumulation);
+        add_complex32_grid(psf_grid, local_psf_grid);
+        add_complex32_grid(residual_grid, local_residual_grid);
+    }
+    log_w_project_streaming_merge_profile(
+        "wproject_dirty",
+        local_results.len(),
+        merge_started.elapsed(),
+    );
+    Ok(accumulation)
+}
+
+fn accumulate_w_project_residual_grid_streaming(
+    batches: &[VisibilityBatch],
+    projector: &WProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> Result<WProjectGridAccumulation, ImagingError> {
+    let thread_count = w_project_grid_threads(batches.iter().map(VisibilityBatch::len).sum());
+    if thread_count <= 1 {
+        return Ok(accumulate_w_project_residual_grid_streaming_serial(
+            batches,
+            0,
+            projector,
+            model_grid,
+            residual_grid,
+        ));
+    }
+    let [nx, ny] = projector.grid_shape();
+    let local_results = accumulate_w_project_streaming_parallel(
+        "wproject_residual",
+        batches,
+        thread_count,
+        || {
+            (
+                Array2::<Complex32>::zeros((0, 0)),
+                Array2::<Complex32>::zeros((nx, ny)),
+            )
+        },
+        |batch, batch_index, sample_index, (_, residual_grid)| {
+            accumulate_w_project_residual_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                model_grid,
+                residual_grid,
+            )
+        },
+    )?;
+    let mut accumulation = WProjectGridAccumulation::default();
+    let merge_started = Instant::now();
+    for (local_accumulation, (_, local_residual_grid)) in &local_results {
+        accumulation.add(*local_accumulation);
+        add_complex32_grid(residual_grid, local_residual_grid);
+    }
+    log_w_project_streaming_merge_profile(
+        "wproject_residual",
+        local_results.len(),
+        merge_started.elapsed(),
+    );
+    Ok(accumulation)
+}
+
+fn accumulate_w_project_streaming_parallel<S, I, F>(
+    stage_name: &'static str,
+    batches: &[VisibilityBatch],
+    thread_count: usize,
+    init_state: I,
+    accumulate_sample: F,
+) -> Result<Vec<(WProjectGridAccumulation, S)>, ImagingError>
+where
+    S: Send,
+    I: Fn() -> S + Copy + Send + Sync,
+    F: Fn(&VisibilityBatch, usize, usize, &mut S) -> WProjectGridAccumulation + Copy + Send + Sync,
+{
+    let profile_detail = profile::standard_mfs_profile_detail_enabled();
+    let stage_started = Instant::now();
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
+                let mut state = init_state();
+                let mut accumulation = WProjectGridAccumulation::default();
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulation.add(accumulate_sample(
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut state,
+                        ));
+                    }
+                }
+                (
+                    chunk_index,
+                    sample_end - sample_start,
+                    worker_started.elapsed(),
+                    accumulation,
+                    state,
+                )
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject streaming worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    local_results.sort_by_key(|(worker_index, _, _, _, _)| *worker_index);
+    if profile_detail {
+        log_w_project_streaming_parallel_profile(
+            stage_name,
+            thread_count,
+            chunk_len,
+            input_sample_count,
+            &local_results,
+            stage_started.elapsed(),
+        );
+    }
+    Ok(local_results
+        .into_iter()
+        .map(|(_, _, _, accumulation, state)| (accumulation, state))
+        .collect())
+}
+
+fn log_w_project_streaming_parallel_profile<S>(
+    stage_name: &str,
+    requested_threads: usize,
+    chunk_len: usize,
+    samples_total: usize,
+    local_results: &[(usize, usize, Duration, WProjectGridAccumulation, S)],
+    stage_elapsed: Duration,
+) {
+    if !profile::standard_mfs_profile_block_detail_enabled() {
+        return;
+    }
+    if local_results.is_empty() {
+        return;
+    }
+    let mut worker_times = local_results
+        .iter()
+        .map(|(_, _, elapsed, _, _)| profile::millis(*elapsed))
+        .collect::<Vec<_>>();
+    worker_times.sort_by(|a, b| a.total_cmp(b));
+    let min_ms = worker_times[0];
+    let p50_ms = worker_times[worker_times.len() / 2];
+    let max_ms = worker_times[worker_times.len() - 1];
+    let samples_min = local_results
+        .iter()
+        .map(|(_, samples, _, _, _)| *samples)
+        .min()
+        .unwrap_or(0);
+    let samples_max = local_results
+        .iter()
+        .map(|(_, samples, _, _, _)| *samples)
+        .max()
+        .unwrap_or(0);
+    eprintln!(
+        "wproject_streaming_stage stage={} requested_threads={} actual_threads={} chunk_len={} samples_total={} samples_per_worker_min={} samples_per_worker_max={} worker_compute_min_ms={:.3} worker_compute_p50_ms={:.3} worker_compute_max_ms={:.3} stage_total_ms={:.3}",
+        stage_name,
+        requested_threads,
+        local_results.len(),
+        chunk_len,
+        samples_total,
+        samples_min,
+        samples_max,
+        min_ms,
+        p50_ms,
+        max_ms,
+        profile::millis(stage_elapsed),
+    );
+    for (worker_index, samples, elapsed, accumulation, _) in local_results {
+        eprintln!(
+            "wproject_streaming_worker stage={} worker_index={} samples={} gridded_samples={} skipped_samples={} worker_compute_ms={:.3}",
+            stage_name,
+            worker_index,
+            samples,
+            accumulation.gridded_samples,
+            accumulation.skipped_samples,
+            profile::millis(*elapsed),
+        );
+    }
+}
+
+fn log_w_project_streaming_merge_profile(stage_name: &str, grid_count: usize, elapsed: Duration) {
+    if profile::standard_mfs_profile_block_detail_enabled() {
+        eprintln!(
+            "wproject_streaming_merge stage={} local_grid_count={} merge_ms={:.3}",
+            stage_name,
+            grid_count,
+            profile::millis(elapsed),
+        );
+    }
+}
+
+fn accumulate_w_project_psf_grid_streaming_serial(
+    batches: &[VisibilityBatch],
+    batch_offset: usize,
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (relative_batch_index, batch) in batches.iter().enumerate() {
+        let batch_index = batch_offset + relative_batch_index;
+        for sample_index in 0..batch.len() {
+            accumulation.add(accumulate_w_project_psf_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+            ));
+        }
+    }
+    accumulation
+}
+
+fn accumulate_w_project_dirty_grids_streaming_serial(
+    batches: &[VisibilityBatch],
+    batch_offset: usize,
+    projector: &WProjector,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (relative_batch_index, batch) in batches.iter().enumerate() {
+        let batch_index = batch_offset + relative_batch_index;
+        for sample_index in 0..batch.len() {
+            accumulation.add(accumulate_w_project_dirty_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                psf_grid,
+                residual_grid,
+            ));
+        }
+    }
+    accumulation
+}
+
+fn accumulate_w_project_residual_grid_streaming_serial(
+    batches: &[VisibilityBatch],
+    batch_offset: usize,
+    projector: &WProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let mut accumulation = WProjectGridAccumulation::default();
+    for (relative_batch_index, batch) in batches.iter().enumerate() {
+        let batch_index = batch_offset + relative_batch_index;
+        for sample_index in 0..batch.len() {
+            accumulation.add(accumulate_w_project_residual_streaming_sample(
+                projector,
+                batch,
+                batch_index,
+                sample_index,
+                model_grid,
+                residual_grid,
+            ));
+        }
+    }
+    accumulation
+}
+
+fn w_project_streaming_plan_for_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+) -> Result<(RawWProjectSample, WProjectSamplePlan), WProjectGridAccumulation> {
+    let sample = RawWProjectSample {
+        batch_index,
+        sample_index,
+        u_lambda: batch.u_lambda[sample_index],
+        v_lambda: batch.v_lambda[sample_index],
+        w_lambda: batch.w_lambda[sample_index],
+        weight: batch.weight[sample_index],
+        visibility: batch.visibility[sample_index],
+        sumwt_factor: batch.sumwt_factor[sample_index],
+    };
+    if !batch.gridable[sample_index] || !raw_w_project_sample_is_valid(sample) {
+        return Err(WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        });
+    }
+    let Some(plan) = projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+    else {
+        return Err(WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        });
+    };
+    Ok((sample, plan))
+}
+
+fn w_project_accumulation_for_sample(
+    sample: RawWProjectSample,
+    plan: &WProjectSamplePlan,
+) -> WProjectGridAccumulation {
+    WProjectGridAccumulation {
+        normalization_sumwt: 2.0 * f64::from(sample.weight) * f64::from(plan.normalization),
+        reported_sumwt: f64::from(sample.weight) * f64::from(sample.sumwt_factor),
+        gridded_samples: 1,
+        skipped_samples: 0,
+    }
+}
+
+fn accumulate_w_project_psf_streaming_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    psf_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let Ok((sample, plan)) =
+        w_project_streaming_plan_for_sample(projector, batch, batch_index, sample_index)
+    else {
+        return WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        };
+    };
+    projector.grid_sample_planned(psf_grid, &plan, Complex32::new(sample.weight, 0.0));
+    w_project_accumulation_for_sample(sample, &plan)
+}
+
+fn accumulate_w_project_dirty_streaming_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let Ok((sample, plan)) =
+        w_project_streaming_plan_for_sample(projector, batch, batch_index, sample_index)
+    else {
+        return WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        };
+    };
+    projector.grid_sample_planned_pair(
+        psf_grid,
+        Complex32::new(sample.weight, 0.0),
+        residual_grid,
+        sample.visibility * sample.weight,
+        &plan,
+    );
+    w_project_accumulation_for_sample(sample, &plan)
+}
+
+fn accumulate_w_project_residual_streaming_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex32>,
+) -> WProjectGridAccumulation {
+    let Ok((sample, plan)) =
+        w_project_streaming_plan_for_sample(projector, batch, batch_index, sample_index)
+    else {
+        return WProjectGridAccumulation {
+            skipped_samples: 1,
+            ..WProjectGridAccumulation::default()
+        };
+    };
+    let predicted = model_grid.as_ref().map_or_else(
+        || Complex32::new(0.0, 0.0),
+        |grid| projector.degrid_sample_planned(grid, &plan),
+    );
+    let residual = (sample.visibility - predicted) * sample.weight;
+    projector.grid_sample_planned(residual_grid, &plan, residual);
+    w_project_accumulation_for_sample(sample, &plan)
+}
+
+fn accumulate_w_project_psf_grid(
+    prepared: &WProjectPreparedData,
+    psf_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let samples = &prepared.samples;
+    let thread_count = w_project_grid_threads(samples.len());
+    if thread_count <= 1 || samples.len() < 10_000 {
+        for sample in samples {
+            let psf_weight = Complex32::new(sample.weight, 0.0);
+            prepared
+                .projector
+                .grid_sample_planned(psf_grid, &sample.positive_plan, psf_weight);
+        }
+        return Ok(());
+    }
+
+    let [nx, ny] = prepared.projector.grid_shape();
+    let chunk_len = samples.len().div_ceil(thread_count);
+    let mut local_grids = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk in samples.chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut local_grid = Array2::<Complex32>::zeros((nx, ny));
+                for sample in chunk {
+                    let psf_weight = Complex32::new(sample.weight, 0.0);
+                    prepared.projector.grid_sample_planned(
+                        &mut local_grid,
+                        &sample.positive_plan,
+                        psf_weight,
+                    );
+                }
+                local_grid
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject PSF grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    for local_grid in &local_grids {
+        add_complex32_grid(psf_grid, local_grid);
+    }
+    Ok(())
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct WProjectMetalSample {
+    loc: u32,
+    plane_support_offsets: u32,
+    weight: f32,
+    visibility_re: f32,
+    visibility_im: f32,
+}
+
+impl WProjectMetalSample {
+    fn support(self) -> u16 {
+        ((self.plane_support_offsets >> 10) & 0x1f) as u16
+    }
+
+    fn has_same_plan(self, other: Self) -> bool {
+        self.loc == other.loc && self.plane_support_offsets == other.plane_support_offsets
+    }
+
+    fn merge_weighted_visibility(&mut self, other: Self) -> bool {
+        if !self.has_same_plan(other) {
+            return false;
+        }
+        let total_weight = self.weight + other.weight;
+        if !(total_weight.is_finite() && total_weight > 0.0) {
+            return false;
+        }
+        self.visibility_re =
+            (self.visibility_re * self.weight + other.visibility_re * other.weight) / total_weight;
+        self.visibility_im =
+            (self.visibility_im * self.weight + other.visibility_im * other.weight) / total_weight;
+        self.weight = total_weight;
+        true
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct WProjectMetalComplex {
+    re: f32,
+    im: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct WProjectMetalParams {
+    sample_count: u32,
+    grid_width: u32,
+    grid_height: u32,
+    kernel_width: u32,
+    sampling: u32,
+    mode: u32,
+    model_present: u32,
+    partial_grid_count: u32,
+    partial_chunk_len: u32,
+    _pad0: u32,
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const W_PROJECT_METAL_MODE_PSF: u32 = 0;
+const W_PROJECT_METAL_MODE_RESIDUAL: u32 = 2;
+const W_PROJECT_METAL_MODE_DIRTY: u32 = 1;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES: usize = 256 * 1024 * 1024;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 8_000_000;
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn w_project_metal_dirty_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
+    let bytes_per_partial_grid = cell_count
+        .checked_mul(std::mem::size_of::<f32>())
+        .and_then(|bytes| bytes.checked_mul(4))
+        .unwrap_or(usize::MAX);
+    let max_by_memory = W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES
+        .checked_div(bytes_per_partial_grid)
+        .unwrap_or(1)
+        .max(1);
+    sample_count
+        .div_ceil(W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID)
+        .clamp(1, max_by_memory.min(32))
+}
+
+fn w_project_metal_sample_from_plan(
+    projector: &WProjector,
+    plan: &WProjectSamplePlan,
+    weight: f32,
+    visibility: Complex32,
+) -> Result<WProjectMetalSample, ImagingError> {
+    let support = projector.kernel_support(plan.plane_index);
+    let loc_x = u16::try_from(plan.loc_x).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal sample x coordinate exceeds u16".to_string())
+    })?;
+    let loc_y = u16::try_from(plan.loc_y).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal sample y coordinate exceeds u16".to_string())
+    })?;
+    let plane_index = u16::try_from(plan.plane_index).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal plane index exceeds u16".to_string())
+    })?;
+    if plane_index > 0x03ff {
+        return Err(ImagingError::InvalidRequest(
+            "wproject Metal compact sample plane index exceeds 10 bits".to_string(),
+        ));
+    }
+    let support = u8::try_from(support).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal support exceeds u8".to_string())
+    })?;
+    if support > 0x1f {
+        return Err(ImagingError::InvalidRequest(
+            "wproject Metal compact sample support exceeds 5 bits".to_string(),
+        ));
+    }
+    let off_x = i8::try_from(plan.off_x).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal x subpixel offset exceeds i8".to_string())
+    })?;
+    let off_y = i8::try_from(plan.off_y).map_err(|_| {
+        ImagingError::InvalidRequest("wproject Metal y subpixel offset exceeds i8".to_string())
+    })?;
+    Ok(WProjectMetalSample {
+        loc: u32::from(loc_x) | (u32::from(loc_y) << 16),
+        plane_support_offsets: u32::from(plane_index)
+            | (u32::from(support) << 10)
+            | (u32::from(plan.conjugate_kernel) << 15)
+            | (u32::from((i16::from(off_x) + 128) as u8) << 16)
+            | (u32::from((i16::from(off_y) + 128) as u8) << 24),
+        weight,
+        visibility_re: visibility.re,
+        visibility_im: visibility.im,
+    })
+}
+
+fn push_w_project_metal_sample(
+    samples: &mut Vec<WProjectMetalSample>,
+    sample: WProjectMetalSample,
+) -> bool {
+    if let Some(last) = samples.last_mut()
+        && last.merge_weighted_visibility(sample)
+    {
+        return false;
+    }
+    samples.push(sample);
+    true
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn w_project_metal_samples(
+    prepared: &WProjectPreparedData,
+) -> Result<Vec<WProjectMetalSample>, ImagingError> {
+    let mut samples = Vec::with_capacity(prepared.samples.len());
+    for sample in &prepared.samples {
+        let metal_sample = w_project_metal_sample_from_plan(
+            &prepared.projector,
+            &sample.positive_plan,
+            sample.weight,
+            sample.visibility,
+        )?;
+        push_w_project_metal_sample(&mut samples, metal_sample);
+    }
+    Ok(samples)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn w_project_metal_kernel_weights(projector: &WProjector) -> Vec<WProjectMetalComplex> {
+    projector
+        .flattened_kernel_weights()
+        .into_iter()
+        .map(|value| WProjectMetalComplex {
+            re: value.re,
+            im: value.im,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_psf_grid_metal(
+    prepared: &WProjectPreparedData,
+    psf_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    let mut residual_grid = Array2::<Complex32>::zeros(psf_grid.raw_dim());
+    accumulate_w_project_grid_metal(
+        prepared,
+        None,
+        psf_grid,
+        &mut residual_grid,
+        W_PROJECT_METAL_MODE_PSF,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_w_project_psf_grid_metal(
+    _prepared: &WProjectPreparedData,
+    _psf_grid: &mut Array2<Complex32>,
+) -> Result<(), ImagingError> {
+    Err(ImagingError::Unsupported(
+        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_w_project_grid_metal_samples(
+    _projector: &WProjector,
+    _samples: &[WProjectMetalSample],
+    _sample_pack_elapsed: Duration,
+    _model_grid: Option<&Array2<Complex32>>,
+    _psf_grid: &mut Array2<Complex32>,
+    _residual_grid: &mut Array2<Complex32>,
+    _mode: u32,
+) -> Result<(), ImagingError> {
+    Err(ImagingError::Unsupported(
+        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_grid_metal(
+    prepared: &WProjectPreparedData,
+    model_grid: Option<&Array2<Complex32>>,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+    mode: u32,
+) -> Result<(), ImagingError> {
+    let sample_pack_started = Instant::now();
+    let samples = w_project_metal_samples(prepared)?;
+    let sample_pack_elapsed = sample_pack_started.elapsed();
+    accumulate_w_project_grid_metal_samples(
+        &prepared.projector,
+        &samples,
+        sample_pack_elapsed,
+        model_grid,
+        psf_grid,
+        residual_grid,
+        mode,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_grid_metal_samples(
+    projector: &WProjector,
+    samples: &[WProjectMetalSample],
+    sample_pack_elapsed: Duration,
+    model_grid: Option<&Array2<Complex32>>,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+    mode: u32,
+) -> Result<(), ImagingError> {
+    use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
+
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
+        MTLLibrary, MTLResourceOptions, MTLSize,
+    };
+
+    let profile_detail = profile::standard_mfs_profile_detail_enabled();
+    let total_started = Instant::now();
+    let [grid_width, grid_height] = projector.grid_shape();
+    let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+        ImagingError::InvalidRequest("wproject Metal grid is too large".to_string())
+    })?;
+    if samples.is_empty() {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let partial_grid_count = if mode == W_PROJECT_METAL_MODE_DIRTY {
+        w_project_metal_dirty_partial_grid_count(samples.len(), cell_count)
+    } else {
+        1
+    };
+    let partial_chunk_len = samples.len().div_ceil(partial_grid_count);
+    let sample_buffer_bytes = mem::size_of_val(samples);
+    let kernel_pack_started = Instant::now();
+    let kernel_weights = w_project_metal_kernel_weights(projector);
+    let kernel_pack_elapsed = kernel_pack_started.elapsed();
+    let kernel_buffer_bytes = mem::size_of_val(kernel_weights.as_slice());
+    let kernel_width = projector.kernel_weight_width();
+    let params = WProjectMetalParams {
+        sample_count: u32::try_from(samples.len()).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal sample count exceeds u32".to_string())
+        })?,
+        grid_width: u32::try_from(grid_width).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal grid width exceeds u32".to_string())
+        })?,
+        grid_height: u32::try_from(grid_height).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal grid height exceeds u32".to_string())
+        })?,
+        kernel_width: u32::try_from(kernel_width).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal kernel width exceeds u32".to_string())
+        })?,
+        sampling: u32::try_from(projector.sampling()).map_err(|_| {
+            ImagingError::InvalidRequest("wproject Metal sampling exceeds u32".to_string())
+        })?,
+        mode,
+        model_present: u32::from(model_grid.is_some()),
+        partial_grid_count: u32::try_from(partial_grid_count).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "wproject Metal partial grid count exceeds u32".to_string(),
+            )
+        })?,
+        partial_chunk_len: u32::try_from(partial_chunk_len).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "wproject Metal partial grid chunk length exceeds u32".to_string(),
+            )
+        })?,
+        _pad0: 0,
+    };
+
+    let device_queue_started = Instant::now();
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not find a default Metal device".to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a Metal command queue".to_string(),
+        )
+    })?;
+    let device_queue_elapsed = device_queue_started.elapsed();
+    let shader_compile_started = Instant::now();
+    let source = objc2_foundation::NSString::from_str(W_PROJECT_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "wproject backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let shader_compile_elapsed = shader_compile_started.elapsed();
+    let pipeline_started = Instant::now();
+    let use_dirty_partial_grids = mode == W_PROJECT_METAL_MODE_DIRTY && partial_grid_count > 1;
+    let entry_point = match (mode, use_dirty_partial_grids) {
+        (W_PROJECT_METAL_MODE_DIRTY, true) => "wproject_grid_dirty_chunked_samples",
+        (W_PROJECT_METAL_MODE_DIRTY, false) => "wproject_grid_dirty_samples",
+        _ => "wproject_grid_samples",
+    };
+    let function_name = objc2_foundation::NSString::from_str(entry_point);
+    let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' shader entry point was not found".to_string(),
+        )
+    })?;
+    let pipeline = device
+        .newComputePipelineStateWithFunction_error(&function)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "wproject backend 'metal' failed to create pipeline: {error:?}"
+            ))
+        })?;
+    let pipeline_elapsed = pipeline_started.elapsed();
+    let reduce_pipeline = if use_dirty_partial_grids {
+        let reduce_function_name =
+            objc2_foundation::NSString::from_str("wproject_reduce_dirty_chunked_grids");
+        let reduce_function = library
+            .newFunctionWithName(&reduce_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' reduction shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        Some(
+            device
+                .newComputePipelineStateWithFunction_error(&reduce_function)
+                .map_err(|error| {
+                    ImagingError::Unsupported(format!(
+                        "wproject backend 'metal' failed to create reduction pipeline: {error:?}"
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
+    let storage_options = MTLResourceOptions::StorageModeShared;
+
+    let buffer_alloc_started = Instant::now();
+    let sample_buffer = unsafe {
+        let pointer =
+            NonNull::new(samples.as_ptr().cast::<c_void>() as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal sample pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                sample_buffer_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not wrap sample buffer without copying"
+                        .to_string(),
+                )
+            })?
+    };
+    let kernel_buffer = unsafe {
+        let pointer = NonNull::new(kernel_weights.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal kernel pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                kernel_buffer_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not wrap kernel buffer without copying"
+                        .to_string(),
+                )
+            })?
+    };
+    let params_buffer = unsafe {
+        let params_slice = slice::from_ref(&params);
+        let byte_len = mem::size_of_val(params_slice);
+        let pointer = NonNull::new(params_slice.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal params pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not allocate params buffer".to_string(),
+                )
+            })?
+    };
+    let buffer_alloc_pre_model_elapsed = buffer_alloc_started.elapsed();
+    let model_pack_started = Instant::now();
+    let model_values = if let Some(model_grid) = model_grid {
+        model_grid
+            .iter()
+            .map(|value| WProjectMetalComplex {
+                re: value.re,
+                im: value.im,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![WProjectMetalComplex { re: 0.0, im: 0.0 }]
+    };
+    let model_pack_elapsed = model_pack_started.elapsed();
+    let model_buffer_bytes = mem::size_of_val(model_values.as_slice());
+    let model_buffer_started = Instant::now();
+    let model_buffer = unsafe {
+        let pointer = NonNull::new(model_values.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal model pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                model_buffer_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not wrap model buffer without copying"
+                        .to_string(),
+                )
+            })?
+    };
+    let model_buffer_elapsed = model_buffer_started.elapsed();
+    let output_bytes = cell_count
+        .checked_mul(mem::size_of::<u32>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("wproject Metal output grid is too large".to_string())
+        })?;
+    let partial_output_bytes = output_bytes
+        .checked_mul(partial_grid_count)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "wproject Metal partial output grid is too large".to_string(),
+            )
+        })?;
+    let output_alloc_started = Instant::now();
+    let psf_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate PSF real buffer".to_string(),
+            )
+        })?;
+    let psf_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate PSF imag buffer".to_string(),
+            )
+        })?;
+    let residual_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate residual real buffer".to_string(),
+            )
+        })?;
+    let residual_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate residual imag buffer".to_string(),
+            )
+        })?;
+    let partial_psf_re = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial PSF real buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_psf_im = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial PSF imag buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_residual_re = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial residual real buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let partial_residual_im = if use_dirty_partial_grids {
+        Some(
+            device
+                .newBufferWithLength_options(partial_output_bytes, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate partial residual imag buffer"
+                            .to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let output_alloc_elapsed = output_alloc_started.elapsed();
+    let accum_psf_re = partial_psf_re.as_ref().unwrap_or(&psf_re);
+    let accum_psf_im = partial_psf_im.as_ref().unwrap_or(&psf_im);
+    let accum_residual_re = partial_residual_re.as_ref().unwrap_or(&residual_re);
+    let accum_residual_im = partial_residual_im.as_ref().unwrap_or(&residual_im);
+    let accum_output_bytes = if use_dirty_partial_grids {
+        partial_output_bytes
+    } else {
+        output_bytes
+    };
+    let zero_outputs_started = Instant::now();
+    unsafe {
+        ptr::write_bytes(
+            accum_psf_re.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_psf_im.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_residual_re.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+        ptr::write_bytes(
+            accum_residual_im.contents().as_ptr().cast::<u8>(),
+            0,
+            accum_output_bytes,
+        );
+    }
+    let zero_outputs_elapsed = zero_outputs_started.elapsed();
+
+    let encode_started = Instant::now();
+    let command_buffer = queue.commandBuffer().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a command buffer".to_string(),
+        )
+    })?;
+    let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a compute encoder".to_string(),
+        )
+    })?;
+    encoder.setComputePipelineState(&pipeline);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(&sample_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(&model_buffer), 0, 2);
+        encoder.setBuffer_offset_atIndex(Some(accum_psf_re), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(accum_psf_im), 0, 4);
+        encoder.setBuffer_offset_atIndex(Some(accum_residual_re), 0, 5);
+        encoder.setBuffer_offset_atIndex(Some(accum_residual_im), 0, 6);
+        encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 7);
+    }
+    let thread_count = samples.len();
+    let thread_width = pipeline.threadExecutionWidth().max(1);
+    let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+    let threads_per_group = thread_width.min(max_threads).min(thread_count).max(1);
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: thread_count,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: threads_per_group,
+            height: 1,
+            depth: 1,
+        },
+    );
+    encoder.endEncoding();
+    let encode_elapsed = encode_started.elapsed();
+    let dispatch_wait_started = Instant::now();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    let dispatch_wait_elapsed = dispatch_wait_started.elapsed();
+    if command_buffer.status() == MTLCommandBufferStatus::Error {
+        let message = command_buffer
+            .error()
+            .map(|error| format!("{error:?}"))
+            .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+        return Err(ImagingError::Unsupported(format!(
+            "wproject backend 'metal' command failed: {message}"
+        )));
+    }
+    let mut reduce_wait_elapsed = Duration::ZERO;
+    if use_dirty_partial_grids {
+        let reduce_started = Instant::now();
+        let reduce_command_buffer = queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not create a reduction command buffer".to_string(),
+            )
+        })?;
+        let reduce_encoder = reduce_command_buffer
+            .computeCommandEncoder()
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not create a reduction compute encoder"
+                        .to_string(),
+                )
+            })?;
+        reduce_encoder
+            .setComputePipelineState(reduce_pipeline.as_ref().expect("reduction pipeline"));
+        unsafe {
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_psf_re), 0, 0);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_psf_im), 0, 1);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_residual_re), 0, 2);
+            reduce_encoder.setBuffer_offset_atIndex(Some(accum_residual_im), 0, 3);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&psf_re), 0, 4);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&psf_im), 0, 5);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&residual_re), 0, 6);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&residual_im), 0, 7);
+            reduce_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 8);
+        }
+        let reduce_thread_count = cell_count;
+        let reduce_thread_width = reduce_pipeline
+            .as_ref()
+            .expect("reduction pipeline")
+            .threadExecutionWidth()
+            .max(1);
+        let reduce_max_threads = reduce_pipeline
+            .as_ref()
+            .expect("reduction pipeline")
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let reduce_threads_per_group = reduce_thread_width
+            .min(reduce_max_threads)
+            .min(reduce_thread_count)
+            .max(1);
+        reduce_encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: reduce_thread_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: reduce_threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        reduce_encoder.endEncoding();
+        reduce_command_buffer.commit();
+        reduce_command_buffer.waitUntilCompleted();
+        reduce_wait_elapsed = reduce_started.elapsed();
+        if reduce_command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = reduce_command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "wproject backend 'metal' reduction command failed: {message}"
+            )));
+        }
+    }
+
+    let readback_started = Instant::now();
+    let psf_re_values =
+        unsafe { slice::from_raw_parts(psf_re.contents().as_ptr().cast::<f32>(), cell_count) };
+    let psf_im_values =
+        unsafe { slice::from_raw_parts(psf_im.contents().as_ptr().cast::<f32>(), cell_count) };
+    let residual_re_values =
+        unsafe { slice::from_raw_parts(residual_re.contents().as_ptr().cast::<f32>(), cell_count) };
+    let residual_im_values =
+        unsafe { slice::from_raw_parts(residual_im.contents().as_ptr().cast::<f32>(), cell_count) };
+    for (
+        (((psf_cell, &psf_re_value), &psf_im_value), residual_cell),
+        (&residual_re_value, &residual_im_value),
+    ) in psf_grid
+        .as_slice_memory_order_mut()
+        .expect("wproject PSF grid should be contiguous")
+        .iter_mut()
+        .zip(psf_re_values)
+        .zip(psf_im_values)
+        .zip(
+            residual_grid
+                .as_slice_memory_order_mut()
+                .expect("wproject residual grid should be contiguous")
+                .iter_mut(),
+        )
+        .zip(residual_re_values.iter().zip(residual_im_values))
+    {
+        *psf_cell = Complex32::new(psf_re_value, psf_im_value);
+        *residual_cell = Complex32::new(residual_re_value, residual_im_value);
+    }
+    let readback_elapsed = readback_started.elapsed();
+
+    if profile_detail {
+        let buffer_alloc_copy_elapsed =
+            buffer_alloc_pre_model_elapsed + model_buffer_elapsed + output_alloc_elapsed;
+        eprintln!(
+            "wproject_metal_grid mode={} entry={} samples={} grid={}x{} planes={} kernel_width={} sampling={} partial_grids={} partial_chunk_len={} sample_bytes={} kernel_bytes={} model_bytes={} output_bytes={} partial_output_bytes={} thread_width={} max_threads={} threads_per_group={} sample_pack_ms={:.3} kernel_pack_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_alloc_copy_ms={:.3} model_pack_ms={:.3} zero_outputs_ms={:.3} encode_ms={:.3} dispatch_wait_ms={:.3} reduce_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            mode,
+            entry_point,
+            samples.len(),
+            grid_width,
+            grid_height,
+            projector.plane_count(),
+            kernel_width,
+            projector.sampling(),
+            partial_grid_count,
+            partial_chunk_len,
+            sample_buffer_bytes,
+            kernel_buffer_bytes,
+            model_buffer_bytes,
+            output_bytes * 4,
+            if use_dirty_partial_grids {
+                partial_output_bytes * 4
+            } else {
+                0
+            },
+            thread_width,
+            max_threads,
+            threads_per_group,
+            profile::millis(sample_pack_elapsed),
+            profile::millis(kernel_pack_elapsed),
+            profile::millis(device_queue_elapsed),
+            profile::millis(shader_compile_elapsed),
+            profile::millis(pipeline_elapsed),
+            profile::millis(buffer_alloc_copy_elapsed),
+            profile::millis(model_pack_elapsed),
+            profile::millis(zero_outputs_elapsed),
+            profile::millis(encode_elapsed),
+            profile::millis(dispatch_wait_elapsed),
+            profile::millis(reduce_wait_elapsed),
+            profile::millis(readback_elapsed),
+            profile::millis(total_started.elapsed()),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accumulate_w_project_grid_metal_streaming_replay<F>(
+    _projector: &WProjector,
+    _model_grid: Option<&Array2<Complex32>>,
+    _psf_grid: &mut Array2<Complex32>,
+    _residual_grid: &mut Array2<Complex32>,
+    _mode: u32,
+    _replay_weighted_batches: &mut F,
+) -> Result<WProjectGridAccumulation, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    Err(ImagingError::Unsupported(
+        "wproject backend 'metal' requires macOS Metal and is not available on this platform"
+            .to_string(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn accumulate_w_project_grid_metal_streaming_replay<F>(
+    projector: &WProjector,
+    model_grid: Option<&Array2<Complex32>>,
+    psf_grid: &mut Array2<Complex32>,
+    residual_grid: &mut Array2<Complex32>,
+    mode: u32,
+    replay_weighted_batches: &mut F,
+) -> Result<WProjectGridAccumulation, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    use std::{ffi::c_void, mem, ptr, ptr::NonNull, slice};
+
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
+        MTLLibrary, MTLResourceOptions, MTLSize,
+    };
+
+    let total_started = Instant::now();
+    let profile_detail = profile::standard_mfs_profile_detail_enabled();
+    let [grid_width, grid_height] = projector.grid_shape();
+    let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+        ImagingError::InvalidRequest("wproject Metal grid is too large".to_string())
+    })?;
+    let output_bytes = cell_count
+        .checked_mul(mem::size_of::<u32>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("wproject Metal output grid is too large".to_string())
+        })?;
+
+    let device_queue_started = Instant::now();
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not find a default Metal device".to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' could not create a Metal command queue".to_string(),
+        )
+    })?;
+    let device_queue_elapsed = device_queue_started.elapsed();
+
+    let shader_compile_started = Instant::now();
+    let source = objc2_foundation::NSString::from_str(W_PROJECT_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "wproject backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let shader_compile_elapsed = shader_compile_started.elapsed();
+
+    let pipeline_started = Instant::now();
+    let entry_point = if mode == W_PROJECT_METAL_MODE_DIRTY {
+        "wproject_grid_dirty_samples"
+    } else {
+        "wproject_grid_samples"
+    };
+    let function_name = objc2_foundation::NSString::from_str(entry_point);
+    let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
+        ImagingError::Unsupported(
+            "wproject backend 'metal' shader entry point was not found".to_string(),
+        )
+    })?;
+    let pipeline = device
+        .newComputePipelineStateWithFunction_error(&function)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "wproject backend 'metal' failed to create pipeline: {error:?}"
+            ))
+        })?;
+    let pipeline_elapsed = pipeline_started.elapsed();
+    let thread_width = pipeline.threadExecutionWidth().max(1);
+    let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+
+    let storage_options = MTLResourceOptions::StorageModeShared;
+    let buffer_alloc_started = Instant::now();
+    let kernel_weights = w_project_metal_kernel_weights(projector);
+    let kernel_buffer_bytes = mem::size_of_val(kernel_weights.as_slice());
+    let kernel_buffer = unsafe {
+        let pointer = NonNull::new(kernel_weights.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal kernel pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                kernel_buffer_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not wrap kernel buffer without copying"
+                        .to_string(),
+                )
+            })?
+    };
+    let model_pack_started = Instant::now();
+    let model_values = if let Some(model_grid) = model_grid {
+        model_grid
+            .iter()
+            .map(|value| WProjectMetalComplex {
+                re: value.re,
+                im: value.im,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![WProjectMetalComplex { re: 0.0, im: 0.0 }]
+    };
+    let model_pack_elapsed = model_pack_started.elapsed();
+    let model_buffer_bytes = mem::size_of_val(model_values.as_slice());
+    let model_buffer = unsafe {
+        let pointer = NonNull::new(model_values.as_ptr().cast::<c_void>() as *mut c_void)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("wproject Metal model pointer was null".to_string())
+            })?;
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                pointer,
+                model_buffer_bytes,
+                storage_options,
+                None,
+            )
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "wproject backend 'metal' could not wrap model buffer without copying"
+                        .to_string(),
+                )
+            })?
+    };
+    let psf_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate PSF real buffer".to_string(),
+            )
+        })?;
+    let psf_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate PSF imag buffer".to_string(),
+            )
+        })?;
+    let residual_re = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate residual real buffer".to_string(),
+            )
+        })?;
+    let residual_im = device
+        .newBufferWithLength_options(output_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not allocate residual imag buffer".to_string(),
+            )
+        })?;
+    let buffer_alloc_elapsed = buffer_alloc_started.elapsed();
+
+    let zero_outputs_started = Instant::now();
+    unsafe {
+        ptr::write_bytes(psf_re.contents().as_ptr().cast::<u8>(), 0, output_bytes);
+        ptr::write_bytes(psf_im.contents().as_ptr().cast::<u8>(), 0, output_bytes);
+        ptr::write_bytes(
+            residual_re.contents().as_ptr().cast::<u8>(),
+            0,
+            output_bytes,
+        );
+        ptr::write_bytes(
+            residual_im.contents().as_ptr().cast::<u8>(),
+            0,
+            output_bytes,
+        );
+    }
+    let zero_outputs_elapsed = zero_outputs_started.elapsed();
+
+    let kernel_width = projector.kernel_weight_width();
+    let mut accumulation = WProjectGridAccumulation::default();
+    let mut stats = WProjectMetalStreamingStats::default();
+    let mut threads_per_group_for_log = 1usize;
+    replay_weighted_batches(&mut |batches| {
+        let chunk = prepare_w_project_metal_streaming_chunk(projector, &batches)?;
+        stats.prepare_elapsed += chunk.prepare_elapsed;
+        stats.skipped_samples += chunk.skipped_samples;
+        stats.gridded_samples += chunk.gridded_samples;
+        stats.max_support = stats.max_support.max(chunk.max_support);
+        stats.tap_visits += chunk.tap_visits;
+        stats.boundary_merges += chunk.boundary_merges;
+        accumulation.normalization_sumwt += chunk.normalization_sumwt;
+        accumulation.reported_sumwt += chunk.reported_sumwt;
+        accumulation.gridded_samples += chunk.gridded_samples;
+        accumulation.skipped_samples += chunk.skipped_samples;
+        if chunk.samples.is_empty() {
+            return Ok(());
+        }
+
+        stats.chunk_count += 1;
+        stats.sample_count += chunk.samples.len();
+        let sample_buffer_bytes = mem::size_of_val(chunk.samples.as_slice());
+        stats.sample_buffer_bytes += sample_buffer_bytes;
+        let params = WProjectMetalParams {
+            sample_count: u32::try_from(chunk.samples.len()).map_err(|_| {
+                ImagingError::InvalidRequest("wproject Metal sample count exceeds u32".to_string())
+            })?,
+            grid_width: u32::try_from(grid_width).map_err(|_| {
+                ImagingError::InvalidRequest("wproject Metal grid width exceeds u32".to_string())
+            })?,
+            grid_height: u32::try_from(grid_height).map_err(|_| {
+                ImagingError::InvalidRequest("wproject Metal grid height exceeds u32".to_string())
+            })?,
+            kernel_width: u32::try_from(kernel_width).map_err(|_| {
+                ImagingError::InvalidRequest("wproject Metal kernel width exceeds u32".to_string())
+            })?,
+            sampling: u32::try_from(projector.sampling()).map_err(|_| {
+                ImagingError::InvalidRequest("wproject Metal sampling exceeds u32".to_string())
+            })?,
+            mode,
+            model_present: u32::from(model_grid.is_some()),
+            partial_grid_count: 1,
+            partial_chunk_len: u32::try_from(chunk.samples.len()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "wproject Metal partial grid chunk length exceeds u32".to_string(),
+                )
+            })?,
+            _pad0: 0,
+        };
+
+        let sample_buffer = unsafe {
+            let pointer = NonNull::new(chunk.samples.as_ptr().cast::<c_void>() as *mut c_void)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal sample pointer was null".to_string(),
+                    )
+                })?;
+            device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    pointer,
+                    sample_buffer_bytes,
+                    storage_options,
+                    None,
+                )
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not wrap streaming sample buffer without copying"
+                            .to_string(),
+                    )
+                })?
+        };
+        let params_buffer = unsafe {
+            let params_slice = slice::from_ref(&params);
+            let byte_len = mem::size_of_val(params_slice);
+            let pointer = NonNull::new(params_slice.as_ptr().cast::<c_void>() as *mut c_void)
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "wproject Metal params pointer was null".to_string(),
+                    )
+                })?;
+            device
+                .newBufferWithBytes_length_options(pointer, byte_len, storage_options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "wproject backend 'metal' could not allocate streaming params buffer"
+                            .to_string(),
+                    )
+                })?
+        };
+
+        let encode_started = Instant::now();
+        let command_buffer = queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not create a command buffer".to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "wproject backend 'metal' could not create a compute encoder".to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&sample_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&kernel_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&model_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&psf_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&psf_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&residual_re), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(&residual_im), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 7);
+        }
+        let thread_count = chunk.samples.len();
+        let threads_per_group = thread_width.min(max_threads).min(thread_count).max(1);
+        threads_per_group_for_log = threads_per_group;
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: thread_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        stats.encode_elapsed += encode_started.elapsed();
+
+        let dispatch_wait_started = Instant::now();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        stats.dispatch_wait_elapsed += dispatch_wait_started.elapsed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "wproject backend 'metal' command failed: {message}"
+            )));
+        }
+        Ok(())
+    })?;
+
+    if stats.sample_count == 0 || accumulation.normalization_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let readback_started = Instant::now();
+    let psf_re_values =
+        unsafe { slice::from_raw_parts(psf_re.contents().as_ptr().cast::<f32>(), cell_count) };
+    let psf_im_values =
+        unsafe { slice::from_raw_parts(psf_im.contents().as_ptr().cast::<f32>(), cell_count) };
+    let residual_re_values =
+        unsafe { slice::from_raw_parts(residual_re.contents().as_ptr().cast::<f32>(), cell_count) };
+    let residual_im_values =
+        unsafe { slice::from_raw_parts(residual_im.contents().as_ptr().cast::<f32>(), cell_count) };
+    for (
+        (((psf_cell, &psf_re_value), &psf_im_value), residual_cell),
+        (&residual_re_value, &residual_im_value),
+    ) in psf_grid
+        .as_slice_memory_order_mut()
+        .expect("wproject PSF grid should be contiguous")
+        .iter_mut()
+        .zip(psf_re_values)
+        .zip(psf_im_values)
+        .zip(
+            residual_grid
+                .as_slice_memory_order_mut()
+                .expect("wproject residual grid should be contiguous")
+                .iter_mut(),
+        )
+        .zip(residual_re_values.iter().zip(residual_im_values))
+    {
+        *psf_cell = Complex32::new(psf_re_value, psf_im_value);
+        *residual_cell = Complex32::new(residual_re_value, residual_im_value);
+    }
+    let readback_elapsed = readback_started.elapsed();
+
+    if profile_detail {
+        let avg_taps_per_sample = stats.tap_visits as f64 / stats.sample_count.max(1) as f64;
+        let grouped_sample_ratio = stats.sample_count as f64 / stats.gridded_samples.max(1) as f64;
+        eprintln!(
+            "wproject_metal_streaming_grid mode={} entry={} chunks={} samples={} gridded_samples={} grouped_sample_ratio={:.6} skipped={} grid={}x{} planes={} kernel_width={} sampling={} max_support={} avg_taps_per_sample={:.3} tap_visits={} boundary_merges={} sample_bytes_total={} kernel_bytes={} model_bytes={} output_bytes={} thread_width={} max_threads={} threads_per_group={} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_alloc_copy_ms={:.3} model_pack_ms={:.3} zero_outputs_ms={:.3} prepare_ms={:.3} encode_ms={:.3} dispatch_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            mode,
+            entry_point,
+            stats.chunk_count,
+            stats.sample_count,
+            stats.gridded_samples,
+            grouped_sample_ratio,
+            stats.skipped_samples,
+            grid_width,
+            grid_height,
+            projector.plane_count(),
+            kernel_width,
+            projector.sampling(),
+            stats.max_support,
+            avg_taps_per_sample,
+            stats.tap_visits,
+            stats.boundary_merges,
+            stats.sample_buffer_bytes,
+            kernel_buffer_bytes,
+            model_buffer_bytes,
+            output_bytes * 4,
+            thread_width,
+            max_threads,
+            threads_per_group_for_log,
+            profile::millis(device_queue_elapsed),
+            profile::millis(shader_compile_elapsed),
+            profile::millis(pipeline_elapsed),
+            profile::millis(buffer_alloc_elapsed),
+            profile::millis(model_pack_elapsed),
+            profile::millis(zero_outputs_elapsed),
+            profile::millis(stats.prepare_elapsed),
+            profile::millis(stats.encode_elapsed),
+            profile::millis(stats.dispatch_wait_elapsed),
+            profile::millis(readback_elapsed),
+            profile::millis(total_started.elapsed()),
+        );
+    }
+    Ok(accumulation)
+}
+
+#[cfg(target_os = "macos")]
+const W_PROJECT_METAL_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct WProjectSample {
+    uint loc;
+    uint plane_support_offsets;
+    float weight;
+    float visibility_re;
+    float visibility_im;
+};
+
+struct WProjectParams {
+    uint sample_count;
+    uint grid_width;
+    uint grid_height;
+    uint kernel_width;
+    uint sampling;
+    uint mode;
+    uint model_present;
+    uint partial_grid_count;
+    uint partial_chunk_len;
+    uint _pad0;
+};
+
+static inline void atomic_add_float(device atomic_float *address, float value) {
+    atomic_fetch_add_explicit(address, value, memory_order_relaxed);
+}
+
+static inline uint sample_loc_x(WProjectSample sample) {
+    return sample.loc & 0xffffu;
+}
+
+static inline uint sample_loc_y(WProjectSample sample) {
+    return sample.loc >> 16;
+}
+
+static inline uint sample_plane_index(WProjectSample sample) {
+    return sample.plane_support_offsets & 0x3ffu;
+}
+
+static inline int sample_support(WProjectSample sample) {
+    return int((sample.plane_support_offsets >> 10) & 0x1fu);
+}
+
+static inline int sample_off_x(WProjectSample sample) {
+    return int((sample.plane_support_offsets >> 16) & 0xffu) - 128;
+}
+
+static inline int sample_off_y(WProjectSample sample) {
+    return int((sample.plane_support_offsets >> 24) & 0xffu) - 128;
+}
+
+static inline bool sample_conjugate_kernel(WProjectSample sample) {
+    return (sample.plane_support_offsets & (1u << 15)) != 0u;
+}
+
+kernel void wproject_grid_samples(
+    device const WProjectSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device const float2 *model [[buffer(2)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant WProjectParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const WProjectSample sample = samples[sample_index];
+    const int support = sample_support(sample);
+    const uint plane_offset =
+        sample_plane_index(sample) * params.kernel_width * params.kernel_width;
+
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    const bool needs_model = params.mode == 2u && params.model_present != 0u;
+    if (needs_model) {
+        for (int iy = -support; iy <= support; ++iy) {
+            const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+            const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
+            for (int ix = -support; ix <= support; ++ix) {
+                const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+                const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
+                float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+                if (sample_conjugate_kernel(sample)) {
+                    cwt.y = -cwt.y;
+                }
+                const float2 cell = model[grid_x * params.grid_height + grid_y];
+                predicted_re += cwt.x * cell.x + cwt.y * cell.y;
+                predicted_im += cwt.x * cell.y - cwt.y * cell.x;
+            }
+        }
+    }
+
+    const bool write_psf = params.mode == 0u || params.mode == 1u;
+    const bool write_residual = params.mode == 1u || params.mode == 2u;
+    const float residual_value_re = sample.visibility_re - predicted_re;
+    const float residual_value_im = sample.visibility_im - predicted_im;
+    for (int iy = -support; iy <= support; ++iy) {
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+        const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
+        for (int ix = -support; ix <= support; ++ix) {
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+            const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
+            float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+            if (sample_conjugate_kernel(sample)) {
+                cwt.y = -cwt.y;
+            }
+            const uint cell = grid_x * params.grid_height + grid_y;
+            if (write_psf) {
+                atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+                atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            }
+            if (write_residual) {
+                const float weighted_re =
+                    sample.weight * (residual_value_re * cwt.x - residual_value_im * cwt.y);
+                const float weighted_im =
+                    sample.weight * (residual_value_re * cwt.y + residual_value_im * cwt.x);
+                atomic_add_float(&residual_re[cell], weighted_re);
+                atomic_add_float(&residual_im[cell], weighted_im);
+            }
+        }
+    }
+}
+
+kernel void wproject_grid_dirty_samples(
+    device const WProjectSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant WProjectParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const WProjectSample sample = samples[sample_index];
+    const int support = sample_support(sample);
+    const uint plane_offset =
+        sample_plane_index(sample) * params.kernel_width * params.kernel_width;
+    for (int iy = -support; iy <= support; ++iy) {
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+        const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
+        for (int ix = -support; ix <= support; ++ix) {
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+            const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
+            float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+            if (sample_conjugate_kernel(sample)) {
+                cwt.y = -cwt.y;
+            }
+            const uint cell = grid_x * params.grid_height + grid_y;
+            atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+            atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            atomic_add_float(
+                &residual_re[cell],
+                sample.weight * (sample.visibility_re * cwt.x - sample.visibility_im * cwt.y)
+            );
+            atomic_add_float(
+                &residual_im[cell],
+                sample.weight * (sample.visibility_re * cwt.y + sample.visibility_im * cwt.x)
+            );
+        }
+    }
+}
+
+kernel void wproject_grid_dirty_chunked_samples(
+    device const WProjectSample *samples [[buffer(0)]],
+    device const float2 *kernels [[buffer(1)]],
+    device atomic_float *psf_re [[buffer(3)]],
+    device atomic_float *psf_im [[buffer(4)]],
+    device atomic_float *residual_re [[buffer(5)]],
+    device atomic_float *residual_im [[buffer(6)]],
+    constant WProjectParams &params [[buffer(7)]],
+    uint sample_index [[thread_position_in_grid]]
+) {
+    if (sample_index >= params.sample_count) {
+        return;
+    }
+    const WProjectSample sample = samples[sample_index];
+    const int support = sample_support(sample);
+    const uint plane_offset =
+        sample_plane_index(sample) * params.kernel_width * params.kernel_width;
+    const uint partial_grid_index = min(
+        sample_index / max(params.partial_chunk_len, 1u),
+        params.partial_grid_count - 1u
+    );
+    const uint partial_grid_offset = partial_grid_index * params.grid_width * params.grid_height;
+    for (int iy = -support; iy <= support; ++iy) {
+        const uint kernel_y = uint(abs(iy * int(params.sampling) + sample_off_y(sample)));
+        const uint grid_y = uint(int(sample_loc_y(sample)) + iy);
+        for (int ix = -support; ix <= support; ++ix) {
+            const uint kernel_x = uint(abs(ix * int(params.sampling) + sample_off_x(sample)));
+            const uint grid_x = uint(int(sample_loc_x(sample)) + ix);
+            float2 cwt = kernels[plane_offset + kernel_x * params.kernel_width + kernel_y];
+            if (sample_conjugate_kernel(sample)) {
+                cwt.y = -cwt.y;
+            }
+            const uint cell = partial_grid_offset + grid_x * params.grid_height + grid_y;
+            atomic_add_float(&psf_re[cell], sample.weight * cwt.x);
+            atomic_add_float(&psf_im[cell], sample.weight * cwt.y);
+            atomic_add_float(
+                &residual_re[cell],
+                sample.weight * (sample.visibility_re * cwt.x - sample.visibility_im * cwt.y)
+            );
+            atomic_add_float(
+                &residual_im[cell],
+                sample.weight * (sample.visibility_re * cwt.y + sample.visibility_im * cwt.x)
+            );
+        }
+    }
+}
+
+kernel void wproject_reduce_dirty_chunked_grids(
+    device const float *partial_psf_re [[buffer(0)]],
+    device const float *partial_psf_im [[buffer(1)]],
+    device const float *partial_residual_re [[buffer(2)]],
+    device const float *partial_residual_im [[buffer(3)]],
+    device float *psf_re [[buffer(4)]],
+    device float *psf_im [[buffer(5)]],
+    device float *residual_re [[buffer(6)]],
+    device float *residual_im [[buffer(7)]],
+    constant WProjectParams &params [[buffer(8)]],
+    uint cell [[thread_position_in_grid]]
+) {
+    const uint cell_count = params.grid_width * params.grid_height;
+    if (cell >= cell_count) {
+        return;
+    }
+
+    float sum_psf_re = 0.0f;
+    float sum_psf_im = 0.0f;
+    float sum_residual_re = 0.0f;
+    float sum_residual_im = 0.0f;
+    for (uint partial = 0; partial < params.partial_grid_count; ++partial) {
+        const uint index = partial * cell_count + cell;
+        sum_psf_re += partial_psf_re[index];
+        sum_psf_im += partial_psf_im[index];
+        sum_residual_re += partial_residual_re[index];
+        sum_residual_im += partial_residual_im[index];
+    }
+    psf_re[cell] = sum_psf_re;
+    psf_im[cell] = sum_psf_im;
+    residual_re[cell] = sum_residual_re;
+    residual_im[cell] = sum_residual_im;
+}
+"#;
+
 fn prepare_w_project_data(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
     w_project_planes: Option<usize>,
 ) -> Result<WProjectPreparedData, ImagingError> {
-    let (raw_samples, mut skipped_samples, max_abs_w_lambda) =
-        collect_w_project_raw_samples(batches);
-    if raw_samples.is_empty() {
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
         return Err(ImagingError::NoUsableSamples);
     }
     let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
-    let mut samples = Vec::with_capacity(raw_samples.len());
+    let thread_count = w_project_grid_threads(input_sample_count);
+    if thread_count > 1 && raw_sample_count >= 10_000 {
+        return prepare_w_project_data_parallel(
+            w_project_planes,
+            max_abs_w_lambda,
+            projector,
+            batches,
+            raw_sample_count,
+            input_sample_count,
+            thread_count,
+        );
+    }
+    prepare_w_project_data_serial(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        batches,
+        raw_sample_count,
+    )
+}
+
+fn prepare_w_project_metal_data(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    w_project_planes: Option<usize>,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    let (raw_sample_count, max_abs_w_lambda) = w_project_raw_sample_summary(batches);
+    if raw_sample_count == 0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+    let projector = WProjector::new(geometry, gridder, max_abs_w_lambda, w_project_planes)?;
+    let thread_count = w_project_grid_threads(input_sample_count);
+    if thread_count > 1 && raw_sample_count >= 10_000 {
+        return prepare_w_project_metal_data_parallel(
+            w_project_planes,
+            max_abs_w_lambda,
+            projector,
+            batches,
+            raw_sample_count,
+            input_sample_count,
+            thread_count,
+        );
+    }
+    prepare_w_project_metal_data_serial(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        batches,
+        raw_sample_count,
+    )
+}
+
+fn prepare_w_project_metal_data_serial(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    let mut samples = Vec::with_capacity(raw_sample_count);
+    let mut skipped_samples = 0usize;
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut max_support = 0u16;
+    let mut tap_visits = 0usize;
+
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for sample_index in 0..batch.len() {
+            accumulate_w_project_metal_prepared_sample(
+                &projector,
+                batch,
+                batch_index,
+                sample_index,
+                &mut samples,
+                &mut skipped_samples,
+                &mut normalization_sumwt,
+                &mut reported_sumwt,
+                &mut gridded_samples,
+                &mut max_support,
+                &mut tap_visits,
+            )?;
+        }
+    }
+
+    finish_w_project_metal_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+        max_support,
+        tap_visits,
+    )
+}
+
+fn prepare_w_project_metal_data_parallel(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+    input_sample_count: usize,
+    thread_count: usize,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            let projector = &projector;
+            handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
+                let mut samples =
+                    Vec::<WProjectMetalSample>::with_capacity(sample_end - sample_start);
+                let mut skipped_samples = 0usize;
+                let mut normalization_sumwt = 0.0f64;
+                let mut reported_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut max_support = 0u16;
+                let mut tap_visits = 0usize;
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulate_w_project_metal_prepared_sample(
+                            projector,
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut samples,
+                            &mut skipped_samples,
+                            &mut normalization_sumwt,
+                            &mut reported_sumwt,
+                            &mut gridded_samples,
+                            &mut max_support,
+                            &mut tap_visits,
+                        )?;
+                    }
+                }
+                Ok::<_, ImagingError>(WProjectMetalPreparedLocal {
+                    sample_start,
+                    samples,
+                    skipped_samples,
+                    normalization_sumwt,
+                    reported_sumwt,
+                    gridded_samples,
+                    max_support,
+                    tap_visits,
+                    worker_elapsed: worker_started.elapsed(),
+                })
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported(
+                    "wproject Metal sample planning worker panicked".to_string(),
+                )
+            })??);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    local_results.sort_by_key(|local| local.sample_start);
+
+    let local_sample_count = local_results
+        .iter()
+        .map(|local| local.samples.len())
+        .sum::<usize>();
+    let merge_started = Instant::now();
+    let mut samples = Vec::<WProjectMetalSample>::with_capacity(local_sample_count);
+    let mut skipped_samples = 0usize;
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut max_support = 0u16;
+    let mut tap_visits = 0usize;
+    let mut boundary_merges = 0usize;
+    let mut worker_elapsed = Vec::with_capacity(local_results.len());
+    for mut local in local_results {
+        worker_elapsed.push(local.worker_elapsed);
+        skipped_samples += local.skipped_samples;
+        normalization_sumwt += local.normalization_sumwt;
+        reported_sumwt += local.reported_sumwt;
+        gridded_samples += local.gridded_samples;
+        max_support = max_support.max(local.max_support);
+        tap_visits += local.tap_visits;
+        if local.samples.is_empty() {
+            continue;
+        }
+        if let Some(last) = samples.last_mut()
+            && last.merge_weighted_visibility(local.samples[0])
+        {
+            let axis = usize::from(local.samples[0].support()) * 2 + 1;
+            tap_visits = tap_visits.saturating_sub(axis * axis);
+            boundary_merges += 1;
+            samples.extend_from_slice(&local.samples[1..]);
+            continue;
+        }
+        samples.append(&mut local.samples);
+    }
+    let merge_elapsed = merge_started.elapsed();
+    if profile::standard_mfs_profile_detail_enabled() {
+        worker_elapsed.sort();
+        let worker_min = worker_elapsed.first().copied().unwrap_or(Duration::ZERO);
+        let worker_p50 = worker_elapsed
+            .get(worker_elapsed.len().saturating_sub(1) / 2)
+            .copied()
+            .unwrap_or(Duration::ZERO);
+        let worker_max = worker_elapsed.last().copied().unwrap_or(Duration::ZERO);
+        eprintln!(
+            "wproject_metal_prepare_parallel requested_threads={} actual_threads={} chunk_len={} input_samples={} raw_samples={} local_grouped_samples={} final_grouped_samples={} boundary_merges={} final_capacity={} worker_compute_min_ms={:.3} worker_compute_p50_ms={:.3} worker_compute_max_ms={:.3} merge_ms={:.3}",
+            thread_count,
+            worker_elapsed.len(),
+            chunk_len,
+            input_sample_count,
+            raw_sample_count,
+            local_sample_count,
+            samples.len(),
+            boundary_merges,
+            samples.capacity(),
+            profile::millis(worker_min),
+            profile::millis(worker_p50),
+            profile::millis(worker_max),
+            profile::millis(merge_elapsed),
+        );
+    }
+
+    finish_w_project_metal_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+        max_support,
+        tap_visits,
+    )
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn prepare_w_project_metal_streaming_chunk(
+    projector: &WProjector,
+    batches: &[VisibilityBatch],
+) -> Result<WProjectMetalStreamingChunk, ImagingError> {
+    let prepare_started = Instant::now();
+    let input_sample_count: usize = batches.iter().map(VisibilityBatch::len).sum();
+    if input_sample_count == 0 {
+        return Ok(WProjectMetalStreamingChunk {
+            prepare_elapsed: prepare_started.elapsed(),
+            ..WProjectMetalStreamingChunk::default()
+        });
+    }
+
+    let thread_count = w_project_grid_threads(input_sample_count);
+    if thread_count <= 1 || input_sample_count < 10_000 {
+        let mut chunk = WProjectMetalStreamingChunk {
+            samples: Vec::with_capacity(input_sample_count),
+            ..WProjectMetalStreamingChunk::default()
+        };
+        for (batch_index, batch) in batches.iter().enumerate() {
+            for sample_index in 0..batch.len() {
+                accumulate_w_project_metal_prepared_sample(
+                    projector,
+                    batch,
+                    batch_index,
+                    sample_index,
+                    &mut chunk.samples,
+                    &mut chunk.skipped_samples,
+                    &mut chunk.normalization_sumwt,
+                    &mut chunk.reported_sumwt,
+                    &mut chunk.gridded_samples,
+                    &mut chunk.max_support,
+                    &mut chunk.tap_visits,
+                )?;
+            }
+        }
+        chunk.prepare_elapsed = prepare_started.elapsed();
+        return Ok(chunk);
+    }
+
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
+                let mut samples =
+                    Vec::<WProjectMetalSample>::with_capacity(sample_end - sample_start);
+                let mut skipped_samples = 0usize;
+                let mut normalization_sumwt = 0.0f64;
+                let mut reported_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut max_support = 0u16;
+                let mut tap_visits = 0usize;
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulate_w_project_metal_prepared_sample(
+                            projector,
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut samples,
+                            &mut skipped_samples,
+                            &mut normalization_sumwt,
+                            &mut reported_sumwt,
+                            &mut gridded_samples,
+                            &mut max_support,
+                            &mut tap_visits,
+                        )?;
+                    }
+                }
+                Ok::<_, ImagingError>(WProjectMetalPreparedLocal {
+                    sample_start,
+                    samples,
+                    skipped_samples,
+                    normalization_sumwt,
+                    reported_sumwt,
+                    gridded_samples,
+                    max_support,
+                    tap_visits,
+                    worker_elapsed: worker_started.elapsed(),
+                })
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported(
+                    "wproject Metal streaming sample planning worker panicked".to_string(),
+                )
+            })??);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    local_results.sort_by_key(|local| local.sample_start);
+
+    let local_sample_count = local_results
+        .iter()
+        .map(|local| local.samples.len())
+        .sum::<usize>();
+    let mut chunk = WProjectMetalStreamingChunk {
+        samples: Vec::with_capacity(local_sample_count),
+        ..WProjectMetalStreamingChunk::default()
+    };
+    for mut local in local_results {
+        chunk.skipped_samples += local.skipped_samples;
+        chunk.normalization_sumwt += local.normalization_sumwt;
+        chunk.reported_sumwt += local.reported_sumwt;
+        chunk.gridded_samples += local.gridded_samples;
+        chunk.max_support = chunk.max_support.max(local.max_support);
+        chunk.tap_visits += local.tap_visits;
+        if local.samples.is_empty() {
+            continue;
+        }
+        if let Some(last) = chunk.samples.last_mut()
+            && last.merge_weighted_visibility(local.samples[0])
+        {
+            let axis = usize::from(local.samples[0].support()) * 2 + 1;
+            chunk.tap_visits = chunk.tap_visits.saturating_sub(axis * axis);
+            chunk.boundary_merges += 1;
+            chunk.samples.extend_from_slice(&local.samples[1..]);
+            continue;
+        }
+        chunk.samples.append(&mut local.samples);
+    }
+    chunk.prepare_elapsed = prepare_started.elapsed();
+    Ok(chunk)
+}
+
+fn prepare_w_project_data_serial(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+) -> Result<WProjectPreparedData, ImagingError> {
+    let mut samples = Vec::with_capacity(raw_sample_count);
+    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
     let mut normalization_sumwt = 0.0f64;
     let mut reported_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
 
-    for sample in raw_samples {
-        let Some(positive_plan) =
-            projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
-        else {
-            skipped_samples.push(WProjectSkippedSample {
-                batch_index: sample.batch_index,
-                sample_index: sample.sample_index,
-                u_lambda: sample.u_lambda,
-                v_lambda: sample.v_lambda,
-                w_lambda: sample.w_lambda,
-                weight: sample.weight,
-                sumwt_factor: sample.sumwt_factor,
-                reason: WProjectSkipReason::OutsideGrid,
-            });
-            continue;
-        };
-        normalization_sumwt +=
-            2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
-        reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
-        gridded_samples += 1;
-        samples.push(WProjectPreparedSample {
-            batch_index: sample.batch_index,
-            sample_index: sample.sample_index,
-            u_lambda: sample.u_lambda,
-            v_lambda: sample.v_lambda,
-            w_lambda: sample.w_lambda,
-            sumwt_factor: sample.sumwt_factor,
-            positive_plan,
-            weight: sample.weight,
-            visibility: sample.visibility,
-        });
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for sample_index in 0..batch.len() {
+            accumulate_w_project_prepared_sample(
+                &projector,
+                batch,
+                batch_index,
+                sample_index,
+                &mut samples,
+                &mut skipped_samples,
+                &mut normalization_sumwt,
+                &mut reported_sumwt,
+                &mut gridded_samples,
+            );
+        }
     }
 
+    finish_w_project_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+    )
+}
+
+fn prepare_w_project_data_parallel(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    batches: &[VisibilityBatch],
+    raw_sample_count: usize,
+    input_sample_count: usize,
+    thread_count: usize,
+) -> Result<WProjectPreparedData, ImagingError> {
+    let chunk_len = input_sample_count.div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for chunk_index in 0..thread_count {
+            let sample_start = chunk_index * chunk_len;
+            let sample_end = ((chunk_index + 1) * chunk_len).min(input_sample_count);
+            if sample_start >= sample_end {
+                continue;
+            }
+            let projector = &projector;
+            handles.push(scope.spawn(move || {
+                let mut samples = Vec::<WProjectPreparedSample>::new();
+                let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
+                let mut normalization_sumwt = 0.0f64;
+                let mut reported_sumwt = 0.0f64;
+                let mut gridded_samples = 0usize;
+                let mut global_sample_offset = 0usize;
+                for (batch_index, batch) in batches.iter().enumerate() {
+                    let batch_start = global_sample_offset;
+                    let batch_end = batch_start + batch.len();
+                    global_sample_offset = batch_end;
+                    if batch_end <= sample_start {
+                        continue;
+                    }
+                    if batch_start >= sample_end {
+                        break;
+                    }
+                    let local_start = sample_start.saturating_sub(batch_start);
+                    let local_end = (sample_end - batch_start).min(batch.len());
+                    for sample_index in local_start..local_end {
+                        accumulate_w_project_prepared_sample(
+                            projector,
+                            batch,
+                            batch_index,
+                            sample_index,
+                            &mut samples,
+                            &mut skipped_samples,
+                            &mut normalization_sumwt,
+                            &mut reported_sumwt,
+                            &mut gridded_samples,
+                        );
+                    }
+                }
+                (
+                    sample_start,
+                    samples,
+                    skipped_samples,
+                    normalization_sumwt,
+                    reported_sumwt,
+                    gridded_samples,
+                )
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("wproject sample planning worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    local_results.sort_by_key(|(batch_offset, _, _, _, _, _)| *batch_offset);
+
+    let mut samples = Vec::with_capacity(raw_sample_count);
+    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    for (
+        _,
+        mut local_samples,
+        mut local_skipped,
+        local_normalization,
+        local_reported,
+        local_gridded,
+    ) in local_results
+    {
+        samples.append(&mut local_samples);
+        skipped_samples.append(&mut local_skipped);
+        normalization_sumwt += local_normalization;
+        reported_sumwt += local_reported;
+        gridded_samples += local_gridded;
+    }
+
+    finish_w_project_prepared_data(
+        w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_w_project_prepared_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    samples: &mut Vec<WProjectPreparedSample>,
+    skipped_samples: &mut Vec<WProjectSkippedSample>,
+    normalization_sumwt: &mut f64,
+    reported_sumwt: &mut f64,
+    gridded_samples: &mut usize,
+) {
+    let sample = RawWProjectSample {
+        batch_index,
+        sample_index,
+        u_lambda: batch.u_lambda[sample_index],
+        v_lambda: batch.v_lambda[sample_index],
+        w_lambda: batch.w_lambda[sample_index],
+        weight: batch.weight[sample_index],
+        visibility: batch.visibility[sample_index],
+        sumwt_factor: batch.sumwt_factor[sample_index],
+    };
+    if !batch.gridable[sample_index] {
+        skipped_samples.push(w_project_skipped_sample(
+            sample,
+            WProjectSkipReason::NotGridable,
+        ));
+        return;
+    }
+    if !raw_w_project_sample_is_valid(sample) {
+        skipped_samples.push(w_project_skipped_sample(
+            sample,
+            WProjectSkipReason::InvalidInput,
+        ));
+        return;
+    }
+    let Some(positive_plan) =
+        projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+    else {
+        skipped_samples.push(w_project_skipped_sample(
+            sample,
+            WProjectSkipReason::OutsideGrid,
+        ));
+        return;
+    };
+    *normalization_sumwt += 2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
+    *reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
+    *gridded_samples += 1;
+    samples.push(WProjectPreparedSample {
+        batch_index: sample.batch_index,
+        sample_index: sample.sample_index,
+        u_lambda: sample.u_lambda,
+        v_lambda: sample.v_lambda,
+        w_lambda: sample.w_lambda,
+        sumwt_factor: sample.sumwt_factor,
+        positive_plan,
+        weight: sample.weight,
+        visibility: sample.visibility,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_w_project_metal_prepared_sample(
+    projector: &WProjector,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    sample_index: usize,
+    samples: &mut Vec<WProjectMetalSample>,
+    skipped_samples: &mut usize,
+    normalization_sumwt: &mut f64,
+    reported_sumwt: &mut f64,
+    gridded_samples: &mut usize,
+    max_support: &mut u16,
+    tap_visits: &mut usize,
+) -> Result<(), ImagingError> {
+    let sample = RawWProjectSample {
+        batch_index,
+        sample_index,
+        u_lambda: batch.u_lambda[sample_index],
+        v_lambda: batch.v_lambda[sample_index],
+        w_lambda: batch.w_lambda[sample_index],
+        weight: batch.weight[sample_index],
+        visibility: batch.visibility[sample_index],
+        sumwt_factor: batch.sumwt_factor[sample_index],
+    };
+    if !batch.gridable[sample_index] || !raw_w_project_sample_is_valid(sample) {
+        *skipped_samples += 1;
+        return Ok(());
+    }
+    let Some(positive_plan) =
+        projector.plan_sample(sample.u_lambda, sample.v_lambda, sample.w_lambda)
+    else {
+        *skipped_samples += 1;
+        return Ok(());
+    };
+    *normalization_sumwt += 2.0 * f64::from(sample.weight) * f64::from(positive_plan.normalization);
+    *reported_sumwt += f64::from(sample.weight) * f64::from(sample.sumwt_factor);
+    *gridded_samples += 1;
+    let metal_sample = w_project_metal_sample_from_plan(
+        projector,
+        &positive_plan,
+        sample.weight,
+        sample.visibility,
+    )?;
+    *max_support = (*max_support).max(metal_sample.support());
+    if push_w_project_metal_sample(samples, metal_sample) {
+        let axis = usize::from(metal_sample.support()) * 2 + 1;
+        *tap_visits += axis * axis;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_w_project_prepared_data(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectPreparedSample>,
+    mut skipped_samples: Vec<WProjectSkippedSample>,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+) -> Result<WProjectPreparedData, ImagingError> {
     if samples.is_empty() || normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
         return Err(ImagingError::NoUsableSamples);
     }
 
     skipped_samples.sort_by_key(|sample| (sample.batch_index, sample.sample_index));
-
     Ok(WProjectPreparedData {
         requested_plane_count: w_project_planes,
         max_abs_w_lambda,
@@ -10647,17 +20312,44 @@ fn prepare_w_project_data(
     })
 }
 
-fn collect_w_project_raw_samples(
-    batches: &[VisibilityBatch],
-) -> (Vec<RawWProjectSample>, Vec<WProjectSkippedSample>, f64) {
-    let mut raw_samples = Vec::<RawWProjectSample>::new();
-    let mut skipped_samples = Vec::<WProjectSkippedSample>::new();
-    let mut max_abs_w_lambda = 0.0f64;
+#[allow(clippy::too_many_arguments)]
+fn finish_w_project_metal_prepared_data(
+    w_project_planes: Option<usize>,
+    max_abs_w_lambda: f64,
+    projector: WProjector,
+    samples: Vec<WProjectMetalSample>,
+    skipped_samples: usize,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    max_support: u16,
+    tap_visits: usize,
+) -> Result<WProjectMetalPreparedData, ImagingError> {
+    if samples.is_empty() || normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
 
-    for (batch_index, batch) in batches.iter().enumerate() {
+    Ok(WProjectMetalPreparedData {
+        requested_plane_count: w_project_planes,
+        max_abs_w_lambda,
+        projector,
+        samples,
+        skipped_samples,
+        max_support,
+        tap_visits,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt: reported_sumwt as f32,
+        gridded_samples,
+    })
+}
+
+fn w_project_raw_sample_summary(batches: &[VisibilityBatch]) -> (usize, f64) {
+    let mut raw_sample_count = 0usize;
+    let mut max_abs_w_lambda = 0.0f64;
+    for batch in batches {
         for sample_index in 0..batch.len() {
             let sample = RawWProjectSample {
-                batch_index,
+                batch_index: 0,
                 sample_index,
                 u_lambda: batch.u_lambda[sample_index],
                 v_lambda: batch.v_lambda[sample_index],
@@ -10666,47 +20358,41 @@ fn collect_w_project_raw_samples(
                 visibility: batch.visibility[sample_index],
                 sumwt_factor: batch.sumwt_factor[sample_index],
             };
-            if !batch.gridable[sample_index] {
-                skipped_samples.push(WProjectSkippedSample {
-                    batch_index,
-                    sample_index,
-                    u_lambda: sample.u_lambda,
-                    v_lambda: sample.v_lambda,
-                    w_lambda: sample.w_lambda,
-                    weight: sample.weight,
-                    sumwt_factor: sample.sumwt_factor,
-                    reason: WProjectSkipReason::NotGridable,
-                });
-                continue;
+            if batch.gridable[sample_index] && raw_w_project_sample_is_valid(sample) {
+                raw_sample_count += 1;
+                max_abs_w_lambda = max_abs_w_lambda.max(sample.w_lambda.abs());
             }
-            if !(sample.weight.is_finite()
-                && sample.weight > 0.0
-                && sample.sumwt_factor.is_finite()
-                && sample.sumwt_factor > 0.0
-                && sample.visibility.re.is_finite()
-                && sample.visibility.im.is_finite()
-                && sample.u_lambda.is_finite()
-                && sample.v_lambda.is_finite()
-                && sample.w_lambda.is_finite())
-            {
-                skipped_samples.push(WProjectSkippedSample {
-                    batch_index,
-                    sample_index,
-                    u_lambda: sample.u_lambda,
-                    v_lambda: sample.v_lambda,
-                    w_lambda: sample.w_lambda,
-                    weight: sample.weight,
-                    sumwt_factor: sample.sumwt_factor,
-                    reason: WProjectSkipReason::InvalidInput,
-                });
-                continue;
-            }
-            max_abs_w_lambda = max_abs_w_lambda.max(sample.w_lambda.abs());
-            raw_samples.push(sample);
         }
     }
+    (raw_sample_count, max_abs_w_lambda)
+}
 
-    (raw_samples, skipped_samples, max_abs_w_lambda)
+fn raw_w_project_sample_is_valid(sample: RawWProjectSample) -> bool {
+    sample.weight.is_finite()
+        && sample.weight > 0.0
+        && sample.sumwt_factor.is_finite()
+        && sample.sumwt_factor > 0.0
+        && sample.visibility.re.is_finite()
+        && sample.visibility.im.is_finite()
+        && sample.u_lambda.is_finite()
+        && sample.v_lambda.is_finite()
+        && sample.w_lambda.is_finite()
+}
+
+fn w_project_skipped_sample(
+    sample: RawWProjectSample,
+    reason: WProjectSkipReason,
+) -> WProjectSkippedSample {
+    WProjectSkippedSample {
+        batch_index: sample.batch_index,
+        sample_index: sample.sample_index,
+        u_lambda: sample.u_lambda,
+        v_lambda: sample.v_lambda,
+        w_lambda: sample.w_lambda,
+        weight: sample.weight,
+        sumwt_factor: sample.sumwt_factor,
+        reason,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -10942,6 +20628,44 @@ fn peak_location_masked(
     mask: Option<&Array2<bool>>,
 ) -> Option<((usize, usize), f32)> {
     peak_location_masked_with_relative_tolerance(image, mask, 0.0)
+}
+
+fn peak_location_masked_in_window(
+    image: &Array2<f32>,
+    mask: Option<&Array2<bool>>,
+    window: ImageWindow,
+) -> Option<((usize, usize), f32)> {
+    let (nx, ny) = image.dim();
+    if nx == 0 || ny == 0 {
+        return None;
+    }
+    let x0 = window.x0.min(nx - 1);
+    let y0 = window.y0.min(ny - 1);
+    let x1 = window.x1.min(nx - 1);
+    let y1 = window.y1.min(ny - 1);
+    if x0 > x1 || y0 > y1 {
+        return None;
+    }
+
+    let mut best = None;
+    // Match casacore's `hclean` search order inside the current dirty window:
+    // y-major, retaining the first pixel for exact ties.
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            if mask.is_some_and(|current| !current[(x, y)]) {
+                continue;
+            }
+            let value = image[(x, y)];
+            match best {
+                None => best = Some(((x, y), value)),
+                Some((_, best_value)) if value.abs() > best_value.abs() => {
+                    best = Some(((x, y), value));
+                }
+                _ => {}
+            }
+        }
+    }
+    best
 }
 
 fn hclean_peak_location_masked(
@@ -11254,9 +20978,36 @@ fn subtract_shifted_kernel(
     peak_index: (usize, usize),
     scale_factor: f32,
 ) {
+    subtract_shifted_kernel_in_window(
+        image,
+        kernel,
+        peak_index,
+        scale_factor,
+        ImageWindow::full(image.dim()),
+    );
+}
+
+fn subtract_shifted_kernel_in_window(
+    image: &mut Array2<f32>,
+    kernel: &Array2<f32>,
+    peak_index: (usize, usize),
+    scale_factor: f32,
+    window: ImageWindow,
+) {
     let kernel_center = (kernel.shape()[0] / 2, kernel.shape()[1] / 2);
-    for x in 0..image.shape()[0] {
-        for y in 0..image.shape()[1] {
+    let (nx, ny) = image.dim();
+    if nx == 0 || ny == 0 {
+        return;
+    }
+    let x0 = window.x0.min(nx - 1);
+    let y0 = window.y0.min(ny - 1);
+    let x1 = window.x1.min(nx - 1);
+    let y1 = window.y1.min(ny - 1);
+    if x0 > x1 || y0 > y1 {
+        return;
+    }
+    for x in x0..=x1 {
+        for y in y0..=y1 {
             let kernel_x = x as isize - peak_index.0 as isize + kernel_center.0 as isize;
             let kernel_y = y as isize - peak_index.1 as isize + kernel_center.1 as isize;
             if !(0..kernel.shape()[0] as isize).contains(&kernel_x)
@@ -11356,21 +21107,25 @@ mod tests {
     };
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
     use ndarray::{Array2, Array4, s};
-    use num_complex::Complex32;
+    use num_complex::{Complex32, Complex64};
     use serial_test::serial;
+    #[cfg(target_os = "macos")]
+    use std::time::Duration;
 
     #[cfg(target_os = "macos")]
     use super::compute_dirty_psf_and_residual_standard_metal;
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
-        HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
-        MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, RestoringBeamMode, StandardGridder, StandardMfsBackendSelection,
-        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
-        StandardMfsExecutionConfig, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
-        StandardMfsPlannedWeightedSample, StandardMfsWeightedSample, VisibilityBatch,
-        VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
+        ImageGeometry, ImagingRequest, ImagingStageTimings, MosaicGridderConfig, MtmfsRequest,
+        ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PsfState, RestoringBeamMode,
+        SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock, StandardGridder,
+        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
+        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
+        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
+        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
+        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
@@ -11378,8 +21133,9 @@ mod tests {
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
         mosaic_projector_sampling, parse_standard_mfs_backend_selection,
-        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked, run_cube,
-        run_dirty_cube, run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
+        primary_beam_voltage_pattern_for_offsets, run_cube, run_dirty_cube, run_hogbom_minor_cycle,
+        run_imaging, run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -11399,6 +21155,620 @@ mod tests {
         assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
         assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    fn wproject_metal_sample_contract_stays_compact() {
+        assert_eq!(std::mem::size_of::<WProjectMetalSample>(), 20);
+        let sample = WProjectMetalSample {
+            loc: 0,
+            plane_support_offsets: 17 | (23 << 10),
+            weight: 1.0,
+            visibility_re: 0.0,
+            visibility_im: 0.0,
+        };
+        assert_eq!(sample.support(), 23);
+    }
+
+    #[test]
+    fn mosaic_metal_sample_contract_matches_shader_stride() {
+        assert_eq!(std::mem::size_of::<super::MosaicMetalSample>(), 48);
+        assert_eq!(std::mem::size_of::<super::MosaicMetalParams>(), 44);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn mosaic_metal_kernel_index_matches_compact_kernel_packing() {
+        assert!(
+            super::MOSAIC_METAL_SHADER
+                .contains("sample.kernel_base + offset_base + tap_y * params.kernel_width + tap_x")
+        );
+    }
+
+    #[test]
+    fn mosaic_metal_partial_grid_count_limits_temporary_grid_residency() {
+        let medium_cell_count = 1024 * 1024;
+        let cell_count = 1280 * 1280;
+
+        assert_eq!(
+            super::mosaic_metal_partial_grid_count(939_214, medium_cell_count),
+            4
+        );
+        assert_eq!(
+            super::mosaic_metal_partial_grid_count(1_005_222, cell_count),
+            2
+        );
+        assert_eq!(
+            super::mosaic_metal_partial_grid_count(100_000, cell_count),
+            1
+        );
+        assert_eq!(super::mosaic_metal_partial_grid_count(10, cell_count), 1);
+    }
+
+    #[test]
+    fn mosaic_metal_sample_grouping_merges_matching_plans() {
+        let first = super::MosaicMetalSample {
+            loc: 42,
+            support: 6,
+            offset: [2, -3],
+            range_x: [-6, 6],
+            range_y: [-5, 6],
+            weight: 2.0,
+            visibility_re: 1.0,
+            visibility_im: 3.0,
+            kernel_base: 0,
+        };
+        let second = super::MosaicMetalSample {
+            weight: 6.0,
+            visibility_re: 5.0,
+            visibility_im: 7.0,
+            ..first
+        };
+        let different_plan = super::MosaicMetalSample {
+            offset: [3, -3],
+            weight: 11.0,
+            visibility_re: 13.0,
+            visibility_im: 17.0,
+            ..first
+        };
+        let mut samples = super::MosaicMetalSampleHashMap::default();
+        super::push_mosaic_metal_sample_aggregate(&mut samples, different_plan);
+        super::push_mosaic_metal_sample_aggregate(&mut samples, second);
+        super::push_mosaic_metal_sample_aggregate(&mut samples, first);
+        let samples = super::finish_mosaic_metal_sample_aggregates(samples);
+
+        assert_eq!(samples.len(), 2);
+        let grouped = samples
+            .iter()
+            .find(|sample| sample.offset == first.offset)
+            .expect("matching mosaic Metal samples should be merged");
+        assert_eq!(grouped.weight, 8.0);
+        assert_eq!(grouped.visibility_re, 4.0);
+        assert_eq!(grouped.visibility_im, 6.0);
+    }
+
+    #[test]
+    fn mosaic_grouped_cpu_dirty_matches_raw_sample_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let mut batch = point_source_visibilities(
+            &[
+                (12.25, -8.5, 0.0),
+                (12.25, -8.5, 0.0),
+                (-18.0, 10.0, 0.0),
+                (-18.0, 10.0, 0.0),
+            ],
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5];
+        batch.sumwt_factor = vec![1.0, 1.0, 2.0, 2.0];
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        let group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch,
+            sample_frequency_hz: Vec::new(),
+        };
+        let projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            primary_beam_model,
+            1.4e9,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            true,
+        )
+        .unwrap();
+        let prepared = super::collect_mosaic_metal_samples(&group, &projector, None).unwrap();
+        assert_eq!(prepared.gridded_samples, 4);
+        assert_eq!(prepared.samples.len(), 2);
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut raw_psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut raw_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        for sample_index in 0..group.batch.len() {
+            let grid_weight = f64::from(
+                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index],
+            );
+            let plan = projector
+                .plan_sample_for_grid(
+                    group.batch.u_lambda[sample_index],
+                    group.batch.v_lambda[sample_index],
+                )
+                .unwrap();
+            projector.grid_sample_planned_f64(
+                &mut raw_psf_grid,
+                &plan,
+                Complex64::new(grid_weight, 0.0),
+            );
+            let visibility = group.batch.visibility[sample_index];
+            projector.grid_sample_planned_f64(
+                &mut raw_residual_grid,
+                &plan,
+                Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight,
+            );
+        }
+
+        let mut grouped_psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut grouped_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        super::accumulate_mosaic_grouped_dirty_cpu(
+            &projector,
+            &prepared.samples,
+            &mut grouped_psf_grid,
+            &mut grouped_residual_grid,
+        );
+
+        let max_psf_delta = grouped_psf_grid
+            .iter()
+            .zip(raw_psf_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f64, f64::max);
+        let max_residual_delta = grouped_residual_grid
+            .iter()
+            .zip(raw_residual_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f64, f64::max);
+        assert!(max_psf_delta < 1.0e-5, "max PSF delta {max_psf_delta}");
+        assert!(
+            max_residual_delta < 1.0e-5,
+            "max residual delta {max_residual_delta}"
+        );
+    }
+
+    #[test]
+    fn mosaic_grouped_cpu_residual_matches_raw_sample_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let mut batch = point_source_visibilities(
+            &[
+                (12.25, -8.5, 0.0),
+                (12.25, -8.5, 0.0),
+                (-18.0, 10.0, 0.0),
+                (-18.0, 10.0, 0.0),
+            ],
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5];
+        batch.sumwt_factor = vec![1.0, 1.0, 2.0, 2.0];
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        let group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch,
+            sample_frequency_hz: Vec::new(),
+        };
+        let projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            primary_beam_model,
+            1.4e9,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            true,
+        )
+        .unwrap();
+        let prepared = super::collect_mosaic_metal_samples(&group, &projector, None).unwrap();
+        assert_eq!(prepared.gridded_samples, 4);
+        assert_eq!(prepared.samples.len(), 2);
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut model_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        for y in 0..grid_ny {
+            for x in 0..grid_nx {
+                let re = (x as f32 - grid_nx as f32 * 0.5) * 1.0e-4;
+                let im = (y as f32 - grid_ny as f32 * 0.5) * -8.0e-5;
+                model_grid[(x, y)] = Complex32::new(re, im);
+            }
+        }
+
+        let mut raw_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        for sample_index in 0..group.batch.len() {
+            let grid_weight = f64::from(
+                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index],
+            );
+            let plan = projector
+                .plan_sample_for_grid(
+                    group.batch.u_lambda[sample_index],
+                    group.batch.v_lambda[sample_index],
+                )
+                .unwrap();
+            let predicted = projector.degrid_sample_planned(&model_grid, &plan);
+            let visibility = group.batch.visibility[sample_index] - predicted;
+            projector.grid_sample_planned_f64(
+                &mut raw_residual_grid,
+                &plan,
+                Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight,
+            );
+        }
+
+        let mut grouped_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        super::accumulate_mosaic_grouped_residual_cpu(
+            &projector,
+            &prepared.samples,
+            Some(&model_grid),
+            &mut grouped_residual_grid,
+        );
+
+        let max_residual_delta = grouped_residual_grid
+            .iter()
+            .zip(raw_residual_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f64, f64::max);
+        assert!(
+            max_residual_delta < 1.0e-5,
+            "max residual delta {max_residual_delta}"
+        );
+    }
+
+    #[test]
+    fn mosaic_weight_grid_grouping_preserves_cropped_support_ranges() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let spacing = gridder.grid_spacing_lambda();
+        let edge_u = (1.0 - grid_nx as f64 / 2.0) * spacing[0];
+        let mut batch = point_source_visibilities(
+            &[(0.0, 0.0, 0.0), (edge_u, 0.0, 0.0)],
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 5.0];
+        batch.sumwt_factor = vec![3.0, 7.0];
+        let group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch,
+            sample_frequency_hz: Vec::new(),
+        };
+        let projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            primary_beam_model,
+            1.4e9,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            true,
+        )
+        .unwrap();
+        let weight_projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            primary_beam_model,
+            1.4e9,
+            super::mosaic_projector_sampling(geometry),
+            4,
+            true,
+        )
+        .unwrap();
+        let center_weight_plan = weight_projector.plan_sample_for_grid(0.0, 0.0).unwrap();
+        let edge_weight_plan = weight_projector.plan_sample_for_grid(edge_u, 0.0).unwrap();
+        assert!(
+            edge_weight_plan.min_ix > -(weight_projector.support() as isize),
+            "edge UV sample should crop the negative x support"
+        );
+
+        let prepared =
+            super::collect_mosaic_metal_samples(&group, &projector, Some(&weight_projector))
+                .unwrap();
+        assert_eq!(prepared.gridded_samples, 2);
+        assert!(
+            prepared.weight_support_sums.len() >= 2,
+            "full and cropped support ranges should not be collapsed together"
+        );
+
+        let mut raw_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut full_kernel_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut total_weight = 0.0f64;
+        for sample_index in 0..group.batch.len() {
+            let grid_weight = f64::from(
+                group.batch.weight[sample_index] * group.batch.sumwt_factor[sample_index],
+            );
+            total_weight += grid_weight;
+            let mut plan = center_weight_plan;
+            let sample_plan = weight_projector
+                .plan_sample_for_grid(
+                    group.batch.u_lambda[sample_index],
+                    group.batch.v_lambda[sample_index],
+                )
+                .unwrap();
+            plan.min_ix = sample_plan.min_ix;
+            plan.max_ix = sample_plan.max_ix;
+            plan.min_iy = sample_plan.min_iy;
+            plan.max_iy = sample_plan.max_iy;
+            weight_projector.grid_sample_planned_f64(
+                &mut raw_weight_grid,
+                &plan,
+                Complex64::new(grid_weight, 0.0),
+            );
+        }
+        weight_projector.grid_sample_planned_f64(
+            &mut full_kernel_weight_grid,
+            &center_weight_plan,
+            Complex64::new(total_weight, 0.0),
+        );
+
+        let mut grouped_weight_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        super::add_mosaic_center_weight_grid_from_support_sums(
+            &weight_projector,
+            &center_weight_plan,
+            &mut grouped_weight_grid,
+            &prepared.weight_support_sums,
+        );
+        let max_grouped_delta = grouped_weight_grid
+            .iter()
+            .zip(raw_weight_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f64, f64::max);
+        let max_full_kernel_delta = full_kernel_weight_grid
+            .iter()
+            .zip(raw_weight_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f64, f64::max);
+        assert!(
+            max_grouped_delta < 1.0e-9,
+            "support-aware grouped weight grid should match raw per-sample grid: {max_grouped_delta}"
+        );
+        assert!(
+            max_full_kernel_delta > 1.0e-6,
+            "legacy full-kernel accumulation should differ for cropped support"
+        );
+    }
+
+    #[test]
+    fn wproject_metal_sample_merges_adjacent_matching_plans() {
+        let mut samples = Vec::new();
+        let first = WProjectMetalSample {
+            loc: 42,
+            plane_support_offsets: 3 | (4 << 10),
+            weight: 2.0,
+            visibility_re: 1.0,
+            visibility_im: 3.0,
+        };
+        let second = WProjectMetalSample {
+            loc: 42,
+            plane_support_offsets: 3 | (4 << 10),
+            weight: 6.0,
+            visibility_re: 5.0,
+            visibility_im: 7.0,
+        };
+
+        assert!(super::push_w_project_metal_sample(&mut samples, first));
+        assert!(!super::push_w_project_metal_sample(&mut samples, second));
+
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].weight, 8.0);
+        assert_eq!(samples[0].visibility_re, 4.0);
+        assert_eq!(samples[0].visibility_im, 6.0);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn wproject_metal_dirty_grouped_weighted_samples_match_cpu_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let mut batch = point_source_visibilities_with_w_term(
+            &[
+                (12.25, -8.5, 100.0),
+                (12.25, -8.5, 100.0),
+                (-18.0, 10.0, -80.0),
+                (-18.0, 10.0, -80.0),
+            ],
+            4.0e-3,
+            [64, 64],
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5];
+        batch.sumwt_factor = batch.weight.clone();
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        let batches = vec![batch];
+
+        let cpu_prepared =
+            super::prepare_w_project_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        let metal_prepared =
+            super::prepare_w_project_metal_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        assert_eq!(cpu_prepared.gridded_samples, 4);
+        assert_eq!(metal_prepared.gridded_samples, 4);
+        assert_eq!(metal_prepared.samples.len(), 2);
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut cpu_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut cpu_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        super::accumulate_w_project_dirty_grids_streaming(
+            &batches,
+            &cpu_prepared.projector,
+            &mut cpu_psf_grid,
+            &mut cpu_residual_grid,
+        )
+        .unwrap();
+
+        let mut metal_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut metal_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        match super::accumulate_w_project_grid_metal_samples(
+            &metal_prepared.projector,
+            &metal_prepared.samples,
+            Duration::ZERO,
+            None,
+            &mut metal_psf_grid,
+            &mut metal_residual_grid,
+            super::W_PROJECT_METAL_MODE_DIRTY,
+        ) {
+            Ok(()) => {}
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("could not find a default Metal device") =>
+            {
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+
+        let max_psf_delta = metal_psf_grid
+            .iter()
+            .zip(cpu_psf_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f32, f32::max);
+        let max_residual_delta = metal_residual_grid
+            .iter()
+            .zip(cpu_residual_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f32, f32::max);
+        assert!(max_psf_delta < 1.0e-4, "max PSF delta {max_psf_delta}");
+        assert!(
+            max_residual_delta < 1.0e-4,
+            "max residual delta {max_residual_delta}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn wproject_metal_residual_grouped_weighted_samples_match_cpu_grid() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let mut batch = point_source_visibilities_with_w_term(
+            &[
+                (12.25, -8.5, 100.0),
+                (12.25, -8.5, 100.0),
+                (-18.0, 10.0, -80.0),
+                (-18.0, 10.0, -80.0),
+            ],
+            4.0e-3,
+            [64, 64],
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5];
+        batch.sumwt_factor = batch.weight.clone();
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        let batches = vec![batch];
+
+        let cpu_prepared =
+            super::prepare_w_project_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        let metal_prepared =
+            super::prepare_w_project_metal_data(geometry, &batches, &gridder, Some(8)).unwrap();
+        assert_eq!(metal_prepared.samples.len(), 2);
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut model_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        model_grid[(31, 29)] = Complex32::new(0.25, -0.125);
+        model_grid[(47, 42)] = Complex32::new(-0.0625, 0.5);
+
+        let mut cpu_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        super::accumulate_w_project_residual_grid_streaming(
+            &batches,
+            &cpu_prepared.projector,
+            Some(&model_grid),
+            &mut cpu_residual_grid,
+        )
+        .unwrap();
+
+        let mut metal_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut metal_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        match super::accumulate_w_project_grid_metal_samples(
+            &metal_prepared.projector,
+            &metal_prepared.samples,
+            Duration::ZERO,
+            Some(&model_grid),
+            &mut metal_psf_grid,
+            &mut metal_residual_grid,
+            super::W_PROJECT_METAL_MODE_RESIDUAL,
+        ) {
+            Ok(()) => {}
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("could not find a default Metal device") =>
+            {
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        }
+
+        let max_psf_value = metal_psf_grid
+            .iter()
+            .map(|value| value.norm())
+            .fold(0.0f32, f32::max);
+        let max_residual_delta = metal_residual_grid
+            .iter()
+            .zip(cpu_residual_grid.iter())
+            .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+            .fold(0.0f32, f32::max);
+        assert_eq!(max_psf_value, 0.0);
+        assert!(
+            max_residual_delta < 1.0e-4,
+            "max residual delta {max_residual_delta}"
+        );
     }
 
     #[test]
@@ -11534,9 +21904,11 @@ mod tests {
     }
 
     #[test]
-    fn alma_aca_airy_voltage_uses_casa_common_pb_radius() {
-        let inside_casa_support = (60.0_f64 / 3600.0).to_radians();
-        let outside_casa_support = (70.0_f64 / 3600.0).to_radians();
+    fn alma_aca_airy_voltage_uses_casa_hetarray_pb_radius() {
+        let alma_inside_casa_support = (120.0_f64 / 3600.0).to_radians();
+        let alma_outside_casa_support = (160.0_f64 / 3600.0).to_radians();
+        let aca_inside_casa_support = (250.0_f64 / 3600.0).to_radians();
+        let aca_outside_casa_support = (320.0_f64 / 3600.0).to_radians();
 
         assert_ne!(
             super::primary_beam_voltage_pattern(
@@ -11544,7 +21916,7 @@ mod tests {
                     dish_diameter_m: 10.7,
                     blockage_diameter_m: 0.75,
                 },
-                inside_casa_support,
+                alma_inside_casa_support,
                 100.0e9,
             ),
             0.0
@@ -11555,7 +21927,7 @@ mod tests {
                     dish_diameter_m: 6.25,
                     blockage_diameter_m: 0.75,
                 },
-                inside_casa_support,
+                aca_inside_casa_support,
                 100.0e9,
             ),
             0.0
@@ -11566,7 +21938,7 @@ mod tests {
                     dish_diameter_m: 10.7,
                     blockage_diameter_m: 0.75,
                 },
-                outside_casa_support,
+                alma_outside_casa_support,
                 100.0e9,
             ),
             0.0
@@ -11577,11 +21949,246 @@ mod tests {
                     dish_diameter_m: 6.25,
                     blockage_diameter_m: 0.75,
                 },
-                outside_casa_support,
+                aca_outside_casa_support,
                 100.0e9,
             ),
             0.0
         );
+    }
+
+    #[test]
+    fn alma_airy_voltage_matches_casa_hetarray_trace_sample() {
+        let frequency_hz: f64 = 2.2972554e11;
+        let radius_arcmin_ghz: f64 = 3.42261;
+        let radius_rad = (radius_arcmin_ghz / (60.0 * (frequency_hz / 1.0e9))).to_radians();
+        let voltage = super::primary_beam_voltage_pattern(
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            radius_rad,
+            frequency_hz,
+        );
+        assert!((voltage - 0.999848).abs() < 5.0e-5);
+    }
+
+    #[test]
+    #[ignore = "large SimplePB projector regression; covered by the 512 CASA trace test in the fast suite"]
+    fn alma_mosaic_projector_matches_casa_trace_support() {
+        let geometry = ImageGeometry {
+            image_shape: [1280, 1280],
+            cell_size_rad: [
+                (0.08_f64 / 3600.0).to_radians(),
+                (0.08_f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            2.2972554e11,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            false,
+        )
+        .unwrap();
+        let (tap_sum, center_tap) = projector.unphased_tap_sum_and_center();
+        let traced_offsets = [(2, -2), (1, -2), (1, -1), (0, -1), (-1, -1)];
+        let expected_offset_sums = [
+            0.995_782_2_f32,
+            0.997_296_0_f32,
+            0.998_811_7_f32,
+            0.999_454_4_f32,
+            0.998_811_8_f32,
+        ];
+        for (off_x, off_y) in traced_offsets {
+            let (offset_sum, offset_center, offset_first) =
+                projector.unphased_tap_metrics_for_offset(off_x, off_y);
+            let _expected = expected_offset_sums[traced_offsets
+                .iter()
+                .position(|offset| *offset == (off_x, off_y))
+                .unwrap()];
+            assert!(offset_sum.re.is_finite() && (0.8..1.2).contains(&offset_sum.re));
+            assert!(offset_sum.im.abs() < 5.0e-6);
+            assert!(offset_center.re.is_finite() && offset_center.re > 0.0);
+            assert!(offset_first.norm() < 1.0e-3);
+        }
+        assert!(projector.support() >= 6 && projector.support() <= 8);
+        assert_eq!(projector.sampling(), 10);
+        assert!(tap_sum.re.is_finite() && (0.8..1.2).contains(&tap_sum.re));
+        assert!(tap_sum.im.abs() < 5.0e-6);
+        assert!(center_tap.re.is_finite() && center_tap.re > 0.0);
+        let phase_center = [4.712391231859_f64, -4.014237906432e-1_f64];
+        let field1_pointing = [4.712507587143_f64, -4.014237906432e-1_f64];
+        let field1_pixel_offset =
+            super::mosaic_pointing_pixel_offset(geometry, phase_center, field1_pointing);
+        let field1_phase_gradient = super::mosaic_projector_phase_gradient_rad_per_sample(
+            geometry,
+            phase_center,
+            field1_pointing,
+            super::mosaic_projector_sampling(geometry),
+        );
+        let conv_samp = super::mosaic_projector_sampling(geometry) as f64;
+        assert!(
+            (field1_phase_gradient[0]
+                + field1_pixel_offset[0] * std::f64::consts::TAU
+                    / (geometry.nx() as f64 * conv_samp))
+                .abs()
+                < 1.0e-12
+        );
+        assert!(
+            (field1_phase_gradient[1]
+                + field1_pixel_offset[1] * std::f64::consts::TAU
+                    / (geometry.ny() as f64 * conv_samp))
+                .abs()
+                < 1.0e-12
+        );
+        let field1_projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            phase_center,
+            field1_pointing,
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            2.2972554e11,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            true,
+        )
+        .unwrap();
+        let (field1_sum, field1_center, field1_first) =
+            field1_projector.phased_tap_metrics_for_offset(2, -2);
+        assert!(field1_sum.re.is_finite());
+        assert!(field1_sum.im.is_finite());
+        assert!(field1_center.re.is_finite());
+        assert!(field1_center.im.is_finite());
+        assert!(field1_first.norm() < 1.0e-3);
+        let weight_projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            phase_center,
+            phase_center,
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            2.2972554e11,
+            super::mosaic_projector_sampling(geometry),
+            4,
+            false,
+        )
+        .unwrap();
+        let (weight_sum, weight_center, weight_first) =
+            weight_projector.unphased_tap_metrics_for_offset(2, -2);
+        assert!(weight_sum.re.is_finite() && (0.8..1.2).contains(&weight_sum.re));
+        assert!(weight_sum.im.abs() < 5.0e-6);
+        assert!(weight_center.re.is_finite() && weight_center.re > 0.0);
+        assert!(weight_first.norm() < 1.0e-3);
+        let field1_weight_projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            phase_center,
+            field1_pointing,
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            2.2972554e11,
+            super::mosaic_projector_sampling(geometry),
+            4,
+            true,
+        )
+        .unwrap();
+        let (field1_weight_sum, field1_weight_center, field1_weight_first) =
+            field1_weight_projector.phased_tap_metrics_for_offset(2, -2);
+        assert!(field1_weight_sum.re.is_finite());
+        assert!(field1_weight_sum.im.is_finite());
+        assert!(field1_weight_center.re.is_finite());
+        assert!(field1_weight_center.im.is_finite());
+        assert!(field1_weight_first.norm() < 1.0e-3);
+    }
+
+    #[test]
+    fn alma_mosaic_hetarray_projector_matches_512_casa_trace_sample() {
+        let geometry = ImageGeometry {
+            image_shape: [512, 512],
+            cell_size_rad: [
+                (0.08_f64 / 3600.0).to_radians(),
+                (0.08_f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            2.2935745e11,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            false,
+        )
+        .unwrap();
+        let (sum, center, first) = projector.unphased_tap_metrics_for_offset(-3, -1);
+        assert_eq!(projector.support(), 6);
+        assert_eq!(projector.sampling(), 10);
+        assert!(
+            (sum.re - 0.998_265_7).abs() < 5.0e-5,
+            "imaging tap sum {}",
+            sum.re
+        );
+        assert!(sum.im.abs() < 1.0e-6);
+        assert!(
+            (center.re - 0.348_361_37).abs() < 5.0e-5,
+            "imaging center tap {}",
+            center.re
+        );
+        assert!(center.im.abs() < 1.0e-6);
+        assert!(first.norm() < 1.0e-3);
+        let weight_projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            PrimaryBeamModel::Airy {
+                dish_diameter_m: 10.7,
+                blockage_diameter_m: 0.75,
+            },
+            2.2935745e11,
+            super::mosaic_projector_sampling(geometry),
+            4,
+            false,
+        )
+        .unwrap();
+        let (weight_sum, weight_center, weight_first) =
+            weight_projector.unphased_tap_metrics_for_offset(-3, -1);
+        assert_eq!(weight_projector.support(), 6);
+        assert_eq!(weight_projector.sampling(), 10);
+        assert!(
+            (weight_sum.re - 0.999_207_44).abs() < 5.0e-5,
+            "weight tap sum {}",
+            weight_sum.re
+        );
+        assert!(weight_sum.im.abs() < 1.0e-6);
+        assert!(
+            (weight_center.re - 0.207_670_17).abs() < 5.0e-5,
+            "weight center tap {}",
+            weight_center.re
+        );
+        assert!(weight_center.im.abs() < 1.0e-6);
+        assert!(weight_first.norm() < 1.0e-3);
     }
 
     #[test]
@@ -11975,6 +22582,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                w_project_max_abs_w_lambda: None,
             },
             |consumer| {
                 for batch in &weighted_batches {
@@ -12050,6 +22658,7 @@ mod tests {
             fixed_tile_max_live_row_blocks: 1,
             fixed_tile_use_planned_run_blocks: false,
             metal_grouped_input_cache: false,
+            w_project_max_abs_w_lambda: None,
         };
         let batch_streaming = run_standard_mfs_weighted_streaming_with_execution_config(
             request.clone(),
@@ -12198,6 +22807,7 @@ mod tests {
             },
             pb_limit: 0.1,
             metadata_batches: vec![metadata],
+            grouped_metadata_batches: Vec::new(),
         });
         let request = |niter| ImagingRequest {
             geometry,
@@ -12237,6 +22847,191 @@ mod tests {
                 < dirty.diagnostics.initial_residual_peak_jy_per_beam
         );
         assert!(peak_abs_value(&clean.model.slice(s![.., .., 0, 0]).to_owned()) > 0.0);
+    }
+
+    #[test]
+    fn streaming_grouped_mosaic_clean_matches_retained_grouped_request() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let batch = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (34.0, 30.0),
+            1.0,
+        );
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let grouped_metadata = GroupedVisibilityMetadataBatch {
+            sample_count: batch.len(),
+            groups: vec![GroupedVisibilityMetadata {
+                beam_frequency_hz: 1.4e9,
+                primary_beam_model,
+                pointing_direction_rad: [0.0, 0.0],
+                sample_ranges: vec![VisibilitySampleRange {
+                    start: 0,
+                    end: batch.len(),
+                }],
+            }],
+        };
+        let gridder_mode = GridderMode::Mosaic(MosaicGridderConfig {
+            phase_center_direction_rad: [0.0, 0.0],
+            primary_beam_model,
+            pb_limit: 0.1,
+            metadata_batches: Vec::new(),
+            grouped_metadata_batches: vec![grouped_metadata.clone()],
+        });
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![batch.clone()],
+            gridder_mode: gridder_mode.clone(),
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let retained = run_imaging(&request).unwrap();
+        let mut streaming_request = request.clone();
+        streaming_request.visibility_batches.clear();
+        let streaming = run_mosaic_mfs_from_single_plane_stream(
+            streaming_request,
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(SinglePlaneVisibilityBlock {
+                    visibility: batch.clone(),
+                    gridder_metadata: SinglePlaneGridderMetadata::Mosaic(grouped_metadata.clone()),
+                })
+            },
+        )
+        .unwrap();
+
+        assert_array4_close(&streaming.psf, &retained.psf, 1.0e-5);
+        assert_array4_close(&streaming.residual, &retained.residual, 1.0e-5);
+        assert_array4_close(&streaming.model, &retained.model, 1.0e-5);
+        assert_array4_close(&streaming.image, &retained.image, 1.0e-5);
+        assert_eq!(
+            streaming.diagnostics.minor_iterations,
+            retained.diagnostics.minor_iterations
+        );
+        assert_eq!(
+            streaming.diagnostics.clean_stop_reason,
+            retained.diagnostics.clean_stop_reason
+        );
+        assert!(streaming.diagnostics.mosaic_weight_image.is_some());
+    }
+
+    #[test]
+    fn mosaic_weight_image_preserves_beam_frequency_buckets() {
+        let geometry = ImageGeometry {
+            image_shape: [33, 33],
+            cell_size_rad: [1.0e-3, 1.0e-3],
+        };
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let config = MosaicGridderConfig {
+            phase_center_direction_rad: [0.0, 0.0],
+            primary_beam_model,
+            pb_limit: 0.1,
+            metadata_batches: Vec::new(),
+            grouped_metadata_batches: Vec::new(),
+        };
+        let group_batch = |weight| VisibilityBatch {
+            u_lambda: vec![0.0],
+            v_lambda: vec![0.0],
+            w_lambda: vec![0.0],
+            weight: vec![weight],
+            sumwt_factor: vec![1.0],
+            gridable: vec![true],
+            visibility: vec![Complex32::new(1.0, 0.0)],
+        };
+        let low_frequency_hz = 1.0e9_f64;
+        let high_frequency_hz = 1.8e9_f64;
+        let low_weight = 2.0_f32;
+        let high_weight = 5.0_f32;
+        let groups = vec![
+            super::MosaicPointingGroup {
+                pointing_direction_rad: [0.0, 0.0],
+                frequency_hz: low_frequency_hz,
+                primary_beam_model,
+                batch: group_batch(low_weight),
+                sample_frequency_hz: Vec::new(),
+            },
+            super::MosaicPointingGroup {
+                pointing_direction_rad: [0.0, 0.0],
+                frequency_hz: high_frequency_hz,
+                primary_beam_model,
+                batch: group_batch(high_weight),
+                sample_frequency_hz: Vec::new(),
+            },
+        ];
+
+        let weight_image = super::build_mosaic_weight_image(geometry, &config, &groups).unwrap();
+        let [pointing_x, pointing_y] =
+            super::mosaic_pointing_pixel_position(geometry, [0.0, 0.0], [0.0, 0.0]);
+        let sample_x = 30usize;
+        let sample_y = 16usize;
+        let l = (sample_x as f64 - pointing_x) * geometry.cell_size_rad[0].abs();
+        let m = (sample_y as f64 - pointing_y) * geometry.cell_size_rad[1].abs();
+        let pb2 = |frequency_hz| {
+            let vp =
+                primary_beam_voltage_pattern_for_offsets(primary_beam_model, l, m, frequency_hz);
+            vp * vp * vp * vp
+        };
+        let expected = low_weight * pb2(low_frequency_hz) + high_weight * pb2(high_frequency_hz);
+        let averaged_frequency_hz = (low_frequency_hz * f64::from(low_weight)
+            + high_frequency_hz * f64::from(high_weight))
+            / f64::from(low_weight + high_weight);
+        let collapsed = (low_weight + high_weight) * pb2(averaged_frequency_hz);
+        let actual = weight_image[(sample_x, sample_y)];
+
+        assert!(
+            (actual - expected).abs() < 1.0e-6,
+            "weight image should sum each beam-frequency bucket separately: actual={actual:.9e} expected={expected:.9e} collapsed={collapsed:.9e}"
+        );
+        assert!(
+            (expected - collapsed).abs() > 1.0e-4,
+            "test frequencies should expose averaged-frequency collapse: expected={expected:.9e} collapsed={collapsed:.9e}"
+        );
+    }
+
+    #[test]
+    fn mosaic_projector_key_preserves_sub_mhz_frequency_drift() {
+        let model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 12.0,
+            blockage_diameter_m: 0.75,
+        };
+        let base = super::mosaic_projector_key(model, 229_986_867_803.0, 2);
+        let near = super::mosaic_projector_key(model, 229_986_868_103.0, 2);
+
+        assert_ne!(base, near);
     }
 
     fn rms_difference(left: &Array2<f32>, right: &Array2<f32>) -> f32 {

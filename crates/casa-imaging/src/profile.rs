@@ -108,7 +108,7 @@ pub(crate) struct ParallelStageProfile<'a> {
 
 /// Emit one structured parallel-stage profiling line when enabled.
 pub(crate) fn log_parallel_stage(profile: ParallelStageProfile<'_>) {
-    if !standard_mfs_profile_detail_enabled() {
+    if !standard_mfs_profile_block_detail_enabled() {
         return;
     }
     let (samples_min, samples_p50, samples_max) = min_p50_max_usize(&profile.samples_per_worker);
@@ -185,7 +185,7 @@ pub(crate) struct ParallelWorkerProfile<'a> {
 
 /// Emit one structured per-worker profiling line when enabled.
 pub(crate) fn log_parallel_worker(profile: ParallelWorkerProfile<'_>) {
-    if !standard_mfs_profile_detail_enabled() {
+    if !standard_mfs_profile_block_detail_enabled() {
         return;
     }
     eprintln!(

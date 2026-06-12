@@ -78,14 +78,14 @@ layer, not in the pure core boundary.
 ```mermaid
 flowchart TB
     surface["Task/API surfaces<br/>Python mfs(), CLI/JSON, GUI task tab"] --> runconfig["Request validation and mode dispatch<br/>casars-imager::run_from_config()"]
-    runconfig --> readms["MS read, row/channel selection, flagging<br/>prepare_plane_input_inner()<br/>DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM"]
-    readms --> prep["Prepared visibility samples<br/>MFS or cube batches<br/>uvw, frequency, Stokes, PB metadata"]
+    runconfig --> readms["Bounded MS source stream<br/>read_visibility_source_columns()<br/>DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW"]
+    readms --> prep["Bounded visibility blocks<br/>MFS or cube adapters<br/>uvw, frequency, Stokes, PB metadata"]
     prep --> dispatch["Processing-mode dispatch<br/>adapter-owned control-flow split"]
 
     dispatch --> mfs["MFS imaging operations<br/>run_imaging()<br/>standard/W-term path and mosaic branch"]
     dispatch --> mtmfs["MTMFS Taylor-term operations<br/>run_mtmfs()<br/>separate core entrypoint, standard gridder only"]
-    dispatch --> cube["Standard cube plane loop<br/>run_cube()<br/>per-channel calls into run_imaging()"]
-    dispatch --> mcube["Mosaic cube plane loop<br/>run_frontend_cube()<br/>frontend-owned per-channel calls into run_imaging()"]
+    dispatch --> cube["Standard cube consumers<br/>bounded one-plane stream adapters<br/>unsupported retained routes reject before MS reads"]
+    dispatch --> mcube["Mosaic cube consumers<br/>bounded one-plane stream adapters<br/>unsupported retained routes reject before MS reads"]
 
     cube --> mfs
     mcube --> mfs
@@ -101,7 +101,7 @@ flowchart TB
     refresh --> deconv
     deconv --> result["Result objects<br/>ImagingResult, MtmfsResult, CubeImagingResult"]
     result --> write["Product emission<br/>write_products()<br/>image/model/residual/PSF/sumwt/PB/pbcor/mask/previews"]
-    result --> modelcol["MODEL_DATA writeback<br/>write_model_column()"]
+    result --> modelcol["MODEL_DATA writeback<br/>requires bounded stream writer<br/>unsupported routes reject before MS reads"]
 
     classDef io fill:#e7f0ff,stroke:#315f9b,color:#1f1f1f;
     classDef op fill:#e9f8e5,stroke:#3c7a36,color:#1f1f1f;
@@ -112,17 +112,19 @@ flowchart TB
     class runconfig,prep,result op;
     class mfs,mtmfs,cube,mcube,stdproj,mosaicproj,deconv mode;
     class weighting,fft,normalize,refresh hot;
-    class dispatch,mcube,write pressure;
+    class dispatch,cube,mcube,modelcol,write pressure;
 ```
 
 Refactoring signals visible here:
 
-- `casars-imager` owns preparation, mode dispatch, cube orchestration,
-  coordinate construction, masks, product writing, and model-column writing.
+- `casars-imager` owns source-stream planning, mode dispatch, coordinate
+  construction, masks, product writing, and bounded model-column writeback.
   That is a large adapter surface even though the pure core boundary is clean.
-- The cube split is meaningful for standard cube imaging, but the mosaic cube
-  path loops in the frontend and repeatedly calls MFS `run_imaging()`. That is a
-  likely future target for a shared `PlaneRunPlan` or `CubeModeRunner`.
+- The old retained full-visibility preparation route has been removed from
+  production dispatch. Standard MFS, W-projection, mosaic MFS, and supported
+  one-plane cube consumers must read through the bounded source stream; modes
+  without a stream consumer fail during planning before large visibility-column
+  reads.
 - Gridder terminology is split across Python task input (`standard`,
   `wproject`, `mosaic`, `awproject`, `awp2`, `awphpg`) and the Rust core
   (`GridderMode::Standard`, `GridderMode::Mosaic`, plus `WTermMode`). That split
@@ -264,16 +266,16 @@ Refactoring signals visible here:
 | Stage | `casa-rs` owner | CASA C++ owner | LibRA owner | Refactoring / optimization signal |
 |---|---|---|---|---|
 | Task/API input | `casars-python`, `casars-imager` JSON/CLI, GUI subprocess | `task_tclean.py`, `ImagerParameters` | `htcimager.py`, Slurm/HTCondor ImageSolver wrappers | Keep user/task compatibility at the edge; do not let task syntax leak into the pure core. |
-| MS selection and column I/O | `casars-imager::prepare_plane_input*` | `SynthesisImager::selectData`, `VisibilityIterator`, helpers | `ReadMSAlgorithm`, per-job MS staging | I/O overlap work belongs here, before gridder optimization. |
+| MS selection and column I/O | `casars-imager` bounded source stream readers | `SynthesisImager::selectData`, `VisibilityIterator`, helpers | `ReadMSAlgorithm`, per-job MS staging | I/O overlap work belongs here, before gridder optimization. |
 | Sample shape | `VisibilityBatch`, `VisibilityMetadataBatch`, `CubeChannelRequest` | `VisBuffer`, `SIMapper`, `FTMachine` input contracts | `VisBuffer`, Applicator records, algorithm payloads | A typed sample/prepared-plane model is a good Rust boundary; avoid spreading it across writers and mode routers. |
 | Weighting | `apply_weighting*`, density diagnostics | `setweighting`, normalizer and imaging weights | weight job modes and algorithm payloads | Hot enough for profiling; also a correctness boundary because CASA modes normalize differently. |
 | Gridder/projection mode | `StandardGridder`, `WProjector`, `ScreenProjector`, `GridderMode`, `WTermMode` | `FTMachine` subclasses plus convolution-function families | `TransformMachines` plus threaded resamplers | Strong candidate for explicit trait/planning boundary before GPU work. |
 | MFS dirty/clean path | `run_imaging()` | `SynthesisImager::makePSF/runMajorCycle` plus deconvolver | residual/model jobs plus sky-model solvers | Dataflow is simple enough to benchmark first. |
 | MTMFS path | `run_mtmfs()` with standard gridder only | `MultiTermFT`, multi-term image stores, deconvolver/normalizer helpers | wide-band and multi-term transform/sky-model classes | Rust currently has a narrow mode; expansion should avoid duplicating product-writing branches. |
-| Cube path | `run_cube()` for standard, `run_frontend_cube()` for mosaic/non-standard | parallel cube helper and cube C++ algorithms | SPW partitioning and image-solver workflow | The frontend cube loop is a likely Rust refactor target. |
+| Cube path | bounded one-plane stream consumers where implemented; unsupported retained routes reject before visibility reads | parallel cube helper and cube C++ algorithms | SPW partitioning and image-solver workflow | Multi-channel cube still needs a stream-native runner rather than a retained full-materialization fallback. |
 | Mosaic/A/AW path | `MosaicGridderConfig`, `ScreenProjector`, PB products; AW-family rejected at task edge | `MosaicFT`, `AWProjectFT`, `AWProjectWBFT`, PB/CF families | `MosaicFT`, `AWProjectFT`, `PBMosaicFT`, `nPBWProjectFT` | CASA/LibRA show the likely future class family; Rust should first stabilize a smaller projection-plan abstraction. |
 | Minor cycle | `run_cotton_schwab_controller`, Hogbom/Clark/Multiscale variants | `synthesisdeconvolver`, image-store family | `CleanImageSkyModel` family | Keep algorithm choice distinct from task routing and product writing. |
-| Residual refresh / prediction | core major-cycle refresh plus optional `write_model_column()` | `runMajorCycle`, `predictModel`, `VisibilityIterator::Model` writes | `ResidualAlgorithm`, `PredictAlgorithm`, `WriteMSAlgorithm` | This is the bridge where I/O, degrid, grid, and MS writes collide. |
+| Residual refresh / prediction | core major-cycle refresh plus bounded stream model prediction/writeback where implemented | `runMajorCycle`, `predictModel`, `VisibilityIterator::Model` writes | `ResidualAlgorithm`, `PredictAlgorithm`, `WriteMSAlgorithm` | This is the bridge where I/O, degrid, grid, and MS writes collide. |
 | Product writing | `write_products()`, coordinate builder, previews | image-store plus normalizer/deconvolver helpers and task history | gather/normalize/restore jobs | Product writing is correctness-heavy but should be isolated from mode execution. |
 | Parallel/resource model | mostly in-process today | serial and parallel helper variants, MPI release path | local, Slurm, HTCondor, GPU/no-GPU job modes | LibRA is the better contrast for resource scheduling than CASA C++. |
 
@@ -320,7 +322,7 @@ resource ownership.
 
 Likely `casa-rs` measurement points:
 
-- MS column loads in `prepare_plane_input_inner()`
+- MS column loads in the bounded source stream readers
 - weighting density construction
 - standard gridder and W/screen projector sample loops
 - FFT and normalization

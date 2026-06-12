@@ -38,12 +38,13 @@ use crate::schema::{SchemaError, TableSchema};
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
-    IsmColumnResult, read_ism_file, read_ism_scalar_column, read_ism_scalar_column_rows,
-    write_ism_file, write_ism_file_indexed, write_ism_file_scalar_columns,
+    IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_scalar_column,
+    read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
+    write_ism_file_scalar_columns,
 };
 use self::standard_stman::{
-    read_ssm_array_column_rows, read_ssm_file, read_ssm_scalar_column_rows, write_ssm_file,
-    write_ssm_file_indexed, write_ssm_file_scalar_columns,
+    read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns, read_ssm_scalar_column_rows,
+    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_columns,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -1015,6 +1016,14 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
     ) -> Result<StorageSnapshot, StorageError> {
+        let profile_open = std::env::var_os("CASA_RS_TABLE_OPEN_PROFILE").is_some();
+        let load_started_at = std::time::Instant::now();
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=storage_load_metadata_only/start",
+                table_path.display(),
+            );
+        }
         let control_path = table_path.join(TABLE_CONTROL_FILE);
         if !table_path.exists() {
             return Err(StorageError::MissingPath(table_path.to_path_buf()));
@@ -1022,16 +1031,49 @@ impl CompositeStorage {
         if !control_path.exists() {
             return Err(StorageError::MissingControlFile(control_path));
         }
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=storage_load_metadata_only/check_paths elapsed_s={:.3}",
+                table_path.display(),
+                load_started_at.elapsed().as_secs_f64(),
+            );
+        }
 
-        match read_table_dat_dispatch(&control_path)? {
+        let table_dat = read_table_dat_dispatch(&control_path)?;
+        if profile_open {
+            eprintln!(
+                "table_open_profile path={} stage=storage_load_metadata_only/read_table_dat elapsed_s={:.3}",
+                table_path.display(),
+                load_started_at.elapsed().as_secs_f64(),
+            );
+        }
+        match table_dat {
             TableDatResult::Plain(table_dat) => {
-                self.load_plain_table_metadata(table_path, &table_dat)
+                let snapshot = self.load_plain_table_metadata(table_path, &table_dat)?;
+                if profile_open {
+                    eprintln!(
+                        "table_open_profile path={} stage=storage_load_metadata_only/plain_metadata rows={} dm_count={} elapsed_s={:.3}",
+                        table_path.display(),
+                        snapshot.row_count,
+                        snapshot.dm_info.len(),
+                        load_started_at.elapsed().as_secs_f64(),
+                    );
+                }
+                Ok(snapshot)
             }
             // Metadata-only open is primarily for plain tiled tables. Fall back
             // to the full loader for more complex table types.
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 let mut snapshot = self.load(table_path)?;
                 snapshot.rows.clear();
+                if profile_open {
+                    eprintln!(
+                        "table_open_profile path={} stage=storage_load_metadata_only/full_loader_fallback rows={} elapsed_s={:.3}",
+                        table_path.display(),
+                        snapshot.row_count,
+                        load_started_at.elapsed().as_secs_f64(),
+                    );
+                }
                 Ok(snapshot)
             }
         }
@@ -1057,6 +1099,38 @@ impl CompositeStorage {
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 let snapshot = self.load_with_row_hint(table_path, row_hint)?;
                 Ok(scalar_columns_from_snapshot(&snapshot))
+            }
+        }
+    }
+
+    pub(crate) fn load_named_scalar_columns_with_row_hint(
+        &self,
+        table_path: &Path,
+        columns: &HashSet<&str>,
+        row_hint: Option<u64>,
+    ) -> Result<ScalarColumnSnapshot, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => self.load_plain_scalar_columns_filtered(
+                table_path,
+                &table_dat,
+                row_hint,
+                Some(columns),
+            ),
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
+                let mut scalar_columns = scalar_columns_from_snapshot(&snapshot);
+                scalar_columns
+                    .columns
+                    .retain(|name, _| columns.contains(name.as_str()));
+                Ok(scalar_columns)
             }
         }
     }
@@ -1700,7 +1774,8 @@ impl CompositeStorage {
                         &data_path,
                         &dm.data,
                         &table_dat.table_desc.columns,
-                        &bound_cols,
+                        &all_bound_cols,
+                        requested_columns,
                         nrrow,
                         &mut columns,
                     )?;
@@ -1713,7 +1788,8 @@ impl CompositeStorage {
                         &data_path,
                         &dm.data,
                         &table_dat.table_desc.columns,
-                        &bound_cols,
+                        &all_bound_cols,
+                        requested_columns,
                         nrrow,
                         &mut columns,
                     )?;
@@ -1732,6 +1808,10 @@ impl CompositeStorage {
                     return Err(StorageError::UnsupportedDataManager(other.to_string()));
                 }
             }
+        }
+
+        if let Some(requested) = requested_columns {
+            columns.retain(|name, _| requested.contains(name.as_str()));
         }
 
         Ok(ScalarColumnSnapshot {
@@ -3267,17 +3347,24 @@ fn collect_ssm_scalar_columns(
     dm_blob: &[u8],
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    requested_columns: Option<&HashSet<&str>>,
     nrrow: usize,
     columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
 ) -> Result<(), StorageError> {
-    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+    let col_descs: Vec<(usize, &table_control::ColumnDescContents)> = bound_cols
         .iter()
-        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .enumerate()
+        .filter_map(|(dm_col_idx, (desc_idx, plain_col))| {
+            requested_columns
+                .is_none_or(|requested| requested.contains(plain_col.original_name.as_str()))
+                .then_some((dm_col_idx, &all_col_descs[*desc_idx]))
+        })
         .collect();
-    let ssm_columns = read_ssm_file(data_path, dm_blob, &col_descs, nrrow)?;
+    let ssm_columns = read_ssm_file_columns(data_path, dm_blob, &col_descs, nrrow)?;
     for (col_name, col_result) in &ssm_columns {
         let col_desc = col_descs
             .iter()
+            .map(|(_, col_desc)| *col_desc)
             .find(|c| c.col_name == *col_name)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
@@ -3298,17 +3385,25 @@ fn collect_ism_scalar_columns(
     dm_blob: &[u8],
     all_col_descs: &[table_control::ColumnDescContents],
     bound_cols: &[(usize, &table_control::PlainColumnEntry)],
+    requested_columns: Option<&HashSet<&str>>,
     nrrow: usize,
     columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
 ) -> Result<(), StorageError> {
-    let col_descs: Vec<&table_control::ColumnDescContents> = bound_cols
+    let col_descs: Vec<(usize, &table_control::ColumnDescContents)> = bound_cols
         .iter()
-        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .enumerate()
+        .filter_map(|(dm_col_idx, (desc_idx, plain_col))| {
+            requested_columns
+                .is_none_or(|requested| requested.contains(plain_col.original_name.as_str()))
+                .then_some((dm_col_idx, &all_col_descs[*desc_idx]))
+        })
         .collect();
-    let ism_columns = read_ism_file(data_path, dm_blob, &col_descs, nrrow)?;
+    let ism_columns =
+        read_ism_file_columns(data_path, dm_blob, &col_descs, bound_cols.len(), nrrow)?;
     for (col_name, col_result) in &ism_columns {
         let col_desc = col_descs
             .iter()
+            .map(|(_, col_desc)| *col_desc)
             .find(|c| c.col_name == *col_name)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(

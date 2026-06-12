@@ -1,0 +1,523 @@
+{
+  "schema_version": 1,
+  "wave_issue": 272,
+  "default_generated_root": "/Volumes/GLENDENNING/casa-rs-imperformance/wave3",
+  "review_contract": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ],
+    "required_panel_layout": [
+      "casa_rs",
+      "casa_cpp",
+      "difference"
+    ]
+  },
+  "modes": [
+    {
+      "issue": 276,
+      "mode_id": "wave3-standard-mfs-single-term",
+      "title": "standard MFS single-term",
+      "imaging": {
+        "specmode": "mfs",
+        "gridder": "standard",
+        "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "ngc5921-testdata",
+          "dataset_source": "existing",
+          "relative_path": "measurementset/vla/ngc5921.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave1-vla-single-medium",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave2-standard-mfs-heavy",
+          "dataset_source": "retained-wave2-evidence",
+          "relative_path": "wave2/standard-mfs-heavy",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 277,
+      "mode_id": "wave3-mfs-ms-multiscale",
+      "title": "MFS-MS / multiscale MFS",
+      "imaging": {
+        "specmode": "mfs",
+        "gridder": "standard",
+        "deconvolver": "multiscale",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "ngc5921-testdata",
+          "dataset_source": "existing",
+          "relative_path": "measurementset/vla/ngc5921.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave1-vla-single-small",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/vla/single/small/ms/wave1-vla-single-small.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave1-vla-single-medium",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 278,
+      "mode_id": "wave3-mtmfs",
+      "title": "MT-MFS",
+      "imaging": {
+        "specmode": "mfs",
+        "gridder": "standard",
+        "deconvolver": "mtmfs",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "wave1-mtmfs-smoke",
+          "dataset_source": "existing-wave1-or-generate",
+          "relative_path": "wave1/vla/single/small/ms/wave1-vla-single-small.ms",
+          "products": [
+            ".image.tt0",
+            ".residual.tt0",
+            ".psf.tt0",
+            ".alpha"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave1-mtmfs-wideband-sentinel",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+          "products": [
+            ".image.tt0",
+            ".residual.tt0",
+            ".psf.tt0",
+            ".alpha"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave3-mtmfs-stress",
+          "dataset_source": "generate-if-missing",
+          "relative_path": "mtmfs/stress/ms/wave3-mtmfs-stress.ms",
+          "products": [
+            ".image.tt0",
+            ".residual.tt0",
+            ".psf.tt0",
+            ".alpha"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 279,
+      "mode_id": "wave3-wprojection-single-plane",
+      "title": "W-projection single-plane",
+      "imaging": {
+        "specmode": "mfs",
+        "gridder": "wproject",
+        "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "refim-mawproject",
+          "dataset_source": "existing-casatestdata",
+          "relative_path": "measurementset/evla/refim_mawproject.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "refim-mawproject-offcenter",
+          "dataset_source": "existing-casatestdata",
+          "relative_path": "measurementset/evla/refim_mawproject_offcenter.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave3-wproject-stress",
+          "dataset_source": "generate-if-missing",
+          "relative_path": "wproject/stress/ms/wave3-wproject-stress.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 280,
+      "mode_id": "wave3-mosaic-mfs-one-channel",
+      "title": "mosaic MFS one-output-channel",
+      "imaging": {
+        "specmode": "mfs",
+        "gridder": "mosaic",
+        "deconvolver": "multiscale",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark",
+          "multiscale"
+        ],
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "papersky-mosaic",
+          "dataset_source": "existing-casatestdata",
+          "relative_path": "measurementset/evla/papersky_mosaic.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave1-alma-mosaic-small",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave1-alma-mosaic-large",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 281,
+      "mode_id": "wave3-aw-style-widefield-single-plane",
+      "title": "heterogeneous / AW-style / widefield single-plane",
+      "imaging": {
+        "specmode": "mfs",
+        "gridder": "awproject",
+        "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "m100-band3-combine-probe",
+          "dataset_source": "existing-wave6",
+          "relative_path": "tutorial-parity/alma/m100/combine/probe.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".sumwt",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave3-vla-aw-widefield-medium",
+          "dataset_source": "generated-wave3",
+          "relative_path": "vla/aw-widefield/medium/ms/wave3-vla-aw-widefield-medium.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".sumwt",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave3-aw-style-stress",
+          "dataset_source": "generate-if-missing",
+          "relative_path": "aw-style/stress/ms/wave3-aw-style-stress.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".sumwt",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 282,
+      "mode_id": "wave3-standard-cube-one-channel",
+      "title": "standard cube with one output channel",
+      "imaging": {
+        "specmode": "cube",
+        "gridder": "standard",
+        "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "refim-point-withline",
+          "dataset_source": "existing-casatestdata",
+          "relative_path": "measurementset/evla/refim_point_withline.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave1-standard-cube-line",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave3-standard-cube-one-channel-stress",
+          "dataset_source": "generate-if-missing",
+          "relative_path": "cube/standard/stress/ms/wave3-standard-cube-one-channel-stress.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 283,
+      "mode_id": "wave3-cubedata-one-channel",
+      "title": "cubedata with one output channel",
+      "imaging": {
+        "specmode": "cubedata",
+        "gridder": "standard",
+        "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "refim-cband-g37line",
+          "dataset_source": "existing-casatestdata",
+          "relative_path": "measurementset/evla/refim_Cband.G37line.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "refim-cband-g37line-briggs",
+          "dataset_source": "existing-casatestdata",
+          "relative_path": "measurementset/evla/refim_Cband.G37line.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave3-cubedata-one-channel-stress",
+          "dataset_source": "generate-if-missing",
+          "relative_path": "cubedata/stress/ms/wave3-cubedata-one-channel-stress.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".psf"
+          ]
+        }
+      ]
+    },
+    {
+      "issue": 284,
+      "mode_id": "wave3-mosaic-cube-one-channel",
+      "title": "mosaic cube with one output channel",
+      "imaging": {
+        "specmode": "cube",
+        "gridder": "mosaic",
+        "deconvolver": "hogbom",
+        "deconvolver_variants": [
+          "hogbom",
+          "clark"
+        ],
+        "hogbom_iteration_mode": "casa",
+        "channel_count": 1
+      },
+      "rows": [
+        {
+          "tier": "smoke",
+          "dataset_key": "m100-band3-two-channel-probe",
+          "dataset_source": "existing-wave6",
+          "relative_path": "tutorial-parity/alma/m100/combine/probe.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".sumwt",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        },
+        {
+          "tier": "medium",
+          "dataset_key": "wave1-mosaic-cube-bounded",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".sumwt",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        },
+        {
+          "tier": "stress",
+          "dataset_key": "wave1-alma-mosaic-large",
+          "dataset_source": "existing-wave1",
+          "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+          "products": [
+            ".image",
+            ".residual",
+            ".model",
+            ".psf",
+            ".sumwt",
+            ".pb",
+            ".weight",
+            ".image.pbcor"
+          ]
+        }
+      ]
+    }
+  ]
+}

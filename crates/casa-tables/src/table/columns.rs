@@ -964,6 +964,30 @@ impl Table {
             .collect()
     }
 
+    /// Returns owned scalar values for every row in each requested column.
+    ///
+    /// Missing cells are returned as `None`. Disk-backed callers should prefer
+    /// this over repeated single-column calls when several scalar columns from
+    /// the same storage manager are needed together.
+    pub fn scalar_columns_owned(
+        &self,
+        columns: &[&str],
+    ) -> Result<HashMap<String, Vec<Option<ScalarValue>>>, TableError> {
+        for &column in columns {
+            self.require_column(column)?;
+        }
+        if let Some(values_by_column) = self.inner.scalar_columns_owned(columns)? {
+            return Ok(values_by_column);
+        }
+        columns
+            .iter()
+            .map(|&column| {
+                self.get_scalar_cells_owned(column)
+                    .map(|values| (column.to_string(), values))
+            })
+            .collect()
+    }
+
     pub(crate) fn get_scalar_cells_owned_for_rows(
         &self,
         column: &str,

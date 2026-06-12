@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
-use casa_ms::{CubeAxisConfig, CubeInterpolation};
+use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
+use casa_types::measures::doppler::DopplerRef;
 use casars_imager::{
     CliConfig, RunSummary, SpectralMode, StandardMfsAccelerationPolicy, run_from_config,
 };
@@ -30,13 +31,22 @@ struct Options {
     spw: Option<i32>,
     channel_start: Option<usize>,
     channel_count: Option<usize>,
+    cube_start: Option<CubeAxisValue>,
+    cube_width: Option<CubeAxisValue>,
     datacolumn: Option<String>,
     correlation: Option<String>,
     spectral_mode: SpectralMode,
     interpolation: CubeInterpolation,
     weighting: WeightingMode,
+    per_channel_weight_density: bool,
     use_pointing: bool,
     deconvolver: Deconvolver,
+    standard_mfs_acceleration: StandardMfsAccelerationPolicy,
+    standard_mfs_grid_threads: Option<String>,
+    imaging_memory_target_mb: Option<usize>,
+    imaging_prepare_buffer_mb: Option<usize>,
+    imaging_row_block_rows: Option<usize>,
+    imaging_prepare_workers: Option<usize>,
     nterms: usize,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
@@ -47,6 +57,9 @@ struct Options {
     threshold_jy: f32,
     nsigma: f32,
     psf_cutoff: f32,
+    mosaic_pb_limit: f32,
+    pbcor: bool,
+    write_pb: bool,
     minor_cycle_length: usize,
     cyclefactor: f32,
     min_psf_fraction: f32,
@@ -127,7 +140,7 @@ fn run() -> Result<(), String> {
     }
 
     println!(
-        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} use_pointing={} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
+        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} cube_start={:?} cube_width={:?} corr={:?} interpolation={:?} weighting={:?} use_pointing={} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
         options.ms.display(),
         options.field_ids,
         options.phasecenter_field,
@@ -135,6 +148,8 @@ fn run() -> Result<(), String> {
         options.spw,
         options.channel_start,
         options.channel_count,
+        options.cube_start,
+        options.cube_width,
         options.correlation,
         options.interpolation,
         options.weighting,
@@ -350,10 +365,12 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         spectral_mode: options.spectral_mode,
         cube_axis: CubeAxisConfig {
             interpolation: options.interpolation,
+            start: options.cube_start.clone(),
+            width: options.cube_width.clone(),
             ..CubeAxisConfig::default()
         },
         weighting: options.weighting,
-        per_channel_weight_density: false,
+        per_channel_weight_density: options.per_channel_weight_density,
         use_pointing: options.use_pointing,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
@@ -368,9 +385,9 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         threshold_jy: options.threshold_jy,
         nsigma: options.nsigma,
         psf_cutoff: options.psf_cutoff,
-        mosaic_pb_limit: 0.1,
-        pbcor: false,
-        write_pb: false,
+        mosaic_pb_limit: options.mosaic_pb_limit,
+        pbcor: options.pbcor,
+        write_pb: options.write_pb,
         minor_cycle_length: options.minor_cycle_length,
         cyclefactor: options.cyclefactor,
         min_psf_fraction: options.min_psf_fraction,
@@ -384,13 +401,19 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
-        standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+        standard_mfs_acceleration: options.standard_mfs_acceleration,
         standard_mfs_backend: None,
-        standard_mfs_grid_threads: None,
+        standard_mfs_grid_threads: options.standard_mfs_grid_threads.clone(),
         standard_mfs_tile_anchor: None,
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
         standard_mfs_metal_grouped_input_cache: None,
+        standard_mfs_memory_target_mb: None,
+        standard_mfs_prepare_buffer_mb: None,
+        imaging_memory_target_mb: options.imaging_memory_target_mb,
+        imaging_prepare_buffer_mb: options.imaging_prepare_buffer_mb,
+        imaging_row_block_rows: options.imaging_row_block_rows,
+        imaging_prepare_workers: options.imaging_prepare_workers,
         write_preview_pngs: false,
     }
 }
@@ -428,7 +451,7 @@ fn maybe_print_standard_mfs_profile_run(
     let ms_read_threads_env =
         env::var("CASA_RS_MS_IMAGING_READ_THREADS").unwrap_or_else(|_| "auto".to_string());
     println!(
-        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_ms={:.3} prepare_processing_buffer_ms={:.3} weighting_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
+        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} gridded_samples={} major_cycles={} minor_iterations={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_ms={:.3} prepare_processing_buffer_ms={:.3} weighting_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
         run_number,
         options.ms.display(),
         options.field_ids,
@@ -444,6 +467,9 @@ fn maybe_print_standard_mfs_profile_run(
         options.imsize,
         options.niter,
         options.dirty_only,
+        summary.gridded_samples,
+        summary.major_cycles,
+        summary.minor_iterations,
         thread_env,
         row_block_env,
         prepare_workers_env,
@@ -503,14 +529,23 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut spw = None::<i32>;
     let mut channel_start = None::<usize>;
     let mut channel_count = None::<usize>;
+    let mut cube_start = None::<CubeAxisValue>;
+    let mut cube_width = None::<CubeAxisValue>;
     let mut datacolumn = Some("DATA".to_string());
     let mut correlation = None::<String>;
     let mut spectral_mode = SpectralMode::Mfs;
     let mut interpolation = CubeInterpolation::Linear;
     let mut weighting_name = String::from("natural");
     let mut robust = 0.5f32;
+    let mut per_channel_weight_density = None::<bool>;
     let mut use_pointing = false;
     let mut deconvolver = Deconvolver::Hogbom;
+    let mut standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
+    let mut standard_mfs_grid_threads = None::<String>;
+    let mut imaging_memory_target_mb = None::<usize>;
+    let mut imaging_prepare_buffer_mb = None::<usize>;
+    let mut imaging_row_block_rows = None::<usize>;
+    let mut imaging_prepare_workers = None::<usize>;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
     let mut small_scale_bias = 0.0f32;
@@ -521,6 +556,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut threshold_jy = 0.0f32;
     let mut nsigma = 0.0f32;
     let mut psf_cutoff = 0.35f32;
+    let mut mosaic_pb_limit = 0.2f32;
+    let mut pbcor = false;
+    let mut write_pb = false;
     let mut minor_cycle_length = 2usize;
     let mut cyclefactor = 1.0f32;
     let mut min_psf_fraction = 0.1f32;
@@ -552,6 +590,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--spw" => spw = Some(parse_next(&mut args, "--spw")?),
             "--channel-start" => channel_start = Some(parse_next(&mut args, "--channel-start")?),
             "--channel-count" => channel_count = Some(parse_next(&mut args, "--channel-count")?),
+            "--start" => {
+                cube_start = Some(parse_cube_axis_value(&next_value(&mut args, "--start")?)?)
+            }
+            "--width" => {
+                cube_width = Some(parse_cube_axis_value(&next_value(&mut args, "--width")?)?)
+            }
             "--datacolumn" => datacolumn = Some(next_value(&mut args, "--datacolumn")?),
             "--corr" => correlation = Some(next_value(&mut args, "--corr")?),
             "--specmode" => {
@@ -563,9 +607,35 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--weighting" => weighting_name = next_value(&mut args, "--weighting")?,
             "--robust" => robust = parse_next(&mut args, "--robust")?,
+            "--perchanweightdensity" => per_channel_weight_density = Some(true),
+            "--no-perchanweightdensity" => per_channel_weight_density = Some(false),
             "--usepointing" | "--use-pointing" => use_pointing = true,
             "--deconvolver" => {
                 deconvolver = parse_deconvolver(&next_value(&mut args, "--deconvolver")?)?
+            }
+            "--standard-mfs-acceleration" => {
+                standard_mfs_acceleration = parse_standard_mfs_acceleration(&next_value(
+                    &mut args,
+                    "--standard-mfs-acceleration",
+                )?)?
+            }
+            "--standard-mfs-grid-threads" => {
+                standard_mfs_grid_threads =
+                    Some(next_value(&mut args, "--standard-mfs-grid-threads")?)
+            }
+            "--imaging-memory-target-mb" => {
+                imaging_memory_target_mb =
+                    Some(parse_next(&mut args, "--imaging-memory-target-mb")?)
+            }
+            "--imaging-prepare-buffer-mb" => {
+                imaging_prepare_buffer_mb =
+                    Some(parse_next(&mut args, "--imaging-prepare-buffer-mb")?)
+            }
+            "--imaging-row-block-rows" => {
+                imaging_row_block_rows = Some(parse_next(&mut args, "--imaging-row-block-rows")?)
+            }
+            "--imaging-prepare-workers" => {
+                imaging_prepare_workers = Some(parse_next(&mut args, "--imaging-prepare-workers")?)
             }
             "--nterms" => nterms = parse_next(&mut args, "--nterms")?,
             "--scales" => {
@@ -579,6 +649,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--threshold-jy" => threshold_jy = parse_next(&mut args, "--threshold-jy")?,
             "--nsigma" => nsigma = parse_next(&mut args, "--nsigma")?,
             "--psfcutoff" => psf_cutoff = parse_next(&mut args, "--psfcutoff")?,
+            "--pblimit" => mosaic_pb_limit = parse_next(&mut args, "--pblimit")?,
+            "--pbcor" => {
+                pbcor = true;
+                write_pb = true;
+            }
+            "--write-pb" => write_pb = true,
             "--minor-cycle-length" => {
                 minor_cycle_length = parse_next(&mut args, "--minor-cycle-length")?
             }
@@ -624,6 +700,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     }
 
     let weighting = parse_weighting_mode(&weighting_name, robust)?;
+    let per_channel_weight_density =
+        per_channel_weight_density.unwrap_or(matches!(spectral_mode, SpectralMode::Cube));
 
     Ok(Options {
         ms: ms.ok_or_else(help_text)?,
@@ -633,13 +711,22 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         spw,
         channel_start,
         channel_count,
+        cube_start,
+        cube_width,
         datacolumn,
         correlation,
         spectral_mode,
         interpolation,
         weighting,
+        per_channel_weight_density,
         use_pointing,
         deconvolver,
+        standard_mfs_acceleration,
+        standard_mfs_grid_threads,
+        imaging_memory_target_mb,
+        imaging_prepare_buffer_mb,
+        imaging_row_block_rows,
+        imaging_prepare_workers,
         nterms,
         multiscale_scales,
         small_scale_bias,
@@ -650,6 +737,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         threshold_jy,
         nsigma,
         psf_cutoff,
+        mosaic_pb_limit,
+        pbcor,
+        write_pb,
         minor_cycle_length,
         cyclefactor,
         min_psf_fraction,
@@ -697,7 +787,10 @@ fn parse_spectral_mode(text: &str) -> Result<SpectralMode, String> {
     match text.to_ascii_lowercase().as_str() {
         "mfs" => Ok(SpectralMode::Mfs),
         "cube" => Ok(SpectralMode::Cube),
-        _ => Err(format!("unsupported --specmode value {text:?}")),
+        "cubedata" => Ok(SpectralMode::Cubedata),
+        _ => Err(format!(
+            "unsupported --specmode value {text:?}; expected mfs, cube, or cubedata"
+        )),
     }
 }
 
@@ -717,10 +810,13 @@ fn parse_gridder_request(text: &str) -> Result<(WTermMode, bool), String> {
         "standard" | "gridft" | "ft" => Ok((WTermMode::None, true)),
         "mosaic" => Ok((WTermMode::None, false)),
         "wproject" => Ok((WTermMode::WProject, false)),
-        "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
-            "gridder={text:?} is not implemented by casa-rs imager yet; \
-             supported gridder values are standard, wproject, and mosaic"
-        )),
+        "widefield" | "awproject" | "awp2" | "awphpg" => {
+            eprintln!(
+                "aw_widefield_alias_plan gridder_request={} core_projection=wproject a_term_cf_planning=not_implemented remaining_capability_issue=https://github.com/bglenden/casa-rs/issues/52",
+                text.to_ascii_lowercase()
+            );
+            Ok((WTermMode::WProject, false))
+        }
         _ => Err(format!(
             "unsupported --gridder value {text:?}; expected standard, wproject, widefield, mosaic, awproject, awp2, or awphpg"
         )),
@@ -738,6 +834,10 @@ fn parse_cube_interpolation(text: &str) -> Result<CubeInterpolation, String> {
     }
 }
 
+fn parse_cube_axis_value(text: &str) -> Result<CubeAxisValue, String> {
+    CubeAxisValue::parse(text, DopplerRef::RADIO).map_err(|error| error.to_string())
+}
+
 fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
     match text.to_ascii_lowercase().as_str() {
         "hogbom" => Ok(Deconvolver::Hogbom),
@@ -746,6 +846,20 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
         "mtmfs" => Ok(Deconvolver::Mtmfs),
         _ => Err(format!(
             "unsupported --deconvolver value {text:?}; expected hogbom, clark, multiscale, or mtmfs"
+        )),
+    }
+}
+
+fn parse_standard_mfs_acceleration(text: &str) -> Result<StandardMfsAccelerationPolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(StandardMfsAccelerationPolicy::Auto),
+        "cpu" | "serial" | "off" | "none" => Ok(StandardMfsAccelerationPolicy::Cpu),
+        "multi-cpu" | "multicpu" | "fixed-tile" | "fixed_tile" | "tile" | "tiled" => {
+            Ok(StandardMfsAccelerationPolicy::MultiCpu)
+        }
+        "metal" | "gpu" => Ok(StandardMfsAccelerationPolicy::Metal),
+        _ => Err(format!(
+            "unsupported --standard-mfs-acceleration value {text:?}; expected auto, cpu, multi-cpu, or metal"
         )),
     }
 }
@@ -806,14 +920,24 @@ Options:
   --spw ID
   --channel-start N
   --channel-count N
+  --start VALUE
+  --width VALUE
   --datacolumn NAME
   --corr XX|YY|RR|LL
-  --specmode mfs|cube
+  --specmode mfs|cube|cubedata
   --interpolation nearest|linear
   --weighting natural|uniform|briggs|briggsbwtaper
   --robust VALUE
+  --perchanweightdensity
+  --no-perchanweightdensity
   --usepointing
   --deconvolver hogbom|clark|multiscale|mtmfs
+  --standard-mfs-acceleration auto|cpu|multi-cpu|metal
+  --standard-mfs-grid-threads N|auto
+  --imaging-memory-target-mb N
+  --imaging-prepare-buffer-mb N
+  --imaging-row-block-rows N
+  --imaging-prepare-workers N
   --nterms N
   --scales PIXELS
   --smallscalebias VALUE
@@ -824,6 +948,9 @@ Options:
   --threshold-jy VALUE
   --nsigma VALUE
   --psfcutoff VALUE
+  --pblimit VALUE
+  --write-pb
+  --pbcor
   --minor-cycle-length N
   --cycleniter N
   --cyclefactor VALUE

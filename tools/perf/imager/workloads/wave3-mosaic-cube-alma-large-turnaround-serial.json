@@ -1,0 +1,76 @@
+{
+  "id": "wave3-mosaic-cube-alma-large-turnaround-serial",
+  "mode_id": "mosaic-cube-one-channel",
+  "description": "Wave 3 #284 optimization-turnaround row using the large ALMA mosaic MS, all seven fields, specmode=cube nchan=1 width=64, uniform weighting, Clark clean, and the full 1280 image geometry. This preserves mosaic/cube shape while reducing spectral volume for several timing iterations per hour.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cube",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 1,
+    "start": "0",
+    "width": "64",
+    "interpolation": "nearest",
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "uniform",
+    "robust": 0.5,
+    "perchanweightdensity": true,
+    "deconvolver": "clark",
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 1000,
+    "minor_cycle_length": 1000,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "cpu"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "wave3-mosaic-cube-large-turnaround-serial",
+    "storage_label": "external-ssd-wave1-large",
+    "ms_staging": "direct",
+    "skip_casa": "1",
+    "skip_profile": "1",
+    "phase_probe": "0",
+    "evidence_role": "optimization_turnaround_serial",
+    "stream_log": true,
+    "env": {
+      "CASA_RS_IMAGING_PROGRESS": "1",
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
+    }
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ]
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".model",
+      ".psf",
+      ".weight",
+      ".sumwt",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}

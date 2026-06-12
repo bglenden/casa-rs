@@ -160,6 +160,13 @@ fn table_scalar_cells_owned(
     table.column_accessor(column)?.scalar_cells_owned()
 }
 
+fn table_scalar_columns_owned(
+    table: &Table,
+    columns: &[&str],
+) -> Result<HashMap<String, Vec<Option<ScalarValue>>>, TableError> {
+    table.scalar_columns_owned(columns)
+}
+
 fn table_array_cells_owned(
     table: &Table,
     column: &str,
@@ -1949,6 +1956,73 @@ fn lazy_disk_open_reads_scalar_column_owned_without_materializing_rows() {
         assert_eq!(
             values,
             vec![Some(ScalarValue::Int32(10)), Some(ScalarValue::Int32(20))]
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "owned scalar column reads should not force row materialization for {dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
+fn lazy_disk_open_reads_scalar_columns_owned_without_materializing_rows() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("scan", PrimitiveType::Int32),
+        ColumnSchema::scalar("time", PrimitiveType::Float64),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+    ])
+    .expect("schema");
+
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
+        let mut table = Table::with_schema(schema.clone());
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("scan", Value::Scalar(ScalarValue::Int32(10))),
+                RecordField::new("time", Value::Scalar(ScalarValue::Float64(1.5))),
+                RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![7, 9]))),
+            ]))
+            .expect("push row 0");
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                RecordField::new("scan", Value::Scalar(ScalarValue::Int32(20))),
+                RecordField::new("time", Value::Scalar(ScalarValue::Float64(2.5))),
+                RecordField::new("data", Value::Array(ArrayValue::from_i32_vec(vec![11, 13]))),
+            ]))
+            .expect("push row 1");
+
+        let root = unique_test_dir(&format!("lazy_scalar_columns_owned_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save disk-backed table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert!(!reopened.inner.has_loaded_rows());
+
+        let values =
+            table_scalar_columns_owned(&reopened, &["scan", "time"]).expect("read scalar columns");
+        assert_eq!(
+            values.get("scan"),
+            Some(&vec![
+                Some(ScalarValue::Int32(10)),
+                Some(ScalarValue::Int32(20))
+            ])
+        );
+        assert_eq!(
+            values.get("time"),
+            Some(&vec![
+                Some(ScalarValue::Float64(1.5)),
+                Some(ScalarValue::Float64(2.5))
+            ])
         );
         assert!(
             !reopened.inner.has_loaded_rows(),

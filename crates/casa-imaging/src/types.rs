@@ -203,6 +203,76 @@ impl VisibilityMetadataBatch {
     }
 }
 
+/// Half-open visibility sample range `[start, end)` inside one scalar
+/// visibility batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisibilitySampleRange {
+    /// First sample index included in the range.
+    pub start: usize,
+    /// First sample index after the range.
+    pub end: usize,
+}
+
+/// Compact mosaic metadata for one pointing/PB-frequency group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupedVisibilityMetadata {
+    /// CASA-style PB/conv-function frequency bucket in Hz for this group.
+    pub beam_frequency_hz: f64,
+    /// Primary-beam model for this homogeneous group.
+    pub primary_beam_model: PrimaryBeamModel,
+    /// Beam-center direction `[ra, dec]` in radians for this group.
+    pub pointing_direction_rad: [f64; 2],
+    /// Contiguous sample ranges in the aligned visibility batch.
+    pub sample_ranges: Vec<VisibilitySampleRange>,
+}
+
+/// Compact per-batch mosaic metadata aligned with one scalar visibility batch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupedVisibilityMetadataBatch {
+    /// Number of scalar visibility samples represented by the batch.
+    pub sample_count: usize,
+    /// Groups of samples that share pointing direction, beam frequency, and PB
+    /// model.
+    pub groups: Vec<GroupedVisibilityMetadata>,
+}
+
+impl GroupedVisibilityMetadataBatch {
+    pub(crate) fn validate_len(&self, expected: usize) -> Result<(), ImagingError> {
+        if self.sample_count != expected {
+            return Err(ImagingError::InvalidRequest(format!(
+                "grouped visibility metadata sample count {} does not match visibility batch sample count {expected}",
+                self.sample_count
+            )));
+        }
+        for group in &self.groups {
+            if !(group.beam_frequency_hz.is_finite() && group.beam_frequency_hz > 0.0) {
+                return Err(ImagingError::InvalidRequest(
+                    "grouped visibility metadata beam frequencies must be finite positive Hz"
+                        .to_string(),
+                ));
+            }
+            group.primary_beam_model.validate()?;
+            if !(group.pointing_direction_rad[0].is_finite()
+                && group.pointing_direction_rad[1].is_finite())
+            {
+                return Err(ImagingError::InvalidRequest(
+                    "grouped visibility metadata pointing directions must be finite radians"
+                        .to_string(),
+                ));
+            }
+            for range in &group.sample_ranges {
+                if range.start >= range.end || range.end > expected {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "grouped visibility metadata range [{}, {}) is invalid for sample count {expected}",
+                        range.start, range.end
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Additional request state needed by the mosaic dirty gridder.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MosaicGridderConfig {
@@ -215,6 +285,11 @@ pub struct MosaicGridderConfig {
     pub pb_limit: f32,
     /// Per-batch metadata aligned with [`ImagingRequest::visibility_batches`].
     pub metadata_batches: Vec<VisibilityMetadataBatch>,
+    /// Compact grouped metadata aligned with
+    /// [`ImagingRequest::visibility_batches`]. This is mutually exclusive with
+    /// [`Self::metadata_batches`] and avoids expanding pointing/PB metadata for
+    /// large homogeneous mosaic selections.
+    pub grouped_metadata_batches: Vec<GroupedVisibilityMetadataBatch>,
 }
 
 impl MosaicGridderConfig {
@@ -232,15 +307,39 @@ impl MosaicGridderConfig {
                 "mosaic pb_limit must be finite and non-zero".to_string(),
             ));
         }
-        if self.metadata_batches.len() != visibility_batches.len() {
+        let has_expanded_metadata = !self.metadata_batches.is_empty();
+        let has_grouped_metadata = !self.grouped_metadata_batches.is_empty();
+        if has_expanded_metadata == has_grouped_metadata {
+            return Err(ImagingError::InvalidRequest(
+                "mosaic gridder requires exactly one expanded or grouped metadata representation"
+                    .to_string(),
+            ));
+        }
+        if has_expanded_metadata && self.metadata_batches.len() != visibility_batches.len() {
             return Err(ImagingError::InvalidRequest(format!(
                 "mosaic metadata batch count {} does not match visibility batch count {}",
                 self.metadata_batches.len(),
                 visibility_batches.len()
             )));
         }
-        for (batch, metadata) in visibility_batches.iter().zip(self.metadata_batches.iter()) {
-            metadata.validate_len(batch.len())?;
+        if has_expanded_metadata {
+            for (batch, metadata) in visibility_batches.iter().zip(self.metadata_batches.iter()) {
+                metadata.validate_len(batch.len())?;
+            }
+        } else {
+            if self.grouped_metadata_batches.len() != visibility_batches.len() {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "grouped mosaic metadata batch count {} does not match visibility batch count {}",
+                    self.grouped_metadata_batches.len(),
+                    visibility_batches.len()
+                )));
+            }
+            for (batch, metadata) in visibility_batches
+                .iter()
+                .zip(self.grouped_metadata_batches.iter())
+            {
+                metadata.validate_len(batch.len())?;
+            }
         }
         Ok(())
     }
@@ -1177,7 +1276,7 @@ impl Default for CleanConfig {
             threshold_jy_per_beam: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
-            minor_cycle_length: 8,
+            minor_cycle_length: 1000,
             cyclefactor: 1.0,
             min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,

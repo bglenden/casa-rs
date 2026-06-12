@@ -814,13 +814,23 @@ pub(crate) fn read_ssm_file(
     col_descs: &[&ColumnDescContents],
     nrrow: usize,
 ) -> Result<Vec<(String, SsmColumnResult)>, StorageError> {
+    let columns = col_descs.iter().copied().enumerate().collect::<Vec<_>>();
+    read_ssm_file_columns(file_path, dm_blob, &columns, nrrow)
+}
+
+pub(crate) fn read_ssm_file_columns(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[(usize, &ColumnDescContents)],
+    nrrow: usize,
+) -> Result<Vec<(String, SsmColumnResult)>, StorageError> {
     let mut file = File::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
 
     // Check if any array columns are stored indirectly via the shared array file.
-    let has_indirect = col_descs.iter().copied().any(is_ssm_indirect);
+    let has_indirect = col_descs.iter().map(|(_, desc)| *desc).any(is_ssm_indirect);
 
     // Lazily open the shared array file for indirect columns.
     let mut array_reader: Option<StManArrayFileReader> = if has_indirect {
@@ -838,7 +848,7 @@ pub(crate) fn read_ssm_file(
 
     let mut result = Vec::with_capacity(col_descs.len());
 
-    for (col_idx, col_desc) in col_descs.iter().enumerate() {
+    for &(col_idx, col_desc) in col_descs {
         if col_idx >= dm_info.column_offsets.len() {
             return Err(StorageError::FormatMismatch(format!(
                 "SSM column index {col_idx} out of range for columnOffsets"

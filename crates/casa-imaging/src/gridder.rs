@@ -3,7 +3,9 @@
 
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
-use std::collections::HashMap;
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
+use std::{collections::HashMap, time::Instant};
 
 use crate::{
     ImageGeometry, ImagingError,
@@ -15,6 +17,23 @@ pub(crate) const STANDARD_GRIDDER_TAP_COUNT: usize = STANDARD_GRIDDER_SUPPORT * 
 const GRIDDER_SUPPORT: usize = STANDARD_GRIDDER_SUPPORT;
 const GRIDDER_TAP_COUNT: usize = STANDARD_GRIDDER_TAP_COUNT;
 const GRIDDER_PRODUCT_TAP_COUNT: usize = GRIDDER_TAP_COUNT * GRIDDER_TAP_COUNT;
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn malloc_default_zone() -> *mut c_void;
+    fn malloc_zone_pressure_relief(zone: *mut c_void, goal: usize) -> usize;
+}
+
+#[inline]
+fn release_allocator_pressure() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let zone = malloc_default_zone();
+        if !zone.is_null() {
+            let _ = malloc_zone_pressure_relief(zone, 0);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DensityCellConvention {
@@ -1548,6 +1567,21 @@ impl StandardGridder {
         image
     }
 
+    pub(crate) fn mosaic_weight_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
+        // CASA's MosaicFT finalizes skyCoverage/weight by FFTing the weight
+        // lattice and cropping it directly; unlike dirty/residual images, it
+        // does not apply the gridding-kernel image correction here.
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                image[(x, y)] = raw[(grid_x, grid_y)].re as f32;
+            }
+        }
+        image
+    }
+
     #[cfg(test)]
     pub(crate) fn density_cell_index(
         &self,
@@ -1610,11 +1644,8 @@ impl StandardGridder {
                     v * self.density_v_scale + self.density_center_y,
                 )
             }
-            DensityCellConvention::CubeBriggsWeightorDensity => (
-                u_lambda * self.density_u_scale + self.density_center_x,
-                -v_lambda * self.density_v_scale + self.density_center_y,
-            ),
-            DensityCellConvention::CubeBriggsWeightorLookup => (
+            DensityCellConvention::CubeBriggsWeightorDensity
+            | DensityCellConvention::CubeBriggsWeightorLookup => (
                 u_lambda * self.density_u_scale + self.density_center_x,
                 -v_lambda * self.density_v_scale + self.density_center_y,
             ),
@@ -1820,6 +1851,14 @@ pub(crate) struct ScreenProjector {
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) struct ScreenProjectorCompactKernel {
+    pub(crate) values: Vec<Complex32>,
+    pub(crate) tap_width: usize,
+    pub(crate) offset_count: usize,
+    pub(crate) offset_bias: usize,
+}
+
 impl ScreenProjector {
     pub(crate) fn support(&self) -> usize {
         self.support
@@ -1831,6 +1870,105 @@ impl ScreenProjector {
 
     pub(crate) fn normalization_sum(&self) -> Complex32 {
         self.normalization_sum
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unphased_tap_sum_and_center(&self) -> (Complex32, Complex32) {
+        (
+            screen_projector_plane_sum(
+                &self.kernel_weights,
+                self.kernel_center,
+                self.support,
+                self.sampling,
+            ),
+            self.kernel_weights[(self.kernel_center, self.kernel_center)],
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unphased_tap_metrics_for_offset(
+        &self,
+        off_x: isize,
+        off_y: isize,
+    ) -> (Complex32, Complex32, Complex32) {
+        self.tap_metrics_for_offset(&self.kernel_weights, off_x, off_y)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn phased_tap_metrics_for_offset(
+        &self,
+        off_x: isize,
+        off_y: isize,
+    ) -> (Complex32, Complex32, Complex32) {
+        self.tap_metrics_for_offset(&self.phased_kernel_weights, off_x, off_y)
+    }
+
+    #[cfg(test)]
+    fn tap_metrics_for_offset(
+        &self,
+        weights: &Array2<Complex32>,
+        off_x: isize,
+        off_y: isize,
+    ) -> (Complex32, Complex32, Complex32) {
+        let support = self.support as isize;
+        let mut tap_sum = Complex32::new(0.0, 0.0);
+        let mut center_tap = Complex32::new(0.0, 0.0);
+        let mut first_tap = Complex32::new(0.0, 0.0);
+        let mut first_set = false;
+        for iy in -support..=support {
+            let kernel_y =
+                (self.kernel_center as isize + iy * self.sampling as isize + off_y) as usize;
+            for ix in -support..=support {
+                let kernel_x =
+                    (self.kernel_center as isize + ix * self.sampling as isize + off_x) as usize;
+                let tap = weights[(kernel_x, kernel_y)];
+                tap_sum += tap;
+                if ix == 0 && iy == 0 {
+                    center_tap = tap;
+                }
+                if !first_set {
+                    first_tap = tap;
+                    first_set = true;
+                }
+            }
+        }
+        (tap_sum, center_tap, first_tap)
+    }
+
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn kernel_weight_width(&self) -> usize {
+        self.phased_kernel_weights.dim().0
+    }
+
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn compact_phased_kernel_weights(&self) -> ScreenProjectorCompactKernel {
+        let support = self.support as isize;
+        let tap_width = self.support * 2 + 1;
+        let offset_bias = self.sampling;
+        let offset_count = offset_bias * 2 + 1;
+        let mut values =
+            Vec::<Complex32>::with_capacity(offset_count * offset_count * tap_width * tap_width);
+        for off_y in -(offset_bias as isize)..=(offset_bias as isize) {
+            for off_x in -(offset_bias as isize)..=(offset_bias as isize) {
+                for iy in -support..=support {
+                    let kernel_y = (self.kernel_center as isize
+                        + iy * self.sampling as isize
+                        + off_y) as usize;
+                    for ix in -support..=support {
+                        let kernel_x = (self.kernel_center as isize
+                            + ix * self.sampling as isize
+                            + off_x) as usize;
+                        values.push(self.phased_kernel_weights[(kernel_x, kernel_y)]);
+                    }
+                }
+            }
+        }
+        ScreenProjectorCompactKernel {
+            values,
+            tap_width,
+            offset_count,
+            offset_bias,
+        }
     }
 
     #[allow(dead_code)]
@@ -1965,54 +2103,7 @@ impl ScreenProjector {
         }
         let imaging_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut imaging_evaluator)?;
         let weight_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut weight_evaluator)?;
-        let support = find_hetarray_screen_support(&weight_temp, 1);
-        if support == 0 {
-            return Err(ImagingError::Normalization(
-                "mosaic screen projector support is zero".to_string(),
-            ));
-        }
-
-        let mut normalized_imaging = imaging_temp;
-        let imaging_sum = screen_projector_plane_sum(
-            &normalized_imaging,
-            normalized_imaging.dim().0 / 2,
-            support,
-            1,
-        );
-        let imaging_norm = imaging_sum.re;
-        if !(imaging_norm.is_finite() && imaging_norm > 1.0e-6) {
-            return Err(ImagingError::Normalization(
-                "mosaic screen projector kernel normalization is non-finite or zero".to_string(),
-            ));
-        }
-        normalized_imaging.mapv_inplace(|value| value / imaging_norm);
-
-        let cropped_size = 2 * (support + 2);
-        let cropped_center = cropped_size / 2;
-        let temp_center = normalized_imaging.dim().0 / 2;
-        let mut cropped = Array2::<Complex32>::zeros((cropped_size, cropped_size));
-        for y in 0..cropped_size {
-            let source_y = temp_center + y - cropped_center;
-            for x in 0..cropped_size {
-                let source_x = temp_center + x - cropped_center;
-                cropped[(x, y)] = normalized_imaging[(source_x, source_y)];
-            }
-        }
-
-        let kernel_weights = lanczos_resample_complex(&cropped, sampling);
-        let kernel_center = kernel_weights.dim().0 / 2;
-        Ok(Self {
-            grid_shape: gridder.grid_shape(),
-            du_lambda: gridder.grid_spacing_lambda()[0],
-            dv_lambda: gridder.grid_spacing_lambda()[1],
-            sampling,
-            support,
-            kernel_center,
-            normalization_sum: Complex32::new(imaging_norm, 0.0),
-            phased_kernel_weights: kernel_weights.clone(),
-            kernel_weights,
-            phase_gradient_rad_per_sample: [0.0, 0.0],
-        })
+        screen_projector_from_hetarray_temps(gridder, sampling, imaging_temp, weight_temp)
     }
 
     pub(crate) fn with_phase_gradient(mut self, phase_gradient_rad_per_sample: [f64; 2]) -> Self {
@@ -2033,6 +2124,23 @@ impl ScreenProjector {
         &self,
         u_lambda: f64,
         v_lambda: f64,
+    ) -> Option<ScreenProjectSamplePlan> {
+        self.plan_sample_internal(u_lambda, v_lambda, true)
+    }
+
+    pub(crate) fn plan_sample_for_grid(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<ScreenProjectSamplePlan> {
+        self.plan_sample_internal(u_lambda, v_lambda, false)
+    }
+
+    fn plan_sample_internal(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+        compute_normalization: bool,
     ) -> Option<ScreenProjectSamplePlan> {
         let pos_x = u_lambda / self.du_lambda + self.grid_shape[0] as f64 / 2.0;
         let pos_y = -v_lambda / self.dv_lambda + self.grid_shape[1] as f64 / 2.0;
@@ -2058,8 +2166,11 @@ impl ScreenProjector {
         if min_ix > max_ix || min_iy > max_iy {
             return None;
         }
-        let normalization =
-            self.sample_normalization(off_x, off_y, min_ix, max_ix, min_iy, max_iy)?;
+        let normalization = if compute_normalization {
+            self.sample_normalization(off_x, off_y, min_ix, max_ix, min_iy, max_iy)?
+        } else {
+            0.0
+        };
         Some(ScreenProjectSamplePlan {
             loc_x,
             loc_y,
@@ -2272,6 +2383,8 @@ pub(crate) struct WProjector {
     sampling: usize,
     w_scale: f64,
     kernels: Vec<WProjectKernel>,
+    normalization_offset_radius: isize,
+    normalization_by_plane_offset: Vec<f32>,
 }
 
 impl WProjector {
@@ -2281,6 +2394,7 @@ impl WProjector {
         max_abs_w_lambda: f64,
         explicit_plane_count: Option<usize>,
     ) -> Result<Self, ImagingError> {
+        let build_started = Instant::now();
         let raw_auto_plane_count = suggested_w_project_plane_count(geometry, max_abs_w_lambda);
         let plane_count = explicit_plane_count
             .unwrap_or_else(|| choose_w_project_plane_count(geometry, max_abs_w_lambda));
@@ -2314,6 +2428,7 @@ impl WProjector {
 
         let mut kernels = Vec::with_capacity(plane_count);
         let mut plane_zero_peak = None::<f32>;
+        let normalization_offset_radius = (sampling as isize + 1) / 2;
         for plane_index in 0..plane_count {
             let mut screen = Array2::<Complex32>::zeros((conv_size, conv_size));
             let w_lambda = if plane_count > 1 {
@@ -2362,14 +2477,44 @@ impl WProjector {
                 ));
             }
             let quarter_len = conv_size / 2 - 1;
-            let mut weights = Array2::<Complex32>::zeros((quarter_len, quarter_len));
-            for y in 0..quarter_len {
-                for x in 0..quarter_len {
+            let support = find_w_project_support_from_transformed(&transformed, peak, sampling);
+            let crop_width = support
+                .saturating_mul(sampling)
+                .saturating_add(normalization_offset_radius as usize)
+                .saturating_add(1)
+                .min(quarter_len)
+                .max(1);
+            let mut weights = Array2::<Complex32>::zeros((crop_width, crop_width));
+            for y in 0..crop_width {
+                for x in 0..crop_width {
                     weights[(x, y)] = transformed[(x, y)] / peak;
                 }
             }
-            let support = find_w_project_support(&weights, sampling);
+            drop(transformed);
+            drop(screen);
+            release_allocator_pressure();
             kernels.push(WProjectKernel { support, weights });
+        }
+
+        if let Some(max_weight_width) = kernels
+            .iter()
+            .map(|kernel| kernel.weights.dim().0)
+            .max()
+            .filter(|width| *width > 0)
+        {
+            for kernel in &mut kernels {
+                if kernel.weights.dim().0 == max_weight_width {
+                    continue;
+                }
+                let mut padded = Array2::<Complex32>::zeros((max_weight_width, max_weight_width));
+                let width = kernel.weights.dim().0;
+                for y in 0..width {
+                    for x in 0..width {
+                        padded[(x, y)] = kernel.weights[(x, y)];
+                    }
+                }
+                kernel.weights = padded;
+            }
         }
 
         let pb_sum = w_project_plane_sum(&kernels[0], sampling);
@@ -2381,6 +2526,47 @@ impl WProjector {
         for kernel in &mut kernels {
             kernel.weights.mapv_inplace(|value| value / pb_sum);
         }
+        let normalization_axis_len = (2 * normalization_offset_radius + 1) as usize;
+        let mut normalization_by_plane_offset = Vec::with_capacity(
+            kernels
+                .len()
+                .saturating_mul(normalization_axis_len)
+                .saturating_mul(normalization_axis_len),
+        );
+        for kernel in &kernels {
+            for off_x in -normalization_offset_radius..=normalization_offset_radius {
+                for off_y in -normalization_offset_radius..=normalization_offset_radius {
+                    normalization_by_plane_offset.push(
+                        compute_w_project_sample_normalization(kernel, sampling, off_x, off_y)
+                            .unwrap_or(0.0),
+                    );
+                }
+            }
+        }
+
+        if crate::profile::standard_mfs_profile_detail_enabled() {
+            let max_support = kernels
+                .iter()
+                .map(|kernel| kernel.support)
+                .max()
+                .unwrap_or(0);
+            let kernel_width = kernels
+                .first()
+                .map(|kernel| kernel.weights.dim().0)
+                .unwrap_or(0);
+            eprintln!(
+                "wproject_projector_build grid={}x{} planes={} requested_planes={:?} raw_auto_planes={} max_abs_w_lambda={:.6e} kernel_width={} max_support={} elapsed_ms={:.3}",
+                grid_shape[0],
+                grid_shape[1],
+                kernels.len(),
+                explicit_plane_count,
+                raw_auto_plane_count,
+                max_abs_w_lambda,
+                kernel_width,
+                max_support,
+                crate::profile::millis(build_started.elapsed()),
+            );
+        }
 
         Ok(Self {
             grid_shape,
@@ -2389,6 +2575,8 @@ impl WProjector {
             sampling,
             w_scale,
             kernels,
+            normalization_offset_radius,
+            normalization_by_plane_offset,
         })
     }
 
@@ -2418,7 +2606,7 @@ impl WProjector {
         {
             return None;
         }
-        let normalization = self.sample_normalization(kernel, off_x, off_y)?;
+        let normalization = self.sample_normalization(plane_index, off_x, off_y)?;
         Some(WProjectSamplePlan {
             loc_x,
             loc_y,
@@ -2434,6 +2622,10 @@ impl WProjector {
         self.sampling
     }
 
+    pub(crate) fn grid_shape(&self) -> [usize; 2] {
+        self.grid_shape
+    }
+
     pub(crate) fn plane_count(&self) -> usize {
         self.kernels.len()
     }
@@ -2444,6 +2636,28 @@ impl WProjector {
 
     pub(crate) fn kernel_support(&self, plane_index: usize) -> usize {
         self.kernels[plane_index].support
+    }
+
+    pub(crate) fn kernel_weight_width(&self) -> usize {
+        self.kernels
+            .first()
+            .map(|kernel| kernel.weights.dim().0)
+            .unwrap_or(0)
+    }
+
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn flattened_kernel_weights(&self) -> Vec<Complex32> {
+        let width = self.kernel_weight_width();
+        let mut weights = Vec::with_capacity(
+            self.kernels
+                .len()
+                .saturating_mul(width)
+                .saturating_mul(width),
+        );
+        for kernel in &self.kernels {
+            weights.extend(kernel.weights.iter().copied());
+        }
+        weights
     }
 
     pub(crate) fn kernel_integral(&self, plane_index: usize) -> f32 {
@@ -2475,6 +2689,31 @@ impl WProjector {
                     cwt = cwt.conj();
                 }
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
+            }
+        }
+    }
+
+    pub(crate) fn grid_sample_planned_pair(
+        &self,
+        first_grid: &mut Array2<Complex32>,
+        first_value: Complex32,
+        second_grid: &mut Array2<Complex32>,
+        second_value: Complex32,
+        plan: &WProjectSamplePlan,
+    ) {
+        let kernel = &self.kernels[plan.plane_index];
+        let support = kernel.support as isize;
+        for iy in -support..=support {
+            let kernel_y = (iy * self.sampling as isize + plan.off_y).unsigned_abs();
+            for ix in -support..=support {
+                let kernel_x = (ix * self.sampling as isize + plan.off_x).unsigned_abs();
+                let mut cwt = kernel.weights[(kernel_x, kernel_y)];
+                if plan.conjugate_kernel {
+                    cwt = cwt.conj();
+                }
+                let cell = ((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize);
+                first_grid[cell] += first_value * cwt;
+                second_grid[cell] += second_value * cwt;
             }
         }
     }
@@ -2512,24 +2751,46 @@ impl WProjector {
             .clamp(0.0, (self.kernels.len() - 1) as f64) as usize
     }
 
-    fn sample_normalization(
-        &self,
-        kernel: &WProjectKernel,
-        off_x: isize,
-        off_y: isize,
-    ) -> Option<f32> {
-        let support = kernel.support as isize;
-        let mut normalization = 0.0f32;
-        for iy in -support..=support {
-            let kernel_y = (iy * self.sampling as isize + off_y).unsigned_abs();
-            for ix in -support..=support {
-                let kernel_x = (ix * self.sampling as isize + off_x).unsigned_abs();
-                let value = *kernel.weights.get((kernel_x, kernel_y))?;
-                normalization += value.re;
-            }
+    fn sample_normalization(&self, plane_index: usize, off_x: isize, off_y: isize) -> Option<f32> {
+        if off_x.abs() <= self.normalization_offset_radius
+            && off_y.abs() <= self.normalization_offset_radius
+        {
+            let axis_len = (2 * self.normalization_offset_radius + 1) as usize;
+            let offset_x = (off_x + self.normalization_offset_radius) as usize;
+            let offset_y = (off_y + self.normalization_offset_radius) as usize;
+            let index = plane_index
+                .checked_mul(axis_len)?
+                .checked_mul(axis_len)?
+                .checked_add(offset_x.checked_mul(axis_len)?)?
+                .checked_add(offset_y)?;
+            return self.normalization_by_plane_offset.get(index).copied();
         }
-        Some(normalization)
+        compute_w_project_sample_normalization(
+            &self.kernels[plane_index],
+            self.sampling,
+            off_x,
+            off_y,
+        )
     }
+}
+
+fn compute_w_project_sample_normalization(
+    kernel: &WProjectKernel,
+    sampling: usize,
+    off_x: isize,
+    off_y: isize,
+) -> Option<f32> {
+    let support = kernel.support as isize;
+    let mut normalization = 0.0f32;
+    for iy in -support..=support {
+        let kernel_y = (iy * sampling as isize + off_y).unsigned_abs();
+        for ix in -support..=support {
+            let kernel_x = (ix * sampling as isize + off_x).unsigned_abs();
+            let value = *kernel.weights.get((kernel_x, kernel_y))?;
+            normalization += value.re;
+        }
+    }
+    Some(normalization)
 }
 
 pub(crate) fn choose_w_project_plane_count(
@@ -2560,12 +2821,19 @@ fn suggested_w_project_plane_count(geometry: ImageGeometry, max_abs_w_lambda: f6
     (1.05 * max_abs_w_lambda * (max_increment * max_axis / 2.0).sin().abs()).ceil() as usize
 }
 
-fn find_w_project_support(weights: &Array2<Complex32>, sampling: usize) -> usize {
-    let quarter_len = weights.dim().0;
+fn find_w_project_support_from_transformed(
+    transformed: &Array2<Complex32>,
+    peak: f32,
+    sampling: usize,
+) -> usize {
+    let conv_size = transformed.dim().0;
+    let quarter_len = conv_size / 2 - 1;
     let mut trial = 0usize;
     let mut found = false;
     for candidate in (1..quarter_len).rev() {
-        if weights[(candidate, 0)].norm() > 1.0e-3 || weights[(0, candidate)].norm() > 1.0e-3 {
+        if (transformed[(candidate, 0)] / peak).norm() > 1.0e-3
+            || (transformed[(0, candidate)] / peak).norm() > 1.0e-3
+        {
             trial = candidate;
             found = true;
             break;
@@ -2633,7 +2901,6 @@ fn find_hetarray_screen_support(weights: &Array2<Complex32>, sampling: usize) ->
     }
 
     let cut_level = 2.5e-2f32;
-    let mut found = false;
     let mut trial = 0usize;
     let max_axis = max_pos.0.max(max_pos.1);
     for candidate in 0..conv_size.saturating_sub(max_axis + 2) {
@@ -2642,12 +2909,11 @@ fn find_hetarray_screen_support(weights: &Array2<Complex32>, sampling: usize) ->
         if weights[(x_probe, max_pos.1)].norm() < cut_level * max_abs
             && weights[(max_pos.0, y_probe)].norm() < cut_level * max_abs
         {
-            found = true;
             trial = candidate;
             break;
         }
     }
-    if !found {
+    if trial == 0 {
         trial = conv_size / 2 - 4 * sampling;
     }
     if trial < 5 * sampling {
@@ -2662,6 +2928,56 @@ fn find_hetarray_screen_support(weights: &Array2<Complex32>, sampling: usize) ->
         support = conv_size / 2 / sampling - 1;
     }
     support
+}
+
+fn screen_projector_from_hetarray_temps(
+    gridder: &StandardGridder,
+    sampling: usize,
+    imaging_temp: Array2<Complex32>,
+    weight_temp: Array2<Complex32>,
+) -> Result<ScreenProjector, ImagingError> {
+    let support = find_hetarray_screen_support(&weight_temp, 1);
+    if support == 0 {
+        return Err(ImagingError::Normalization(
+            "mosaic screen projector support is zero".to_string(),
+        ));
+    }
+
+    let imaging_sum =
+        screen_projector_plane_sum(&imaging_temp, imaging_temp.dim().0 / 2, support, 1);
+    let imaging_norm = imaging_sum.re;
+    if !(imaging_norm.is_finite() && imaging_norm > 1.0e-6) {
+        return Err(ImagingError::Normalization(
+            "mosaic screen projector kernel normalization is non-finite or zero".to_string(),
+        ));
+    }
+
+    let cropped_size = 2 * (support + 2);
+    let cropped_center = cropped_size / 2;
+    let temp_center = imaging_temp.dim().0 / 2;
+    let mut cropped = Array2::<Complex32>::zeros((cropped_size, cropped_size));
+    for y in 0..cropped_size {
+        let source_y = temp_center + y - cropped_center;
+        for x in 0..cropped_size {
+            let source_x = temp_center + x - cropped_center;
+            cropped[(x, y)] = imaging_temp[(source_x, source_y)] / imaging_norm;
+        }
+    }
+
+    let kernel_weights = lanczos_resample_complex(&cropped, sampling);
+    let kernel_center = kernel_weights.dim().0 / 2;
+    Ok(ScreenProjector {
+        grid_shape: gridder.grid_shape(),
+        du_lambda: gridder.grid_spacing_lambda()[0],
+        dv_lambda: gridder.grid_spacing_lambda()[1],
+        sampling,
+        support,
+        kernel_center,
+        normalization_sum: Complex32::new(imaging_norm as f32, 0.0),
+        phased_kernel_weights: kernel_weights.clone(),
+        kernel_weights,
+        phase_gradient_rad_per_sample: [0.0, 0.0],
+    })
 }
 
 fn w_project_plane_sum(kernel: &WProjectKernel, sampling: usize) -> f32 {
@@ -2703,7 +3019,7 @@ fn screen_projector_conv_size(geometry: ImageGeometry, sampling: usize) -> usize
 
 #[allow(dead_code)]
 pub(crate) fn hetarray_screen_conv_size(geometry: ImageGeometry) -> usize {
-    hetarray_screen_conv_size_for_support(geometry, geometry.nx().max(geometry.ny()) / 10)
+    hetarray_screen_conv_size_for_support(geometry, 0)
 }
 
 pub(crate) fn hetarray_screen_conv_size_for_support(
@@ -2711,12 +3027,16 @@ pub(crate) fn hetarray_screen_conv_size_for_support(
     pb_support_pixels: usize,
 ) -> usize {
     let image_max = geometry.nx().max(geometry.ny());
-    let support = (image_max / 10).max(pb_support_pixels).min(image_max);
-    let mut conv_size = support.max(64);
+    let support = image_max.max(pb_support_pixels);
+    let mut conv_size = support.max(64) + 1;
     while conv_size % 2 != 0 || !is_casa_composite_len(conv_size) {
         conv_size += 1;
     }
-    (conv_size / 16).max(1) * 16
+    conv_size = (conv_size / 16) * 16;
+    if conv_size < 64 {
+        conv_size = 64;
+    }
+    conv_size
 }
 
 fn hetarray_screen_fft_temp<F>(
@@ -2739,6 +3059,13 @@ where
             screen[(x, y)] = Complex64::new(value.re as f64, value.im as f64);
         }
     }
+    hetarray_screen_temp_from_screen(screen, conv_size)
+}
+
+fn hetarray_screen_temp_from_screen(
+    screen: Array2<Complex64>,
+    conv_size: usize,
+) -> Result<Array2<Complex32>, ImagingError> {
     let transformed = centered_fft2_f64(&screen);
     let peak = transformed[(conv_size / 2, conv_size / 2)].norm();
     if !(peak.is_finite() && peak > 0.0) {
@@ -2937,7 +3264,9 @@ mod tests {
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
 
-    use super::{DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder};
+    use super::{
+        DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder, WProjector,
+    };
     use crate::{
         ImageGeometry,
         fft::{centered_fft2, centered_ifft2},
@@ -3118,23 +3447,23 @@ mod tests {
     }
 
     #[test]
-    fn hetarray_screen_size_follows_casa_support_scale() {
+    fn hetarray_screen_size_keeps_at_least_image_sampling() {
         let geometry = ImageGeometry {
             image_shape: [800, 800],
             cell_size_rad: [1.0e-6, 1.0e-6],
         };
-        assert_eq!(super::hetarray_screen_conv_size(geometry), 80);
+        assert_eq!(super::hetarray_screen_conv_size(geometry), 800);
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 224),
-            240
+            800
         );
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 524),
-            528
+            800
         );
         assert_eq!(
             super::hetarray_screen_conv_size_for_support(geometry, 1040),
-            800
+            1072
         );
         assert_eq!(
             super::hetarray_screen_conv_size(ImageGeometry {
@@ -3142,6 +3471,13 @@ mod tests {
                 cell_size_rad: [1.0e-6, 1.0e-6],
             }),
             64
+        );
+        assert_eq!(
+            super::hetarray_screen_conv_size(ImageGeometry {
+                image_shape: [1280, 1280],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            }),
+            1296
         );
     }
 
@@ -3205,6 +3541,72 @@ mod tests {
         let expected_x = geometry.image_shape[0] / 2 + 6;
         let expected_y = geometry.image_shape[1] / 2;
         assert_peak_within_tolerance(peak, (expected_x, expected_y), 2);
+    }
+
+    #[test]
+    fn screen_projector_grid_plan_skips_trace_only_normalization() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [
+                (1.0f64 / 3600.0).to_radians(),
+                (1.0f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new(geometry).expect("gridder");
+        let projector = ScreenProjector::from_screen(geometry, &gridder, 4, |l, m| {
+            let radius_sq = l * l + m * m;
+            Complex32::new((-0.5 * radius_sq / 1.0e-10).exp() as f32, 0.0)
+        })
+        .expect("screen projector");
+
+        let traced = projector
+            .plan_sample(12.25, -7.5)
+            .expect("normalized sample plan");
+        let gridding = projector
+            .plan_sample_for_grid(12.25, -7.5)
+            .expect("gridding sample plan");
+
+        assert_eq!(gridding.loc_x, traced.loc_x);
+        assert_eq!(gridding.loc_y, traced.loc_y);
+        assert_eq!(gridding.off_x, traced.off_x);
+        assert_eq!(gridding.off_y, traced.off_y);
+        assert_eq!(gridding.min_ix, traced.min_ix);
+        assert_eq!(gridding.max_ix, traced.max_ix);
+        assert_eq!(gridding.min_iy, traced.min_iy);
+        assert_eq!(gridding.max_iy, traced.max_iy);
+        assert_eq!(gridding.center_in_bounds, traced.center_in_bounds);
+        assert!(traced.normalization > 0.0);
+        assert_eq!(gridding.normalization, 0.0);
+    }
+
+    #[test]
+    fn w_project_sample_normalization_uses_cached_plane_offset_value() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [
+                (0.25f64 / 3600.0).to_radians(),
+                (0.25f64 / 3600.0).to_radians(),
+            ],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let projector = WProjector::new(geometry, &gridder, 20_000.0, Some(8)).unwrap();
+        let plan = projector
+            .plan_sample(12_000.25, -9_000.75, -4_000.0)
+            .expect("wproject sample should plan inside the grid");
+
+        let cached = projector
+            .sample_normalization(plan.plane_index, plan.off_x, plan.off_y)
+            .expect("cached normalization");
+        let direct = super::compute_w_project_sample_normalization(
+            &projector.kernels[plan.plane_index],
+            projector.sampling,
+            plan.off_x,
+            plan.off_y,
+        )
+        .expect("direct normalization");
+
+        assert!((cached - direct).abs() <= f32::EPSILON);
+        assert_eq!(cached, plan.normalization);
     }
 
     #[test]
