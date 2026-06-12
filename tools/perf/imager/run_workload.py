@@ -13,6 +13,7 @@ import statistics
 import subprocess
 import sys
 import uuid
+import math
 from typing import Any
 
 
@@ -38,12 +39,13 @@ RUNNABLE_GRIDDER_VALUES = {
     "wproject",
 }
 SUPPORTED_SPEC_MODES = {"cubedata", "cube", "mfs"}
-RUNNABLE_SPEC_MODES = {"cube", "mfs"}
+RUNNABLE_SPEC_MODES = {"cubedata", "cube", "mfs"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
 SUPPORTED_HOGBOM_ITERATION_MODES = {"strict", "casa", "casa-inclusive", "casa_inclusive"}
 SUPPORTED_MS_STAGING = {"copy", "direct"}
 SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
+STRING_IMAGING_OVERRIDE_KEYS = {"start", "width"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 STRUCTURED_DIFFERENCE_REVIEW_LEGEND = {
     "good": "No review action expected from this check.",
@@ -117,11 +119,19 @@ def main() -> None:
         action="store_true",
         help="validate manifest support and write the planned command without running",
     )
+    parser.add_argument(
+        "--set-imaging",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override one imaging manifest field for benchmark sweeps",
+    )
     args = parser.parse_args()
 
     try:
         manifest_path = resolve_workload(args.workload)
         manifest = load_manifest(manifest_path)
+        apply_imaging_overrides(manifest, args.set_imaging)
         plan = build_plan(
             manifest_path=manifest_path,
             manifest=manifest,
@@ -177,6 +187,36 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
         raise HarnessError(f"parse {path}: {error}") from error
     if not isinstance(value, dict):
         raise HarnessError(f"{path} must contain a JSON object")
+    return value
+
+
+def apply_imaging_overrides(manifest: dict[str, Any], overrides: list[str]) -> None:
+    if not overrides:
+        return
+    imaging = required_object(manifest, "imaging")
+    for override in overrides:
+        if "=" not in override:
+            raise HarnessError("--set-imaging values must use KEY=VALUE")
+        key, value = override.split("=", 1)
+        if not key:
+            raise HarnessError("--set-imaging key must not be empty")
+        imaging[key] = parse_override_value(key, value)
+
+
+def parse_override_value(key: str, value: str) -> Any:
+    if key in STRING_IMAGING_OVERRIDE_KEYS:
+        return value
+    lowered = value.strip().lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    if lowered in {"null", "none"}:
+        return None
+    if re.fullmatch(r"-?[0-9]+", value):
+        return int(value)
+    if re.fullmatch(r"-?(?:[0-9]+[.][0-9]*|[0-9]*[.][0-9]+)(?:[eE][+-]?[0-9]+)?", value):
+        return float(value)
+    if "," in value and all(re.fullmatch(r"-?[0-9]+", part) for part in value.split(",")):
+        return [int(part) for part in value.split(",")]
     return value
 
 
@@ -237,6 +277,11 @@ def build_plan(
     )
     if skip_profile.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.skip_profile must be 0/1, true/false, yes/no, or on/off")
+    profile_repeats = os.environ.get("CASA_RS_BENCH_PROFILE_REPEATS") or str(
+        int_value(run, "profile_repeats", repeats)
+    )
+    if not profile_repeats.isdigit() or int(profile_repeats) < 1:
+        raise HarnessError("run.profile_repeats must be an integer >= 1")
     extra_env = string_map_value(run, "env")
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
@@ -267,7 +312,7 @@ def build_plan(
         "IMAGER_BENCH_PERCHANWEIGHTDENSITY": boolean_env_value(
             imaging,
             "perchanweightdensity",
-            specmode == "cube",
+            specmode in {"cube", "cubedata"},
         ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
@@ -300,11 +345,22 @@ def build_plan(
         "IMAGER_BENCH_PHASE_PROBE": phase_probe,
         "IMAGER_BENCH_SKIP_CASA": skip_casa,
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
+        "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
+    optional_imaging_env = {
+        "imaging_memory_target_mb": "IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB",
+        "imaging_prepare_buffer_mb": "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
+        "imaging_row_block_rows": "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
+        "imaging_prepare_workers": "IMAGER_BENCH_IMAGING_PREPARE_WORKERS",
+    }
+    for imaging_key, env_key in optional_imaging_env.items():
+        if imaging.get(imaging_key) is not None:
+            env[env_key] = str(int_value(imaging, imaging_key, 0))
+    env.setdefault("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", "1")
     env.update(extra_env)
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
-    return {
+    plan = {
         "run_id": f"{utc_stamp()}-{workload_id}-{uuid.uuid4().hex[:8]}",
         "created_at": utc_now(),
         "manifest_path": str(manifest_path),
@@ -331,7 +387,7 @@ def build_plan(
             "perchanweightdensity": boolean_env_value(
                 imaging,
                 "perchanweightdensity",
-                specmode == "cube",
+                specmode in {"cube", "cubedata"},
             ),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
             "standard_mfs_acceleration": str_value(
@@ -351,6 +407,7 @@ def build_plan(
             "phase_probe": phase_probe,
             "env": extra_env,
             "stream_log": bool_value(run, "stream_log", False),
+            "profile_repeats": int(profile_repeats),
         },
         "run_support": run_support,
         "review": review_contract_value(manifest, run),
@@ -366,6 +423,8 @@ def build_plan(
         },
         "environment": collect_environment(casa_python),
     }
+    plan["benchmark_features"] = build_benchmark_feature_summary(plan, None)
+    return plan
 
 
 def attach_output_paths(plan: dict[str, Any], output_dir: pathlib.Path, *, dry_run: bool) -> None:
@@ -493,6 +552,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     )
     log_path.write_text(completed.stdout, encoding="utf-8")
     if completed.returncode != 0:
+        reason = benchmark_failure_reason(completed.stdout, completed.returncode)
         return {
             "schema_version": 1,
             "status": "failed",
@@ -502,19 +562,23 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
             "exit_code": completed.returncode,
             "results": empty_results(
                 casa_status="blocked",
-                reason=f"benchmark command exited {completed.returncode}",
+                reason=reason,
             ),
             "human_review": human_review_gate(plan, None),
         }
 
     parsed = parse_benchmark_log(completed.stdout)
+    parsed["backend_plan_logs"] = parse_backend_plan_logs(completed.stdout)
+    parsed["benchmark_features"] = build_benchmark_feature_summary(plan, parsed)
     attach_stage_breakdown(plan, parsed)
     comparison = compare_products(plan, parsed, log_path)
     parsed["product_comparison"] = comparison
+    completed_plan = dict(plan)
+    completed_plan["benchmark_features"] = parsed["benchmark_features"]
     return {
         "schema_version": 1,
         "status": "completed",
-        **plan,
+        **completed_plan,
         "started_at": started,
         "completed_at": utc_now(),
         "exit_code": completed.returncode,
@@ -555,6 +619,18 @@ def run_benchmark_command(
     return subprocess.CompletedProcess(argv, returncode, "".join(output_chunks), None)
 
 
+def benchmark_failure_reason(text: str, returncode: int) -> str:
+    for raw_line in reversed(text.splitlines()):
+        line = raw_line.strip()
+        if line.startswith("Error:"):
+            return line
+    for raw_line in reversed(text.splitlines()):
+        line = raw_line.strip()
+        if "bounded source stream rejected" in line:
+            return line
+    return f"benchmark command exited {returncode}"
+
+
 def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
     return {
         "rust": {
@@ -593,6 +669,300 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
         "product_paths": parse_product_paths(text),
     }
+
+
+def parse_backend_plan_logs(text: str) -> dict[str, Any]:
+    """Extract compact backend/source-stream diagnostics from benchmark logs."""
+    buckets = {
+        "single_plane_execution_plan": [],
+        "standard_mfs_runtime_plan": [],
+        "source_stream_memory_plan": [],
+        "source_stream_consumer": [],
+        "frontend_progress": [],
+        "profile_runs": [],
+        "worker_diagnostics": [],
+        "metal_diagnostics": [],
+    }
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parsed = parse_key_value_line(line)
+        if not parsed:
+            continue
+        name = parsed["name"]
+        if name == "single_plane_execution_plan":
+            buckets["single_plane_execution_plan"].append(parsed)
+        elif name == "standard_mfs_runtime_plan":
+            buckets["standard_mfs_runtime_plan"].append(parsed)
+        elif name == "standard_mfs_memory_plan_actual":
+            buckets["source_stream_memory_plan"].append(parsed)
+        elif name == "visibility_source_stream_consumer":
+            buckets["source_stream_consumer"].append(parsed)
+        elif name == "frontend":
+            buckets["frontend_progress"].append(parsed)
+        elif name == "standard_mfs_profile_run":
+            buckets["profile_runs"].append(parsed)
+        elif "worker" in name or "prepare_parallel" in name:
+            buckets["worker_diagnostics"].append(parsed)
+        elif "metal" in name:
+            buckets["metal_diagnostics"].append(parsed)
+    return {
+        "schema_version": 1,
+        "summary": summarize_backend_plan_logs(buckets),
+        **buckets,
+    }
+
+
+def parse_key_value_line(line: str) -> dict[str, Any] | None:
+    if "=" not in line:
+        return None
+    parts = line.split(None, 1)
+    name = parts[0]
+    if "=" in name:
+        name = "line"
+        rest = line
+    else:
+        rest = parts[1] if len(parts) > 1 else ""
+    fields = {
+        key: parse_scalar_value(value)
+        for key, value in re.findall(r"([A-Za-z0-9_]+)=([^ \t]+)", rest)
+    }
+    if not fields:
+        return None
+    return {"name": name, "raw": line, "fields": fields}
+
+
+def parse_scalar_value(value: str) -> Any:
+    if value in {"true", "false"}:
+        return value == "true"
+    if value in {"None", "none", "unset", "auto"}:
+        return value
+    if re.fullmatch(r"-?[0-9]+", value):
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    if re.fullmatch(r"-?(?:[0-9]+[.][0-9]*|[0-9]*[.][0-9]+)(?:[eE][+-]?[0-9]+)?", value):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return value
+
+
+def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
+    memory = last_fields(buckets.get("source_stream_memory_plan", []))
+    profile = last_fields(buckets.get("profile_runs", []))
+    single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
+    return {
+        "single_plane_reason": {
+            "cpu_multi_worker": single_plane.get("cpu_multi_worker_reason"),
+            "gpu_metal": single_plane.get("gpu_metal_reason"),
+        },
+        "resolved_backend": runtime.get("backend"),
+        "resolved_grid_threads": runtime.get("grid_threads"),
+        "resolved_tile_anchor": runtime.get("tile_anchor"),
+        "resolved_residual_backend": runtime.get("residual_backend"),
+        "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
+        "metal_device_available": runtime.get("metal_device_available"),
+        "metal_grouped_input_cache": runtime.get("metal_grouped_input_cache"),
+        "row_block_rows": memory.get("row_block_rows"),
+        "selected_channels": memory.get("selected_channels"),
+        "active_rows": memory.get("rows_total"),
+        "memory_target_bytes": memory.get("memory_target_bytes"),
+        "planned_active_bytes": memory.get("planned_active_bytes"),
+        "peak_rss_bytes": profile.get("peak_rss_bytes"),
+        "gridded_samples": profile.get("gridded_samples"),
+        "major_cycles": profile.get("major_cycles"),
+        "minor_iterations": profile.get("minor_iterations"),
+    }
+
+
+def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    if not entries:
+        return {}
+    value = entries[-1].get("fields", {})
+    return value if isinstance(value, dict) else {}
+
+
+def build_benchmark_feature_summary(
+    plan: dict[str, Any], parsed: dict[str, Any] | None
+) -> dict[str, Any]:
+    mode = plan.get("mode", {})
+    comparison = plan.get("comparison", {})
+    environment = plan.get("environment", {})
+    backend_logs = (parsed or {}).get("backend_plan_logs", {})
+    backend_summary = backend_logs.get("summary", {}) if isinstance(backend_logs, dict) else {}
+    stages = ((parsed or {}).get("stage_medians_ms") or {}).get("rust", {})
+    image_shape = mode.get("image_shape") or [None, None]
+    imsize_x = int(image_shape[0]) if image_shape and image_shape[0] is not None else None
+    imsize_y = int(image_shape[1]) if len(image_shape) > 1 and image_shape[1] is not None else imsize_x
+    selected_channels = first_int(
+        backend_summary.get("selected_channels"),
+        source_channel_width(mode),
+        mode.get("channel_count"),
+    )
+    selected_rows = first_int(backend_summary.get("active_rows"))
+    gridded_samples = first_int(backend_summary.get("gridded_samples"))
+    correlations = planned_correlation_count(plan)
+    flagged_fraction = None
+    if gridded_samples is not None and selected_rows and selected_channels and correlations:
+        denominator = selected_rows * selected_channels * correlations
+        if denominator > 0:
+            flagged_fraction = max(0.0, min(1.0, 1.0 - (gridded_samples / denominator)))
+    visibility_work = None
+    if selected_rows is not None and selected_channels is not None and correlations is not None:
+        visibility_work = selected_rows * selected_channels * correlations
+        if flagged_fraction is not None:
+            visibility_work = int(round(visibility_work * (1.0 - flagged_fraction)))
+    product_count = len(comparison.get("products") or [])
+    output_planes = planned_output_planes(mode)
+    image_work = None
+    if imsize_x is not None and imsize_y is not None:
+        image_work = imsize_x * imsize_y * output_planes * max(1, product_count)
+    source_stream_throughput = None
+    prepare_ms = sum(
+        float(stages.get(name, 0.0) or 0.0)
+        for name in ("get_ms_values_into_processing_buffer", "prepare_processing_buffer")
+    )
+    if prepare_ms > 0 and visibility_work:
+        source_stream_throughput = visibility_work / (prepare_ms / 1000.0)
+    return {
+        "schema_version": 1,
+        "visibility": {
+            "selected_rows": selected_rows,
+            "selected_channels": selected_channels,
+            "correlations": correlations,
+            "correlation_source": "scalar-plane-after-polarization-collapse",
+            "flagged_fraction": finite_float(flagged_fraction),
+            "visibility_work": visibility_work,
+            "gridded_samples": gridded_samples,
+            "source_stream_throughput_samples_per_s": finite_float(source_stream_throughput),
+        },
+        "image": {
+            "imsize_x": imsize_x,
+            "imsize_y": imsize_y,
+            "output_planes": output_planes,
+            "product_count": product_count,
+            "image_work": image_work,
+        },
+        "mode_cost": {
+            "specmode": mode.get("specmode"),
+            "gridder": mode.get("gridder"),
+            "deconvolver": mode.get("deconvolver"),
+            "weighting": mode.get("weighting"),
+            "niter": mode.get("niter"),
+            "cycleniter": plan.get("command", {}).get("env", {}).get("IMAGER_BENCH_MINOR_CYCLE_LENGTH"),
+            "actual_major_cycles": backend_summary.get("major_cycles"),
+            "actual_minor_iterations": backend_summary.get("minor_iterations"),
+            "multiscale_scale_count": multiscale_scale_count(plan),
+            "mtmfs_nterms": mode.get("nterms") if mode.get("deconvolver") == "mtmfs" else None,
+            "wprojplanes": mode.get("wprojplanes"),
+            "mosaic_field_count": field_count(plan),
+        },
+        "resources": {
+            "physical_cores": environment.get("physical_cores"),
+            "logical_cores": environment.get("logical_cores"),
+            "available_parallelism": environment.get("logical_cores"),
+            "physical_memory_bytes": environment.get("physical_memory_bytes"),
+            "memory_target_bytes": backend_summary.get("memory_target_bytes"),
+            "planned_active_bytes": backend_summary.get("planned_active_bytes"),
+            "memory_headroom_bytes": memory_headroom_bytes(backend_summary),
+            "row_block_count": row_block_count(selected_rows, backend_summary.get("row_block_rows")),
+            "row_block_rows": backend_summary.get("row_block_rows"),
+            "peak_rss_bytes": backend_summary.get("peak_rss_bytes"),
+            "metal_device": backend_summary.get("metal_device_available"),
+            "metal_grouped_input_cache": backend_summary.get("metal_grouped_input_cache"),
+        },
+        "backend": {
+            "requested_acceleration": mode.get("standard_mfs_acceleration"),
+            "resolved_backend": backend_summary.get("resolved_backend"),
+            "resolved_grid_threads": backend_summary.get("resolved_grid_threads"),
+            "resolved_tile_anchor": backend_summary.get("resolved_tile_anchor"),
+            "resolved_residual_backend": backend_summary.get("resolved_residual_backend"),
+            "resolved_initial_dirty_backend": backend_summary.get("resolved_initial_dirty_backend"),
+            "cpu_multi_worker_reason": backend_summary.get("single_plane_reason", {}).get("cpu_multi_worker")
+            if isinstance(backend_summary.get("single_plane_reason"), dict)
+            else None,
+            "gpu_metal_reason": backend_summary.get("single_plane_reason", {}).get("gpu_metal")
+            if isinstance(backend_summary.get("single_plane_reason"), dict)
+            else None,
+        },
+    }
+
+
+def source_channel_width(mode: dict[str, Any]) -> int | None:
+    width = mode.get("width")
+    if isinstance(width, str) and width.isdigit():
+        return int(width)
+    value = mode.get("channel_count")
+    return value if isinstance(value, int) else None
+
+
+def planned_correlation_count(plan: dict[str, Any]) -> int:
+    return 1
+
+
+def planned_output_planes(mode: dict[str, Any]) -> int:
+    if mode.get("deconvolver") == "mtmfs":
+        return max(1, int(mode.get("nterms") or 1))
+    if mode.get("specmode") in {"cube", "cubedata"}:
+        return max(1, int(mode.get("channel_count") or 1))
+    return 1
+
+
+def multiscale_scale_count(plan: dict[str, Any]) -> int | None:
+    env_value = plan.get("command", {}).get("env", {}).get("IMAGER_BENCH_SCALES")
+    if not env_value:
+        return None
+    return len([part for part in str(env_value).split(",") if part != ""])
+
+
+def field_count(plan: dict[str, Any]) -> int | None:
+    field = plan.get("command", {}).get("env", {}).get("IMAGER_BENCH_FIELD")
+    if field is None or field == "":
+        return None
+    return len([part for part in str(field).split(",") if part != ""])
+
+
+def memory_headroom_bytes(summary: dict[str, Any]) -> int | None:
+    target = first_int(summary.get("memory_target_bytes"))
+    active = first_int(summary.get("planned_active_bytes"))
+    if target is None or active is None:
+        return None
+    return target - active
+
+
+def row_block_count(selected_rows: int | None, row_block_rows: Any) -> int | None:
+    block_rows = first_int(row_block_rows)
+    if selected_rows is None or not block_rows:
+        return None
+    return int(math.ceil(selected_rows / block_rows))
+
+
+def first_int(*values: Any) -> int | None:
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def finite_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def timing_result(
@@ -998,6 +1368,9 @@ def collect_environment(casa_python: str | None) -> dict[str, Any]:
         "casa_python": casa_python,
         "bench_script": str(BENCH_SCRIPT),
         "bench_script_sha256": file_sha256(BENCH_SCRIPT),
+        "physical_cores": physical_core_count(),
+        "logical_cores": os.cpu_count(),
+        "physical_memory_bytes": physical_memory_bytes(),
     }
 
 
@@ -1023,6 +1396,43 @@ def file_sha256(path: pathlib.Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def physical_core_count() -> int | None:
+    value = sysctl_int("hw.physicalcpu")
+    return value or os.cpu_count()
+
+
+def physical_memory_bytes() -> int | None:
+    return sysctl_int("hw.memsize") or sysconf_int("SC_PAGE_SIZE", "SC_PHYS_PAGES")
+
+
+def sysctl_int(name: str) -> int | None:
+    try:
+        completed = subprocess.run(
+            ["sysctl", "-n", name],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    text = completed.stdout.strip()
+    return int(text) if text.isdigit() else None
+
+
+def sysconf_int(page_size_name: str, page_count_name: str) -> int | None:
+    try:
+        page_size = os.sysconf(page_size_name)
+        page_count = os.sysconf(page_count_name)
+    except (AttributeError, OSError, ValueError):
+        return None
+    if not isinstance(page_size, int) or not isinstance(page_count, int):
+        return None
+    return page_size * page_count
 
 
 def utc_now() -> str:

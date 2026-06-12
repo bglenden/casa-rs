@@ -91,6 +91,18 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("blocked", results["casa"]["status"])
         self.assertEqual("benchmark command exited 2", results["casa"]["reason"])
 
+    def test_benchmark_failure_reason_preserves_error_line(self) -> None:
+        reason = run_workload.benchmark_failure_reason(
+            """Rust release CLI timings (seconds):
+error: Rust casars-imager run 1 failed
+Error: bounded source stream rejected production imaging request before visibility-column preparation: BriggsBwTaper has no shared bounded stream consumer for this mode
+real 1.145408
+""",
+            1,
+        )
+
+        self.assertIn("bounded source stream rejected production imaging request", reason)
+
     def test_wterm_manifest_can_be_dry_run_for_wave3_matrix(self) -> None:
         manifest = {
             "id": "unsupported-wterm",
@@ -375,6 +387,236 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("runnable", plan["run_support"]["status"])
         self.assertEqual("pending", run_workload.human_review_gate(plan, None)["status"])
         self.assertEqual("Brian", plan["review"]["required_reviewer"])
+        self.assertEqual(128 * 128 * 3, plan["benchmark_features"]["image"]["image_work"])
+        self.assertEqual(1, plan["benchmark_features"]["visibility"]["selected_channels"])
+
+    def test_shared_imaging_resource_controls_flow_to_environment(self) -> None:
+        manifest = {
+            "id": "resource-controls",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "imaging_memory_target_mb": 2048,
+                "imaging_prepare_buffer_mb": 128,
+                "imaging_row_block_rows": 4096,
+                "imaging_prepare_workers": 3,
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        env = plan["command"]["env"]
+        self.assertEqual("2048", env["IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB"])
+        self.assertEqual("128", env["IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB"])
+        self.assertEqual("4096", env["IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS"])
+        self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
+        self.assertEqual("1", env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"])
+
+    def test_imaging_overrides_support_backend_sweeps(self) -> None:
+        manifest = {
+            "id": "backend-sweep",
+            "mode_id": "standard-mfs-clean",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "deconvolver": "hogbom",
+                "standard_mfs_acceleration": "auto",
+                "niter": 500,
+                "scales": [0, 5, 15],
+            },
+        }
+
+        run_workload.apply_imaging_overrides(
+            manifest,
+            [
+                "standard_mfs_acceleration=multi-cpu",
+                "deconvolver=clark",
+                "niter=1000",
+                "pbcor=true",
+                "scales=0,10,30",
+            ],
+        )
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("multi-cpu", plan["mode"]["standard_mfs_acceleration"])
+        self.assertEqual("clark", plan["mode"]["deconvolver"])
+        self.assertEqual(1000, plan["mode"]["niter"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PBCOR"])
+        self.assertEqual("0,10,30", plan["command"]["env"]["IMAGER_BENCH_SCALES"])
+
+    def test_imaging_overrides_preserve_spectral_selector_strings(self) -> None:
+        manifest = {
+            "id": "cube-width",
+            "mode_id": "cube-one-channel",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "cube",
+                "gridder": "standard",
+                "channel_count": 1,
+            },
+        }
+
+        run_workload.apply_imaging_overrides(
+            manifest,
+            [
+                "width=64",
+                "start=0",
+                "niter=1000",
+            ],
+        )
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("64", plan["mode"]["width"])
+        self.assertEqual("0", plan["mode"]["start"])
+        self.assertEqual(1000, plan["mode"]["niter"])
+        self.assertEqual("64", plan["command"]["env"]["IMAGER_BENCH_CUBE_WIDTH"])
+
+    def test_parse_backend_plan_logs_extracts_shape_and_runtime_summary(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """single_plane_execution_plan spectral=mfs projection=standard deconvolver=single-term weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=false pb_requirement=none output_products=.image,.residual,.model,.psf,.sumwt cpu_multi_worker_eligible=true cpu_multi_worker_reason=standard-mfs-fixed-tile-workers-4 gpu_metal_eligible=true gpu_metal_reason=standard-mfs-grouped-metal stage_timing_attribution=frontend-core-product-stages standard_mfs_regression_sentinel=true
+standard_mfs_runtime_plan policy=auto eligible=true auto_multi_cpu=true auto_metal=true metal_device_available=true backend=fixed_tile backend_source=planner grid_threads=4 grid_threads_source=auto density_threads=4 density_threads_source=auto tile_anchor=center_quadrants tile_anchor_source=planner residual_backend=fixed_tile residual_backend_source=planner initial_dirty_backend=fixed_tile initial_dirty_backend_source=planner metal_grouped_input_cache=false metal_grouped_input_cache_source=planner mtmfs_metal_backend=false mtmfs_metal_input_cache=false
+standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=8192 selected_channels=64 row_block_rows=2048 row_block_rows_source=heuristic heuristic_row_block_rows=2048 worker_buffers=4 system_memory_bytes=34359738368 memory_target_bytes=8589934592 memory_target_source=cli total_budget_bytes=8589934592 planned_reserved_bytes=100 planned_active_bytes=200 reserve_over_budget_bytes=0 prepare_buffer_floor_applied=false prepare_buffer_bytes=100 image_working_set_bytes=100 weighting_density_bytes=100 gridded_visibility_bytes=100 output_image_bytes=100 fixed_tile_resident_bytes=100 fixed_tile_resident_limit=true fixed_tile_edge=512 fixed_tile_anchor=center max_live_row_blocks=1 live_row_block_bytes=100 live_bucket_bytes=100 queued_task_bytes=100 resident_tile_buffer_bytes=100 global_grid_bytes=100 tile_cell_bin_bytes=100 worker_staging_bytes=100 gpu_staging_bytes=100 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false executor_plan_bytes_estimate=100 local_grid_bytes_estimate=100 peak_rss_bytes=0 product_status=planned
+standard_mfs_profile_run run=1 workload_ms=/tmp/input.ms field_ids=Some([0]) phasecenter_field=None ddid=Some(0) spw=Some(0) channel_start=Some(0) channel_count=Some(64) spectral_mode=Mfs weighting=Briggs deconvolver=Hogbom nterms=1 imsize=1024 niter=500 dirty_only=false gridded_samples=500000 major_cycles=10 minor_iterations=500 thread_env=4 row_block_rows_env=auto prepare_workers_env=auto ms_read_threads_env=auto frontend_total_ms=1000.000 core_total_ms=800.000 prepare_plane_input_ms=100.000 get_ms_values_ms=40.000 prepare_processing_buffer_ms=60.000 weighting_ms=20.000 psf_grid_ms=300.000 residual_degrid_grid_ms=200.000 major_cycle_refresh_ms=150.000 peak_rss_bytes=123456 product_status=written
+Rust release CLI timings (seconds):
+  run=1 real=1.500
+"""
+        )
+        parsed["backend_plan_logs"] = run_workload.parse_backend_plan_logs(
+            """single_plane_execution_plan spectral=mfs projection=standard deconvolver=single-term weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=false pb_requirement=none output_products=.image,.residual,.model,.psf,.sumwt cpu_multi_worker_eligible=true cpu_multi_worker_reason=standard-mfs-fixed-tile-workers-4 gpu_metal_eligible=true gpu_metal_reason=standard-mfs-grouped-metal stage_timing_attribution=frontend-core-product-stages standard_mfs_regression_sentinel=true
+standard_mfs_runtime_plan policy=auto eligible=true auto_multi_cpu=true auto_metal=true metal_device_available=true backend=fixed_tile backend_source=planner grid_threads=4 grid_threads_source=auto density_threads=4 density_threads_source=auto tile_anchor=center_quadrants tile_anchor_source=planner residual_backend=fixed_tile residual_backend_source=planner initial_dirty_backend=fixed_tile initial_dirty_backend_source=planner metal_grouped_input_cache=false metal_grouped_input_cache_source=planner mtmfs_metal_backend=false mtmfs_metal_input_cache=false
+standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=8192 selected_channels=64 row_block_rows=2048 row_block_rows_source=heuristic heuristic_row_block_rows=2048 worker_buffers=4 system_memory_bytes=34359738368 memory_target_bytes=8589934592 memory_target_source=cli total_budget_bytes=8589934592 planned_reserved_bytes=100 planned_active_bytes=200 reserve_over_budget_bytes=0 prepare_buffer_floor_applied=false prepare_buffer_bytes=100 image_working_set_bytes=100 weighting_density_bytes=100 gridded_visibility_bytes=100 output_image_bytes=100 fixed_tile_resident_bytes=100 fixed_tile_resident_limit=true fixed_tile_edge=512 fixed_tile_anchor=center max_live_row_blocks=1 live_row_block_bytes=100 live_bucket_bytes=100 queued_task_bytes=100 resident_tile_buffer_bytes=100 global_grid_bytes=100 tile_cell_bin_bytes=100 worker_staging_bytes=100 gpu_staging_bytes=100 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false executor_plan_bytes_estimate=100 local_grid_bytes_estimate=100 peak_rss_bytes=0 product_status=planned
+standard_mfs_profile_run run=1 workload_ms=/tmp/input.ms field_ids=Some([0]) phasecenter_field=None ddid=Some(0) spw=Some(0) channel_start=Some(0) channel_count=Some(64) spectral_mode=Mfs weighting=Briggs deconvolver=Hogbom nterms=1 imsize=1024 niter=500 dirty_only=false gridded_samples=500000 major_cycles=10 minor_iterations=500 thread_env=4 row_block_rows_env=auto prepare_workers_env=auto ms_read_threads_env=auto frontend_total_ms=1000.000 core_total_ms=800.000 prepare_plane_input_ms=100.000 get_ms_values_ms=40.000 prepare_processing_buffer_ms=60.000 weighting_ms=20.000 psf_grid_ms=300.000 residual_degrid_grid_ms=200.000 major_cycle_refresh_ms=150.000 peak_rss_bytes=123456 product_status=written
+"""
+        )
+        plan = {
+            "mode": {
+                "specmode": "mfs",
+                "gridder": "standard",
+                "deconvolver": "hogbom",
+                "weighting": "briggs",
+                "standard_mfs_acceleration": "auto",
+                "image_shape": [1024, 1024],
+                "channel_count": 64,
+                "nterms": 1,
+                "niter": 500,
+            },
+            "comparison": {"products": [".image", ".residual", ".psf", ".model"]},
+            "command": {"env": {"IMAGER_BENCH_MINOR_CYCLE_LENGTH": "50"}},
+            "environment": {"physical_cores": 10, "logical_cores": 10},
+        }
+
+        features = run_workload.build_benchmark_feature_summary(plan, parsed)
+
+        summary = parsed["backend_plan_logs"]["summary"]
+        self.assertEqual("fixed_tile", summary["resolved_backend"])
+        self.assertEqual(4, summary["resolved_grid_threads"])
+        self.assertEqual(8192, features["visibility"]["selected_rows"])
+        self.assertEqual(64, features["visibility"]["selected_channels"])
+        self.assertEqual(500000, features["visibility"]["gridded_samples"])
+        self.assertEqual(1024 * 1024 * 4, features["image"]["image_work"])
+        self.assertEqual(4, features["resources"]["row_block_count"])
+        self.assertEqual(8589934392, features["resources"]["memory_headroom_bytes"])
+
+    def test_completed_run_promotes_enriched_benchmark_features(self) -> None:
+        plan = {
+            "schema_version": 1,
+            "run_id": "test-run",
+            "run": {"stream_log": False},
+            "review": {},
+            "mode": {
+                "bench_mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "deconvolver": "hogbom",
+                "weighting": "briggs",
+                "standard_mfs_acceleration": "auto",
+                "image_shape": [1024, 1024],
+                "channel_count": 64,
+                "nterms": 1,
+                "niter": 500,
+            },
+            "comparison": {"products": [".image", ".residual"]},
+            "command": {
+                "argv": ["bench"],
+                "env": {"IMAGER_BENCH_MINOR_CYCLE_LENGTH": "50"},
+            },
+            "environment": {"physical_cores": 10, "logical_cores": 10},
+            "products": {},
+            "benchmark_features": {
+                "backend": {"resolved_backend": None},
+                "visibility": {"selected_rows": None},
+            },
+        }
+        output = """Rust release CLI timings (seconds):
+  run=1 real=1.500
+  median=1.500
+Rust stage medians (milliseconds):
+  stage medians (ms):
+    prepare_plane_input=100.000
+    get_ms_values_into_processing_buffer=40.000
+    prepare_processing_buffer=60.000
+    total=800.000
+single_plane_execution_plan spectral=mfs projection=standard deconvolver=single-term weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=false pb_requirement=none output_products=.image,.residual cpu_multi_worker_eligible=true cpu_multi_worker_reason=standard-mfs-fixed-tile-workers-4 gpu_metal_eligible=false gpu_metal_reason=metal-device-unavailable
+standard_mfs_runtime_plan policy=auto eligible=true auto_multi_cpu=true auto_metal=false metal_device_available=false backend=fixed_tile backend_source=planner grid_threads=4 grid_threads_source=auto tile_anchor=center_quadrants tile_anchor_source=planner residual_backend=cpu residual_backend_source=planner initial_dirty_backend=cpu initial_dirty_backend_source=planner metal_grouped_input_cache=planner metal_grouped_input_cache_source=planner
+standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=8192 selected_channels=64 row_block_rows=2048 memory_target_bytes=8589934592 planned_active_bytes=200
+standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iterations=500 peak_rss_bytes=123456
+"""
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with mock.patch(
+                "run_workload.run_benchmark_command",
+                return_value=run_workload.subprocess.CompletedProcess(
+                    ["bench"], 0, output, None
+                ),
+            ), mock.patch(
+                "run_workload.compare_products",
+                return_value={"status": "skipped", "reason": "test", "products": {}},
+            ):
+                bundle = run_workload.run_plan(plan, Path(tempdir) / "bench.log")
+
+        self.assertEqual("completed", bundle["status"])
+        self.assertEqual("fixed_tile", bundle["benchmark_features"]["backend"]["resolved_backend"])
+        self.assertEqual(8192, bundle["benchmark_features"]["visibility"]["selected_rows"])
+        self.assertEqual(
+            bundle["results"]["benchmark_features"],
+            bundle["benchmark_features"],
+        )
 
     def test_turnaround_workload_can_skip_profile_rerun(self) -> None:
         manifest = {
@@ -405,7 +647,38 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
 
         self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_SKIP_PROFILE"])
 
-    def test_cubedata_is_accepted_as_dry_run_only_wave3_mode(self) -> None:
+    def test_profile_repeats_can_be_lower_than_wallclock_repeats(self) -> None:
+        manifest = {
+            "id": "profile-repeat-control",
+            "mode_id": "standard-mfs-clean",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "profile_repeats": 1,
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=3,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual(3, plan["run"]["repeats"])
+        self.assertEqual(1, plan["run"]["profile_repeats"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PROFILE_REPEATS"])
+
+    def test_cubedata_is_accepted_as_runnable_wave3_mode(self) -> None:
         manifest = {
             "id": "cubedata-one-plane",
             "mode_id": "cubedata-one-channel",
@@ -434,8 +707,8 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         )
 
         self.assertEqual("cubedata", plan["mode"]["specmode"])
-        self.assertEqual("dry_run_only", plan["run_support"]["status"])
-        self.assertIn("specmode='cubedata'", plan["run_support"]["reason"])
+        self.assertEqual("runnable", plan["run_support"]["status"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PERCHANWEIGHTDENSITY"])
         self.assertEqual("after_gpu_metal", plan["review"]["evidence_role"])
 
     def test_phase_probe_is_opt_in_for_casa_stage_diagnostics(self) -> None:

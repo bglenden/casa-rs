@@ -451,7 +451,7 @@ fn maybe_print_standard_mfs_profile_run(
     let ms_read_threads_env =
         env::var("CASA_RS_MS_IMAGING_READ_THREADS").unwrap_or_else(|_| "auto".to_string());
     println!(
-        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_ms={:.3} prepare_processing_buffer_ms={:.3} weighting_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
+        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} gridded_samples={} major_cycles={} minor_iterations={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_ms={:.3} prepare_processing_buffer_ms={:.3} weighting_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
         run_number,
         options.ms.display(),
         options.field_ids,
@@ -467,6 +467,9 @@ fn maybe_print_standard_mfs_profile_run(
         options.imsize,
         options.niter,
         options.dirty_only,
+        summary.gridded_samples,
+        summary.major_cycles,
+        summary.minor_iterations,
         thread_env,
         row_block_env,
         prepare_workers_env,
@@ -784,7 +787,10 @@ fn parse_spectral_mode(text: &str) -> Result<SpectralMode, String> {
     match text.to_ascii_lowercase().as_str() {
         "mfs" => Ok(SpectralMode::Mfs),
         "cube" => Ok(SpectralMode::Cube),
-        _ => Err(format!("unsupported --specmode value {text:?}")),
+        "cubedata" => Ok(SpectralMode::Cubedata),
+        _ => Err(format!(
+            "unsupported --specmode value {text:?}; expected mfs, cube, or cubedata"
+        )),
     }
 }
 
@@ -918,7 +924,7 @@ Options:
   --width VALUE
   --datacolumn NAME
   --corr XX|YY|RR|LL
-  --specmode mfs|cube
+  --specmode mfs|cube|cubedata
   --interpolation nearest|linear
   --weighting natural|uniform|briggs|briggsbwtaper
   --robust VALUE

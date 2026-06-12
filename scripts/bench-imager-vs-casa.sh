@@ -37,6 +37,7 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
 fi
 
 repeats="${BENCH_REPEATS:-${IMAGER_BENCH_REPEATS:-5}}"
+profile_repeats="${BENCH_PROFILE_REPEATS:-${IMAGER_BENCH_PROFILE_REPEATS:-$repeats}}"
 profile_warmups="${BENCH_PROFILE_WARMUPS:-${IMAGER_BENCH_PROFILE_WARMUPS:-0}}"
 field="${IMAGER_BENCH_FIELD:-0}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
@@ -119,8 +120,8 @@ if [[ -n "$imaging_prepare_workers" && ! "$imaging_prepare_workers" =~ ^[0-9]+$ 
   exit 2
 fi
 
-if [[ "$specmode" != "mfs" && "$specmode" != "cube" ]]; then
-  echo "error: IMAGER_BENCH_SPECMODE must be mfs or cube" >&2
+if [[ "$specmode" != "mfs" && "$specmode" != "cube" && "$specmode" != "cubedata" ]]; then
+  echo "error: IMAGER_BENCH_SPECMODE must be mfs, cube, or cubedata" >&2
   exit 2
 fi
 
@@ -208,7 +209,7 @@ case "$pbcor" in
 esac
 
 if [[ -z "$perchanweightdensity" ]]; then
-  if [[ "$specmode" == "cube" ]]; then
+  if [[ "$specmode" == "cube" || "$specmode" == "cubedata" ]]; then
     perchanweightdensity_enabled=1
   else
     perchanweightdensity_enabled=0
@@ -285,7 +286,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -492,7 +493,7 @@ elif [[ -n "$scales" ]]; then
     --wterm "$wterm" \
     ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
     $dirty_flag \
-    --repeats "$repeats" \
+    --repeats "$profile_repeats" \
     --warmups "$profile_warmups" \
     | sed 's/^/  /'
 else
@@ -530,7 +531,7 @@ else
     --wterm "$wterm" \
     ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
     $dirty_flag \
-    --repeats "$repeats" \
+    --repeats "$profile_repeats" \
     --warmups "$profile_warmups" \
     | sed 's/^/  /'
 fi

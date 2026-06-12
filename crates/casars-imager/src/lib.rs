@@ -48,7 +48,7 @@ use casa_imaging::{
     StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
     VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
     WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
-    restore_standard_mfs_model, run_imaging, run_mosaic_mfs_from_single_plane_stream,
+    restore_standard_mfs_model, run_imaging, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
     run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
@@ -2244,6 +2244,15 @@ fn run_single_image_from_config_with_gridder_override(
         total_start.elapsed(),
     );
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    if can_run_mtmfs_from_bounded_stream(config, force_standard_gridder, ms_paths.len()) {
+        return run_mtmfs_from_bounded_stream_open_ms(
+            &ms,
+            config,
+            data_column,
+            open_measurement_set,
+            total_start,
+        );
+    }
     if can_run_standard_mfs_fixed_tile_streaming_clean(
         config,
         force_standard_gridder,
@@ -2331,9 +2340,6 @@ fn bounded_source_stream_rejection(
     if config.use_pointing {
         reasons.push("use_pointing has no shared bounded stream consumer for this mode".into());
     }
-    if config.deconvolver == Deconvolver::Mtmfs {
-        reasons.push("MT-MFS is not yet an end-to-end bounded stream consumer".into());
-    }
     if matches!(config.weighting, WeightingMode::BriggsBwTaper { .. }) {
         reasons.push("BriggsBwTaper has no shared bounded stream consumer for this mode".into());
     }
@@ -2365,6 +2371,32 @@ fn bounded_source_stream_rejection(
          preparation: {}; retained MS materialization has been removed",
         reasons.join("; ")
     )
+}
+
+fn can_run_mtmfs_from_bounded_stream(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && config.deconvolver == Deconvolver::Mtmfs
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && standard_mfs_shared_acceleration_spectral_mode_is_eligible_with_force(
+            config,
+            force_standard_gridder,
+        )
+        && !config.use_pointing
+        && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
+        && config.phasecenter.is_none()
+        && config.phasecenter_field.is_none()
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
+        && config.uv_taper.is_none()
+        && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
+        && !needs_single_field_primary_beam_products(config)
+        && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
 }
 
 fn can_run_standard_mfs_fixed_tile_streaming_clean(
@@ -4512,12 +4544,12 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         .unwrap_or(false);
     let standard_cube_one_channel_streaming =
         standard_cube_like_one_channel_can_use_mfs_single_plane_path(config);
-    let use_sample_streaming = (env_standard_mfs_grid_threads() == Some(1)
-        || standard_mfs_fixed_tile_backend_enabled_for_frontend())
-        || standard_cube_one_channel_streaming
-            && matches!(config.w_term_mode, WTermMode::None)
-            && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none()
-            && !force_tiled_one_worker;
+    let use_sample_streaming =
+        standard_mfs_fixed_tile_clean_uses_sample_streaming(config, &request.gridder_mode)
+            || standard_cube_one_channel_streaming
+                && matches!(config.w_term_mode, WTermMode::None)
+                && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none()
+                && !force_tiled_one_worker;
     let cube_one_channel_briggs_preweighted_streaming = cube_one_channel_briggs_streaming.is_some();
     let use_routed_tile_weighting = cube_one_channel_briggs_preweighted_streaming
         || use_sample_streaming
@@ -5575,6 +5607,382 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
             prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
+}
+
+fn estimated_mtmfs_visibility_cache_bytes(
+    visibility_batches: &[VisibilityBatch],
+    sample_frequency_batches_hz: &[Vec<f64>],
+) -> usize {
+    let visibility_bytes = visibility_batches
+        .iter()
+        .map(|batch| batch.len() * ESTIMATED_STANDARD_MFS_SAMPLE_BYTES)
+        .sum::<usize>();
+    let frequency_bytes = sample_frequency_batches_hz
+        .iter()
+        .map(|batch| batch.len() * std::mem::size_of::<f64>())
+        .sum::<usize>();
+    visibility_bytes.saturating_add(frequency_bytes)
+}
+
+fn run_mtmfs_from_bounded_stream_open_ms(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: if config.dirty_only { 0 } else { config.niter },
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        true,
+    )?;
+
+    let prepare_started_at = Instant::now();
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(ms, config, &ddid_info)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    if !can_prepare_standard_mfs_without_trace(config, &selection) {
+        return Err(
+            "internal error: streaming MT-MFS path was selected for an ineligible row selection"
+                .to_string(),
+        );
+    }
+
+    let flag_row = selection.flag_row.as_slice();
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active rows".to_string());
+    }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_row_column",
+        Duration::ZERO,
+        prepare_started_at.elapsed(),
+    );
+
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let derived_engine =
+        if selection.needs_geometry_engine || selected_freq_ref != FrequencyRef::LSRK {
+            Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+        } else {
+            None
+        };
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_derived_engine",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let selected_channel_count =
+        selected_channel_count_estimate_from_table_values(config, &table_values);
+    let channel_read_range =
+        selected_channel_read_range_for_shared_single_plane_acceleration(config, &table_values)?;
+    let strategy =
+        standard_mfs_memory_plan(config, selected_channel_count, active_selected_rows.len());
+    validate_standard_mfs_memory_plan(&strategy)?;
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_selected_rows.len(),
+        strategy.live_row_block_bytes,
+        strategy.worker_staging_bytes,
+        "mtmfs_bounded_stream_frontend",
+    );
+
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+
+    let mut phase_center = None::<PhaseCenter>;
+    let mut prepared_freq_ref = None::<FrequencyRef>;
+    let mut plane_stokes = None::<PlaneStokes>;
+    let mut gridder_mode = None::<GridderMode>;
+    let mut reffreq_hz = None::<f64>;
+    let mut selected_frequency_range_hz = None::<[f64; 2]>;
+    let mut spectral_frequency_edge_range_hz = None::<[f64; 2]>;
+    let mut visibility_batches = Vec::<VisibilityBatch>::new();
+    let mut sample_frequency_batches_hz = Vec::<Vec<f64>>::new();
+    let mut stream_stats = StandardMfsStreamingPassStats::new("mtmfs_bounded_source", 0);
+    stream_standard_mfs_prepared_row_blocks(
+        ms,
+        config,
+        data_column,
+        &selection,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        flag_row,
+        &active_selected_rows,
+        derived_engine.as_ref(),
+        channel_read_range,
+        &geometry_columns,
+        strategy.row_block_rows,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+        &mut stream_stats,
+        |mut plane, _pass_stats| {
+            if plane.sample_frequency_batches_hz.len() != plane.batches.len() {
+                return Err(format!(
+                    "MT-MFS bounded stream produced {} frequency batches for {} visibility batches",
+                    plane.sample_frequency_batches_hz.len(),
+                    plane.batches.len()
+                ));
+            }
+            for (batch_index, (batch, frequencies_hz)) in plane
+                .batches
+                .iter()
+                .zip(plane.sample_frequency_batches_hz.iter())
+                .enumerate()
+            {
+                if frequencies_hz.len() != batch.len() {
+                    return Err(format!(
+                        "MT-MFS bounded stream batch {batch_index} has {} frequencies for {} visibility samples",
+                        frequencies_hz.len(),
+                        batch.len()
+                    ));
+                }
+            }
+            if let Some(existing_stokes) = plane_stokes {
+                if existing_stokes != plane.plane_stokes {
+                    return Err(format!(
+                        "MT-MFS bounded stream plane Stokes changed from {} to {}",
+                        existing_stokes.as_str(),
+                        plane.plane_stokes.as_str()
+                    ));
+                }
+            } else {
+                plane_stokes = Some(plane.plane_stokes);
+            }
+            if let Some(existing_gridder) = &gridder_mode {
+                if existing_gridder != &plane.gridder_mode {
+                    return Err("MT-MFS bounded stream gridder mode changed between blocks".into());
+                }
+            } else {
+                gridder_mode = Some(plane.gridder_mode.clone());
+            }
+            if phase_center.is_none() {
+                phase_center = Some(plane.phase_center.clone());
+                prepared_freq_ref = Some(plane.freq_ref);
+                reffreq_hz = Some(plane.reffreq_hz);
+            }
+            selected_frequency_range_hz = Some(
+                merge_optional_frequency_ranges(
+                    selected_frequency_range_hz,
+                    Some(plane.selected_frequency_range_hz),
+                )
+                .expect("right-hand frequency range supplied"),
+            );
+            spectral_frequency_edge_range_hz = merge_optional_frequency_ranges(
+                spectral_frequency_edge_range_hz,
+                plane.spectral_frequency_edge_range_hz,
+            );
+            visibility_batches.append(&mut plane.batches);
+            sample_frequency_batches_hz.append(&mut plane.sample_frequency_batches_hz);
+            let estimated_cache_bytes = estimated_mtmfs_visibility_cache_bytes(
+                &visibility_batches,
+                &sample_frequency_batches_hz,
+            );
+            if estimated_cache_bytes > strategy.memory_target_bytes {
+                return Err(format!(
+                    "MT-MFS bounded stream cache estimate {} MiB exceeds memory target {} MiB; replayable MT-MFS core streaming is not yet implemented",
+                    estimated_cache_bytes / (1024 * 1024),
+                    strategy.memory_target_bytes / (1024 * 1024)
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    stream_stats.log();
+    accumulate_timings.log(prepare_started_at.elapsed());
+    let estimated_cache_bytes =
+        estimated_mtmfs_visibility_cache_bytes(&visibility_batches, &sample_frequency_batches_hz);
+    if frontend_progress_enabled() || standard_mfs_profile_detail_enabled() {
+        let sample_count = visibility_batches
+            .iter()
+            .map(VisibilityBatch::len)
+            .sum::<usize>();
+        eprintln!(
+            "mtmfs_bounded_stream_frontend source_stream=bounded rows_total={} row_block_rows={} batches={} samples={} estimated_cache_bytes={} memory_target_bytes={}",
+            active_selected_rows.len(),
+            strategy.row_block_rows,
+            visibility_batches.len(),
+            sample_count,
+            estimated_cache_bytes,
+            strategy.memory_target_bytes,
+        );
+    }
+
+    let phase_center =
+        phase_center.ok_or_else(|| "selection resolved to no prepared row blocks".to_string())?;
+    let prepared_freq_ref = prepared_freq_ref
+        .ok_or_else(|| "selection resolved to no prepared frequency frame".to_string())?;
+    let plane_stokes =
+        plane_stokes.ok_or_else(|| "selection resolved to no prepared Stokes plane".to_string())?;
+    let gridder_mode =
+        gridder_mode.ok_or_else(|| "selection resolved to no prepared gridder mode".to_string())?;
+    let reffreq_hz =
+        reffreq_hz.ok_or_else(|| "selection resolved to no reference frequency".to_string())?;
+    let selected_frequency_range_hz = selected_frequency_range_hz
+        .ok_or_else(|| "selection resolved to no selected frequency range".to_string())?;
+
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_stage_timings
+            .get_ms_values_into_processing_buffer
+            .saturating_add(prepare_stage_timings.prepare_processing_buffer),
+        total_start.elapsed(),
+    );
+
+    let run_started_at = Instant::now();
+    let result = run_mtmfs(&casa_imaging::MtmfsRequest {
+        geometry,
+        visibility_batches,
+        sample_frequency_batches_hz,
+        gridder_mode,
+        plane_stokes,
+        weighting: config.weighting,
+        reffreq_hz,
+        selected_frequency_range_hz,
+        nterms: config.nterms,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        clean,
+        clean_mask: clean_mask.clone(),
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    })
+    .map_err(|error| error.to_string())?;
+    let run_imaging_time = run_started_at.elapsed();
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let stage_start = Instant::now();
+    let run_result = RunProducts::Mtmfs(MtmfsRunProducts {
+        result,
+        primary_beam_weight_samples: Vec::new(),
+        spectral_delta_hz: spectral_frequency_edge_range_hz.and_then(spectral_delta_from_range),
+    });
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: run_result.coordinate_freq_ref(prepared_freq_ref),
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        spectral_delta_hz: run_result.spectral_delta_hz(),
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
+    });
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    write_products(config, &coords, &run_result, None, None)?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_stage_timings
+                .get_ms_values_into_processing_buffer
+                .saturating_add(prepare_stage_timings.prepare_processing_buffer),
             get_ms_values_into_processing_buffer: prepare_stage_timings
                 .get_ms_values_into_processing_buffer,
             prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
@@ -7206,10 +7614,14 @@ fn apply_standard_mfs_runtime_plan_locked(
     } else {
         standard_mfs_auto_grid_threads()
     };
-    let auto_metal = eligible
-        && cfg!(target_os = "macos")
-        && metal_device_available
-        && (wproject_acceleration || (!config.dirty_only && config.niter > 0));
+    let auto_metal = standard_mfs_auto_metal_enabled(
+        config,
+        eligible,
+        mosaic_mfs_eligible,
+        mosaic_cube_one_channel_eligible,
+        wproject_acceleration,
+        metal_device_available,
+    );
     let auto_multi_cpu = eligible && auto_threads > 1;
     let metal_policy = config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Metal;
 
@@ -7250,12 +7662,9 @@ fn apply_standard_mfs_runtime_plan_locked(
     }
 
     let default_threads = match config.standard_mfs_acceleration {
-        StandardMfsAccelerationPolicy::Auto
-            if mosaic_mfs_eligible && mosaic_cube_one_channel_eligible =>
-        {
+        StandardMfsAccelerationPolicy::Auto if mosaic_mfs_eligible => {
             Some(mosaic_mfs_cpu_grid_threads(auto_threads).to_string())
         }
-        StandardMfsAccelerationPolicy::Auto if mosaic_mfs_eligible => Some("1".to_string()),
         StandardMfsAccelerationPolicy::Auto => auto_multi_cpu.then(|| auto_threads.to_string()),
         StandardMfsAccelerationPolicy::Cpu => Some("1".to_string()),
         StandardMfsAccelerationPolicy::MultiCpu
@@ -7286,7 +7695,7 @@ fn apply_standard_mfs_runtime_plan_locked(
         guard.set("CASA_RS_STANDARD_MFS_GRID_THREADS", value);
     }
 
-    let default_density_threads = if mosaic_cube_one_channel_eligible {
+    let default_density_threads = if mosaic_mfs_eligible {
         match config.standard_mfs_acceleration {
             StandardMfsAccelerationPolicy::Auto
             | StandardMfsAccelerationPolicy::MultiCpu
@@ -7439,6 +7848,32 @@ fn apply_standard_mfs_runtime_plan_locked(
     }
 
     guard
+}
+
+fn standard_mfs_auto_metal_enabled(
+    config: &CliConfig,
+    eligible: bool,
+    mosaic_mfs_eligible: bool,
+    mosaic_cube_one_channel_eligible: bool,
+    wproject_acceleration: bool,
+    metal_device_available: bool,
+) -> bool {
+    if !(eligible && cfg!(target_os = "macos") && metal_device_available) {
+        return false;
+    }
+    if wproject_acceleration {
+        return true;
+    }
+    if mosaic_cube_one_channel_eligible {
+        return !config.dirty_only && config.niter > 0;
+    }
+    if config.deconvolver == Deconvolver::Mtmfs {
+        return !config.dirty_only && config.niter > 0;
+    }
+    if mosaic_mfs_eligible {
+        return false;
+    }
+    false
 }
 
 fn can_plan_standard_mfs_acceleration(
@@ -18342,6 +18777,16 @@ fn standard_mfs_fixed_tile_backend_enabled_for_frontend() -> bool {
         .unwrap_or(false)
 }
 
+fn standard_mfs_fixed_tile_clean_uses_sample_streaming(
+    config: &CliConfig,
+    gridder_mode: &GridderMode,
+) -> bool {
+    matches!(gridder_mode, GridderMode::Standard)
+        && matches!(config.w_term_mode, WTermMode::None)
+        && (env_standard_mfs_grid_threads() == Some(1)
+            || standard_mfs_fixed_tile_backend_enabled_for_frontend())
+}
+
 fn standard_mfs_metal_grouped_residual_backend_selected_for_frontend() -> bool {
     env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND")
         .map(|value| {
@@ -18704,33 +19149,86 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
         row: &StandardMfsRoutedVisibilityRow,
         derived_engine: Option<&MsCalEngine>,
     ) -> Result<StandardMfsRoutedVisibilityRow, String> {
-        if row.source_channel_indices.len() != 1 || row.channel_lambda_scales.len() != 1 {
+        if row.source_channel_indices.len() != row.channel_lambda_scales.len() {
             return Err(format!(
-                "one-channel cube Briggs preweighting expected one routed source slot, found {}",
-                row.source_channel_indices.len()
+                "one-channel cube Briggs preweighting source slot count {} differs from lambda scale count {}",
+                row.source_channel_indices.len(),
+                row.channel_lambda_scales.len()
             ));
         }
         let contributions = self
             .plan
             .row_spectral_contributions_readonly(selected_row, derived_engine)?;
-        let output_contributions = contributions
-            .output_channel_contributions
+
+        let corr_count = row
+            .data
+            .shape()
             .first()
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let density_plane = nearest_cube_density_contribution(output_contributions)
-            .and_then(|contribution| {
-                contributions
-                    .padded_source_channel_output_map
-                    .get(contribution.source_channel)
-                    .copied()
-                    .flatten()
-            })
-            .ok_or_else(|| {
-                "one-channel cube Briggs target sample did not map to a padded density plane"
-                    .to_string()
-            })?;
-        let lambda_scale = row.channel_lambda_scales[0];
+            .copied()
+            .unwrap_or(row.weight.len())
+            .max(row.weight.len());
+        let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
+        let mut preweighted_spectrum = Array2::<f32>::zeros((corr_count, local_channel_count));
+        for (source_slot, &source_channel) in row.source_channel_indices.iter().enumerate() {
+            let final_weight =
+                self.preweighted_source_slot_weight(row, &contributions, source_slot)?;
+            let local_channel =
+                local_channel_index(source_channel, row.channel_origin, local_channel_count)?;
+            match row.polarization {
+                StandardMfsVisibilityPolarization::Explicit { corr_index, .. } => {
+                    *preweighted_spectrum
+                        .get_mut((corr_index, local_channel))
+                        .ok_or_else(|| {
+                            format!(
+                                "routed preweighted WEIGHT_SPECTRUM index [{corr_index}, {local_channel}] out of bounds"
+                            )
+                        })? = final_weight;
+                }
+                StandardMfsVisibilityPolarization::CollapsedPair {
+                    first_corr_index,
+                    second_corr_index,
+                    ..
+                } => {
+                    *preweighted_spectrum
+                        .get_mut((first_corr_index, local_channel))
+                        .ok_or_else(|| {
+                            format!(
+                                "routed preweighted WEIGHT_SPECTRUM index [{first_corr_index}, {local_channel}] out of bounds"
+                            )
+                        })? = final_weight;
+                    *preweighted_spectrum
+                        .get_mut((second_corr_index, local_channel))
+                        .ok_or_else(|| {
+                            format!(
+                                "routed preweighted WEIGHT_SPECTRUM index [{second_corr_index}, {local_channel}] out of bounds"
+                            )
+                        })? = final_weight;
+                }
+            }
+        }
+        Ok(preweighted_routed_row_with_weight_spectrum(
+            row,
+            preweighted_spectrum,
+        ))
+    }
+
+    fn preweighted_source_slot_weight(
+        &self,
+        row: &StandardMfsRoutedVisibilityRow,
+        contributions: &CubeRowSpectralContributions,
+        source_slot: usize,
+    ) -> Result<f32, String> {
+        let Some(density_plane) = contributions
+            .padded_source_channel_output_map
+            .get(source_slot)
+            .copied()
+            .flatten()
+        else {
+            return Ok(0.0);
+        };
+        let lambda_scale = *row.channel_lambda_scales.get(source_slot).ok_or_else(|| {
+            format!("routed row lambda scale slot {source_slot} is out of bounds")
+        })?;
         let u_lambda = row.uvw_m[0] * lambda_scale;
         let v_lambda = row.uvw_m[1] * lambda_scale;
         let Some(density_grid) = self.plan.density_grids.get(density_plane) else {
@@ -18744,7 +19242,7 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
             v_lambda,
             self.geometry.cell_size_rad,
         ) else {
-            return Ok(preweighted_routed_row_with_weight(row, 0.0));
+            return Ok(0.0);
         };
         let density = density_grid[(x, y)];
         let f2 = self
@@ -18753,7 +19251,7 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
             .get(density_plane)
             .copied()
             .unwrap_or(0.0);
-        let natural_weight = routed_row_natural_weight_for_loaded_channel(row)?;
+        let natural_weight = routed_row_natural_weight_for_source_slot(row, source_slot)?;
         if !(natural_weight.is_finite()
             && natural_weight > 0.0
             && density.is_finite()
@@ -18761,7 +19259,7 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
             && f2.is_finite()
             && f2 > 0.0)
         {
-            return Ok(preweighted_routed_row_with_weight(row, 0.0));
+            return Ok(0.0);
         }
         let denominator = casa_cube_briggs_weight_denominator(
             self.plan.weighting,
@@ -18772,11 +19270,11 @@ impl CubeOneChannelBriggsStreamingPlanWithGeometry {
             density,
             f2,
         );
-        if !(denominator.is_finite() && denominator > 0.0) {
-            return Ok(preweighted_routed_row_with_weight(row, 0.0));
+        if denominator.is_finite() && denominator > 0.0 {
+            Ok(natural_weight / denominator)
+        } else {
+            Ok(0.0)
         }
-        let final_weight = natural_weight / denominator;
-        Ok(preweighted_routed_row_with_weight(row, final_weight))
     }
 }
 
@@ -19176,13 +19674,14 @@ fn row_weight_for_corr_channel(
     }
 }
 
-fn routed_row_natural_weight_for_loaded_channel(
+fn routed_row_natural_weight_for_source_slot(
     row: &StandardMfsRoutedVisibilityRow,
+    source_slot: usize,
 ) -> Result<f32, String> {
     let source_channel = *row
         .source_channel_indices
-        .first()
-        .ok_or_else(|| "routed row has no source channel".to_string())?;
+        .get(source_slot)
+        .ok_or_else(|| format!("routed row source slot {source_slot} is out of bounds"))?;
     let local_channel = source_channel
         .checked_sub(row.channel_origin)
         .ok_or_else(|| {
@@ -19248,9 +19747,9 @@ fn routed_row_natural_weight_for_loaded_channel(
     }
 }
 
-fn preweighted_routed_row_with_weight(
+fn preweighted_routed_row_with_weight_spectrum(
     row: &StandardMfsRoutedVisibilityRow,
-    final_weight: f32,
+    preweighted_spectrum: Array2<f32>,
 ) -> StandardMfsRoutedVisibilityRow {
     let corr_count = row
         .data
@@ -19258,26 +19757,7 @@ fn preweighted_routed_row_with_weight(
         .first()
         .copied()
         .unwrap_or(row.weight.len());
-    let mut weights = vec![0.0f32; corr_count.max(row.weight.len())];
-    match row.polarization {
-        StandardMfsVisibilityPolarization::Explicit { corr_index, .. } => {
-            if let Some(slot) = weights.get_mut(corr_index) {
-                *slot = final_weight;
-            }
-        }
-        StandardMfsVisibilityPolarization::CollapsedPair {
-            first_corr_index,
-            second_corr_index,
-            ..
-        } => {
-            if let Some(slot) = weights.get_mut(first_corr_index) {
-                *slot = final_weight;
-            }
-            if let Some(slot) = weights.get_mut(second_corr_index) {
-                *slot = final_weight;
-            }
-        }
-    }
+    let weights = vec![0.0f32; corr_count.max(row.weight.len())];
     StandardMfsRoutedVisibilityRow {
         uvw_m: row.uvw_m,
         spw_id: row.spw_id,
@@ -19287,7 +19767,7 @@ fn preweighted_routed_row_with_weight(
         data: row.data.clone(),
         flag: row.flag.clone(),
         weight: Arc::from(weights.into_boxed_slice()),
-        weight_spectrum: None,
+        weight_spectrum: Some(preweighted_spectrum),
         gridable: row.gridable,
         polarization: row.polarization,
     }
@@ -31752,7 +32232,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_mfs_runtime_planner_defaults_to_fixed_tile_multi_cpu() {
+    fn standard_mfs_runtime_planner_defaults_to_fixed_tile_multi_cpu_without_metal_override() {
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
             .expect("standard MFS runtime env lock");
@@ -31798,24 +32278,10 @@ mod tests {
                 env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
                     .ok()
                     .and_then(|value| value.parse::<usize>().ok())
-                    .is_some_and(|threads| threads >= 1)
+                    .is_some_and(|threads| threads > 1)
             );
-            #[cfg(target_os = "macos")]
-            {
-                if casa_imaging::standard_mfs_metal_device_available() {
-                    assert_eq!(
-                        env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
-                        Ok("metal-row-run-grouped")
-                    );
-                    assert_eq!(
-                        env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
-                        Ok("metal-row-run-grouped")
-                    );
-                } else {
-                    assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
-                    assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
-                }
-            }
+            assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+            assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
         }
 
         assert!(env::var_os("CASA_RS_STANDARD_MFS_BACKEND").is_none());
@@ -31874,6 +32340,60 @@ mod tests {
                 env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
                 Ok("cpu")
             );
+        }
+    }
+
+    #[test]
+    fn mosaic_mfs_auto_runtime_planner_defaults_to_multi_worker_cpu() {
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _density_threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_DENSITY_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("1280"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--field"),
+            OsString::from("0,1"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse mosaic auto config");
+
+        {
+            let expected_threads =
+                mosaic_mfs_cpu_grid_threads(standard_mfs_auto_grid_threads()).to_string();
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("cpu")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").as_deref(),
+                Ok(expected_threads.as_str())
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_DENSITY_THREADS").as_deref(),
+                Ok(expected_threads.as_str())
+            );
+            assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+            assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
         }
     }
 
@@ -32175,6 +32695,78 @@ mod tests {
             &config, false, 1
         ));
         assert!(can_run_standard_mfs_dirty_streaming(&config, false, 1));
+    }
+
+    #[test]
+    fn forced_cpu_wproject_avoids_standard_sample_streaming() {
+        let _runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::set("CASA_RS_STANDARD_MFS_GRID_THREADS", "1");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("wproject"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("cpu"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse W-projection CPU config");
+
+        assert!(!standard_mfs_fixed_tile_clean_uses_sample_streaming(
+            &config,
+            &GridderMode::Standard
+        ));
+    }
+
+    #[test]
+    fn forced_cpu_standard_mfs_keeps_standard_sample_streaming() {
+        let _runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::set("CASA_RS_STANDARD_MFS_GRID_THREADS", "1");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("cpu"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse standard MFS CPU config");
+
+        assert_eq!(env_standard_mfs_grid_threads(), Some(1));
+        assert!(matches!(config.w_term_mode, WTermMode::None));
+        assert!(standard_mfs_fixed_tile_clean_uses_sample_streaming(
+            &config,
+            &GridderMode::Standard
+        ));
     }
 
     #[test]
@@ -36998,6 +37590,115 @@ deconvolver=mtmfs
     }
 
     #[test]
+    fn cube_briggs_preweighting_preserves_multi_source_slot_rows() {
+        let selected_row = SelectedMainRow {
+            row_index: 0,
+            field_id: 3,
+            ddid: 0,
+            spw_id: 0,
+            polarization_id: 0,
+            time_mjd_seconds: Some(12.5),
+        };
+        let spectral = Arc::new(CubeRowSpectralContributions {
+            output_channel_contributions: Vec::new(),
+            source_channel_output_map: vec![Some(0), Some(0)],
+            padded_source_channel_output_map: vec![Some(0), Some(1)],
+            padded_grid_channel_contributions: Vec::new(),
+            grid_channel_contributions: Vec::new(),
+            source_channel_model_contributions: Vec::new(),
+        });
+        let mut row_spectral_cache = HashMap::new();
+        row_spectral_cache.insert(
+            (
+                selected_row.time_mjd_seconds.unwrap().to_bits(),
+                selected_row.field_id,
+            ),
+            spectral,
+        );
+        let mut density0 = Array2::<f32>::zeros((16, 16));
+        let mut density1 = Array2::<f32>::zeros((16, 16));
+        let center =
+            casa_cube_briggs_density_cell_from_lambda(density0.dim(), 0.0, 0.0, [1.0, 1.0])
+                .unwrap();
+        density0[center] = 2.0;
+        density1[center] = 7.0;
+        let plan = CubeOneChannelBriggsStreamingPlanWithGeometry {
+            geometry: ImageGeometry {
+                image_shape: [16, 16],
+                cell_size_rad: [1.0, 1.0],
+            },
+            plan: CubeOneChannelBriggsStreamingPlan {
+                cube_setup: CubeSpectralSetup {
+                    source_freq_ref: FrequencyRef::TOPO,
+                    output_freq_ref: FrequencyRef::TOPO,
+                    interpolation: CubeInterpolation::Nearest,
+                    interpolation_uses_native_source_frequencies: true,
+                    output_frame_reference_time_mjd_sec: 12.5,
+                    output_frame_field_id: 3,
+                    output_channel_frequencies_hz: vec![1.0],
+                    output_channel_widths_hz: vec![1.0],
+                },
+                source_channel_indices: Arc::from([0usize, 1usize]),
+                source_channel_frequencies_hz: Arc::from([1.0_f64, 2.0_f64]),
+                source_channel_widths_hz: Arc::from([1.0_f64, 1.0_f64]),
+                row_spectral_cache,
+                density_grids: vec![density0, density1],
+                f2_by_plane: vec![1.0, 1.0],
+                weighting: WeightingMode::Uniform,
+                fractional_bandwidth: 0.0,
+                polarization: CubeOneChannelBriggsPolarization::CollapsedPair {
+                    first_corr_index: 0,
+                    second_corr_index: 1,
+                },
+            },
+        };
+        let row = StandardMfsRoutedVisibilityRow {
+            uvw_m: [0.0, 0.0, 0.0],
+            spw_id: 0,
+            channel_origin: 0,
+            source_channel_indices: Arc::from([0usize, 1usize]),
+            channel_lambda_scales: Arc::from([1.0_f64, 2.0_f64]),
+            data: Array2::from_shape_vec(
+                (2, 2),
+                vec![
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(2.0, 0.0),
+                    Complex32::new(3.0, 0.0),
+                    Complex32::new(4.0, 0.0),
+                ],
+            )
+            .unwrap(),
+            flag: Array2::from_shape_vec((2, 2), vec![false, false, false, false]).unwrap(),
+            weight: Arc::from([99.0_f32, 99.0_f32]),
+            weight_spectrum: Some(
+                Array2::from_shape_vec((2, 2), vec![2.0_f32, 4.0, 6.0, 10.0]).unwrap(),
+            ),
+            gridable: true,
+            polarization: StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index: 0,
+                second_corr_index: 1,
+                transform: StandardMfsPairCollapseTransform::HalfSum,
+                sumwt_factor: 2.0,
+            },
+        };
+
+        let preweighted = plan
+            .preweighted_row_for_target_readonly(&selected_row, &row, None)
+            .unwrap();
+        assert_eq!(preweighted.source_channel_indices.as_ref(), &[0, 1]);
+        assert_eq!(preweighted.channel_lambda_scales.as_ref(), &[1.0, 2.0]);
+        assert!(preweighted.weight.iter().all(|value| *value == 0.0));
+        let spectrum = preweighted
+            .weight_spectrum
+            .as_ref()
+            .expect("expected per-source-slot preweighted spectrum");
+        assert!((spectrum[(0, 0)] - 2.0).abs() < 1.0e-6);
+        assert!((spectrum[(1, 0)] - 2.0).abs() < 1.0e-6);
+        assert!((spectrum[(0, 1)] - 1.0).abs() < 1.0e-6);
+        assert!((spectrum[(1, 1)] - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
     fn explicit_cube_linear_interpolation_drops_when_any_contributor_is_flagged() {
         let data = ArrayValue::Complex32(
             ArrayD::from_shape_vec(
@@ -40053,7 +40754,7 @@ deconvolver=mtmfs
     }
 
     #[test]
-    fn mtmfs_rejects_without_bounded_stream_consumer() {
+    fn mtmfs_uses_bounded_stream_frontend_and_writes_taylor_products() {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("tiny_mtmfs.ms");
         let image_prefix = tmp.path().join("tiny_mtmfs_image");
@@ -40098,7 +40799,7 @@ deconvolver=mtmfs
         );
         ms.save().unwrap();
 
-        let error = run_from_config(&CliConfig {
+        let summary = run_from_config(&CliConfig {
             ms: ms_path.clone(),
             imagename: image_prefix.clone(),
             imsize: 32,
@@ -40165,13 +40866,16 @@ deconvolver=mtmfs
             imaging_prepare_workers: None,
             write_preview_pngs: true,
         })
-        .unwrap_err();
-        assert!(error.contains("bounded source stream rejected production imaging request"));
-        assert!(error.contains("MT-MFS is not yet an end-to-end bounded stream consumer"));
-        assert!(error.contains("retained MS materialization has been removed"));
+        .unwrap();
+        assert!(summary.gridded_samples > 0);
+        assert!(summary.minor_iterations <= 6);
         assert!(
-            !Path::new(&format!("{}.image.tt0", image_prefix.display())).exists(),
-            "unsupported MT-MFS must not write products through retained materialization"
+            Path::new(&format!("{}.image.tt0", image_prefix.display())).exists(),
+            "bounded-stream MT-MFS should write Taylor image products"
+        );
+        assert!(
+            Path::new(&format!("{}.residual.tt0", image_prefix.display())).exists(),
+            "bounded-stream MT-MFS should write Taylor residual products"
         );
     }
 
