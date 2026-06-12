@@ -21109,6 +21109,7 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
+    #[cfg(target_os = "macos")]
     use std::time::Duration;
 
     #[cfg(target_os = "macos")]
@@ -21176,6 +21177,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn mosaic_metal_kernel_index_matches_compact_kernel_packing() {
         assert!(
             super::MOSAIC_METAL_SHADER

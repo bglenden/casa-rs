@@ -3282,7 +3282,7 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
             for (batch, metadata) in plane
                 .batches
                 .into_iter()
-                .zip(mosaic.grouped_metadata_batches.into_iter())
+                .zip(mosaic.grouped_metadata_batches)
             {
                 sample_count += batch.len();
                 consumer(SinglePlaneVisibilityBlock {
@@ -4068,7 +4068,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                     let consumer_started = Instant::now();
                     for (batch, metadata) in plane_batches
                         .into_iter()
-                        .zip(mosaic.grouped_metadata_batches.into_iter())
+                        .zip(mosaic.grouped_metadata_batches)
                     {
                         consumer(SinglePlaneVisibilityBlock {
                             visibility: batch,
@@ -15350,7 +15350,7 @@ fn prepare_cube_one_channel_briggs_preweighted_routed_visibility_chunk(
         runs: Vec::new(),
     };
     let mut local_input_seq = 0u64;
-    for (selected_row, row) in selected_rows.iter().zip(rows.into_iter()) {
+    for (selected_row, row) in selected_rows.iter().zip(rows) {
         if row.spw_id != selected_row.spw_id {
             return Err(format!(
                 "row {} SPW mismatch: selected row has {}, essentials block has {}",
