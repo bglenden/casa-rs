@@ -60,12 +60,8 @@ run_llvm_cov() {
   # lifecycle, and direct terminal overlay plumbing that is not meaningfully
   # line-coverable in a CI coverage run; the underlying app/runtime behavior
   # remains covered through focused module tests.
-  # The casa-imaging execution backend mixes CPU execution with macOS Metal
-  # backend plumbing and embedded shader source in one internal file. CI-like
-  # coverage cannot line-cover that hardware/runtime path directly; the shipped
-  # behavior remains checked by casa-imaging unit tests and slow imager parity.
   local ignored_files
-  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-imaging/src/execution\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
+  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
 
   local feature_args=()
   if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \

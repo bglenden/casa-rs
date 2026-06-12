@@ -57,7 +57,7 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 use execution::{
     MtmfsMetalInputCache, StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill,
 };
@@ -3354,7 +3354,7 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
     .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn begin_metal_grouped_input_cache_prime<'a>(
     gridder: &'a StandardGridder,
     weighting_plan: &StandardMfsStreamingWeightingPlan,
@@ -3396,7 +3396,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
         standard_mfs_initial_dirty_backend_selection_from_env()?,
         Some(StandardMfsBackendSelection::MetalRowRunGrouped)
     ) {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", not(coverage)))]
         {
             let mut metal_grouped_input_cache = metal_grouped_input_cache;
             let grid_started = Instant::now();
@@ -3476,7 +3476,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
             )
             .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(not(target_os = "macos"), coverage))]
         {
             return Err(ImagingError::Unsupported(
                 "standard MFS initial dirty backend 'metal-row-run-grouped' requires macOS Metal"
@@ -3486,19 +3486,19 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     }
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
         gridder,
         weighting_plan,
         metal_grouped_input_cache.is_some(),
     )?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), coverage))]
     let _ = metal_grouped_input_cache;
     let grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
             replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
-                #[cfg(target_os = "macos")]
+                #[cfg(all(target_os = "macos", not(coverage)))]
                 if let Some((metal_executor, fill, _)) = metal_cache_prime.as_mut() {
                     metal_executor.append_grouped_input_cache_run(
                         fill,
@@ -3519,7 +3519,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
     stage_timings.psf_grid += split_grid_elapsed;
     stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     if let (Some((metal_executor, fill, fill_started)), Some(cache)) =
         (metal_cache_prime, metal_grouped_input_cache)
     {
@@ -3678,19 +3678,19 @@ fn compute_psf_standard_routed_visibility_run_replay(
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
         gridder,
         weighting_plan,
         metal_grouped_input_cache.is_some(),
     )?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), coverage))]
     let _ = metal_grouped_input_cache;
     let grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
             replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
-                #[cfg(target_os = "macos")]
+                #[cfg(all(target_os = "macos", not(coverage)))]
                 if let Some((metal_executor, fill, _)) = metal_cache_prime.as_mut() {
                     metal_executor.append_grouped_input_cache_run(
                         fill,
@@ -3707,7 +3707,7 @@ fn compute_psf_standard_routed_visibility_run_replay(
         &mut psf_grid,
     )?;
     stage_timings.psf_grid += grid_started.elapsed();
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     if let (Some((metal_executor, fill, fill_started)), Some(cache)) =
         (metal_cache_prime, metal_grouped_input_cache)
     {
@@ -4034,7 +4034,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
         };
     let counts = match standard_mfs_residual_backend_selection_from_env()? {
         Some(StandardMfsBackendSelection::Metal) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             {
                 let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
                 executor.accumulate_residual_grid_direct_routed_visibility_run_replay(
@@ -4044,7 +4044,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
                     &mut residual_grid,
                 )?
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(not(target_os = "macos"), coverage))]
             {
                 return Err(ImagingError::Unsupported(
                     "standard MFS residual backend 'metal' requires macOS Metal".to_string(),
@@ -4052,7 +4052,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
             }
         }
         Some(StandardMfsBackendSelection::MetalRowRun) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             {
                 let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
                 executor.accumulate_residual_grid_direct_routed_visibility_run_replay_row_run(
@@ -4062,7 +4062,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
                     &mut residual_grid,
                 )?
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(not(target_os = "macos"), coverage))]
             {
                 return Err(ImagingError::Unsupported(
                     "standard MFS residual backend 'metal-row-run' requires macOS Metal"
@@ -4071,7 +4071,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
             }
         }
         Some(StandardMfsBackendSelection::MetalRowRunGrouped) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             {
                 let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
                 executor
@@ -4083,7 +4083,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
                         _metal_grouped_input_cache,
                     )?
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(not(target_os = "macos"), coverage))]
             {
                 return Err(ImagingError::Unsupported(
                     "standard MFS residual backend 'metal-row-run-grouped' requires macOS Metal"
@@ -4329,11 +4329,11 @@ fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
 /// backend selections are still allowed to reach the backend so callers get
 /// the detailed backend error if the device cannot be opened.
 pub fn standard_mfs_metal_device_available() -> bool {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     {
         objc2_metal::MTLCreateSystemDefaultDevice().is_some()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), coverage))]
     {
         false
     }
@@ -4349,11 +4349,11 @@ fn ensure_standard_mfs_backend_available() -> Result<(), ImagingError> {
         StandardMfsBackendSelection::Metal
         | StandardMfsBackendSelection::MetalRowRun
         | StandardMfsBackendSelection::MetalRowRunGrouped => {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             {
                 Ok(())
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(not(target_os = "macos"), coverage))]
             {
                 Err(ImagingError::Unsupported(
                     "standard MFS backend 'metal' requires macOS Metal and is not available \
@@ -5456,7 +5456,7 @@ fn finish_mosaic_metal_sample_aggregates(
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct MosaicMetalParams {
     sample_count: u32,
     grid_width: u32,
@@ -5473,11 +5473,11 @@ struct MosaicMetalParams {
 
 const MOSAIC_METAL_MODE_DIRTY: u32 = 1;
 const MOSAIC_METAL_MODE_RESIDUAL: u32 = 2;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES: usize = 64 * 1024 * 1024;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const MOSAIC_METAL_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 25_000;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const MOSAIC_METAL_SINGLE_GRID_GROUPED_SAMPLE_LIMIT: usize = 128_000;
 const MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES: usize = 25_000;
 const MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES: usize = 10_000;
@@ -5525,7 +5525,7 @@ impl MosaicMetalGridStats {
     }
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn mosaic_metal_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
     if sample_count <= MOSAIC_METAL_SINGLE_GRID_GROUPED_SAMPLE_LIMIT {
         return 1;
@@ -9534,7 +9534,7 @@ fn accumulate_mosaic_grid_metal_samples(
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 fn accumulate_mosaic_grid_metal_samples_impl(
     _projector: &ScreenProjector,
     _samples: &[MosaicMetalSample],
@@ -9549,7 +9549,7 @@ fn accumulate_mosaic_grid_metal_samples_impl(
     ))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn accumulate_mosaic_grid_metal_samples_impl(
     projector: &ScreenProjector,
     samples: &[MosaicMetalSample],
@@ -10153,13 +10153,13 @@ fn accumulate_mosaic_grid_metal_samples_impl(
     Ok(stats)
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn gridder_shape_from_complex32_grid(grid: &Array2<Complex32>) -> [usize; 2] {
     let dim = grid.dim();
     [dim.0, dim.1]
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 const MOSAIC_METAL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -12800,9 +12800,9 @@ struct MtmfsResidualGridAccumulation {
 }
 
 struct MtmfsAccelerationBackend<'a> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     metal: Option<StandardMfsMetalExecutor<'a>>,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     metal_input_cache: Option<MtmfsMetalInputCache>,
     _gridder_lifetime: std::marker::PhantomData<&'a StandardGridder>,
 }
@@ -12812,7 +12812,7 @@ impl<'a> MtmfsAccelerationBackend<'a> {
         let _ = gridder;
         if standard_mfs_mtmfs_metal_backend_enabled() && request.w_term_mode != WTermMode::WProject
         {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             {
                 return Ok(Self {
                     metal: Some(StandardMfsMetalExecutor::new_with_resident_bytes(
@@ -12822,7 +12822,7 @@ impl<'a> MtmfsAccelerationBackend<'a> {
                     _gridder_lifetime: std::marker::PhantomData,
                 });
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(not(target_os = "macos"), coverage))]
             {
                 return Err(ImagingError::Unsupported(
                     "MTMFS Metal backend requires macOS Metal and is not available on this platform"
@@ -12831,9 +12831,9 @@ impl<'a> MtmfsAccelerationBackend<'a> {
             }
         }
         Ok(Self {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             metal: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(coverage)))]
             metal_input_cache: None,
             _gridder_lifetime: std::marker::PhantomData,
         })
@@ -12844,7 +12844,7 @@ impl<'a> MtmfsAccelerationBackend<'a> {
         request: &MtmfsRequest,
         batches: &[VisibilityBatch],
     ) -> Result<(), ImagingError> {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", not(coverage)))]
         {
             if let Some(metal) = self.metal.as_ref() {
                 self.metal_input_cache = Some(metal.prepare_mtmfs_input_cache(
@@ -12870,12 +12870,12 @@ impl<'a> MtmfsAccelerationBackend<'a> {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn metal(&self) -> Option<&StandardMfsMetalExecutor<'a>> {
         self.metal.as_ref()
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn metal_input_cache(&self) -> Option<&MtmfsMetalInputCache> {
         self.metal_input_cache.as_ref()
     }
@@ -12938,8 +12938,10 @@ fn compute_mtmfs_psf_terms(
 
     let grid_started = Instant::now();
     let worker_threads = mtmfs_worker_threads(batches.len());
-    let accumulation = if cfg!(target_os = "macos") && standard_mfs_mtmfs_metal_backend_enabled() {
-        #[cfg(target_os = "macos")]
+    let accumulation = if cfg!(all(target_os = "macos", not(coverage)))
+        && standard_mfs_mtmfs_metal_backend_enabled()
+    {
+        #[cfg(all(target_os = "macos", not(coverage)))]
         {
             let executor = acceleration_backend.metal().ok_or_else(|| {
                 ImagingError::Unsupported(
@@ -12961,7 +12963,7 @@ fn compute_mtmfs_psf_terms(
                 skipped_samples: metal.skipped_samples,
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(not(target_os = "macos"), coverage))]
         {
             return Err(ImagingError::Unsupported(
                 "MTMFS Metal backend requires macOS Metal and is not available on this platform"
@@ -13328,9 +13330,10 @@ fn compute_mtmfs_residual_terms(
 
     let degrid_grid_started = Instant::now();
     let worker_threads = mtmfs_worker_threads(batches.len());
-    let residual_grids = if cfg!(target_os = "macos") && standard_mfs_mtmfs_metal_backend_enabled()
+    let residual_grids = if cfg!(all(target_os = "macos", not(coverage)))
+        && standard_mfs_mtmfs_metal_backend_enabled()
     {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", not(coverage)))]
         {
             let executor = acceleration_backend.metal().ok_or_else(|| {
                 ImagingError::Unsupported(
@@ -13351,7 +13354,7 @@ fn compute_mtmfs_residual_terms(
                 )?
                 .residual_grids
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(not(target_os = "macos"), coverage))]
         {
             return Err(ImagingError::Unsupported(
                 "MTMFS Metal backend requires macOS Metal and is not available on this platform"
@@ -14501,7 +14504,7 @@ fn compute_psf_standard_metal(
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<PsfState, ImagingError> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     {
         let mut timings = PsfComputationTimings::default();
         let [nx, ny] = gridder.grid_shape();
@@ -14546,7 +14549,7 @@ fn compute_psf_standard_metal(
             skipped_samples: accumulation.skipped_samples,
         })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), coverage))]
     {
         let _ = (batches, gridder, execution_config, stage_timings);
         Err(ImagingError::Unsupported(
@@ -14767,7 +14770,7 @@ fn compute_dirty_psf_and_residual_standard_metal(
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<(PsfState, Array2<f32>), ImagingError> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     {
         let [nx, ny] = gridder.grid_shape();
         let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
@@ -14824,7 +14827,7 @@ fn compute_dirty_psf_and_residual_standard_metal(
             residual,
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), coverage))]
     {
         let _ = (batches, gridder, execution_config, stage_timings);
         Err(ImagingError::Unsupported(
@@ -16487,7 +16490,7 @@ struct WProjectMetalPreparedLocal {
 }
 
 #[derive(Debug, Default)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct WProjectMetalStreamingChunk {
     samples: Vec<WProjectMetalSample>,
     skipped_samples: usize,
@@ -16501,7 +16504,7 @@ struct WProjectMetalStreamingChunk {
 }
 
 #[derive(Debug, Default)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct WProjectMetalStreamingStats {
     chunk_count: usize,
     sample_count: usize,
@@ -17780,7 +17783,7 @@ impl WProjectMetalSample {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct WProjectMetalComplex {
     re: f32,
     im: f32,
@@ -17788,7 +17791,7 @@ struct WProjectMetalComplex {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 struct WProjectMetalParams {
     sample_count: u32,
     grid_width: u32,
@@ -17802,16 +17805,16 @@ struct WProjectMetalParams {
     _pad0: u32,
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const W_PROJECT_METAL_MODE_PSF: u32 = 0;
 const W_PROJECT_METAL_MODE_RESIDUAL: u32 = 2;
 const W_PROJECT_METAL_MODE_DIRTY: u32 = 1;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES: usize = 256 * 1024 * 1024;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 const W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 8_000_000;
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn w_project_metal_dirty_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
     let bytes_per_partial_grid = cell_count
         .checked_mul(std::mem::size_of::<f32>())
@@ -17887,7 +17890,7 @@ fn push_w_project_metal_sample(
     true
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn w_project_metal_samples(
     prepared: &WProjectPreparedData,
 ) -> Result<Vec<WProjectMetalSample>, ImagingError> {
@@ -17904,7 +17907,7 @@ fn w_project_metal_samples(
     Ok(samples)
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn w_project_metal_kernel_weights(projector: &WProjector) -> Vec<WProjectMetalComplex> {
     projector
         .flattened_kernel_weights()
@@ -17916,7 +17919,7 @@ fn w_project_metal_kernel_weights(projector: &WProjector) -> Vec<WProjectMetalCo
         .collect()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn accumulate_w_project_psf_grid_metal(
     prepared: &WProjectPreparedData,
     psf_grid: &mut Array2<Complex32>,
@@ -17931,7 +17934,7 @@ fn accumulate_w_project_psf_grid_metal(
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 fn accumulate_w_project_psf_grid_metal(
     _prepared: &WProjectPreparedData,
     _psf_grid: &mut Array2<Complex32>,
@@ -17942,7 +17945,7 @@ fn accumulate_w_project_psf_grid_metal(
     ))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 fn accumulate_w_project_grid_metal_samples(
     _projector: &WProjector,
     _samples: &[WProjectMetalSample],
@@ -17958,7 +17961,7 @@ fn accumulate_w_project_grid_metal_samples(
     ))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn accumulate_w_project_grid_metal(
     prepared: &WProjectPreparedData,
     model_grid: Option<&Array2<Complex32>>,
@@ -17980,7 +17983,7 @@ fn accumulate_w_project_grid_metal(
     )
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn accumulate_w_project_grid_metal_samples(
     projector: &WProjector,
     samples: &[WProjectMetalSample],
@@ -18540,7 +18543,7 @@ fn accumulate_w_project_grid_metal_samples(
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(not(target_os = "macos"), coverage))]
 fn accumulate_w_project_grid_metal_streaming_replay<F>(
     _projector: &WProjector,
     _model_grid: Option<&Array2<Complex32>>,
@@ -18560,7 +18563,7 @@ where
     ))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn accumulate_w_project_grid_metal_streaming_replay<F>(
     projector: &WProjector,
     model_grid: Option<&Array2<Complex32>>,
@@ -18970,7 +18973,7 @@ where
     Ok(accumulation)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 const W_PROJECT_METAL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -19496,7 +19499,7 @@ fn prepare_w_project_metal_data_parallel(
     )
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 fn prepare_w_project_metal_streaming_chunk(
     projector: &WProjector,
     batches: &[VisibilityBatch],
@@ -20726,10 +20729,10 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     use std::time::Duration;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     use super::compute_dirty_psf_and_residual_standard_metal;
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
@@ -20794,7 +20797,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn mosaic_metal_kernel_index_matches_compact_kernel_packing() {
         assert!(
             super::MOSAIC_METAL_SHADER
@@ -21221,7 +21224,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn wproject_metal_dirty_grouped_weighted_samples_match_cpu_grid() {
         let geometry = ImageGeometry {
             image_shape: [64, 64],
@@ -21305,7 +21308,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(coverage)))]
     fn wproject_metal_residual_grouped_weighted_samples_match_cpu_grid() {
         let geometry = ImageGeometry {
             image_shape: [64, 64],
@@ -21447,7 +21450,7 @@ mod tests {
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", not(coverage)))]
         {
             let gridder = StandardGridder::new(geometry).unwrap();
             let weighted_batches = apply_weighting(&request, &gridder).unwrap();
@@ -21493,7 +21496,7 @@ mod tests {
                 "max residual delta {max_residual_delta}"
             );
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(not(target_os = "macos"), coverage))]
         {
             let _ = request;
         }

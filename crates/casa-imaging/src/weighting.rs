@@ -49,7 +49,7 @@ enum DensityReweightMode {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
 pub(crate) enum StandardMfsStreamingReweightPlan<'a> {
     Natural,
     Uniform {
@@ -337,7 +337,7 @@ impl StandardMfsStreamingWeightingPlan {
         }
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(any(not(target_os = "macos"), coverage), allow(dead_code))]
     pub(crate) fn reweight_plan(
         &self,
     ) -> Result<StandardMfsStreamingReweightPlan<'_>, crate::ImagingError> {
