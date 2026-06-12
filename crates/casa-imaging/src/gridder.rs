@@ -1851,6 +1851,7 @@ pub(crate) struct ScreenProjector {
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct ScreenProjectorCompactKernel {
     pub(crate) values: Vec<Complex32>,
     pub(crate) tap_width: usize,
@@ -1934,10 +1935,12 @@ impl ScreenProjector {
         (tap_sum, center_tap, first_tap)
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn kernel_weight_width(&self) -> usize {
         self.phased_kernel_weights.dim().0
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn compact_phased_kernel_weights(&self) -> ScreenProjectorCompactKernel {
         let support = self.support as isize;
         let tap_width = self.support * 2 + 1;
@@ -2642,6 +2645,7 @@ impl WProjector {
             .unwrap_or(0)
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn flattened_kernel_weights(&self) -> Vec<Complex32> {
         let width = self.kernel_weight_width();
         let mut weights = Vec::with_capacity(

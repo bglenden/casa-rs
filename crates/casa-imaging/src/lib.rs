@@ -5928,6 +5928,7 @@ fn finish_mosaic_metal_sample_aggregates(
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct MosaicMetalParams {
     sample_count: u32,
     grid_width: u32,
@@ -5944,8 +5945,11 @@ struct MosaicMetalParams {
 
 const MOSAIC_METAL_MODE_DIRTY: u32 = 1;
 const MOSAIC_METAL_MODE_RESIDUAL: u32 = 2;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES: usize = 64 * 1024 * 1024;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const MOSAIC_METAL_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 25_000;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const MOSAIC_METAL_SINGLE_GRID_GROUPED_SAMPLE_LIMIT: usize = 128_000;
 const MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES: usize = 25_000;
 const MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES: usize = 10_000;
@@ -5993,6 +5997,7 @@ impl MosaicMetalGridStats {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn mosaic_metal_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
     if sample_count <= MOSAIC_METAL_SINGLE_GRID_GROUPED_SAMPLE_LIMIT {
         return 1;
@@ -6001,11 +6006,10 @@ fn mosaic_metal_partial_grid_count(sample_count: usize, cell_count: usize) -> us
         .checked_mul(std::mem::size_of::<f32>())
         .and_then(|bytes| bytes.checked_mul(4))
         .unwrap_or(usize::MAX);
-    let max_by_memory = if bytes_per_partial_grid == 0 {
-        1
-    } else {
-        (MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES / bytes_per_partial_grid).max(1)
-    };
+    let max_by_memory = MOSAIC_METAL_PARTIAL_GRID_TARGET_BYTES
+        .checked_div(bytes_per_partial_grid)
+        .unwrap_or(1)
+        .max(1);
     sample_count
         .div_ceil(MOSAIC_METAL_TARGET_SAMPLES_PER_PARTIAL_GRID)
         .clamp(1, max_by_memory.min(32))
@@ -10532,6 +10536,7 @@ fn accumulate_mosaic_grid_metal_samples(
     Ok(stats)
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn gridder_shape_from_complex32_grid(grid: &Array2<Complex32>) -> [usize; 2] {
     let dim = grid.dim();
     [dim.0, dim.1]
@@ -16865,6 +16870,7 @@ struct WProjectMetalPreparedLocal {
 }
 
 #[derive(Debug, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct WProjectMetalStreamingChunk {
     samples: Vec<WProjectMetalSample>,
     skipped_samples: usize,
@@ -16878,6 +16884,7 @@ struct WProjectMetalStreamingChunk {
 }
 
 #[derive(Debug, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct WProjectMetalStreamingStats {
     chunk_count: usize,
     sample_count: usize,
@@ -18156,6 +18163,7 @@ impl WProjectMetalSample {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct WProjectMetalComplex {
     re: f32,
     im: f32,
@@ -18163,6 +18171,7 @@ struct WProjectMetalComplex {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct WProjectMetalParams {
     sample_count: u32,
     grid_width: u32,
@@ -18176,22 +18185,25 @@ struct WProjectMetalParams {
     _pad0: u32,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const W_PROJECT_METAL_MODE_PSF: u32 = 0;
 const W_PROJECT_METAL_MODE_RESIDUAL: u32 = 2;
 const W_PROJECT_METAL_MODE_DIRTY: u32 = 1;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES: usize = 256 * 1024 * 1024;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID: usize = 8_000_000;
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn w_project_metal_dirty_partial_grid_count(sample_count: usize, cell_count: usize) -> usize {
     let bytes_per_partial_grid = cell_count
         .checked_mul(std::mem::size_of::<f32>())
         .and_then(|bytes| bytes.checked_mul(4))
         .unwrap_or(usize::MAX);
-    let max_by_memory = if bytes_per_partial_grid == 0 {
-        1
-    } else {
-        (W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES / bytes_per_partial_grid).max(1)
-    };
+    let max_by_memory = W_PROJECT_METAL_DIRTY_PARTIAL_GRID_TARGET_BYTES
+        .checked_div(bytes_per_partial_grid)
+        .unwrap_or(1)
+        .max(1);
     sample_count
         .div_ceil(W_PROJECT_METAL_DIRTY_TARGET_SAMPLES_PER_PARTIAL_GRID)
         .clamp(1, max_by_memory.min(32))
@@ -18258,6 +18270,7 @@ fn push_w_project_metal_sample(
     true
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn w_project_metal_samples(
     prepared: &WProjectPreparedData,
 ) -> Result<Vec<WProjectMetalSample>, ImagingError> {
@@ -18274,6 +18287,7 @@ fn w_project_metal_samples(
     Ok(samples)
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn w_project_metal_kernel_weights(projector: &WProjector) -> Vec<WProjectMetalComplex> {
     projector
         .flattened_kernel_weights()
@@ -19865,6 +19879,7 @@ fn prepare_w_project_metal_data_parallel(
     )
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn prepare_w_project_metal_streaming_chunk(
     projector: &WProjector,
     batches: &[VisibilityBatch],
