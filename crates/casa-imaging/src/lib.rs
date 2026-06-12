@@ -13182,10 +13182,12 @@ struct MtmfsAccelerationBackend<'a> {
     metal: Option<StandardMfsMetalExecutor<'a>>,
     #[cfg(target_os = "macos")]
     metal_input_cache: Option<MtmfsMetalInputCache>,
+    _gridder_lifetime: std::marker::PhantomData<&'a StandardGridder>,
 }
 
 impl<'a> MtmfsAccelerationBackend<'a> {
     fn new(request: &MtmfsRequest, gridder: &'a StandardGridder) -> Result<Self, ImagingError> {
+        let _ = gridder;
         if standard_mfs_mtmfs_metal_backend_enabled() && request.w_term_mode != WTermMode::WProject
         {
             #[cfg(target_os = "macos")]
@@ -13195,6 +13197,7 @@ impl<'a> MtmfsAccelerationBackend<'a> {
                         gridder, None,
                     )?),
                     metal_input_cache: None,
+                    _gridder_lifetime: std::marker::PhantomData,
                 });
             }
             #[cfg(not(target_os = "macos"))]
@@ -13210,6 +13213,7 @@ impl<'a> MtmfsAccelerationBackend<'a> {
             metal: None,
             #[cfg(target_os = "macos")]
             metal_input_cache: None,
+            _gridder_lifetime: std::marker::PhantomData,
         })
     }
 
@@ -13303,6 +13307,7 @@ fn compute_mtmfs_psf_terms(
     acceleration_backend: &MtmfsAccelerationBackend<'_>,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<MtmfsPsfState, ImagingError> {
+    let _ = acceleration_backend;
     if request.w_term_mode == WTermMode::WProject {
         return compute_mtmfs_psf_terms_w_project(request, batches, gridder, stage_timings);
     }
@@ -13672,6 +13677,7 @@ fn compute_mtmfs_residual_terms(
     psf_state: &MtmfsPsfState,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Vec<Array2<f32>>, ImagingError> {
+    let _ = acceleration_backend;
     if request.w_term_mode == WTermMode::WProject {
         return compute_mtmfs_residual_terms_w_project(
             request,
