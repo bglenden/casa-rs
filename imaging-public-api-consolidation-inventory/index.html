@@ -1,0 +1,1214 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Imaging Public API Consolidation Inventory - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-public-api-consolidation-inventory" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging Public API Consolidation Inventory
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-method" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Method
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#disposition-legend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disposition Legend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-public-surface-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Public Surface Snapshot
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Current Public Surface Snapshot">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#casa-imaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casa-imaging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casa-imagingsrcexecutionrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casa-imaging/src/execution.rs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casars-imager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casars-imager
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-public-api-consolidation-inventory">Imaging Public API Consolidation Inventory<a class="headerlink" href="#imaging-public-api-consolidation-inventory" title="Permanent link">&para;</a></h1>
+<p>Truth class: implementation inventory
+Last reality check: 2026-06-12
+Verification: targeted <code>rg</code> call-site searches; <code>just quick</code>; <code>just verify</code></p>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<p>This inventory records the Wave 3 imaging execution and orchestration surface
+that is variant-heavy enough to need deliberate public API shrinkage. It covers:</p>
+<ul>
+<li><code>crates/casa-imaging/src/lib.rs</code></li>
+<li><code>crates/casa-imaging/src/execution.rs</code></li>
+<li><code>crates/casars-imager/src/lib.rs</code></li>
+</ul>
+<p>The dispositions here apply only to Rust public or crate-visible implementation
+surface. Provider contracts, persisted image/MS formats, CLI flags, task JSON,
+output product names, and numerical algorithms are unchanged.</p>
+<h2 id="audit-method">Audit Method<a class="headerlink" href="#audit-method" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Enumerated public items with <code>rg -n "^pub (fn|struct|enum|trait|type|const|static|mod|use)\b|^\s*pub\(crate\)" crates/casa-imaging/src/lib.rs crates/casa-imaging/src/execution.rs crates/casars-imager/src/lib.rs</code>.</li>
+<li>Searched workspace call sites for the standard-MFS, <code>casars-imager</code>,
+  mosaic, and W-projection functions listed in issues #289 through #292.</li>
+<li>Treated same-name <code>cfg</code> alternatives as platform variants, not duplicates
+  eligible for naive deletion.</li>
+</ul>
+<h2 id="disposition-legend">Disposition Legend<a class="headerlink" href="#disposition-legend" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Disposition</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keep public</td>
+<td>User-meaningful or cross-crate domain API.</td>
+</tr>
+<tr>
+<td>Make private</td>
+<td>Implementation variant with no external workspace callers.</td>
+</tr>
+<tr>
+<td>Merge behind smaller public abstraction</td>
+<td>Keep behavior but route callers through a concept-oriented public API.</td>
+</tr>
+<tr>
+<td>Remove without replacement</td>
+<td>Internal variant; no replacement beyond the retained concept API.</td>
+</tr>
+<tr>
+<td>Recorded remaining debt</td>
+<td>Related duplicate family outside this wave's implemented boundary.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="current-public-surface-snapshot">Current Public Surface Snapshot<a class="headerlink" href="#current-public-surface-snapshot" title="Permanent link">&para;</a></h2>
+<h3 id="casa-imaging"><code>casa-imaging</code><a class="headerlink" href="#casa-imaging" title="Permanent link">&para;</a></h3>
+<p>The public execution/orchestration surface is concentrated around these items:</p>
+<table>
+<thead>
+<tr>
+<th>Item or family</th>
+<th style="text-align: right;">Current status</th>
+<th>In-repo callers</th>
+<th>Disposition</th>
+<th>Replacement guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>run_imaging</code>, <code>run_imaging_owned</code>, <code>run_imaging_owned_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casa-imaging</code>, <code>casars-imager</code></td>
+<td>Keep public</td>
+<td>Primary concept-oriented imaging entrypoints.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_weighted_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casa-imaging</code> tests, <code>casars-imager</code> dirty path</td>
+<td>Keep public for now</td>
+<td>Streaming standard-MFS concept API. Later wave may rename or wrap with a smaller request type.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_weighted_sample_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Test-only private as of this inventory</td>
+<td><code>casa-imaging</code> tests only</td>
+<td>Remove without replacement</td>
+<td>Internal scalar sample variant; use retained streaming or source-block APIs.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_weighted_sample_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Test-only private as of this inventory</td>
+<td><code>casa-imaging</code> tests only</td>
+<td>Remove without replacement</td>
+<td>Internal row-block sample variant; use retained streaming or source-block APIs.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Test-only private as of this inventory</td>
+<td><code>casa-imaging</code> tests only</td>
+<td>Remove without replacement</td>
+<td>Internal planned-sample variant; source-block API remains the cross-crate boundary.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_run_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> clean path</td>
+<td>Keep public for now</td>
+<td>Retained app/library boundary; now routes through the private <code>StandardMfsReplayPlan</code>.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_sample_run_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed as of #290</td>
+<td>no external workspace caller found</td>
+<td>Remove without replacement</td>
+<td>Internal routed-sample run-block variant; routed visibility-run API remains the live boundary.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed as of #290</td>
+<td>no external workspace caller found</td>
+<td>Remove without replacement</td>
+<td>Internal block adapter; no replacement beyond retained routed visibility-run API.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed as of #290</td>
+<td>no external workspace caller found</td>
+<td>Remove without replacement</td>
+<td>Internal no-cache adapter; Metal-cache-capable sibling is the app boundary.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> Metal path</td>
+<td>Keep public for now</td>
+<td>Retained app/library boundary; now routes through the private <code>StandardMfsReplayPlan</code>.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> clean path</td>
+<td>Keep public for now</td>
+<td>Retained app/library boundary; now routes through the private <code>StandardMfsReplayPlan</code>.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed as of #290</td>
+<td>no external workspace caller found</td>
+<td>Remove without replacement</td>
+<td>Internal source-block adapter; no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed as of #290</td>
+<td>no external workspace caller found</td>
+<td>Remove without replacement</td>
+<td>Internal no-cache source adapter; no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed as of #290</td>
+<td>no external workspace caller found</td>
+<td>Remove without replacement</td>
+<td>Internal routed-sample source-block variant; no replacement.</td>
+</tr>
+<tr>
+<td><code>StandardMfsExecutionConfig</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casa-imaging</code>, <code>casars-imager</code></td>
+<td>Keep public for now</td>
+<td>User-visible backend knobs currently cross the app/library boundary.</td>
+</tr>
+<tr>
+<td><code>StandardMfsPlannedSampleBuilder</code> and source traits</td>
+<td style="text-align: right;">Public</td>
+<td><code>casa-imaging</code>, <code>casars-imager</code></td>
+<td>Merge behind smaller public abstraction</td>
+<td>Retained app/library source-build boundary; not changed by this wave.</td>
+</tr>
+<tr>
+<td><code>StandardMfsDirtyAccumulator*</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casa-imaging</code> and app export tooling</td>
+<td>Keep public for now</td>
+<td>Fixture/export path still uses this as a boundary object.</td>
+</tr>
+<tr>
+<td><code>StandardMfsMetalGroupedInputCache*</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> Metal prefill/export paths</td>
+<td>Merge behind backend abstraction</td>
+<td>Keep until Metal grouped-input cache is represented as private backend strategy.</td>
+</tr>
+<tr>
+<td><code>SinglePlaneVisibilityBlock</code>, <code>SinglePlaneStreamPass</code>, <code>SinglePlaneGridderMetadata</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> mosaic/cube paths</td>
+<td>Keep public</td>
+<td>User-meaningful stream boundary for single-plane imaging.</td>
+</tr>
+<tr>
+<td><code>run_mosaic_mfs_from_single_plane_stream</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> mosaic path</td>
+<td>Keep public</td>
+<td>Current concept API for mosaic MFS streaming.</td>
+</tr>
+<tr>
+<td><code>run_mtmfs</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> MT-MFS path</td>
+<td>Keep public</td>
+<td>Current concept API for MT-MFS.</td>
+</tr>
+<tr>
+<td><code>standard_mfs_metal_device_available</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> policy/export paths</td>
+<td>Keep public</td>
+<td>Capability query, not an implementation duplicate.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="casa-imagingsrcexecutionrs"><code>casa-imaging/src/execution.rs</code><a class="headerlink" href="#casa-imagingsrcexecutionrs" title="Permanent link">&para;</a></h3>
+<p>Most execution-layer types and functions are already <code>pub(crate)</code>. This is the
+right direction: fixed-tile planning, tile buckets, planned samples, workspace
+state, CPU/Metal executors, visibility plans, and accumulation helpers are
+implementation details owned by <code>casa-imaging</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Item or family</th>
+<th style="text-align: right;">Current status</th>
+<th>In-repo callers</th>
+<th>Disposition</th>
+<th>Replacement guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StandardMfsBackend</code>, CPU/Metal executor types, tile partitioning, tile buckets</td>
+<td style="text-align: right;"><code>pub(crate)</code></td>
+<td><code>casa-imaging</code> only</td>
+<td>Keep crate-private</td>
+<td>No public replacement.</td>
+</tr>
+<tr>
+<td>Replay accumulation helpers for dirty, PSF, and residual</td>
+<td style="text-align: right;"><code>pub(crate)</code> methods</td>
+<td><code>casa-imaging</code> only</td>
+<td>Merge behind internal request/plan</td>
+<td>Planned-sample and routed-visibility sources now share <code>StandardMfsReplayPlan</code>; weighted-batch streaming remains separate because it also owns W-projection replay.</td>
+</tr>
+<tr>
+<td><code>StandardMfsVisibilityPlan</code>, <code>StandardMfsPlannedSample</code>, <code>StandardMfsWorkspace</code></td>
+<td style="text-align: right;"><code>pub(crate)</code></td>
+<td><code>casa-imaging</code> only</td>
+<td>Keep crate-private</td>
+<td>No public replacement.</td>
+</tr>
+<tr>
+<td><code>StandardMfsMetalGroupedInputCache*</code></td>
+<td style="text-align: right;">Public type exported by <code>lib.rs</code></td>
+<td><code>casars-imager</code> Metal paths</td>
+<td>Merge behind backend abstraction</td>
+<td>Keep only until Metal grouped-input cache is no longer an app-facing implementation type.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="casars-imager"><code>casars-imager</code><a class="headerlink" href="#casars-imager" title="Permanent link">&para;</a></h3>
+<p><code>casars-imager</code> exports user-facing config, task contract, oracle, managed
+output, and run-summary types. The row-block and streaming functions listed in</p>
+<h1 id="291-are-private-today-so-the-consolidation-target-is-code-duplication-and">291 are private today, so the consolidation target is code duplication and<a class="headerlink" href="#291-are-private-today-so-the-consolidation-target-is-code-duplication-and" title="Permanent link">&para;</a></h1>
+<p>crate-visible churn rather than Rust public API removal.</p>
+<table>
+<thead>
+<tr>
+<th>Item or family</th>
+<th style="text-align: right;">Current status</th>
+<th>In-repo callers</th>
+<th>Disposition</th>
+<th>Replacement guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>run_with_cli_args</code>, <code>run_from_config</code>, <code>CliConfig</code>, <code>RunSummary</code></td>
+<td style="text-align: right;">Public</td>
+<td>binary, tests, examples</td>
+<td>Keep public</td>
+<td>User-facing app/runtime boundary.</td>
+</tr>
+<tr>
+<td>Task contract and schema exports</td>
+<td style="text-align: right;">Public</td>
+<td>Python/frontend/task callers</td>
+<td>Keep public</td>
+<td>Contract surface; do not change in stabilization cleanup.</td>
+</tr>
+<tr>
+<td>Oracle and managed-output exports</td>
+<td style="text-align: right;">Public</td>
+<td>examples/tests</td>
+<td>Keep public</td>
+<td>Test/oracle and output-management boundary.</td>
+</tr>
+<tr>
+<td>Source row-block prep functions</td>
+<td style="text-align: right;">Private</td>
+<td><code>casars-imager</code> only</td>
+<td>Merge behind smaller internal abstraction</td>
+<td>Shared through private <code>SourceRowBlockPlaneDescriptor</code>; no public replacement.</td>
+</tr>
+<tr>
+<td>Open-MS mode orchestration functions</td>
+<td style="text-align: right;">Private</td>
+<td><code>run_from_config</code> only</td>
+<td>Recorded remaining debt</td>
+<td>Keep user-visible modes explicit; #291 consolidated the shared row-block preparation cluster.</td>
+</tr>
+<tr>
+<td>Standard-MFS density/planned/routed streaming stages</td>
+<td style="text-align: right;">Private</td>
+<td><code>casars-imager</code> only</td>
+<td>Merge behind smaller internal abstraction</td>
+<td>Dead routed-sample run-block stage removed; retained planned and routed-visibility stages feed the reduced <code>casa-imaging</code> APIs.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="standard-mfs-variant-families">Standard-MFS Variant Families<a class="headerlink" href="#standard-mfs-variant-families" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th style="text-align: right;">Status after this inventory</th>
+<th>Call-site result</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>run_standard_mfs_weighted_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casa-imaging</code> tests; <code>casars-imager</code> dirty streaming</td>
+<td>Keep public for now.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_weighted_sample_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Test-only private</td>
+<td><code>casa-imaging</code> tests only</td>
+<td>Internal variant, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_weighted_sample_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Test-only private</td>
+<td><code>casa-imaging</code> tests only</td>
+<td>Internal variant, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Test-only private</td>
+<td><code>casa-imaging</code> tests only</td>
+<td>Internal variant, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_run_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> clean streaming</td>
+<td>Retained boundary; shared private replay plan.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_sample_run_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed</td>
+<td>no external workspace caller found</td>
+<td>Internal variant, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_block_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed</td>
+<td>no external workspace caller found</td>
+<td>Internal adapter, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed</td>
+<td>no external workspace caller found</td>
+<td>Internal no-cache adapter, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> Metal prefill path</td>
+<td>Retained boundary; shared private replay plan.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> clean streaming</td>
+<td>Retained boundary; shared private replay plan.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed</td>
+<td>no external workspace caller found</td>
+<td>Internal adapter, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed</td>
+<td>no external workspace caller found</td>
+<td>Internal no-cache adapter, no replacement.</td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_routed_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed</td>
+<td>no external workspace caller found</td>
+<td>Internal variant, no replacement.</td>
+</tr>
+</tbody>
+</table>
+<p>The API reduction is now broader than the first inventory pass: the scalar
+sample, weighted sample-block, and planned sample-block wrappers are test-only
+helpers, six routed implementation wrappers were removed, the routed-sample
+block-source trait was removed from the public surface, and
+<code>StandardMfsRoutedSampleRunBlock</code> is no longer re-exported from the crate root.
+These removals have no replacement beyond the retained concept-oriented
+streaming/source APIs.</p>
+<h2 id="standard-mfs-replay-families">Standard-MFS Replay Families<a class="headerlink" href="#standard-mfs-replay-families" title="Permanent link">&para;</a></h2>
+<p>The dirty/PSF/residual replay helpers are already private functions in
+<code>casa-imaging</code>. They still duplicate the same axes across products:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th style="text-align: right;">Current status</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tiled replay dirty/PSF/residual</td>
+<td style="text-align: right;">Private</td>
+<td>Kept separate because weighted-batch streaming also owns W-projection replay.</td>
+</tr>
+<tr>
+<td>Sample replay dirty/PSF/residual</td>
+<td style="text-align: right;">Private</td>
+<td>Routed through <code>StandardMfsReplayPlan</code>.</td>
+</tr>
+<tr>
+<td>Routed sample replay dirty/PSF/residual</td>
+<td style="text-align: right;">Removed from live API path</td>
+<td>Internal routed-sample run-block backend is no longer reachable.</td>
+</tr>
+<tr>
+<td>Routed visibility-run replay dirty/PSF/residual</td>
+<td style="text-align: right;">Private</td>
+<td>Routed through <code>StandardMfsReplayPlan</code>, including optional Metal grouped-input cache.</td>
+</tr>
+</tbody>
+</table>
+<p>The shared private request/plan now captures product selection, source family,
+routing strategy, block/run grouping, executor config, and optional Metal cache
+for the planned-sample and routed-visibility paths. This implements issue #290
+without changing gridding math, weighting math, task/provider contracts, or
+persisted products.</p>
+<h2 id="casars-imager-row-block-and-streaming-families"><code>casars-imager</code> Row-Block and Streaming Families<a class="headerlink" href="#casars-imager-row-block-and-streaming-families" title="Permanent link">&para;</a></h2>
+<p>All functions listed in issue #291 are private today. They form two clusters:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th style="text-align: right;">Current status</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source row-block preparation for mosaic MFS, cube one-channel, trace, and no-trace paths</td>
+<td style="text-align: right;">Private</td>
+<td>Shared private <code>SourceRowBlockPlaneDescriptor</code>.</td>
+</tr>
+<tr>
+<td>Open-MS mode orchestration for mosaic, cube, standard-MFS, and MT-MFS</td>
+<td style="text-align: right;">Private</td>
+<td>Recorded remaining debt; keep mode entrypoints explicit.</td>
+</tr>
+<tr>
+<td>Standard-MFS density, planned-sample, routed-sample, routed-visibility, and Metal-prefill streaming stages</td>
+<td style="text-align: right;">Private</td>
+<td>Dead routed-sample run-block stage removed; retained stages feed reduced <code>casa-imaging</code> APIs.</td>
+</tr>
+</tbody>
+</table>
+<p>The descriptor captures the MS handle, selection, DDID/SPW/polarization table
+context, loaded geometry/data/flag/weight columns, derived engine, optional
+standard-MFS table values, optional cube context, finish mode, reusable spectral
+plan, and cube-density/mosaic-metadata policy. This implements the core #291
+row-block consolidation while keeping user-visible mode entrypoints explicit.</p>
+<h2 id="mosaic-and-w-projection-backend-families">Mosaic and W-Projection Backend Families<a class="headerlink" href="#mosaic-and-w-projection-backend-families" title="Permanent link">&para;</a></h2>
+<p>The functions listed in issue #292 are private today, except where behavior is
+reachable through concept-oriented public APIs like <code>run_imaging</code> and
+<code>run_mosaic_mfs_from_single_plane_stream</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th style="text-align: right;">Current status</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mosaic dirty grouped CPU, Metal, and sample-range variants</td>
+<td style="text-align: right;">Private</td>
+<td>Consolidated behind <code>MosaicDirtyGroupBackend</code> / <code>MosaicDirtyGroupStrategy</code>.</td>
+</tr>
+<tr>
+<td>Mosaic residual grouped CPU, Metal, and sample-range variants</td>
+<td style="text-align: right;">Private</td>
+<td>Recorded remaining debt; #292 chose mosaic dirty grouping as the primary family.</td>
+</tr>
+<tr>
+<td><code>accumulate_mosaic_grid_metal_samples</code> same-name <code>cfg</code> alternatives</td>
+<td style="text-align: right;">Private wrapper plus named platform impls</td>
+<td>Wrapper delegates to <code>accumulate_mosaic_grid_metal_samples_impl</code> under platform <code>cfg</code>.</td>
+</tr>
+<tr>
+<td>W-projection PSF/dirty/residual concept functions</td>
+<td style="text-align: right;">Private through public <code>run_imaging</code></td>
+<td>Recorded remaining debt outside the chosen #292 family.</td>
+</tr>
+<tr>
+<td>W-projection streaming/replay serial, parallel, sample, and Metal variants</td>
+<td style="text-align: right;">Private</td>
+<td>Recorded remaining debt outside the chosen #292 family.</td>
+</tr>
+<tr>
+<td><code>accumulate_w_project_grid_metal_streaming_replay</code> same-name <code>cfg</code> alternatives</td>
+<td style="text-align: right;">Private platform variants</td>
+<td>Keep compile-gated; rename or module-split in chosen backend wave.</td>
+</tr>
+</tbody>
+</table>
+<p>For #292 this PR chooses mosaic dirty grouping as the primary backend family.
+The private strategy captures the selected dirty backend (<code>Metal</code>,
+<code>GroupedCpu</code>, <code>SampleRanges</code>, or <code>Scalar</code>), projectors, weight plan, and optional
+prepared Metal/grouped samples. Mosaic residual and W-projection remain recorded
+families, but are not changed by this wave.</p>
+<h2 id="implemented-stabilization-scope">Implemented Stabilization Scope<a class="headerlink" href="#implemented-stabilization-scope" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Issue #289: checked-in inventory plus first API shrink.</li>
+<li>Issue #290: standard-MFS public wrapper shrinkage, routed-sample block-source
+  removal, and shared private replay plan for planned-sample and
+  routed-visibility sources.</li>
+<li>Issue #291: shared source-row-block descriptor in <code>casars-imager</code> and removal
+  of the dead routed-sample essentials run-block stage.</li>
+<li>Issue #292: mosaic dirty backend strategy boundary and clearer Metal <code>cfg</code>
+  implementation split.</li>
+</ul>
+<p>Remaining duplicate families are implementation debt, not approved-scope
+deferrals for these issues: weighted-batch standard-MFS replay stays separate
+because it also handles W-projection replay, and mosaic residual / W-projection
+backend families remain unchanged because #292 required one primary family.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
