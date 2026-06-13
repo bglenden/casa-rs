@@ -923,21 +923,25 @@ impl<T: ImagePixel> PagedImage<T> {
             Value::Array(to_array_value(&placeholder)),
         )]))?;
 
-        // Save the table skeleton to create the directory.
-        // Use default DM (StManAipsIO) since our pixel data is in the TSM file
-        // managed by TiledFileIO, not in the table cell.
-        table.save(TableOptions::new(&path))?;
+        // Save the table skeleton with a CASA-visible tiled data manager for
+        // the map column. TiledFileIO overwrites this same DM sequence below
+        // with the full target cube shape while avoiding a full in-memory map.
+        table.save(
+            TableOptions::new(&path)
+                .with_data_manager(DataManagerKind::TiledCellStMan)
+                .with_tile_shape(tile_shape.clone()),
+        )?;
 
         // Create the TiledFileIO which writes the TSM header + allocates
-        // a zeroed data file. Use dm_seq_nr=1 to avoid conflict with the
-        // StManAipsIO data manager at seq_nr=0.
+        // a zeroed data file for the same TiledCellStMan sequence registered
+        // in table.dat.
         let tiled_io = TiledFileIO::create(
             &path,
             &shape,
             &tile_shape,
             T::PRIMITIVE_TYPE,
             cfg!(target_endian = "big"), // native endian, matching C++ default
-            1,                           // dm_seq_nr=1 avoids conflict with StManAipsIO at 0
+            0,
             MAP_COLUMN,
         )
         .map_err(|e| ImageError::Io(e.to_string()))?;
@@ -996,7 +1000,11 @@ impl<T: ImagePixel> PagedImage<T> {
             MAP_COLUMN,
             Value::Array(to_array_value(&placeholder)),
         )]))?;
-        table.save(TableOptions::new(&path))?;
+        table.save(
+            TableOptions::new(&path)
+                .with_data_manager(DataManagerKind::TiledCellStMan)
+                .with_tile_shape(tile_shape.clone()),
+        )?;
 
         let tiled_io = TiledFileIO::create_with_cache_limit(
             &path,
@@ -1004,7 +1012,7 @@ impl<T: ImagePixel> PagedImage<T> {
             &tile_shape,
             T::PRIMITIVE_TYPE,
             cfg!(target_endian = "big"),
-            1,
+            0,
             MAP_COLUMN,
             max_cache_bytes,
         )
@@ -2821,6 +2829,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tiled_io_image_registers_casa_visible_data_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiled_dm.image");
+        let mut img = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![16, 16, 1, 4],
+            vec![8, 8, 1, 2],
+            make_coords(),
+            &path,
+            4096,
+        )
+        .unwrap();
+        img.put_slice(
+            &ArrayD::from_shape_vec(IxDyn(&[16, 16, 1, 1]), vec![1.0; 16 * 16]).unwrap(),
+            &[0, 0, 0, 2],
+        )
+        .unwrap();
+        img.save().unwrap();
+
+        let table = Table::open(TableOptions::new(&path)).unwrap();
+        let map_dm = table
+            .data_manager_info()
+            .iter()
+            .find(|dm| dm.columns.iter().any(|column| column == MAP_COLUMN))
+            .expect("map data manager");
+        assert_eq!(map_dm.dm_type, "TiledCellStMan");
+        assert_eq!(map_dm.seq_nr, 0);
+
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.shape(), &[16, 16, 1, 4]);
+        let plane = reopened.get_slice(&[0, 0, 0, 2], &[16, 16, 1, 1]).unwrap();
+        assert!(plane.iter().all(|value| *value == 1.0));
     }
 
     #[test]

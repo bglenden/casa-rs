@@ -8773,6 +8773,90 @@ mod tests {
     }
 
     #[test]
+    fn tiled_selected_channel_range_reads_only_intersecting_channel_tiles() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        set_table_cache_budget_bytes(1024 * 1024);
+
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "DATA",
+            PrimitiveType::Complex32,
+            vec![2, 8],
+        )])
+        .expect("schema");
+        let mut table = Table::with_schema(schema);
+        for row_idx in 0..4 {
+            let mut values = Vec::new();
+            for channel in 0..8 {
+                for corr in 0..2 {
+                    let value = row_idx as f32 * 100.0 + channel as f32 * 10.0 + corr as f32;
+                    values.push(Complex32::new(value, -value));
+                }
+            }
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "DATA",
+                    Value::Array(ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 8]).f(), values)
+                            .expect("shape DATA"),
+                    )),
+                )]))
+                .expect("push row");
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("channel_range_tile_subset.table");
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(
+                TableOptions::new(&root)
+                    .with_data_manager(DataManagerKind::TiledShapeStMan)
+                    .with_tile_shape(vec![2, 2, 2]),
+            )
+            .expect("save tiled-shape table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
+
+        let selected = reopened
+            .get_array_cells_2d_channel_range_owned_uncached("DATA", &[1], 2, 2)
+            .expect("selected channel-range read");
+        assert_eq!(
+            selected,
+            vec![Some(ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[2, 2]).f(),
+                    vec![
+                        Complex32::new(120.0, -120.0),
+                        Complex32::new(121.0, -121.0),
+                        Complex32::new(130.0, -130.0),
+                        Complex32::new(131.0, -131.0),
+                    ],
+                )
+                .unwrap()
+            ))]
+        );
+        assert_eq!(
+            shared_tile_cache_entry_count_for_table(&root),
+            1,
+            "channel range 2..4 should touch only one channel tile"
+        );
+
+        invalidate_shared_tile_cache_for_table(&root);
+        assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
+        reopened
+            .get_array_cells_owned("DATA", &[1])
+            .expect("full selected-row read");
+        assert_eq!(
+            shared_tile_cache_entry_count_for_table(&root),
+            4,
+            "full 8-channel row should touch all four channel tiles for this shape"
+        );
+
+        reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
     fn bool_lru_eviction_round_trips_after_reopen() {
         let dir = tempdir().unwrap();
         let table_path = dir.path().join("bool_eviction.table");

@@ -81,7 +81,11 @@ write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
 pbcor="${IMAGER_BENCH_PBCOR:-0}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
 ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
-tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
+default_tmp_root="${TMPDIR:-/tmp}"
+if [[ -d "/Volumes/GLENDENNING" ]]; then
+  default_tmp_root="/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/tmp"
+fi
+tmp_root="${IMAGER_BENCH_TMP_ROOT:-$default_tmp_root}"
 phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
 skip_casa="${IMAGER_BENCH_SKIP_CASA:-0}"
 skip_profile="${IMAGER_BENCH_SKIP_PROFILE:-0}"
@@ -229,9 +233,16 @@ else
   esac
 fi
 
-if [[ ! -d "$tmp_root" ]]; then
-  echo "error: IMAGER_BENCH_TMP_ROOT does not exist: $tmp_root" >&2
-  exit 2
+mkdir -p "$tmp_root"
+if [[ "$tmp_root" == /Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts* ]]; then
+  marker="/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/README_SAFE_TO_DELETE.txt"
+  if [[ ! -e "$marker" ]]; then
+    cat >"$marker" <<'EOF'
+This directory contains generated casa-rs ImPerformance artifacts.
+It is safe to delete when no benchmark run is actively using it.
+Recreate the contents by rerunning the relevant tools/perf/imager command.
+EOF
+  fi
 fi
 
 if [[ "$mode" == "dirty" ]]; then
@@ -265,12 +276,29 @@ import time
 print(f"{time.perf_counter():.9f}")
 PY
 )"
+  set +e
   if [[ "${IMAGER_BENCH_STREAM_LOG:-0}" == "1" || "${IMAGER_BENCH_STREAM_LOG:-}" == "true" || "${IMAGER_BENCH_STREAM_LOG:-}" == "yes" || "${IMAGER_BENCH_STREAM_LOG:-}" == "on" ]]; then
-    "$@" >/dev/null 2> >(tee "$stderr_file" >&2)
+    : >"$stderr_file"
+    tail -f "$stderr_file" >&2 &
+    local tail_pid="$!"
+    "$@" >/dev/null 2>>"$stderr_file" &
+    local command_pid="$!"
+    local heartbeat_start="$SECONDS"
+    while kill -0 "$command_pid" 2>/dev/null; do
+      sleep 30
+      if kill -0 "$command_pid" 2>/dev/null; then
+        echo "benchmark_command_progress command=$(basename "$1") elapsed_s=$((SECONDS - heartbeat_start))" >&2
+      fi
+    done
+    wait "$command_pid"
+    status="$?"
+    kill "$tail_pid" 2>/dev/null
+    wait "$tail_pid" 2>/dev/null
   else
     "$@" >/dev/null 2>"$stderr_file"
+    status="$?"
   fi
-  status="$?"
+  set -e
   python3 - "$start" "$stderr_file" <<'PY'
 import sys
 import time
@@ -359,6 +387,7 @@ for run in $(seq 1 "$repeats"); do
   else
     prefix="$tmpdir/rust-run-$run"
   fi
+  echo "rust_run_start run=$run prefix=$prefix"
   rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
@@ -657,6 +686,7 @@ if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || 
   echo "  skipped; IMAGER_BENCH_SKIP_CASA=$skip_casa"
 else
   echo "CASA tclean timings (seconds):"
+  echo "casa_run_start repeats=$repeats"
   CASA_RS_BENCH_MS_PATH="$ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \

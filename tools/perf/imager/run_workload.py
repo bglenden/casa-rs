@@ -16,6 +16,8 @@ import uuid
 import math
 from typing import Any
 
+import perf_paths
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 WORKLOAD_DIR = pathlib.Path(__file__).resolve().parent / "workloads"
@@ -95,8 +97,18 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
-        default=pathlib.Path("target/imperformance-wave1"),
+        default=perf_paths.artifact_path("imager", "runs"),
         help="directory for result JSON and benchmark log",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "root for large benchmark artifacts such as image products, panels, "
+            f"and scratch data; defaults to ${perf_paths.ARTIFACT_ROOT_ENV} or "
+            f"{perf_paths.DEFAULT_EXTERNAL_ARTIFACT_ROOT}"
+        ),
     )
     parser.add_argument(
         "--repeats",
@@ -120,6 +132,11 @@ def main() -> None:
         help="validate manifest support and write the planned command without running",
     )
     parser.add_argument(
+        "--stream-log",
+        action="store_true",
+        help="stream benchmark stdout while still recording the full benchmark log",
+    )
+    parser.add_argument(
         "--set-imaging",
         action="append",
         default=[],
@@ -138,11 +155,19 @@ def main() -> None:
             repeats_override=args.repeats,
             run_label_override=args.run_label,
             storage_label_override=args.storage_label,
+            stream_log_override=args.stream_log,
             dry_run=args.dry_run,
         )
-        output_dir = args.output_dir.resolve()
+        output_dir = args.output_dir.expanduser().resolve()
+        artifact_root = (
+            args.artifact_root.expanduser()
+            if args.artifact_root is not None
+            else perf_paths.default_artifact_root()
+        ).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-        attach_output_paths(plan, output_dir, dry_run=args.dry_run)
+        if not args.dry_run:
+            perf_paths.mark_safe_to_delete(artifact_root)
+        attach_output_paths(plan, output_dir, artifact_root, dry_run=args.dry_run)
         result_path = output_dir / f"{plan['run_id']}.json"
         log_path = output_dir / f"{plan['run_id']}.log"
 
@@ -228,6 +253,7 @@ def build_plan(
     run_label_override: str | None,
     storage_label_override: str | None,
     dry_run: bool,
+    stream_log_override: bool | None = None,
 ) -> dict[str, Any]:
     workload_id = required_str(manifest, "id")
     mode_id = required_str(manifest, "mode_id")
@@ -406,7 +432,11 @@ def build_plan(
             "ms_staging": ms_staging,
             "phase_probe": phase_probe,
             "env": extra_env,
-            "stream_log": bool_value(run, "stream_log", False),
+            "stream_log": (
+                bool(stream_log_override)
+                if stream_log_override is not None
+                else bool_value(run, "stream_log", False)
+            ),
             "profile_repeats": int(profile_repeats),
         },
         "run_support": run_support,
@@ -427,15 +457,32 @@ def build_plan(
     return plan
 
 
-def attach_output_paths(plan: dict[str, Any], output_dir: pathlib.Path, *, dry_run: bool) -> None:
-    product_root = output_dir / "products" / plan["run_id"]
+def attach_output_paths(
+    plan: dict[str, Any],
+    output_dir: pathlib.Path,
+    artifact_root: pathlib.Path,
+    *,
+    dry_run: bool,
+) -> None:
+    product_root = artifact_root / "products" / plan["run_id"]
+    comparison_root = artifact_root / "comparisons" / plan["run_id"]
+    tmp_root = artifact_root / "tmp"
     plan["products"] = {
         "root": None if dry_run else str(product_root),
         "rust_prefix": None if dry_run else str(product_root / "rust" / "rust"),
         "casa_prefix": None if dry_run else str(product_root / "casa" / "casa"),
     }
+    plan["artifacts"] = {
+        "root": str(artifact_root),
+        "result_dir": str(output_dir),
+        "products_root": None if dry_run else str(product_root),
+        "comparison_root": None if dry_run else str(comparison_root),
+        "tmp_root": None if dry_run else str(tmp_root),
+    }
     if not dry_run:
+        tmp_root.mkdir(parents=True, exist_ok=True)
         plan["command"]["env"]["IMAGER_BENCH_KEEP_OUTPUT_ROOT"] = str(product_root)
+        plan["command"]["env"]["IMAGER_BENCH_TMP_ROOT"] = str(tmp_root)
 
 
 def benchmark_run_support(
@@ -544,6 +591,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     env.update(plan["command"]["env"])
     if bool(plan.get("run", {}).get("stream_log", False)):
         env["IMAGER_BENCH_STREAM_LOG"] = "1"
+        env["CASA_RS_IMAGING_PROGRESS"] = "1"
     started = utc_now()
     completed = run_benchmark_command(
         plan["command"]["argv"],
@@ -680,6 +728,9 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "source_stream_consumer": [],
         "frontend_progress": [],
         "profile_runs": [],
+        "spectral_slab_events": [],
+        "spectral_slab_memory": [],
+        "spectral_slab_plans": [],
         "worker_diagnostics": [],
         "metal_diagnostics": [],
     }
@@ -703,6 +754,12 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["frontend_progress"].append(parsed)
         elif name == "standard_mfs_profile_run":
             buckets["profile_runs"].append(parsed)
+        elif name == "spectral_slab_event":
+            buckets["spectral_slab_events"].append(parsed)
+        elif name == "spectral_slab_memory":
+            buckets["spectral_slab_memory"].append(parsed)
+        elif name == "spectral_slab_plan":
+            buckets["spectral_slab_plans"].append(parsed)
         elif "worker" in name or "prepare_parallel" in name:
             buckets["worker_diagnostics"].append(parsed)
         elif "metal" in name:
@@ -756,6 +813,18 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
+    spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
+    spectral_memory = [
+        entry.get("fields", {})
+        for entry in buckets.get("spectral_slab_memory", [])
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    max_current_rss = max_int_field(spectral_memory, "current_rss_bytes")
+    max_peak_rss = max_int_field(spectral_memory, "peak_rss_bytes")
+    max_baseline_delta = max_int_field(spectral_memory, "delta_from_baseline_bytes")
+    max_previous_delta_entry = max_entry_by_int_field(
+        spectral_memory, "delta_from_previous_bytes"
+    )
     return {
         "single_plane_reason": {
             "cpu_multi_worker": single_plane.get("cpu_multi_worker_reason"),
@@ -773,10 +842,121 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "active_rows": memory.get("rows_total"),
         "memory_target_bytes": memory.get("memory_target_bytes"),
         "planned_active_bytes": memory.get("planned_active_bytes"),
+        "source_stream_buffer_bytes": memory.get("source_stream_buffer_bytes"),
+        "visibility_row_channel_bytes": memory.get("visibility_row_channel_bytes"),
+        "visibility_row_fixed_bytes": memory.get("visibility_row_fixed_bytes"),
+        "visibility_row_fixed_resident_bytes": memory.get(
+            "visibility_row_fixed_resident_bytes"
+        ),
+        "visibility_row_cache_overhead_bytes": memory.get(
+            "visibility_row_cache_overhead_bytes"
+        ),
+        "modeled_source_read_bytes": memory.get("modeled_source_read_bytes"),
         "peak_rss_bytes": profile.get("peak_rss_bytes"),
         "gridded_samples": profile.get("gridded_samples"),
         "major_cycles": profile.get("major_cycles"),
         "minor_iterations": profile.get("minor_iterations"),
+        "spectral_active_planes": spectral_plan.get("active_planes"),
+        "spectral_slab_count": spectral_plan.get("slab_count"),
+        "spectral_schedule": spectral_plan.get("schedule"),
+        "spectral_best_modeled_schedule": spectral_plan.get("best_modeled_schedule"),
+        "spectral_executor_capabilities": spectral_plan.get("executor_capabilities"),
+        "spectral_cache_budget_bytes": spectral_plan.get("cache_budget_bytes"),
+        "spectral_visibility_cache_policy": spectral_plan.get("visibility_cache_policy"),
+        "spectral_prepared_residency": spectral_plan.get("prepared_residency"),
+        "spectral_visibility_cache_bytes": spectral_plan.get("visibility_cache_bytes"),
+        "spectral_source_channel_visits": spectral_plan.get("source_channel_visits"),
+        "spectral_max_slab_source_channels": spectral_plan.get("max_slab_source_channels"),
+        "spectral_full_source_channel_count": spectral_plan.get("full_source_channel_count"),
+        "spectral_source_cell_channel_count": spectral_plan.get("source_cell_channel_count"),
+        "spectral_visibility_row_channel_bytes": spectral_plan.get(
+            "visibility_row_channel_bytes"
+        ),
+        "spectral_visibility_row_fixed_bytes": spectral_plan.get(
+            "visibility_row_fixed_bytes"
+        ),
+        "spectral_visibility_row_fixed_resident_bytes": spectral_plan.get(
+            "visibility_row_fixed_resident_bytes"
+        ),
+        "spectral_visibility_row_cache_overhead_bytes": spectral_plan.get(
+            "visibility_row_cache_overhead_bytes"
+        ),
+        "spectral_visibility_resident_cache_layout": spectral_plan.get(
+            "visibility_resident_cache_layout"
+        ),
+        "spectral_data_channel_read_granularity": spectral_plan.get(
+            "data_channel_read_granularity"
+        ),
+        "spectral_flag_channel_read_granularity": spectral_plan.get(
+            "flag_channel_read_granularity"
+        ),
+        "spectral_weight_spectrum_channel_read_granularity": spectral_plan.get(
+            "weight_spectrum_channel_read_granularity"
+        ),
+        "spectral_best_modeled_total_io_bytes": spectral_plan.get(
+            "best_modeled_total_io_bytes"
+        ),
+        "spectral_best_modeled_source_read_bytes": spectral_plan.get(
+            "best_modeled_source_read_bytes"
+        ),
+        "spectral_best_modeled_visibility_cache_io_bytes": spectral_plan.get(
+            "best_modeled_visibility_cache_io_bytes"
+        ),
+        "spectral_best_modeled_output_spill_io_bytes": spectral_plan.get(
+            "best_modeled_output_spill_io_bytes"
+        ),
+        "spectral_best_modeled_product_write_bytes": spectral_plan.get(
+            "best_modeled_product_write_bytes"
+        ),
+        "spectral_best_modeled_active_planes": spectral_plan.get(
+            "best_modeled_active_planes"
+        ),
+        "spectral_best_modeled_slab_count": spectral_plan.get("best_modeled_slab_count"),
+        "spectral_best_modeled_source_channel_visits": spectral_plan.get(
+            "best_modeled_source_channel_visits"
+        ),
+        "spectral_modeled_total_io_bytes": spectral_plan.get("modeled_total_io_bytes"),
+        "spectral_modeled_source_read_bytes": spectral_plan.get("modeled_source_read_bytes"),
+        "spectral_modeled_visibility_cache_fill_bytes": spectral_plan.get(
+            "modeled_visibility_cache_fill_bytes"
+        ),
+        "spectral_modeled_visibility_cache_read_bytes": spectral_plan.get(
+            "modeled_visibility_cache_read_bytes"
+        ),
+        "spectral_modeled_visibility_cache_io_bytes": spectral_plan.get(
+            "modeled_visibility_cache_io_bytes"
+        ),
+        "spectral_modeled_output_spill_read_bytes": spectral_plan.get(
+            "modeled_output_spill_read_bytes"
+        ),
+        "spectral_modeled_output_spill_write_bytes": spectral_plan.get(
+            "modeled_output_spill_write_bytes"
+        ),
+        "spectral_modeled_output_spill_io_bytes": spectral_plan.get(
+            "modeled_output_spill_io_bytes"
+        ),
+        "spectral_modeled_product_write_bytes": spectral_plan.get(
+            "modeled_product_write_bytes"
+        ),
+        "spectral_modeled_no_cache_source_read_bytes": spectral_plan.get(
+            "modeled_no_cache_source_read_bytes"
+        ),
+        "spectral_modeled_full_cache_source_read_bytes": spectral_plan.get(
+            "modeled_full_cache_source_read_bytes"
+        ),
+        "spectral_visibility_cache_saved_read_bytes": spectral_plan.get(
+            "visibility_cache_saved_read_bytes"
+        ),
+        "spectral_candidate_io_costs": spectral_plan.get("candidate_io_costs"),
+        "spectral_backend": spectral_plan.get("backend"),
+        "spectral_memory_max_current_rss_bytes": max_current_rss,
+        "spectral_memory_max_peak_rss_bytes": max_peak_rss,
+        "spectral_memory_max_delta_from_baseline_bytes": max_baseline_delta,
+        "spectral_memory_max_delta_from_previous_bytes": max_previous_delta_entry.get(
+            "delta_from_previous_bytes"
+        ),
+        "spectral_memory_max_delta_stage": max_previous_delta_entry.get("stage"),
+        "spectral_memory_max_delta_slab_id": max_previous_delta_entry.get("slab_id"),
     }
 
 
@@ -785,6 +965,18 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
         return {}
     value = entries[-1].get("fields", {})
     return value if isinstance(value, dict) else {}
+
+
+def max_int_field(entries: list[dict[str, Any]], field: str) -> int | None:
+    values = [entry.get(field) for entry in entries if isinstance(entry.get(field), int)]
+    return max(values) if values else None
+
+
+def max_entry_by_int_field(entries: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    candidates = [entry for entry in entries if isinstance(entry.get(field), int)]
+    if not candidates:
+        return {}
+    return max(candidates, key=lambda entry: entry[field])
 
 
 def build_benchmark_feature_summary(
@@ -1228,7 +1420,12 @@ def compare_products(
             "products": {},
         }
 
-    panel_dir = log_path.with_suffix(".panels")
+    comparison_root = plan.get("artifacts", {}).get("comparison_root")
+    panel_dir = (
+        pathlib.Path(comparison_root) / "panels"
+        if comparison_root
+        else log_path.with_suffix(".panels")
+    )
     request = {
         "rust_prefix": rust_prefix,
         "casa_prefix": casa_prefix,
@@ -1942,6 +2139,11 @@ def low_order_r2_score(data, mask):
 def difference_basis_fit(reference, diff, mask):
     if int(np.count_nonzero(mask)) < 8:
         return {"status": "insufficient_pixels"}
+    if reference.ndim != 2 or min(reference.shape) < 2:
+        return {
+            "status": "insufficient_dimensions",
+            "shape": [int(v) for v in reference.shape],
+        }
     y_gradient, x_gradient = np.gradient(reference.astype(np.float64))
     diff_values = diff[mask].astype(np.float64)
     reference_values = reference[mask].astype(np.float64)

@@ -78,6 +78,10 @@ pub enum MsError {
     #[error("schema error: {0}")]
     Schema(#[from] casa_tables::SchemaError),
 
+    /// Invalid caller input for a MeasurementSet read or write request.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     /// Invalid input for native synthetic-observation generation.
     #[error("synthetic observation input: {0}")]
     SyntheticObservation(String),

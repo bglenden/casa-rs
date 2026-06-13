@@ -66,6 +66,7 @@ pub mod subtables;
 pub mod transform;
 pub mod ui_schema;
 pub mod validate;
+pub mod visibility_buffer;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
@@ -151,4 +152,9 @@ pub use subtables::{
 };
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
+};
+pub use visibility_buffer::{
+    VisibilityBuffer, VisibilityBufferAllocationReport, VisibilityBufferColumnReport,
+    VisibilityBufferFillReport, VisibilityBufferRequest, VisibilityBufferTimings,
+    VisibilityChannelReadGranularity, VisibilityComplexSamples, VisibilityFloatSamples,
 };

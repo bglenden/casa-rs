@@ -21,6 +21,7 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+libc = "0.2"
 libm = "0.2"
 nalgebra.workspace = true
 ndarray.workspace = true
@@ -57,6 +58,10 @@ path = "src/bin/flagmanager.rs"
 [[bin]]
 name = "simobserve"
 path = "src/bin/simobserve.rs"
+
+[[bin]]
+name = "ms-read-probe"
+path = "src/bin/ms-read-probe.rs"
 
 [lints]
 workspace = true

@@ -18,13 +18,15 @@ import numpy as np
 from casatasks import tclean
 from casatools import image
 
+import perf_paths
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 DEFAULT_MS = pathlib.Path(
     "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/"
     "wave1-vla-single-medium.ms"
 )
-DEFAULT_OUTPUT = REPO_ROOT / "target" / "imperformance-wave3" / "residual-divergence"
+DEFAULT_OUTPUT = perf_paths.artifact_path("wave3", "residual-divergence")
 
 
 def parse_args() -> argparse.Namespace:
@@ -322,6 +324,7 @@ def main() -> None:
     if not args.ms.exists():
         raise SystemExit(f"MeasurementSet not found: {args.ms}")
     cases = [case.strip() for case in args.cases.split(",") if case.strip()]
+    perf_paths.mark_safe_to_delete(perf_paths.default_artifact_root())
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "measurement_set": str(args.ms),

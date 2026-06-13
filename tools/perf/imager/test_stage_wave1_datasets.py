@@ -44,6 +44,13 @@ class StageWave1DatasetsTest(unittest.TestCase):
                 "standard-mfs-dirty-control",
                 "standard-mfs-clean-current",
                 "standard-cube-line",
+                "standard-cube-line-clean-hogbom-casa-niter2",
+                "standard-cube-line-clean-clark-niter2",
+                "standard-cube-line-clean-multiscale-niter2",
+                "standard-cube-line-clean-hogbom-casa-final",
+                "standard-cube-line-clean-hogbom-strict-final",
+                "standard-cube-line-clean-clark-final",
+                "standard-cube-line-clean-multiscale-final",
                 "mosaic-mfs-clean-primary",
                 "mosaic-cube-bounded",
             ],
@@ -123,11 +130,54 @@ class StageWave1DatasetsTest(unittest.TestCase):
         workload = stage.build_workload_manifest(dataset, "standard-mfs-clean-current")
 
         self.assertEqual(
-            [".image", ".residual", ".psf", ".model"],
+            [".image", ".residual", ".psf", ".sumwt", ".model"],
             workload["comparison"]["products"],
         )
         self.assertEqual(100, workload["imaging"]["niter"])
         self.assertEqual(100, workload["imaging"]["minor_cycle_length"])
+
+    def test_cube_clean_matrix_sets_deconvolver_and_hogbom_mode(self) -> None:
+        spec = stage.select_datasets(
+            self.registry,
+            dataset_ids=["wave1-vla-single-medium"],
+            tiers=None,
+            instruments=None,
+        )
+        dataset = stage.build_plan(
+            self.registry,
+            spec,
+            self.data_root,
+            allow_non_external_large_root=False,
+        )["datasets"][0]
+
+        hogbom_casa = stage.build_workload_manifest(
+            dataset, "standard-cube-line-clean-hogbom-casa-niter2"
+        )
+        hogbom_strict = stage.build_workload_manifest(
+            dataset, "standard-cube-line-clean-hogbom-strict-final"
+        )
+        clark = stage.build_workload_manifest(
+            dataset, "standard-cube-line-clean-clark-final"
+        )
+        multiscale = stage.build_workload_manifest(
+            dataset, "standard-cube-line-clean-multiscale-final"
+        )
+
+        self.assertEqual("cube", hogbom_casa["imaging"]["specmode"])
+        self.assertEqual("nearest", hogbom_casa["imaging"]["interpolation"])
+        self.assertEqual("hogbom", hogbom_casa["imaging"]["deconvolver"])
+        self.assertEqual("casa", hogbom_casa["imaging"]["hogbom_iteration_mode"])
+        self.assertEqual(2, hogbom_casa["imaging"]["niter"])
+        self.assertEqual("strict", hogbom_strict["imaging"]["hogbom_iteration_mode"])
+        self.assertEqual(100, hogbom_strict["imaging"]["niter"])
+        self.assertEqual("clark", clark["imaging"]["deconvolver"])
+        self.assertNotIn("hogbom_iteration_mode", clark["imaging"])
+        self.assertEqual("multiscale", multiscale["imaging"]["deconvolver"])
+        self.assertEqual([0, 5, 15], multiscale["imaging"]["scales"])
+        self.assertEqual(
+            [".image", ".residual", ".psf", ".sumwt", ".model"],
+            hogbom_casa["comparison"]["products"],
+        )
 
     def test_niter2_clean_workload_is_shallow_diagnostic(self) -> None:
         spec = stage.select_datasets(
@@ -149,7 +199,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertEqual(2, workload["imaging"]["niter"])
         self.assertEqual(2, workload["imaging"]["minor_cycle_length"])
         self.assertEqual(
-            [".image", ".residual", ".psf", ".model"],
+            [".image", ".residual", ".psf", ".sumwt", ".model"],
             workload["comparison"]["products"],
         )
 

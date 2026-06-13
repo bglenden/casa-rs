@@ -34,6 +34,23 @@ imager.
     `tclean` on the same MeasurementSet selection, and can preserve final-run
     products for harness-level comparison
 
+## Artifact policy
+
+Generated benchmark data does not default to the repository `target/`
+directory. When `/Volumes/GLENDENNING` is mounted, perf-imager tools write
+large artifacts under:
+
+```text
+/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/
+```
+
+That root contains `README_SAFE_TO_DELETE.txt`; its contents are generated and
+safe to remove when no benchmark is actively using them. Override the root with
+`CASA_RS_IMPERF_ARTIFACT_ROOT` or `run_workload.py --artifact-root` when a run
+needs a different external scratch area. Small JSON/log result files may still
+be directed with `--output-dir`, but image products, comparison panels, and
+benchmark temp copies default to the safe-to-delete external root.
+
 ## Typical usage
 
 ```sh
@@ -46,7 +63,7 @@ To run the Wave 1 manifest harness in validation mode:
 tools/perf/imager/run_workload.py --dry-run wave1-standard-mfs-dirty-smoke
 ```
 
-The command writes a JSON plan under `target/imperformance-wave1/` without
+The command writes a JSON plan under the external artifact root without
 requiring CASA Python or a local MeasurementSet.
 
 To validate the Wave 1 simulated-dataset plan:
@@ -112,7 +129,7 @@ cargo build --release --bin simobserve
 
 python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
   --dataset wave1-vla-single-medium \
-  --output-dir target/imperformance-wave1/internal-io-check \
+  --output-dir /path/to/fast-local-disk/internal-io-check \
   --skip-casa \
   --skip-serial-check \
   --disable-prediction \
