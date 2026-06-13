@@ -30,6 +30,9 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Free lint build artifacts
+        run: cargo clean
+
       - name: Run tests
         run: cargo test --workspace
 
