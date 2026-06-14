@@ -981,9 +981,13 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     );
     stage_timings.beam_fit += beam_fit_started.elapsed();
     let restore_started = Instant::now();
-    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    let restored_image = if request.clean.niter == 0 && !has_initial_model {
+        residual.clone()
+    } else {
+        let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+        &restored_model + &residual
+    };
     stage_timings.restore += restore_started.elapsed();
-    let restored_image = &restored_model + &residual;
 
     let max_abs_w_lambda = weighted_batches
         .iter()

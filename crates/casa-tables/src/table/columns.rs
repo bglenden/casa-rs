@@ -2,6 +2,7 @@
 use std::collections::HashSet;
 
 use super::*;
+use crate::storage::RequiredScalarColumnData;
 
 fn compile_prepared_row_slots(
     table: &Table,
@@ -988,6 +989,34 @@ impl Table {
             .collect()
     }
 
+    /// Returns required scalar values for every row in each requested column.
+    ///
+    /// This is a typed, column-oriented variant of
+    /// [`scalar_columns_owned`](Self::scalar_columns_owned) for hot paths that
+    /// know the selected scalar columns are fully populated.
+    pub fn required_scalar_columns_owned(
+        &self,
+        columns: &[&str],
+    ) -> Result<HashMap<String, RequiredScalarColumnValues>, TableError> {
+        for &column in columns {
+            self.require_column(column)?;
+        }
+        if let Some(values_by_column) = self.inner.required_scalar_columns_owned(columns)? {
+            return Ok(values_by_column
+                .into_iter()
+                .map(|(name, values)| (name, required_scalar_column_values(values)))
+                .collect());
+        }
+        columns
+            .iter()
+            .map(|&column| {
+                let values = self.get_scalar_cells_owned(column)?;
+                required_scalar_column_values_from_optional_scalars(&values, column)
+                    .map(|values| (column.to_string(), values))
+            })
+            .collect()
+    }
+
     pub(crate) fn get_scalar_cells_owned_for_rows(
         &self,
         column: &str,
@@ -1589,6 +1618,76 @@ impl<'a> PreparedTableRowMut<'a> {
                 found: value.kind(),
             }),
         }
+    }
+}
+
+fn required_scalar_column_values(values: RequiredScalarColumnData) -> RequiredScalarColumnValues {
+    match values {
+        RequiredScalarColumnData::Bool(values) => RequiredScalarColumnValues::Bool(values),
+        RequiredScalarColumnData::Int32(values) => RequiredScalarColumnValues::Int32(values),
+        RequiredScalarColumnData::Float32(values) => RequiredScalarColumnValues::Float32(values),
+        RequiredScalarColumnData::Float64(values) => RequiredScalarColumnValues::Float64(values),
+    }
+}
+
+fn required_scalar_column_values_from_optional_scalars(
+    values: &[Option<ScalarValue>],
+    column: &str,
+) -> Result<RequiredScalarColumnValues, TableError> {
+    let Some(first) = values.iter().find_map(|value| value.as_ref()) else {
+        return Err(TableError::Storage(format!(
+            "required scalar column {column} has no values"
+        )));
+    };
+    match first {
+        ScalarValue::Bool(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Bool(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Bool"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnValues::Bool),
+        ScalarValue::Int32(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Int32(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Int32"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnValues::Int32),
+        ScalarValue::Float32(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Float32(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Float32"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnValues::Float32),
+        ScalarValue::Float64(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Float64(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Float64"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnValues::Float64),
+        other => Err(TableError::Storage(format!(
+            "required scalar column {column} has unsupported type {:?}",
+            other.primitive_type()
+        ))),
     }
 }
 

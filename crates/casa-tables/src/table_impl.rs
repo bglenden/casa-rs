@@ -7,10 +7,11 @@ use std::sync::OnceLock;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::schema::{ColumnType, TableSchema};
-use crate::storage::{CompositeStorage, StorageProfiler};
+use crate::storage::{CompositeStorage, RequiredScalarColumnData, StorageProfiler};
 use crate::table::TableError;
 
 type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
+type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
 
 #[derive(Debug, Clone)]
 struct LazyRowsSource {
@@ -850,6 +851,95 @@ impl TableImpl {
         Ok(Some(values_by_column))
     }
 
+    pub(crate) fn required_scalar_columns_owned(
+        &self,
+        columns: &[&str],
+    ) -> Result<Option<RequiredScalarColumnValueMap>, TableError> {
+        if columns.is_empty() {
+            return Ok(Some(HashMap::new()));
+        }
+
+        if let Some(loaded) = self.loaded_rows.get() {
+            let mut values_by_column = HashMap::with_capacity(columns.len());
+            for &column in columns {
+                let values = loaded
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .map(|(row, row_value)| match row_value.get(column) {
+                        Some(Value::Scalar(scalar)) => Ok(Some(scalar.clone())),
+                        _ => Err(TableError::Storage(format!(
+                            "required scalar column {column} row {row} is missing"
+                        ))),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                values_by_column.insert(
+                    column.to_string(),
+                    required_scalar_column_data_from_optional_scalars(&values, column)?,
+                );
+            }
+            return Ok(Some(values_by_column));
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+
+        let mut profiler = StorageProfiler::start(format!(
+            "table_impl::load_required_scalar_columns_now path={} columns={columns:?}",
+            source.path.display()
+        ));
+        let requested = columns
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let snapshot = CompositeStorage
+            .load_named_required_scalar_columns_with_row_hint(
+                &source.path,
+                &requested,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load required scalar columns {:?} for table {}: {err}",
+                    columns,
+                    source.path.display()
+                ))
+            })?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "storage_load_complete",
+                Some(format!(
+                    "row_count_hint={} requested_columns={} loaded_columns={}",
+                    source.row_count_hint,
+                    columns.len(),
+                    snapshot.columns.len(),
+                )),
+            );
+        }
+        let mut values_by_column = snapshot.columns;
+        for &column in columns {
+            let Some(values) = values_by_column.get_mut(column) else {
+                return Err(TableError::Storage(format!(
+                    "required scalar column {column} was not loaded"
+                )));
+            };
+            if required_scalar_column_data_len(values) != source.row_count_hint {
+                return Err(TableError::Storage(format!(
+                    "required scalar column {column} length {} does not match row count {}",
+                    required_scalar_column_data_len(values),
+                    source.row_count_hint
+                )));
+            }
+            if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
+                for (&row_index, value) in overrides {
+                    set_required_scalar_column_value(values, row_index, value, column)?;
+                }
+            }
+        }
+        Ok(Some(values_by_column))
+    }
+
     pub(crate) fn scalar_cells_owned_for_rows(
         &self,
         row_indices: &[usize],
@@ -1374,5 +1464,124 @@ impl TableImpl {
             .by_column
             .get(column)
             .is_some_and(|cells| !cells.is_empty())
+    }
+}
+
+fn required_scalar_column_data_len(values: &RequiredScalarColumnData) -> usize {
+    match values {
+        RequiredScalarColumnData::Bool(values) => values.len(),
+        RequiredScalarColumnData::Int32(values) => values.len(),
+        RequiredScalarColumnData::Float32(values) => values.len(),
+        RequiredScalarColumnData::Float64(values) => values.len(),
+    }
+}
+
+fn set_required_scalar_column_value(
+    values: &mut RequiredScalarColumnData,
+    row_index: usize,
+    value: &ScalarValue,
+    column: &str,
+) -> Result<(), TableError> {
+    match (values, value) {
+        (RequiredScalarColumnData::Bool(values), ScalarValue::Bool(value)) => {
+            let Some(slot) = values.get_mut(row_index) else {
+                return Err(TableError::Storage(format!(
+                    "required scalar column {column} override row {row_index} is out of bounds"
+                )));
+            };
+            *slot = *value;
+        }
+        (RequiredScalarColumnData::Int32(values), ScalarValue::Int32(value)) => {
+            let Some(slot) = values.get_mut(row_index) else {
+                return Err(TableError::Storage(format!(
+                    "required scalar column {column} override row {row_index} is out of bounds"
+                )));
+            };
+            *slot = *value;
+        }
+        (RequiredScalarColumnData::Float32(values), ScalarValue::Float32(value)) => {
+            let Some(slot) = values.get_mut(row_index) else {
+                return Err(TableError::Storage(format!(
+                    "required scalar column {column} override row {row_index} is out of bounds"
+                )));
+            };
+            *slot = *value;
+        }
+        (RequiredScalarColumnData::Float64(values), ScalarValue::Float64(value)) => {
+            let Some(slot) = values.get_mut(row_index) else {
+                return Err(TableError::Storage(format!(
+                    "required scalar column {column} override row {row_index} is out of bounds"
+                )));
+            };
+            *slot = *value;
+        }
+        (_, other) => {
+            return Err(TableError::Storage(format!(
+                "required scalar column {column} override has incompatible type {:?}",
+                other.primitive_type()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn required_scalar_column_data_from_optional_scalars(
+    values: &[Option<ScalarValue>],
+    column: &str,
+) -> Result<RequiredScalarColumnData, TableError> {
+    let Some(first) = values.iter().find_map(|value| value.as_ref()) else {
+        return Err(TableError::Storage(format!(
+            "required scalar column {column} has no values"
+        )));
+    };
+    match first {
+        ScalarValue::Bool(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Bool(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Bool"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnData::Bool),
+        ScalarValue::Int32(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Int32(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Int32"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnData::Int32),
+        ScalarValue::Float32(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Float32(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Float32"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnData::Float32),
+        ScalarValue::Float64(_) => values
+            .iter()
+            .enumerate()
+            .map(|(row, value)| match value {
+                Some(ScalarValue::Float64(value)) => Ok(*value),
+                _ => Err(TableError::Storage(format!(
+                    "required scalar column {column} row {row} is not Float64"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(RequiredScalarColumnData::Float64),
+        other => Err(TableError::Storage(format!(
+            "required scalar column {column} has unsupported type {:?}",
+            other.primitive_type()
+        ))),
     }
 }

@@ -682,6 +682,40 @@ pub struct TableColumnMut<'a> {
     pub(crate) column: String,
 }
 
+/// Required scalar values loaded as typed column vectors.
+///
+/// Unlike [`TableColumn::scalar_cells_owned`], this form is for callers that
+/// know every row in the requested column must be present and want to avoid a
+/// per-row `ScalarValue` wrapper in hot column-oriented paths.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RequiredScalarColumnValues {
+    /// Boolean scalar column values.
+    Bool(Vec<bool>),
+    /// 32-bit signed integer scalar column values.
+    Int32(Vec<i32>),
+    /// 32-bit floating-point scalar column values.
+    Float32(Vec<f32>),
+    /// 64-bit floating-point scalar column values.
+    Float64(Vec<f64>),
+}
+
+impl RequiredScalarColumnValues {
+    /// Number of rows represented by this column vector.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.len(),
+            Self::Int32(values) => values.len(),
+            Self::Float32(values) => values.len(),
+            Self::Float64(values) => values.len(),
+        }
+    }
+
+    /// Returns true when this column vector is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Read-only cell accessor for a [`Table`].
 ///
 /// Cell accessors tie a row index and column name together so callers can

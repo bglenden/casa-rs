@@ -76,7 +76,7 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
-use casa_tables::ColumnSchema;
+use casa_tables::{ColumnSchema, RequiredScalarColumnValues};
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -7119,6 +7119,76 @@ struct SharedCubePlaneRunResult {
     run_imaging_elapsed: Duration,
     visibility_batches: usize,
     visibility_samples: usize,
+    used_owned_single_plane_dirty: bool,
+}
+
+fn owned_single_plane_dirty_cube_eligible(
+    weighting: &WeightingMode,
+    weight_density_mode: &WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    gridder_mode: &GridderMode,
+    w_term_mode: &WTermMode,
+    clean: CleanConfig,
+    channel: &CubeChannelRequest,
+) -> bool {
+    clean.niter == 0
+        && matches!(weighting, WeightingMode::Natural)
+        && matches!(weight_density_mode, WeightDensityMode::PerPlane)
+        && uv_taper.is_none()
+        && matches!(gridder_mode, GridderMode::Standard)
+        && matches!(w_term_mode, WTermMode::None)
+        && channel.density_batches.is_empty()
+        && channel.model_interpolation_batches.is_empty()
+}
+
+fn single_plane_imaging_result_to_cube_result(
+    channel_frequency_hz: f64,
+    plane_result: ImagingResult,
+) -> CubeImagingResult {
+    let diagnostics = plane_result.diagnostics;
+    let warnings = diagnostics.warnings.clone();
+    let gridded_samples = diagnostics.gridded_samples;
+    let skipped_samples = diagnostics.skipped_samples;
+    let major_cycles = diagnostics.major_cycles;
+    let minor_iterations = diagnostics.minor_iterations;
+    let clean_stop_reason = diagnostics.clean_stop_reason;
+    let stage_timings = diagnostics.stage_timings;
+    let beam = plane_result.beam;
+    CubeImagingResult {
+        psf: plane_result.psf,
+        residual: plane_result.residual,
+        model: plane_result.model,
+        image: plane_result.image,
+        sumwt: plane_result.sumwt,
+        clean_mask: None,
+        beams: vec![beam],
+        restored_beams: vec![beam],
+        diagnostics: CubeImagingDiagnostics {
+            warnings,
+            gridded_samples,
+            skipped_samples,
+            major_cycles,
+            minor_iterations,
+            clean_stop_reason,
+            channel_diagnostics: vec![diagnostics],
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: plane_result.compatibility.plane_stokes,
+            reffreq_hz: channel_frequency_hz,
+            channel_frequencies_hz: vec![channel_frequency_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7327,28 +7397,61 @@ fn run_independent_shared_cube_slab_planes(
             let model_batches = channel.model_interpolation_batches.len();
             let model_samples =
                 model_interpolation_batch_sample_count(&channel.model_interpolation_batches);
-            let cube_request = CubeImagingRequest {
-                geometry,
-                channels: vec![channel],
-                plane_stokes,
-                weighting: payload.weighting,
-                weight_density_mode: payload.weight_density_mode,
-                uv_taper: payload.uv_taper,
-                restoring_beam_mode: payload.restoring_beam_mode,
-                deconvolver: payload.deconvolver,
-                multiscale_scales: payload.multiscale_scales,
-                small_scale_bias: payload.small_scale_bias,
+            let use_owned_single_plane_dirty = owned_single_plane_dirty_cube_eligible(
+                &payload.weighting,
+                &payload.weight_density_mode,
+                payload.uv_taper,
+                &payload.gridder_mode,
+                &payload.w_term_mode,
                 clean,
-                clean_mask: None,
-                channel_clean_mask: None,
-                auto_mask: None,
-                psf_cutoff: clean.psf_cutoff,
-                w_term_mode: payload.w_term_mode,
-                w_project_planes: payload.w_project_planes,
-                compatibility: CompatibilityMode::CasaStandardMfs,
-            };
+                &channel,
+            );
             let run_imaging_started = Instant::now();
-            let cube_result = run_cube(&cube_request).map_err(|error| error.to_string())?;
+            let cube_result = if use_owned_single_plane_dirty {
+                let channel_frequency_hz = channel.channel_frequency_hz;
+                let plane_result = run_imaging(&ImagingRequest {
+                    geometry,
+                    visibility_batches: channel.visibility_batches,
+                    gridder_mode: GridderMode::Standard,
+                    plane_stokes,
+                    weighting: payload.weighting,
+                    reffreq_hz: channel_frequency_hz,
+                    selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+                    deconvolver: payload.deconvolver,
+                    multiscale_scales: payload.multiscale_scales,
+                    small_scale_bias: payload.small_scale_bias,
+                    clean,
+                    clean_mask: None,
+                    initial_model: None,
+                    w_term_mode: payload.w_term_mode,
+                    w_project_planes: payload.w_project_planes,
+                    compatibility: CompatibilityMode::CasaStandardMfs,
+                })
+                .map_err(|error| error.to_string())?;
+                single_plane_imaging_result_to_cube_result(channel_frequency_hz, plane_result)
+            } else {
+                let cube_request = CubeImagingRequest {
+                    geometry,
+                    channels: vec![channel],
+                    plane_stokes,
+                    weighting: payload.weighting,
+                    weight_density_mode: payload.weight_density_mode,
+                    uv_taper: payload.uv_taper,
+                    restoring_beam_mode: payload.restoring_beam_mode,
+                    deconvolver: payload.deconvolver,
+                    multiscale_scales: payload.multiscale_scales,
+                    small_scale_bias: payload.small_scale_bias,
+                    clean,
+                    clean_mask: None,
+                    channel_clean_mask: None,
+                    auto_mask: None,
+                    psf_cutoff: clean.psf_cutoff,
+                    w_term_mode: payload.w_term_mode,
+                    w_project_planes: payload.w_project_planes,
+                    compatibility: CompatibilityMode::CasaStandardMfs,
+                };
+                run_cube(&cube_request).map_err(|error| error.to_string())?
+            };
             let run_imaging_elapsed = run_imaging_started.elapsed();
             let stage_timings = cube_result.diagnostics.stage_timings;
             let plane_diagnostics = cube_result
@@ -7368,7 +7471,7 @@ fn run_independent_shared_cube_slab_planes(
                 .sum::<usize>();
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
-                    "cube_shared_plane_worker plane={} batches={} samples={} density_batches={} density_samples={} model_batches={} model_samples={} weight_density_mode={:?} gridder_mode={:?} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} psf_peak_normalization={:.9e} max_psf_sidelobe={:.9e} major_cycles={} actual_minor_iterations={} reported_minor_iterations={} initial_peak={:.9e} final_peak={:.9e} stop_reason={:?} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_normalize_ms={:.3} core_restore_ms={:.3} core_controller_overhead_ms={:.3}",
+                    "cube_shared_plane_worker plane={} batches={} samples={} density_batches={} density_samples={} model_batches={} model_samples={} owned_single_plane_dirty={} weight_density_mode={:?} gridder_mode={:?} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} psf_peak_normalization={:.9e} max_psf_sidelobe={:.9e} major_cycles={} actual_minor_iterations={} reported_minor_iterations={} initial_peak={:.9e} final_peak={:.9e} stop_reason={:?} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_normalize_ms={:.3} core_restore_ms={:.3} core_controller_overhead_ms={:.3}",
                     payload.plane_index,
                     visibility_batches,
                     visibility_samples,
@@ -7376,6 +7479,7 @@ fn run_independent_shared_cube_slab_planes(
                     density_samples,
                     model_batches,
                     model_samples,
+                    use_owned_single_plane_dirty,
                     payload.weight_density_mode,
                     payload.gridder_mode,
                     plane_diagnostics.gridded_samples,
@@ -7411,6 +7515,7 @@ fn run_independent_shared_cube_slab_planes(
                     run_imaging_elapsed,
                     visibility_batches,
                     visibility_samples,
+                    used_owned_single_plane_dirty: use_owned_single_plane_dirty,
                 },
                 stage_timings,
             ))
@@ -7422,7 +7527,7 @@ fn run_independent_shared_cube_slab_planes(
         add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
-                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} batches={} samples={} core_total_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
+                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} batches={} samples={} owned_single_plane_dirty={} core_total_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
                 plane_result.plane_index,
                 plane_result.batch_index,
                 plane_result.batch_task_count,
@@ -7431,6 +7536,7 @@ fn run_independent_shared_cube_slab_planes(
                 duration_ms(plane_result.result.run_imaging_elapsed),
                 plane_result.result.visibility_batches,
                 plane_result.result.visibility_samples,
+                plane_result.result.used_owned_single_plane_dirty,
                 duration_ms(plane_result.stage_timings.total),
                 duration_ms(plane_result.stage_timings.executor_build),
                 duration_ms(plane_result.stage_timings.psf_grid),
@@ -17257,10 +17363,10 @@ fn select_main_rows(
     if needs_row_times {
         selection_scalar_names.push("TIME");
     }
-    let selection_scalars = load_main_scalar_columns_owned(ms, &selection_scalar_names)?;
-    let field_values = required_i32_main_column_from_map(ms, &selection_scalars, "FIELD_ID")?;
-    let ddid_values = required_i32_main_column_from_map(ms, &selection_scalars, "DATA_DESC_ID")?;
-    let flag_row = required_bool_main_column_from_map(ms, &selection_scalars, "FLAG_ROW")?;
+    let mut selection_scalars = load_main_required_scalar_columns(ms, &selection_scalar_names)?;
+    let field_values = take_required_i32_main_column(&mut selection_scalars, "FIELD_ID")?;
+    let ddid_values = take_required_i32_main_column(&mut selection_scalars, "DATA_DESC_ID")?;
+    let flag_row = take_required_bool_main_column(&mut selection_scalars, "FLAG_ROW")?;
     maybe_log_frontend_progress(
         "prepare_plane_input/select_main_rows/load_scalar_columns",
         select_started_at.elapsed(),
@@ -17268,9 +17374,8 @@ fn select_main_rows(
     );
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
     let time_values = if needs_row_times {
-        Some(required_f64_main_column_from_map(
-            ms,
-            &selection_scalars,
+        Some(take_required_f64_main_column(
+            &mut selection_scalars,
             "TIME",
         )?)
     } else {
@@ -17380,40 +17485,30 @@ fn select_main_rows(
     })
 }
 
-fn load_main_scalar_columns_owned(
+fn load_main_required_scalar_columns(
     ms: &MeasurementSet,
     column_names: &[&'static str],
-) -> Result<HashMap<String, Vec<Option<ScalarValue>>>, String> {
+) -> Result<HashMap<String, RequiredScalarColumnValues>, String> {
     let row_count = ms.main_table().row_count();
-    let values = if frontend_progress_enabled() {
-        let load_started_at = Instant::now();
+    let load_started_at = Instant::now();
+    if frontend_progress_enabled() {
         eprintln!(
-            "frontend stage=prepare_plane_input/load_main_scalar_columns start rows={} columns={:?}",
+            "frontend stage=prepare_plane_input/load_main_required_scalar_columns start rows={} columns={:?}",
             row_count, column_names,
         );
-        let mut values = HashMap::with_capacity(column_names.len());
-        for &column_name in column_names {
-            let column_started_at = Instant::now();
-            let column_values = ms
-                .main_table()
-                .column_accessor(column_name)
-                .and_then(|column| column.scalar_cells_owned())
-                .map_err(|error| format!("load scalar column {column_name}: {error}"))?;
-            eprintln!(
-                "frontend stage=prepare_plane_input/load_main_scalar_columns/column name={} rows={} elapsed_s={:.3} total_elapsed_s={:.3}",
-                column_name,
-                column_values.len(),
-                column_started_at.elapsed().as_secs_f64(),
-                load_started_at.elapsed().as_secs_f64(),
-            );
-            values.insert(column_name.to_string(), column_values);
-        }
-        values
-    } else {
-        ms.main_table()
-            .scalar_columns_owned(column_names)
-            .map_err(|error| format!("load scalar columns {column_names:?}: {error}"))?
-    };
+    }
+    let values = ms
+        .main_table()
+        .required_scalar_columns_owned(column_names)
+        .map_err(|error| format!("load required scalar columns {column_names:?}: {error}"))?;
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/load_main_required_scalar_columns/done rows={} columns={} elapsed_s={:.3}",
+            row_count,
+            values.len(),
+            load_started_at.elapsed().as_secs_f64(),
+        );
+    }
     for &column_name in column_names {
         let Some(column_values) = values.get(column_name) else {
             return Err(format!("scalar column {column_name} was not loaded"));
@@ -17429,34 +17524,20 @@ fn load_main_scalar_columns_owned(
     Ok(values)
 }
 
-fn required_i32_main_column_from_map(
-    ms: &MeasurementSet,
-    columns: &HashMap<String, Vec<Option<ScalarValue>>>,
+fn take_required_i32_main_column(
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
     column_name: &'static str,
 ) -> Result<Vec<i32>, String> {
-    let row_count = ms.main_table().row_count();
     let values = columns
-        .get(column_name)
+        .remove(column_name)
         .ok_or_else(|| format!("scalar column {column_name} was not loaded"))?;
-    if values.len() != row_count {
-        return Err(format!(
-            "{column_name} length {} does not match MAIN row count {}",
-            values.len(),
-            row_count
-        ));
+    match values {
+        RequiredScalarColumnValues::Int32(values) => Ok(values),
+        other => Err(format!(
+            "{column_name} must be Int32, found typed scalar column with {} rows",
+            other.len()
+        )),
     }
-    values
-        .iter()
-        .enumerate()
-        .map(|(row, value)| match value {
-            Some(ScalarValue::Int32(value)) => Ok(*value),
-            Some(other) => Err(format!(
-                "{column_name} row {row} must be Int32, found {:?}",
-                other.primitive_type()
-            )),
-            None => Err(format!("{column_name} row {row} is missing")),
-        })
-        .collect()
 }
 
 fn load_selected_i32_main_column(
@@ -17524,65 +17605,39 @@ fn load_selected_optional_i32_main_column(
         .collect()
 }
 
-fn required_bool_main_column_from_map(
-    ms: &MeasurementSet,
-    columns: &HashMap<String, Vec<Option<ScalarValue>>>,
+fn take_required_bool_main_column(
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
     column_name: &'static str,
 ) -> Result<Vec<bool>, String> {
-    let row_count = ms.main_table().row_count();
     let values = columns
-        .get(column_name)
+        .remove(column_name)
         .ok_or_else(|| format!("scalar column {column_name} was not loaded"))?;
-    if values.len() != row_count {
-        return Err(format!(
-            "{column_name} length {} does not match MAIN row count {}",
-            values.len(),
-            row_count
-        ));
+    match values {
+        RequiredScalarColumnValues::Bool(values) => Ok(values),
+        other => Err(format!(
+            "{column_name} must be Bool, found typed scalar column with {} rows",
+            other.len()
+        )),
     }
-    values
-        .iter()
-        .enumerate()
-        .map(|(row, value)| match value {
-            Some(ScalarValue::Bool(value)) => Ok(*value),
-            Some(other) => Err(format!(
-                "{column_name} row {row} must be Bool, found {:?}",
-                other.primitive_type()
-            )),
-            None => Err(format!("{column_name} row {row} is missing")),
-        })
-        .collect()
 }
 
-fn required_f64_main_column_from_map(
-    ms: &MeasurementSet,
-    columns: &HashMap<String, Vec<Option<ScalarValue>>>,
+fn take_required_f64_main_column(
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
     column_name: &'static str,
 ) -> Result<Vec<f64>, String> {
-    let row_count = ms.main_table().row_count();
     let values = columns
-        .get(column_name)
+        .remove(column_name)
         .ok_or_else(|| format!("scalar column {column_name} was not loaded"))?;
-    if values.len() != row_count {
-        return Err(format!(
-            "{column_name} length {} does not match MAIN row count {}",
-            values.len(),
-            row_count
-        ));
+    match values {
+        RequiredScalarColumnValues::Float64(values) => Ok(values),
+        RequiredScalarColumnValues::Float32(values) => {
+            Ok(values.into_iter().map(f64::from).collect())
+        }
+        other => Err(format!(
+            "{column_name} must be Float64, found typed scalar column with {} rows",
+            other.len()
+        )),
     }
-    values
-        .iter()
-        .enumerate()
-        .map(|(row, value)| match value {
-            Some(ScalarValue::Float64(value)) => Ok(*value),
-            Some(ScalarValue::Float32(value)) => Ok(*value as f64),
-            Some(other) => Err(format!(
-                "{column_name} row {row} must be Float64, found {:?}",
-                other.primitive_type()
-            )),
-            None => Err(format!("{column_name} row {row} is missing")),
-        })
-        .collect()
 }
 
 fn extract_constant_direction_angles(

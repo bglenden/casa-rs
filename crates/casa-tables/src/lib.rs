@@ -273,8 +273,8 @@ pub use storage::{
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table, TableCell,
-    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
-    TableRowMut,
+    QueryResult, RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange, Slicer,
+    SortOrder, Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+    TableOptions, TableRow, TableRowMut,
 };
 pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};
