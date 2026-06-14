@@ -1717,6 +1717,7 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
                 VisibilityCachePolicy::Disabled => 1usize,
             },
             candidate.shape.slab_count,
+            usize::MAX.saturating_sub(candidate.row_block_rows),
             prepared_residency_rank(candidate.prepared_residency),
             candidate.planned_active_bytes,
             candidate.shape.active_planes,
@@ -1732,6 +1733,7 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
                 VisibilityCachePolicy::Disabled => 1usize,
             },
             current.shape.slab_count,
+            usize::MAX.saturating_sub(current.row_block_rows),
             prepared_residency_rank(current.prepared_residency),
             current.planned_active_bytes,
             current.shape.active_planes,
@@ -2647,6 +2649,68 @@ mod tests {
             plan.log_line()
                 .contains("prepared_residency=row_block_stream")
         );
+    }
+
+    #[test]
+    fn candidate_tie_break_prefers_fewer_source_blocks() {
+        let base_shape = VisibilitySlabShape {
+            active_planes: 47,
+            slab_count: 2,
+            source_channel_visits: 64,
+            max_slab_source_channels: 47,
+        };
+        let residency = PreparedVisibilityResidency {
+            sample_lanes_per_source_channel: 2,
+            bucket_sample_bytes: 32,
+            max_live_row_blocks: 1,
+        };
+        let base_candidate = CandidatePlan {
+            schedule_kind: ImagingScheduleKind::SlabFirst,
+            shape: base_shape,
+            prepared_residency: residency,
+            visibility_cache_policy: VisibilityCachePolicy::Disabled,
+            visibility_cache_bytes: 0,
+            visibility_cache_source_channels: 0,
+            source_stream_buffer_bytes: 1_422_123_402,
+            row_block_rows: 168_518,
+            prepared_visibility_staging_bytes: 9_283_394_880,
+            visibility_staging_bytes_per_plane: 197_519_040,
+            live_prepared_visibility_bytes: 1_013_804_288,
+            live_bucket_bytes: 253_451_072,
+            planned_active_bytes: 17_179_862_010,
+            modeled_total_io_bytes: 8_146_785_696,
+            modeled_source_read_bytes: 3_851_621_280,
+            modeled_visibility_cache_fill_bytes: 0,
+            modeled_visibility_cache_read_bytes: 0,
+            modeled_output_spill_read_bytes: 0,
+            modeled_output_spill_write_bytes: 0,
+            modeled_product_write_bytes: 4_295_164_416,
+            modeled_no_cache_source_read_bytes: 3_851_621_280,
+        };
+        let mut best = Some(base_candidate);
+
+        consider_candidate(
+            &mut best,
+            CandidatePlan {
+                shape: VisibilitySlabShape {
+                    active_planes: 32,
+                    max_slab_source_channels: 32,
+                    ..base_shape
+                },
+                source_stream_buffer_bytes: 5_391_592_020,
+                row_block_rows: 934_580,
+                prepared_visibility_staging_bytes: 6_320_609_280,
+                visibility_staging_bytes_per_plane: 197_519_040,
+                live_prepared_visibility_bytes: 3_828_039_680,
+                live_bucket_bytes: 957_009_920,
+                planned_active_bytes: 17_179_865_868,
+                ..base_candidate
+            },
+        );
+
+        let selected = best.expect("candidate selected");
+        assert_eq!(selected.shape.active_planes, 32);
+        assert_eq!(selected.row_block_rows, 934_580);
     }
 
     #[test]

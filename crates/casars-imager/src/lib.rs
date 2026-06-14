@@ -136,7 +136,6 @@ const DEFAULT_BATCH_SIZE: usize = 65_536;
 const DEFAULT_ACCELERATED_STREAMING_BATCH_SIZE: usize = DEFAULT_BATCH_SIZE * 8;
 const DEFAULT_STANDARD_MFS_MEMORY_TARGET_FALLBACK_BYTES: usize = 8 * 1024 * 1024 * 1024;
 const MAX_PREPARE_ROW_BLOCK_ROWS: usize = 32_768;
-const MAX_MOSAIC_PREPARE_ROW_BLOCK_ROWS: usize = 131_072;
 const ESTIMATED_STANDARD_MFS_SAMPLE_BYTES: usize = 64;
 const ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES: usize = 32;
 const ESTIMATED_STANDARD_MFS_ROUTED_REPLAY_CACHE_BYTES_PER_LANE: usize = 416;
@@ -5952,6 +5951,10 @@ fn run_standard_cube_slab_from_open_ms(
     } else {
         spectral_slab::PlaneStateRequirements::bounded_clean()
     };
+    let row_block_override = config
+        .imaging_row_block_rows
+        .or_else(|| env_usize("CASA_RS_IMAGING_PREPARE_ROW_BLOCK"))
+        .filter(|value| *value > 0);
     let memory_plan = spectral_slab::plan_spectral_memory(
         spectral_slab::SpectralMemoryPlannerInput {
             output: spectral_slab::ImagingOutputShape {
@@ -5971,7 +5974,7 @@ fn run_standard_cube_slab_from_open_ms(
             gpu_staging_bytes: 0,
             safety_margin_bytes: 0,
             product_scratch_bytes: executor_scratch_bytes,
-            max_row_block_rows: max_prepare_row_block_rows_for_config(config),
+            max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
             max_worker_count: worker_capacity,
             requirements,
             prepared_residency,
@@ -21587,7 +21590,6 @@ fn standard_mfs_memory_plan_with_visibility_shape(
         .or_else(|| env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB"))
         .filter(|value| *value > 0)
         .map(|value| value.saturating_mul(1024 * 1024));
-    let max_prepare_row_block_rows = max_prepare_row_block_rows_for_config(config);
     let row_block_override = config
         .imaging_row_block_rows
         .or_else(|| env_usize("CASA_RS_IMAGING_PREPARE_ROW_BLOCK"))
@@ -21612,7 +21614,7 @@ fn standard_mfs_memory_plan_with_visibility_shape(
             gpu_staging_bytes: 0,
             safety_margin_bytes: 0,
             product_scratch_bytes: 0,
-            max_row_block_rows: row_block_override.unwrap_or(max_prepare_row_block_rows),
+            max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
             max_worker_count: worker_buffers,
             requirements: spectral_slab::PlaneStateRequirements::default(),
             prepared_residency,
@@ -21722,18 +21724,6 @@ fn standard_mfs_memory_plan_with_visibility_shape(
         metal_grouped_input_cache_bytes,
         metal_grouped_input_cache_enabled,
         selected_channel_count,
-    }
-}
-
-fn max_prepare_row_block_rows_for_config(config: &CliConfig) -> usize {
-    let output_channel_count = match config.spectral_mode {
-        SpectralMode::Mfs => 1,
-        SpectralMode::Cube | SpectralMode::Cubedata => config.channel_count.unwrap_or(1),
-    };
-    if can_plan_mosaic_mfs_acceleration(config, 1) && output_channel_count == 1 {
-        MAX_MOSAIC_PREPARE_ROW_BLOCK_ROWS
-    } else {
-        MAX_PREPARE_ROW_BLOCK_ROWS
     }
 }
 
@@ -37917,8 +37907,8 @@ mod tests {
 
         let plan = standard_mfs_memory_plan(&config, 1, 2_000_000);
 
-        assert_eq!(plan.row_block_rows, MAX_MOSAIC_PREPARE_ROW_BLOCK_ROWS);
         assert!(plan.row_block_rows > MAX_PREPARE_ROW_BLOCK_ROWS);
+        assert!(plan.row_block_rows <= 2_000_000);
         assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
     }
 
@@ -37958,7 +37948,8 @@ mod tests {
 
         let plan = standard_mfs_memory_plan_with_cache_channels(&config, 1024, 1, 2_000_000);
 
-        assert_eq!(plan.row_block_rows, MAX_MOSAIC_PREPARE_ROW_BLOCK_ROWS);
+        assert!(plan.row_block_rows > MAX_PREPARE_ROW_BLOCK_ROWS);
+        assert!(plan.row_block_rows < 2_000_000);
         assert!(plan.source_stream_buffer_bytes > plan.live_row_block_bytes);
         assert!(
             plan.source_stream_buffer_bytes
