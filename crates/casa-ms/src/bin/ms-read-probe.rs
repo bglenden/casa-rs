@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `ms-read-probe` - visibility-buffer read timing and diagnostics.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, Instant};
 
 use casa_ms::{
-    MeasurementSet, VisibilityBuffer, VisibilityBufferColumnReport, VisibilityBufferRequest,
-    VisibilityBufferTimings, VisibilityComplexSamples, VisibilityDataColumn,
-    VisibilityFloatSamples,
+    MeasurementSet, SourcePartition, SourcePartitionId, VisibilityBuffer,
+    VisibilityBufferColumnReport, VisibilityBufferRequest, VisibilityBufferTimings,
+    VisibilityComplexSamples, VisibilityDataColumn, VisibilityFloatSamples,
 };
-use casa_types::ArrayValue;
+use casa_types::{ArrayValue, ScalarValue};
 use serde::Serialize;
 
 fn main() {
@@ -42,6 +43,8 @@ fn run() -> Result<(), String> {
     }
     let (corr_count, full_channel_count) =
         data_shape(&ms, options.data_column, first_row).map_err(|error| error.to_string())?;
+    let source_partition =
+        source_partition_for_row(&ms, first_row, corr_count, full_channel_count)?;
     let channel_count = options
         .channel_count
         .unwrap_or_else(|| full_channel_count.saturating_sub(options.channel_start));
@@ -68,6 +71,7 @@ fn run() -> Result<(), String> {
     let mut buffer = VisibilityBuffer::default();
     let mut block_reports = Vec::new();
     let mut aggregate = AggregateFill::default();
+    let mut column_aggregates = ColumnAggregates::default();
     let probe_started = Instant::now();
     for repeat_index in 0..options.repeat {
         let mut block_start = options.row_start;
@@ -76,17 +80,21 @@ fn run() -> Result<(), String> {
                 .saturating_add(options.block_rows)
                 .min(selected_end);
             let row_indices = (block_start..block_end).collect::<Vec<_>>();
-            let request = VisibilityBufferRequest::imaging(
-                options.data_column,
-                row_indices,
-                options.channel_start,
-                channel_count,
+            let request = options.sidecars.apply_to(
+                VisibilityBufferRequest::imaging(
+                    options.data_column,
+                    row_indices,
+                    options.channel_start,
+                    channel_count,
+                )
+                .with_source_partition(source_partition.clone()),
             );
             let started = Instant::now();
             let fill_report = ms
                 .fill_visibility_buffer(&request, &mut buffer)
                 .map_err(|error| error.to_string())?;
             let elapsed = started.elapsed();
+            column_aggregates.add(&fill_report.columns);
             aggregate.add(&fill_report);
             block_reports.push(BlockProbeReport {
                 repeat_index,
@@ -127,6 +135,7 @@ fn run() -> Result<(), String> {
             row_count: ms.row_count(),
             corr_count,
             full_channel_count,
+            source_partition: SourcePartitionReport::from_partition(&source_partition),
             data_manager_info: data_manager_info(&ms),
         },
         selection: SelectionReport {
@@ -136,11 +145,12 @@ fn run() -> Result<(), String> {
             channel_count,
             block_rows: options.block_rows,
             repeat: options.repeat,
+            sidecars: options.sidecars,
         },
         elapsed_ns: probe_elapsed.as_nanos(),
         aggregate,
         block_stats,
-        columns: last_column_reports(&ms, &options, channel_count)?,
+        columns: column_aggregates.into_reports(),
         verification,
         peak_rss_bytes: peak_rss_bytes(),
         throughput: ThroughputReport::from_totals(
@@ -166,6 +176,7 @@ struct ProbeOptions {
     channel_count: Option<usize>,
     block_rows: usize,
     repeat: usize,
+    sidecars: ProbeSidecarMode,
     verify_full_read_rows: Option<usize>,
 }
 
@@ -179,6 +190,7 @@ impl ProbeOptions {
         let mut channel_count = None;
         let mut block_rows = 8192usize;
         let mut repeat = 1usize;
+        let mut sidecars = ProbeSidecarMode::Imaging;
         let mut verify_full_read_rows = None;
 
         let mut index = 0usize;
@@ -223,6 +235,10 @@ impl ProbeOptions {
                     index += 1;
                     repeat = parse_usize(args.get(index).ok_or_else(usage)?, "--repeat")?;
                 }
+                "--sidecars" => {
+                    index += 1;
+                    sidecars = parse_sidecars(args.get(index).ok_or_else(usage)?)?;
+                }
                 "--verify-full-read" => {
                     index += 1;
                     verify_full_read_rows = Some(parse_usize(
@@ -249,8 +265,48 @@ impl ProbeOptions {
             channel_count,
             block_rows,
             repeat,
+            sidecars,
             verify_full_read_rows,
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ProbeSidecarMode {
+    Minimal,
+    Imaging,
+    Full,
+}
+
+impl ProbeSidecarMode {
+    fn apply_to(self, mut request: VisibilityBufferRequest) -> VisibilityBufferRequest {
+        match self {
+            Self::Minimal => {
+                request.include_antenna_ids = false;
+                request.include_data_desc_ids = false;
+                request.include_field_ids = false;
+                request.include_flag_row = false;
+                request.include_time = false;
+                request.include_interval = false;
+                request.include_exposure = false;
+                request.include_array_ids = false;
+                request.include_observation_ids = false;
+                request.include_scan_numbers = false;
+                request.include_state_ids = false;
+            }
+            Self::Imaging => {}
+            Self::Full => {
+                request.include_time = true;
+                request.include_interval = true;
+                request.include_exposure = true;
+                request.include_array_ids = true;
+                request.include_observation_ids = true;
+                request.include_scan_numbers = true;
+                request.include_state_ids = true;
+            }
+        }
+        request
     }
 }
 
@@ -263,7 +319,7 @@ struct MsReadProbeReport {
     elapsed_ns: u128,
     aggregate: AggregateFill,
     block_stats: BlockStats,
-    columns: Vec<VisibilityBufferColumnReport>,
+    columns: Vec<ColumnAggregateReport>,
     verification: Option<VerificationReport>,
     peak_rss_bytes: Option<u64>,
     throughput: ThroughputReport,
@@ -274,7 +330,33 @@ struct DatasetShapeReport {
     row_count: usize,
     corr_count: usize,
     full_channel_count: usize,
+    source_partition: SourcePartitionReport,
     data_manager_info: Vec<DataManagerReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct SourcePartitionReport {
+    id: usize,
+    ms_id: usize,
+    data_desc_id: i32,
+    spectral_window_id: i32,
+    polarization_id: i32,
+    channel_count: usize,
+    corr_count: usize,
+}
+
+impl SourcePartitionReport {
+    fn from_partition(partition: &SourcePartition) -> Self {
+        Self {
+            id: partition.id.0,
+            ms_id: partition.ms_id,
+            data_desc_id: partition.data_desc_id,
+            spectral_window_id: partition.spw_id,
+            polarization_id: partition.polarization_id,
+            channel_count: partition.shape.channel_count,
+            corr_count: partition.shape.corr_count,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -292,6 +374,7 @@ struct SelectionReport {
     channel_count: usize,
     block_rows: usize,
     repeat: usize,
+    sidecars: ProbeSidecarMode,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -334,6 +417,56 @@ impl AggregateFill {
             .scalar_ns
             .saturating_add(report.timings.scalar_ns);
     }
+}
+
+#[derive(Debug, Default)]
+struct ColumnAggregates {
+    columns: BTreeMap<String, ColumnAggregateReport>,
+}
+
+impl ColumnAggregates {
+    fn add(&mut self, reports: &[VisibilityBufferColumnReport]) {
+        for report in reports {
+            let aggregate = self
+                .columns
+                .entry(report.column.clone())
+                .or_insert_with(|| ColumnAggregateReport {
+                    column: report.column.clone(),
+                    primitive_type: report.primitive_type.clone(),
+                    channelized: report.channelized,
+                    channel_read_granularity: report.channel_read_granularity,
+                    element_bytes: report.element_bytes,
+                    fills: 0,
+                    logical_output_bytes: 0,
+                    modeled_physical_read_bytes: 0,
+                    data_manager_types: report.data_manager_types.clone(),
+                });
+            aggregate.fills += 1;
+            aggregate.logical_output_bytes = aggregate
+                .logical_output_bytes
+                .saturating_add(report.logical_output_bytes);
+            aggregate.modeled_physical_read_bytes = aggregate
+                .modeled_physical_read_bytes
+                .saturating_add(report.modeled_physical_read_bytes);
+        }
+    }
+
+    fn into_reports(self) -> Vec<ColumnAggregateReport> {
+        self.columns.into_values().collect()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ColumnAggregateReport {
+    column: String,
+    primitive_type: String,
+    channelized: bool,
+    channel_read_granularity: casa_ms::VisibilityChannelReadGranularity,
+    element_bytes: usize,
+    fills: usize,
+    logical_output_bytes: u64,
+    modeled_physical_read_bytes: u64,
+    data_manager_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -409,25 +542,6 @@ impl ThroughputReport {
                 / seconds,
         }
     }
-}
-
-fn last_column_reports(
-    ms: &MeasurementSet,
-    options: &ProbeOptions,
-    channel_count: usize,
-) -> Result<Vec<VisibilityBufferColumnReport>, String> {
-    let rows = (options.row_start..options.row_start + options.block_rows.min(1)).collect();
-    let request = VisibilityBufferRequest::imaging(
-        options.data_column,
-        rows,
-        options.channel_start,
-        channel_count,
-    );
-    let mut buffer = VisibilityBuffer::default();
-    let report = ms
-        .fill_visibility_buffer(&request, &mut buffer)
-        .map_err(|error| error.to_string())?;
-    Ok(report.columns)
 }
 
 fn verify_full_read(
@@ -651,6 +765,54 @@ fn data_shape(
     }
 }
 
+fn source_partition_for_row(
+    ms: &MeasurementSet,
+    row: usize,
+    corr_count: usize,
+    full_channel_count: usize,
+) -> Result<SourcePartition, String> {
+    let value = ms
+        .main_table()
+        .column_accessor("DATA_DESC_ID")
+        .and_then(|column| column.scalar_cell(row))
+        .map_err(|error| format!("read DATA_DESC_ID row {row}: {error}"))?;
+    let data_desc_id = match value {
+        ScalarValue::Int32(value) if *value >= 0 => *value,
+        ScalarValue::Int32(value) => {
+            return Err(format!("DATA_DESC_ID row {row} is negative: {value}"));
+        }
+        other => {
+            return Err(format!(
+                "DATA_DESC_ID row {row} must be Int32, found {:?}",
+                other.primitive_type()
+            ));
+        }
+    };
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let spw_id = data_description
+        .spectral_window_id(data_desc_id as usize)
+        .map_err(|error| format!("read DATA_DESCRIPTION.SPECTRAL_WINDOW_ID: {error}"))?;
+    let polarization_id = data_description
+        .polarization_id(data_desc_id as usize)
+        .map_err(|error| format!("read DATA_DESCRIPTION.POLARIZATION_ID: {error}"))?;
+    if spw_id < 0 || polarization_id < 0 {
+        return Err(format!(
+            "DATA_DESCRIPTION row {data_desc_id} has negative SPW/POLARIZATION ids: {spw_id}/{polarization_id}"
+        ));
+    }
+    Ok(SourcePartition::new(
+        SourcePartitionId(0),
+        0,
+        data_desc_id,
+        spw_id,
+        polarization_id,
+        full_channel_count,
+        corr_count,
+    ))
+}
+
 fn data_manager_info(ms: &MeasurementSet) -> Vec<DataManagerReport> {
     ms.main_table()
         .data_manager_info()
@@ -669,6 +831,17 @@ fn parse_data_column(value: &str) -> Result<VisibilityDataColumn, String> {
         "CORRECTED" | "CORRECTED_DATA" => Ok(VisibilityDataColumn::CorrectedData),
         "MODEL" | "MODEL_DATA" => Ok(VisibilityDataColumn::ModelData),
         _ => Err(format!("unknown data column {value:?}")),
+    }
+}
+
+fn parse_sidecars(value: &str) -> Result<ProbeSidecarMode, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "minimal" => Ok(ProbeSidecarMode::Minimal),
+        "imaging" => Ok(ProbeSidecarMode::Imaging),
+        "full" => Ok(ProbeSidecarMode::Full),
+        _ => Err(format!(
+            "unknown sidecar mode {value:?}; expected minimal, imaging, or full"
+        )),
     }
 }
 
@@ -707,6 +880,7 @@ fn peak_rss_bytes() -> Option<u64> {
 fn usage() -> String {
     "Usage: ms-read-probe --ms PATH [--datacolumn DATA|CORRECTED_DATA|MODEL_DATA] \
      [--row-start N] [--row-count N] [--channel-start N] [--channel-count N] \
-     [--block-rows N] [--repeat N] [--verify-full-read N]"
+     [--block-rows N] [--repeat N] [--sidecars minimal|imaging|full] \
+     [--verify-full-read N]"
         .to_string()
 }

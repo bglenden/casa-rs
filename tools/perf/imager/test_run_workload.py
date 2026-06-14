@@ -749,6 +749,8 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
 spectral_slab_event mode=cube pass_kind=initial_dirty stage=source_read slab_id=0 plane_start=0 plane_end=4 row_block_rows=32768 bytes_read=2048 bytes_written=unset worker_count=4 backend=cpu_slab elapsed_ms=12 estimated_resident_bytes=123456
 spectral_slab_memory mode=cube stage=after_slab_prepare slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1000000 peak_rss_bytes=1200000 delta_from_baseline_bytes=400000 delta_from_previous_bytes=300000 estimated_resident_bytes=123456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=prepared
 spectral_slab_memory mode=cube stage=after_slab_run slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1500000 peak_rss_bytes=1700000 delta_from_baseline_bytes=900000 delta_from_previous_bytes=500000 estimated_resident_bytes=223456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=run_cube
+cube_slab_executor_limitation materialization=full_prepared_slab planner_row_block_rows=687 inner_prepare_row_block_rows=executor_default reason=small_planner_row_blocks_are_only_valid_for_streaming_consumers
+cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_source=shape-planner source_channels=62 prepared_samples=191346570 blocks=95 visibility_batches=5890 visibility_capacity=212952516 visibility_capacity_surplus=21605946 visibility_capacity_bytes=13628961024 density_samples=0 density_batches=0 density_capacity=0 density_capacity_surplus=0 model_samples=0 model_batches=0 model_capacity=0 model_capacity_surplus=0 geometry_columns_ms=0.026 read_wall_ms=9156.943 read_data_ms=4172.764 read_flag_ms=2464.324 read_weight_ms=501.464 read_weight_spectrum_ms=0.000 read_geometry_ms=516.441 prepare_ms=11355.156 merge_ms=0.733 wall_ms=20525.010
 """
         )
 
@@ -793,6 +795,26 @@ spectral_slab_memory mode=cube stage=after_slab_run slab_id=0 plane_start=0 plan
         self.assertEqual(
             "requested_range",
             parsed["summary"]["spectral_weight_spectrum_channel_read_granularity"],
+        )
+        self.assertEqual(95, parsed["summary"]["cube_source_row_blocks"])
+        self.assertEqual(32768, parsed["summary"]["cube_source_row_block_rows"])
+        self.assertEqual(
+            13628961024,
+            parsed["summary"]["cube_source_row_blocks_visibility_capacity_bytes"],
+        )
+        self.assertEqual(
+            9156.943, parsed["summary"]["cube_source_row_blocks_read_ms"]
+        )
+        self.assertEqual(
+            11355.156, parsed["summary"]["cube_source_row_blocks_prepare_ms"]
+        )
+        self.assertEqual(
+            "full_prepared_slab",
+            parsed["summary"]["executor_limitation_materialization"],
+        )
+        self.assertEqual(
+            "small_planner_row_blocks_are_only_valid_for_streaming_consumers",
+            parsed["summary"]["executor_limitation_reason"],
         )
         self.assertEqual(7777, parsed["summary"]["spectral_best_modeled_total_io_bytes"])
         self.assertEqual(700, parsed["summary"]["spectral_best_modeled_source_read_bytes"])

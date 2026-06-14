@@ -154,7 +154,8 @@ pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
 };
 pub use visibility_buffer::{
-    VisibilityBuffer, VisibilityBufferAllocationReport, VisibilityBufferColumnReport,
-    VisibilityBufferFillReport, VisibilityBufferRequest, VisibilityBufferTimings,
-    VisibilityChannelReadGranularity, VisibilityComplexSamples, VisibilityFloatSamples,
+    SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
+    VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
+    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityComplexSamples,
+    VisibilityFloatSamples, VisibilityShape,
 };

@@ -731,6 +731,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "spectral_slab_events": [],
         "spectral_slab_memory": [],
         "spectral_slab_plans": [],
+        "cube_source_row_blocks": [],
+        "executor_limitations": [],
         "worker_diagnostics": [],
         "metal_diagnostics": [],
     }
@@ -760,6 +762,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["spectral_slab_memory"].append(parsed)
         elif name == "spectral_slab_plan":
             buckets["spectral_slab_plans"].append(parsed)
+        elif name == "cube_source_row_blocks":
+            buckets["cube_source_row_blocks"].append(parsed)
+        elif name.endswith("_executor_limitation"):
+            buckets["executor_limitations"].append(parsed)
         elif "worker" in name or "prepare_parallel" in name:
             buckets["worker_diagnostics"].append(parsed)
         elif "metal" in name:
@@ -814,6 +820,8 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
+    cube_source_rows = last_fields(buckets.get("cube_source_row_blocks", []))
+    executor_limitation = last_fields(buckets.get("executor_limitations", []))
     spectral_memory = [
         entry.get("fields", {})
         for entry in buckets.get("spectral_slab_memory", [])
@@ -856,6 +864,18 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "gridded_samples": profile.get("gridded_samples"),
         "major_cycles": profile.get("major_cycles"),
         "minor_iterations": profile.get("minor_iterations"),
+        "cube_source_row_blocks": cube_source_rows.get("blocks"),
+        "cube_source_row_block_rows": cube_source_rows.get("row_block_rows"),
+        "cube_source_row_blocks_wall_ms": cube_source_rows.get("wall_ms"),
+        "cube_source_row_blocks_read_ms": cube_source_rows.get("read_wall_ms"),
+        "cube_source_row_blocks_prepare_ms": cube_source_rows.get("prepare_ms"),
+        "cube_source_row_blocks_visibility_capacity_bytes": cube_source_rows.get(
+            "visibility_capacity_bytes"
+        ),
+        "executor_limitation_materialization": executor_limitation.get(
+            "materialization"
+        ),
+        "executor_limitation_reason": executor_limitation.get("reason"),
         "spectral_active_planes": spectral_plan.get("active_planes"),
         "spectral_slab_count": spectral_plan.get("slab_count"),
         "spectral_schedule": spectral_plan.get("schedule"),

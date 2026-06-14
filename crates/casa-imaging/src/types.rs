@@ -4,7 +4,7 @@
 use std::{ops::Range, sync::Arc, time::Duration};
 
 use ndarray::{Array2, Array4};
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
 use crate::{ImagingError, gridder::STANDARD_GRIDDER_TAP_COUNT};
 
@@ -630,6 +630,317 @@ impl ImageGeometry {
             return Err(ImagingError::InvalidRequest(
                 "cell sizes must be finite positive radians".to_string(),
             ));
+        }
+        Ok(())
+    }
+}
+
+/// Stable identity for one homogeneous visibility source partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImagingSourcePartitionId(pub usize);
+
+/// Shape invariant for one homogeneous visibility source partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImagingSourceShape {
+    /// Number of source channels in the partition.
+    pub channel_count: usize,
+    /// Number of correlations in each source row/channel sample.
+    pub correlation_count: usize,
+}
+
+/// Source identity and shape visible to the pure imaging core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImagingSourcePartition {
+    /// Frontend-owned source partition id.
+    pub id: ImagingSourcePartitionId,
+    /// Frontend-owned MeasurementSet/source id.
+    pub ms_id: usize,
+    /// Main-table data-description id.
+    pub data_desc_id: i32,
+    /// Spectral-window id.
+    pub spectral_window_id: i32,
+    /// Polarization id.
+    pub polarization_id: i32,
+    /// Homogeneous source shape.
+    pub shape: ImagingSourceShape,
+}
+
+/// Borrowed complex sample storage for columnar source visibility data.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnarComplexSamplesRef<'a> {
+    /// Native Complex32 samples.
+    Complex32(&'a [Complex32]),
+    /// Native Complex64 samples.
+    Complex64(&'a [Complex64]),
+}
+
+impl ColumnarComplexSamplesRef<'_> {
+    /// Number of complex values in the borrowed storage.
+    pub fn len(self) -> usize {
+        match self {
+            Self::Complex32(values) => values.len(),
+            Self::Complex64(values) => values.len(),
+        }
+    }
+
+    /// Returns true when the borrowed storage is empty.
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Borrowed real sample storage for columnar source weights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnarFloatSamplesRef<'a> {
+    /// Native Float32 samples.
+    Float32(&'a [f32]),
+    /// Native Float64 samples.
+    Float64(&'a [f64]),
+}
+
+impl ColumnarFloatSamplesRef<'_> {
+    /// Number of real values in the borrowed storage.
+    pub fn len(self) -> usize {
+        match self {
+            Self::Float32(values) => values.len(),
+            Self::Float64(values) => values.len(),
+        }
+    }
+
+    /// Returns true when the borrowed storage is empty.
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Borrowed homogeneous columnar source block.
+///
+/// Channelized arrays use `[channel][row][correlation]` layout. Row sidecars use
+/// `[row]`, and UVW uses `[row][axis]` with three axes per row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColumnarVisibilitySourceRef<'a> {
+    /// Homogeneous partition identity and shape.
+    pub partition: ImagingSourcePartition,
+    /// Original source row indices in stable processing order.
+    pub row_indices: &'a [usize],
+    /// First source channel represented in channelized arrays.
+    pub channel_start: usize,
+    /// Number of source channels represented in channelized arrays.
+    pub channel_count: usize,
+    /// Complex visibility samples.
+    pub data: Option<ColumnarComplexSamplesRef<'a>>,
+    /// Channel flags.
+    pub flags: Option<&'a [bool]>,
+    /// Per-row weights.
+    pub weights: Option<ColumnarFloatSamplesRef<'a>>,
+    /// Per-channel weights.
+    pub weight_spectrum: Option<ColumnarFloatSamplesRef<'a>>,
+    /// UVW coordinates.
+    pub uvw_m: Option<&'a [f64]>,
+    /// Row flags.
+    pub flag_row: Option<&'a [bool]>,
+    /// Antenna1 ids.
+    pub antenna1: Option<&'a [i32]>,
+    /// Antenna2 ids.
+    pub antenna2: Option<&'a [i32]>,
+    /// Field ids.
+    pub field_ids: Option<&'a [i32]>,
+    /// Time values.
+    pub time: Option<&'a [f64]>,
+}
+
+impl ColumnarVisibilitySourceRef<'_> {
+    /// Number of rows represented by this source block.
+    pub fn row_count(self) -> usize {
+        self.row_indices.len()
+    }
+
+    /// Source-channel range represented by this source block.
+    pub fn channel_range(self) -> Range<usize> {
+        self.channel_start..self.channel_start.saturating_add(self.channel_count)
+    }
+
+    /// Index into `[channel][row][correlation]` sample arrays.
+    pub fn channel_row_corr_index(
+        self,
+        channel_slot: usize,
+        row_slot: usize,
+        corr_slot: usize,
+    ) -> usize {
+        (channel_slot * self.row_count() + row_slot) * self.partition.shape.correlation_count
+            + corr_slot
+    }
+
+    /// Validate shape consistency for the borrowed block.
+    pub fn validate(self) -> Result<(), ImagingError> {
+        if self.channel_count == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "source block channel_count must be greater than zero".to_string(),
+            ));
+        }
+        let end = self
+            .channel_start
+            .checked_add(self.channel_count)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("source block channel range overflow".to_string())
+            })?;
+        if end > self.partition.shape.channel_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "source block channel range {}..{} exceeds partition channel count {}",
+                self.channel_start, end, self.partition.shape.channel_count
+            )));
+        }
+        let sample_count = self
+            .row_count()
+            .saturating_mul(self.channel_count)
+            .saturating_mul(self.partition.shape.correlation_count);
+        if let Some(data) = self.data {
+            validate_len("source data", data.len(), sample_count)?;
+        }
+        if let Some(flags) = self.flags {
+            validate_len("source flags", flags.len(), sample_count)?;
+        }
+        if let Some(weights) = self.weights {
+            validate_len(
+                "source weights",
+                weights.len(),
+                self.row_count()
+                    .saturating_mul(self.partition.shape.correlation_count),
+            )?;
+        }
+        if let Some(weight_spectrum) = self.weight_spectrum {
+            validate_len(
+                "source weight_spectrum",
+                weight_spectrum.len(),
+                sample_count,
+            )?;
+        }
+        if let Some(uvw_m) = self.uvw_m {
+            validate_len(
+                "source uvw",
+                uvw_m.len(),
+                self.row_count().saturating_mul(3),
+            )?;
+        }
+        validate_optional_row_len("source flag_row", self.flag_row, self.row_count())?;
+        validate_optional_row_len("source antenna1", self.antenna1, self.row_count())?;
+        validate_optional_row_len("source antenna2", self.antenna2, self.row_count())?;
+        validate_optional_row_len("source field_ids", self.field_ids, self.row_count())?;
+        validate_optional_row_len("source time", self.time, self.row_count())?;
+        Ok(())
+    }
+}
+
+fn validate_len(name: &str, actual: usize, expected: usize) -> Result<(), ImagingError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ImagingError::InvalidRequest(format!(
+            "{name} length {actual} does not match expected {expected}"
+        )))
+    }
+}
+
+fn validate_optional_row_len<T>(
+    name: &str,
+    values: Option<&[T]>,
+    expected: usize,
+) -> Result<(), ImagingError> {
+    match values {
+        Some(values) => validate_len(name, values.len(), expected),
+        None => Ok(()),
+    }
+}
+
+/// Compact spectral routing state for a borrowed source block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpectralRoutePlan {
+    /// Source-channel to output-plane mapping.
+    pub channel_routes: Vec<SourceChannelRoute>,
+}
+
+/// Mapping for one represented source channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceChannelRoute {
+    /// Source channel index.
+    pub source_channel: usize,
+    /// Output planes receiving this source channel.
+    pub output_planes: Vec<OutputPlaneContribution>,
+}
+
+/// Contribution of one source channel to one output plane.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutputPlaneContribution {
+    /// Output plane index.
+    pub plane_index: usize,
+    /// Linear contribution factor.
+    pub factor: f32,
+}
+
+/// Compact Stokes/correlation routing state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolarizationRoutePlan {
+    /// Output Stokes plane represented by this route.
+    pub output_stokes: PlaneStokes,
+}
+
+/// Compact geometric routing state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeometryRoutePlan {
+    /// Image-plane geometry for routed samples.
+    pub geometry: ImageGeometry,
+}
+
+/// Compact weighting route state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeightingRoutePlan {
+    /// Weighting mode for this route.
+    pub weighting: WeightingMode,
+}
+
+/// Compact gridder route state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridderRoutePlan {
+    /// Gridder mode for this route.
+    pub gridder_mode: GridderMode,
+}
+
+/// Compact model routing state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelRoutePlan {
+    /// Output-model planes available for prediction.
+    pub model_plane_count: usize,
+}
+
+/// Borrowed source block plus compact route state consumed by imaging stages.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImagingSourceBlockView<'a> {
+    /// Borrowed source samples and row sidecars.
+    pub source: ColumnarVisibilitySourceRef<'a>,
+    /// Spectral routing plan.
+    pub spectral: &'a SpectralRoutePlan,
+    /// Polarization routing plan.
+    pub polarization: &'a PolarizationRoutePlan,
+    /// Geometry routing plan.
+    pub geometry: &'a GeometryRoutePlan,
+    /// Weighting routing plan.
+    pub weighting: &'a WeightingRoutePlan,
+    /// Gridder routing plan.
+    pub gridder: &'a GridderRoutePlan,
+    /// Optional model routing plan.
+    pub model: Option<&'a ModelRoutePlan>,
+}
+
+impl ImagingSourceBlockView<'_> {
+    /// Validate borrowed source and route-level shape consistency.
+    pub fn validate(self) -> Result<(), ImagingError> {
+        self.source.validate()?;
+        if self.spectral.channel_routes.len() != self.source.channel_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "spectral route count {} does not match source block channel count {}",
+                self.spectral.channel_routes.len(),
+                self.source.channel_count
+            )));
         }
         Ok(())
     }
@@ -2315,4 +2626,161 @@ pub struct CubeImagingResult {
     pub diagnostics: CubeImagingDiagnostics,
     /// Declared metadata contract for downstream persistence.
     pub compatibility: CompatibilityMetadata,
+}
+
+#[cfg(test)]
+mod source_view_tests {
+    use super::*;
+
+    #[test]
+    fn columnar_source_view_validates_shape_and_routes() {
+        let partition = ImagingSourcePartition {
+            id: ImagingSourcePartitionId(0),
+            ms_id: 0,
+            data_desc_id: 3,
+            spectral_window_id: 4,
+            polarization_id: 5,
+            shape: ImagingSourceShape {
+                channel_count: 4,
+                correlation_count: 2,
+            },
+        };
+        let row_indices = [10usize, 11];
+        let data = vec![Complex32::new(1.0, 0.0); 8];
+        let flags = vec![false; 8];
+        let weights = vec![1.0f32; 4];
+        let uvw = vec![0.0f64; 6];
+        let flag_row = [false, true];
+        let source = ColumnarVisibilitySourceRef {
+            partition,
+            row_indices: &row_indices,
+            channel_start: 1,
+            channel_count: 2,
+            data: Some(ColumnarComplexSamplesRef::Complex32(&data)),
+            flags: Some(&flags),
+            weights: Some(ColumnarFloatSamplesRef::Float32(&weights)),
+            weight_spectrum: None,
+            uvw_m: Some(&uvw),
+            flag_row: Some(&flag_row),
+            antenna1: None,
+            antenna2: None,
+            field_ids: None,
+            time: None,
+        };
+        let spectral = SpectralRoutePlan {
+            channel_routes: vec![
+                SourceChannelRoute {
+                    source_channel: 1,
+                    output_planes: vec![OutputPlaneContribution {
+                        plane_index: 0,
+                        factor: 1.0,
+                    }],
+                },
+                SourceChannelRoute {
+                    source_channel: 2,
+                    output_planes: vec![OutputPlaneContribution {
+                        plane_index: 1,
+                        factor: 1.0,
+                    }],
+                },
+            ],
+        };
+        let polarization = PolarizationRoutePlan {
+            output_stokes: PlaneStokes::I,
+        };
+        let geometry = GeometryRoutePlan {
+            geometry: ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            },
+        };
+        let weighting = WeightingRoutePlan {
+            weighting: WeightingMode::Natural,
+        };
+        let gridder = GridderRoutePlan {
+            gridder_mode: GridderMode::Standard,
+        };
+        let view = ImagingSourceBlockView {
+            source,
+            spectral: &spectral,
+            polarization: &polarization,
+            geometry: &geometry,
+            weighting: &weighting,
+            gridder: &gridder,
+            model: None,
+        };
+
+        view.validate().unwrap();
+        assert_eq!(view.source.channel_range(), 1..3);
+        assert_eq!(view.source.channel_row_corr_index(1, 1, 1), 7);
+    }
+
+    #[test]
+    fn columnar_source_view_rejects_route_channel_mismatch() {
+        let partition = ImagingSourcePartition {
+            id: ImagingSourcePartitionId(0),
+            ms_id: 0,
+            data_desc_id: 3,
+            spectral_window_id: 4,
+            polarization_id: 5,
+            shape: ImagingSourceShape {
+                channel_count: 4,
+                correlation_count: 1,
+            },
+        };
+        let row_indices = [10usize];
+        let data = vec![Complex32::new(1.0, 0.0); 2];
+        let source = ColumnarVisibilitySourceRef {
+            partition,
+            row_indices: &row_indices,
+            channel_start: 0,
+            channel_count: 2,
+            data: Some(ColumnarComplexSamplesRef::Complex32(&data)),
+            flags: None,
+            weights: None,
+            weight_spectrum: None,
+            uvw_m: None,
+            flag_row: None,
+            antenna1: None,
+            antenna2: None,
+            field_ids: None,
+            time: None,
+        };
+        let spectral = SpectralRoutePlan {
+            channel_routes: vec![SourceChannelRoute {
+                source_channel: 0,
+                output_planes: Vec::new(),
+            }],
+        };
+        let polarization = PolarizationRoutePlan {
+            output_stokes: PlaneStokes::I,
+        };
+        let geometry = GeometryRoutePlan {
+            geometry: ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            },
+        };
+        let weighting = WeightingRoutePlan {
+            weighting: WeightingMode::Natural,
+        };
+        let gridder = GridderRoutePlan {
+            gridder_mode: GridderMode::Standard,
+        };
+        let view = ImagingSourceBlockView {
+            source,
+            spectral: &spectral,
+            polarization: &polarization,
+            geometry: &geometry,
+            weighting: &weighting,
+            gridder: &gridder,
+            model: None,
+        };
+
+        let error = view.validate().unwrap_err();
+        assert!(
+            error.to_string().contains("spectral route count"),
+            "{error}"
+        );
+    }
 }

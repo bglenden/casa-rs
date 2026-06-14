@@ -312,6 +312,16 @@ PY
   return "$status"
 }
 
+emit_rust_backend_diagnostics() {
+  local stderr_file="$1"
+  if [[ ! -s "$stderr_file" ]]; then
+    return 0
+  fi
+  grep -E \
+    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|visibility_source_stream_consumer|standard_mfs_profile_run|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|cube_slab_executor_limitation|cube_source_row_blocks|frontend stage=prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks))' \
+    "$stderr_file" || true
+}
+
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
 echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
@@ -476,6 +486,7 @@ for run in $(seq 1 "$repeats"); do
   real_seconds="$(awk '/^real / {print $2}' "$rust_stderr")"
   printf "  run=%s real=%s\n" "$run" "$real_seconds"
   printf "%s\n" "$real_seconds" >>"$rust_cli_file"
+  emit_rust_backend_diagnostics "$rust_stderr"
 done
 echo "  median=$(median_from_file "$rust_cli_file")"
 if [[ -n "$rust_keep_prefix" ]]; then

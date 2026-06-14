@@ -6,6 +6,7 @@
 //! source channels needed by a schedule candidate.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use casa_tables::Table;
@@ -20,6 +21,8 @@ use crate::schema::main_table::VisibilityDataColumn;
 /// Request for filling a caller-owned [`VisibilityBuffer`].
 #[derive(Debug, Clone)]
 pub struct VisibilityBufferRequest {
+    /// Homogeneous source partition represented by this request.
+    pub source_partition: Option<SourcePartition>,
     /// Complex visibility column to read when [`include_data`](Self::include_data) is true.
     pub data_column: VisibilityDataColumn,
     /// Main-table row indices to read, in output order.
@@ -44,6 +47,22 @@ pub struct VisibilityBufferRequest {
     pub include_data_desc_ids: bool,
     /// Read `FIELD_ID`.
     pub include_field_ids: bool,
+    /// Read `FLAG_ROW`.
+    pub include_flag_row: bool,
+    /// Read `TIME`.
+    pub include_time: bool,
+    /// Read `INTERVAL`.
+    pub include_interval: bool,
+    /// Read `EXPOSURE`.
+    pub include_exposure: bool,
+    /// Read `ARRAY_ID`.
+    pub include_array_ids: bool,
+    /// Read `OBSERVATION_ID`.
+    pub include_observation_ids: bool,
+    /// Read `SCAN_NUMBER`.
+    pub include_scan_numbers: bool,
+    /// Read `STATE_ID`.
+    pub include_state_ids: bool,
 }
 
 impl VisibilityBufferRequest {
@@ -55,6 +74,7 @@ impl VisibilityBufferRequest {
         channel_count: usize,
     ) -> Self {
         Self {
+            source_partition: None,
             data_column,
             row_indices,
             channel_start,
@@ -67,6 +87,75 @@ impl VisibilityBufferRequest {
             include_antenna_ids: true,
             include_data_desc_ids: true,
             include_field_ids: true,
+            include_flag_row: true,
+            include_time: false,
+            include_interval: false,
+            include_exposure: false,
+            include_array_ids: false,
+            include_observation_ids: false,
+            include_scan_numbers: false,
+            include_state_ids: false,
+        }
+    }
+
+    /// Attach a homogeneous source partition invariant to this request.
+    pub fn with_source_partition(mut self, source_partition: SourcePartition) -> Self {
+        self.source_partition = Some(source_partition);
+        self
+    }
+}
+
+/// Stable identity for a homogeneous MeasurementSet source partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SourcePartitionId(pub usize);
+
+/// Shape invariant for a homogeneous source partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisibilityShape {
+    /// Number of source channels for this partition.
+    pub channel_count: usize,
+    /// Number of correlations for this partition.
+    pub corr_count: usize,
+}
+
+/// Homogeneous source partition read by a visibility buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePartition {
+    /// Caller-owned partition identifier.
+    pub id: SourcePartitionId,
+    /// Source MeasurementSet identity within a larger imaging request.
+    pub ms_id: usize,
+    /// Main-table `DATA_DESC_ID`.
+    pub data_desc_id: i32,
+    /// Spectral-window id.
+    pub spw_id: i32,
+    /// Polarization id.
+    pub polarization_id: i32,
+    /// Full source shape for this homogeneous partition.
+    pub shape: VisibilityShape,
+}
+
+impl SourcePartition {
+    /// Create a source partition invariant.
+    pub fn new(
+        id: SourcePartitionId,
+        ms_id: usize,
+        data_desc_id: i32,
+        spw_id: i32,
+        polarization_id: i32,
+        channel_count: usize,
+        corr_count: usize,
+    ) -> Self {
+        Self {
+            id,
+            ms_id,
+            data_desc_id,
+            spw_id,
+            polarization_id,
+            shape: VisibilityShape {
+                channel_count,
+                corr_count,
+            },
         }
     }
 }
@@ -82,6 +171,8 @@ pub struct VisibilityBuffer {
     pub channel_count: usize,
     /// Number of correlations per row/channel sample.
     pub corr_count: usize,
+    /// Homogeneous source partition represented by this buffer.
+    pub source_partition: Option<SourcePartition>,
     /// Complex samples, laid out as `[channel][row][correlation]`.
     pub data: Option<VisibilityComplexSamples>,
     /// Flags, laid out as `[channel][row][correlation]`.
@@ -100,6 +191,22 @@ pub struct VisibilityBuffer {
     pub data_desc_ids: Option<Vec<i32>>,
     /// `FIELD_ID` values by row slot.
     pub field_ids: Option<Vec<i32>>,
+    /// `FLAG_ROW` values by row slot.
+    pub flag_row: Option<Vec<bool>>,
+    /// `TIME` values by row slot.
+    pub time: Option<Vec<f64>>,
+    /// `INTERVAL` values by row slot.
+    pub interval: Option<Vec<f64>>,
+    /// `EXPOSURE` values by row slot.
+    pub exposure: Option<Vec<f64>>,
+    /// `ARRAY_ID` values by row slot.
+    pub array_ids: Option<Vec<i32>>,
+    /// `OBSERVATION_ID` values by row slot.
+    pub observation_ids: Option<Vec<i32>>,
+    /// `SCAN_NUMBER` values by row slot.
+    pub scan_numbers: Option<Vec<i32>>,
+    /// `STATE_ID` values by row slot.
+    pub state_ids: Option<Vec<i32>>,
 }
 
 impl VisibilityBuffer {
@@ -114,6 +221,7 @@ impl VisibilityBuffer {
         self.channel_start = request.channel_start;
         self.channel_count = request.channel_count;
         self.corr_count = 0;
+        self.source_partition = request.source_partition.clone();
         if !request.include_data {
             self.data = None;
         }
@@ -139,6 +247,51 @@ impl VisibilityBuffer {
         if !request.include_field_ids {
             self.field_ids = None;
         }
+        if !request.include_flag_row {
+            self.flag_row = None;
+        }
+        if !request.include_time {
+            self.time = None;
+        }
+        if !request.include_interval {
+            self.interval = None;
+        }
+        if !request.include_exposure {
+            self.exposure = None;
+        }
+        if !request.include_array_ids {
+            self.array_ids = None;
+        }
+        if !request.include_observation_ids {
+            self.observation_ids = None;
+        }
+        if !request.include_scan_numbers {
+            self.scan_numbers = None;
+        }
+        if !request.include_state_ids {
+            self.state_ids = None;
+        }
+    }
+
+    /// Source-channel range represented in channelized arrays.
+    pub fn channel_range(&self) -> Range<usize> {
+        self.channel_start..self.channel_start.saturating_add(self.channel_count)
+    }
+
+    /// Index into `[channel][row][correlation]` sample arrays.
+    pub fn channel_row_corr_index(
+        &self,
+        channel_slot: usize,
+        row_slot: usize,
+        corr_slot: usize,
+    ) -> usize {
+        channel_row_corr_index(
+            channel_slot,
+            row_slot,
+            corr_slot,
+            self.row_count(),
+            self.corr_count,
+        )
     }
 }
 
@@ -412,7 +565,17 @@ impl MeasurementSet {
             columns.push(report);
         }
 
-        if request.include_antenna_ids || request.include_data_desc_ids || request.include_field_ids
+        if request.include_antenna_ids
+            || request.include_data_desc_ids
+            || request.include_field_ids
+            || request.include_flag_row
+            || request.include_time
+            || request.include_interval
+            || request.include_exposure
+            || request.include_array_ids
+            || request.include_observation_ids
+            || request.include_scan_numbers
+            || request.include_state_ids
         {
             let started = Instant::now();
             if request.include_antenna_ids {
@@ -453,9 +616,86 @@ impl MeasurementSet {
                 buffer.field_ids = Some(field_ids);
                 columns.push(report);
             }
+            if request.include_flag_row {
+                let (flag_row, report) = read_bool_scalar_column(
+                    self,
+                    "FLAG_ROW",
+                    &request.row_indices,
+                    buffer.flag_row.take(),
+                )?;
+                buffer.flag_row = Some(flag_row);
+                columns.push(report);
+            }
+            if request.include_time {
+                let (time, report) =
+                    read_f64_scalar_column(self, "TIME", &request.row_indices, buffer.time.take())?;
+                buffer.time = Some(time);
+                columns.push(report);
+            }
+            if request.include_interval {
+                let (interval, report) = read_f64_scalar_column(
+                    self,
+                    "INTERVAL",
+                    &request.row_indices,
+                    buffer.interval.take(),
+                )?;
+                buffer.interval = Some(interval);
+                columns.push(report);
+            }
+            if request.include_exposure {
+                let (exposure, report) = read_f64_scalar_column(
+                    self,
+                    "EXPOSURE",
+                    &request.row_indices,
+                    buffer.exposure.take(),
+                )?;
+                buffer.exposure = Some(exposure);
+                columns.push(report);
+            }
+            if request.include_array_ids {
+                let (array_ids, report) = read_i32_scalar_column(
+                    self,
+                    "ARRAY_ID",
+                    &request.row_indices,
+                    buffer.array_ids.take(),
+                )?;
+                buffer.array_ids = Some(array_ids);
+                columns.push(report);
+            }
+            if request.include_observation_ids {
+                let (observation_ids, report) = read_i32_scalar_column(
+                    self,
+                    "OBSERVATION_ID",
+                    &request.row_indices,
+                    buffer.observation_ids.take(),
+                )?;
+                buffer.observation_ids = Some(observation_ids);
+                columns.push(report);
+            }
+            if request.include_scan_numbers {
+                let (scan_numbers, report) = read_i32_scalar_column(
+                    self,
+                    "SCAN_NUMBER",
+                    &request.row_indices,
+                    buffer.scan_numbers.take(),
+                )?;
+                buffer.scan_numbers = Some(scan_numbers);
+                columns.push(report);
+            }
+            if request.include_state_ids {
+                let (state_ids, report) = read_i32_scalar_column(
+                    self,
+                    "STATE_ID",
+                    &request.row_indices,
+                    buffer.state_ids.take(),
+                )?;
+                buffer.state_ids = Some(state_ids);
+                columns.push(report);
+            }
             timings.scalar_ns = elapsed_ns(started.elapsed());
         }
 
+        validate_source_partition(request, corr_count)?;
         buffer.corr_count = corr_count;
         let logical_output_bytes = columns
             .iter()
@@ -482,6 +722,29 @@ impl MeasurementSet {
             allocation,
         })
     }
+}
+
+fn validate_source_partition(request: &VisibilityBufferRequest, corr_count: usize) -> MsResult<()> {
+    let Some(source_partition) = &request.source_partition else {
+        return Ok(());
+    };
+    let requested_end = request
+        .channel_start
+        .checked_add(request.channel_count)
+        .ok_or_else(|| invalid_input("visibility buffer channel range overflow".to_string()))?;
+    if requested_end > source_partition.shape.channel_count {
+        return Err(invalid_input(format!(
+            "requested channel range {}..{} exceeds source partition channel count {}",
+            request.channel_start, requested_end, source_partition.shape.channel_count
+        )));
+    }
+    if corr_count != 0 && corr_count != source_partition.shape.corr_count {
+        return Err(invalid_input(format!(
+            "visibility buffer correlation count {corr_count} does not match source partition correlation count {}",
+            source_partition.shape.corr_count
+        )));
+    }
+    Ok(())
 }
 
 fn read_complex_channel_column(
@@ -986,6 +1249,98 @@ fn read_i32_scalar_column(
     Ok((out, report))
 }
 
+fn read_f64_scalar_column(
+    ms: &MeasurementSet,
+    column_name: &str,
+    row_indices: &[usize],
+    existing: Option<Vec<f64>>,
+) -> MsResult<(Vec<f64>, VisibilityBufferColumnReport)> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)?
+        .scalar_cells_owned_for_rows(row_indices)?;
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    if primitive != PrimitiveType::Float64 {
+        return Err(column_type_error(column_name, "Float64 scalar", primitive));
+    }
+    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
+    out.clear();
+    out.reserve(row_indices.len().saturating_sub(out.capacity()));
+    for (row_slot, value) in values.into_iter().enumerate() {
+        match value {
+            Some(ScalarValue::Float64(value)) => out.push(value),
+            Some(other) => {
+                return Err(column_type_error(
+                    column_name,
+                    "Float64 scalar",
+                    other.primitive_type(),
+                ));
+            }
+            None => {
+                return Err(invalid_input(format!(
+                    "{column_name} missing for selected row slot {row_slot}"
+                )));
+            }
+        }
+    }
+    let report = column_report(
+        ms.main_table(),
+        column_name,
+        primitive,
+        false,
+        1,
+        1,
+        row_indices.len(),
+    )?;
+    Ok((out, report))
+}
+
+fn read_bool_scalar_column(
+    ms: &MeasurementSet,
+    column_name: &str,
+    row_indices: &[usize],
+    existing: Option<Vec<bool>>,
+) -> MsResult<(Vec<bool>, VisibilityBufferColumnReport)> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)?
+        .scalar_cells_owned_for_rows(row_indices)?;
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    if primitive != PrimitiveType::Bool {
+        return Err(column_type_error(column_name, "Bool scalar", primitive));
+    }
+    let mut out = existing.unwrap_or_else(|| Vec::with_capacity(row_indices.len()));
+    out.clear();
+    out.reserve(row_indices.len().saturating_sub(out.capacity()));
+    for (row_slot, value) in values.into_iter().enumerate() {
+        match value {
+            Some(ScalarValue::Bool(value)) => out.push(value),
+            Some(other) => {
+                return Err(column_type_error(
+                    column_name,
+                    "Bool scalar",
+                    other.primitive_type(),
+                ));
+            }
+            None => {
+                return Err(invalid_input(format!(
+                    "{column_name} missing for selected row slot {row_slot}"
+                )));
+            }
+        }
+    }
+    let report = column_report(
+        ms.main_table(),
+        column_name,
+        primitive,
+        false,
+        1,
+        1,
+        row_indices.len(),
+    )?;
+    Ok((out, report))
+}
+
 fn column_report(
     table: &Table,
     column_name: &str,
@@ -1227,6 +1582,30 @@ fn collect_capacities(buffer: &VisibilityBuffer) -> BTreeMap<String, usize> {
     if let Some(values) = &buffer.field_ids {
         capacities.insert("field_ids".to_string(), values.capacity());
     }
+    if let Some(values) = &buffer.flag_row {
+        capacities.insert("flag_row".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.time {
+        capacities.insert("time".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.interval {
+        capacities.insert("interval".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.exposure {
+        capacities.insert("exposure".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.array_ids {
+        capacities.insert("array_ids".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.observation_ids {
+        capacities.insert("observation_ids".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.scan_numbers {
+        capacities.insert("scan_numbers".to_string(), values.capacity());
+    }
+    if let Some(values) = &buffer.state_ids {
+        capacities.insert("state_ids".to_string(), values.capacity());
+    }
     capacities
 }
 
@@ -1304,15 +1683,39 @@ mod tests {
         add_visibility_test_row(ms.main_table_mut(), 0);
         add_visibility_test_row(ms.main_table_mut(), 1);
 
-        let request =
-            VisibilityBufferRequest::imaging(VisibilityDataColumn::Data, vec![1, 0], 1, 2);
+        let mut request =
+            VisibilityBufferRequest::imaging(VisibilityDataColumn::Data, vec![1, 0], 1, 2)
+                .with_source_partition(SourcePartition::new(
+                    SourcePartitionId(0),
+                    0,
+                    0,
+                    0,
+                    0,
+                    4,
+                    2,
+                ));
+        request.include_time = true;
+        request.include_interval = true;
+        request.include_exposure = true;
+        request.include_array_ids = true;
+        request.include_observation_ids = true;
+        request.include_scan_numbers = true;
+        request.include_state_ids = true;
         let mut buffer = VisibilityBuffer::default();
         let report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
 
         assert_eq!(buffer.row_indices, vec![1, 0]);
         assert_eq!(buffer.channel_start, 1);
+        assert_eq!(buffer.channel_range(), 1..3);
         assert_eq!(buffer.channel_count, 2);
         assert_eq!(buffer.corr_count, 2);
+        assert_eq!(
+            buffer
+                .source_partition
+                .as_ref()
+                .map(|partition| partition.id),
+            Some(SourcePartitionId(0))
+        );
         assert_eq!(report.row_count, 2);
         assert_eq!(report.channel_count, 2);
         assert!(report.logical_output_bytes > 0);
@@ -1355,9 +1758,39 @@ mod tests {
         assert_eq!(buffer.antenna2.as_deref(), Some(&[12, 2][..]));
         assert_eq!(buffer.data_desc_ids.as_deref(), Some(&[13, 3][..]));
         assert_eq!(buffer.field_ids.as_deref(), Some(&[14, 4][..]));
+        assert_eq!(buffer.flag_row.as_deref(), Some(&[false, true][..]));
+        assert_eq!(buffer.time.as_deref(), Some(&[1001.0, 1.0][..]));
+        assert_eq!(buffer.interval.as_deref(), Some(&[1010.0, 10.0][..]));
+        assert_eq!(buffer.exposure.as_deref(), Some(&[1020.0, 20.0][..]));
+        assert_eq!(buffer.array_ids.as_deref(), Some(&[15, 5][..]));
+        assert_eq!(buffer.observation_ids.as_deref(), Some(&[16, 6][..]));
+        assert_eq!(buffer.scan_numbers.as_deref(), Some(&[17, 7][..]));
+        assert_eq!(buffer.state_ids.as_deref(), Some(&[18, 8][..]));
 
         let second_report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
         assert!(second_report.allocation.reused_buffers > 0);
+    }
+
+    #[test]
+    fn fill_visibility_buffer_rejects_source_partition_shape_mismatch() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_visibility_test_row(ms.main_table_mut(), 0);
+
+        let request = VisibilityBufferRequest::imaging(VisibilityDataColumn::Data, vec![0], 1, 2)
+            .with_source_partition(SourcePartition::new(SourcePartitionId(0), 0, 0, 0, 0, 2, 2));
+        let mut buffer = VisibilityBuffer::default();
+        let error = ms
+            .fill_visibility_buffer(&request, &mut buffer)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exceeds source partition channel count"),
+            "{error}"
+        );
     }
 
     fn add_visibility_test_row(table: &mut Table, row_id: i32) {
@@ -1399,6 +1832,18 @@ mod tests {
                     "ANTENNA2" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 2)),
                     "DATA_DESC_ID" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 3)),
                     "FIELD_ID" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 4)),
+                    "FLAG_ROW" => Value::Scalar(ScalarValue::Bool(row_id == 0)),
+                    "TIME" => Value::Scalar(ScalarValue::Float64(row_id as f64 * 1000.0 + 1.0)),
+                    "INTERVAL" => {
+                        Value::Scalar(ScalarValue::Float64(row_id as f64 * 1000.0 + 10.0))
+                    }
+                    "EXPOSURE" => {
+                        Value::Scalar(ScalarValue::Float64(row_id as f64 * 1000.0 + 20.0))
+                    }
+                    "ARRAY_ID" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 5)),
+                    "OBSERVATION_ID" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 6)),
+                    "SCAN_NUMBER" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 7)),
+                    "STATE_ID" => Value::Scalar(ScalarValue::Int32(row_id * 10 + 8)),
                     _ => default_value(column.name()),
                 };
                 RecordField::new(column.name(), value)
