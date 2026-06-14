@@ -19,6 +19,7 @@ use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -6792,81 +6793,116 @@ fn run_independent_imaging_planes<T, R, F>(
     run_plane: F,
 ) -> Result<(Vec<IndependentImagingPlaneResult<R>>, Duration), String>
 where
-    T: Send,
+    T: Sync,
     R: Send,
-    F: Fn(T) -> Result<(R, ImagingStageTimings), String> + Sync,
+    F: Fn(&T) -> Result<(R, ImagingStageTimings), String> + Sync,
 {
     let started_at = Instant::now();
-    let worker_count = worker_count.max(1);
-    let mut results = Vec::with_capacity(tasks.len());
-    let mut pending = tasks.into_iter();
-    let mut batch_index = 0usize;
-    loop {
-        let batch = pending.by_ref().take(worker_count).collect::<Vec<_>>();
-        if batch.is_empty() {
-            break;
-        }
-        let batch_task_count = batch.len();
-        let batch_started_at = Instant::now();
-        if standard_mfs_profile_detail_enabled() {
-            let planes = batch
-                .iter()
-                .map(|task| task.plane_index.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            eprintln!(
-                "independent_plane_executor_batch_start batch={} tasks={} worker_count={} planes={}",
-                batch_index, batch_task_count, worker_count, planes,
-            );
-        }
-        let batch_results = std::thread::scope(|scope| {
-            let handles = batch
-                .into_iter()
-                .enumerate()
-                .map(|(worker_slot, task)| {
-                    let run_plane = &run_plane;
-                    scope.spawn(move || {
-                        let worker_started_at = Instant::now();
-                        let (result, stage_timings) = run_plane(task.payload)?;
-                        let worker_elapsed = worker_started_at.elapsed();
-                        Ok::<_, String>(IndependentImagingPlaneResult {
+    let task_count = tasks.len();
+    if task_count == 0 {
+        return Ok((Vec::new(), started_at.elapsed()));
+    }
+    let worker_count = worker_count.max(1).min(task_count);
+    let next_task = AtomicUsize::new(0);
+    let stop_workers = AtomicBool::new(false);
+    let (result_tx, result_rx) =
+        mpsc::channel::<Result<IndependentImagingPlaneResult<R>, String>>();
+    if standard_mfs_profile_detail_enabled() {
+        let planes = tasks
+            .iter()
+            .map(|task| task.plane_index.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "independent_plane_executor_dynamic_start tasks={} worker_count={} planes={}",
+            task_count, worker_count, planes,
+        );
+    }
+
+    std::thread::scope(|scope| {
+        for worker_slot in 0..worker_count {
+            let tasks = &tasks;
+            let result_tx = result_tx.clone();
+            let run_plane = &run_plane;
+            let next_task = &next_task;
+            let stop_workers = &stop_workers;
+            scope.spawn(move || {
+                loop {
+                    if stop_workers.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let task_ordinal = next_task.fetch_add(1, Ordering::Relaxed);
+                    let Some(task) = tasks.get(task_ordinal) else {
+                        break;
+                    };
+                    let worker_started_at = Instant::now();
+                    let result = run_plane(&task.payload).map(|(result, stage_timings)| {
+                        let wave_start = (task_ordinal / worker_count) * worker_count;
+                        let wave_task_count =
+                            task_count.saturating_sub(wave_start).min(worker_count);
+                        IndependentImagingPlaneResult {
                             plane_index: task.plane_index,
-                            batch_index,
-                            batch_task_count,
+                            batch_index: task_ordinal / worker_count,
+                            batch_task_count: wave_task_count,
                             worker_slot,
-                            worker_elapsed,
+                            worker_elapsed: worker_started_at.elapsed(),
                             result,
                             stage_timings,
-                        })
-                    })
-                })
-                .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .map_err(|_| "independent imaging plane worker panicked".to_string())?
-                })
-                .collect::<Result<Vec<_>, String>>()
-        })?;
-        if standard_mfs_profile_detail_enabled() {
-            let worker_elapsed_ms = batch_results
-                .iter()
-                .map(|result| format!("{:.3}", duration_ms(result.worker_elapsed)))
-                .collect::<Vec<_>>()
-                .join(",");
-            eprintln!(
-                "independent_plane_executor_batch_done batch={} tasks={} worker_count={} worker_elapsed_ms=[{}] wall_ms={:.3}",
-                batch_index,
-                batch_task_count,
-                worker_count,
-                worker_elapsed_ms,
-                duration_ms(batch_started_at.elapsed()),
-            );
+                        }
+                    });
+                    if result.is_err() {
+                        stop_workers.store(true, Ordering::Relaxed);
+                    }
+                    if result_tx.send(result).is_err() {
+                        break;
+                    }
+                }
+            });
         }
-        results.extend(batch_results);
-        batch_index += 1;
+        drop(result_tx);
+    });
+
+    let mut results = Vec::with_capacity(task_count);
+    let mut first_error = None::<String>;
+    for result in result_rx {
+        match result {
+            Ok(result) => results.push(result),
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    if results.len() != task_count {
+        return Err(format!(
+            "independent imaging plane executor completed {} of {} tasks",
+            results.len(),
+            task_count
+        ));
+    }
+    if standard_mfs_profile_detail_enabled() {
+        let worker_elapsed_ms = results
+            .iter()
+            .map(|result| {
+                format!(
+                    "{}:{:.3}",
+                    result.plane_index,
+                    duration_ms(result.worker_elapsed)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "independent_plane_executor_dynamic_done tasks={} worker_count={} plane_elapsed_ms=[{}] wall_ms={:.3}",
+            task_count,
+            worker_count,
+            worker_elapsed_ms,
+            duration_ms(started_at.elapsed()),
+        );
     }
     results.sort_by_key(|result| result.plane_index);
     Ok((results, started_at.elapsed()))
@@ -7175,13 +7211,17 @@ fn run_independent_shared_cube_slab_planes(
             if standard_mfs_profile_detail_enabled() {
                 let timings = prepare_result.accumulate_timings;
                 eprintln!(
-                    "cube_shared_plane_worker plane={} blocks={} batches={} samples={} rows_seen={} rows_flagged={} prepare_ms={:.3} run_imaging_ms={:.3} worker_wall_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_controller_overhead_ms={:.3}",
+                    "cube_shared_plane_worker plane={} blocks={} batches={} samples={} rows_seen={} rows_flagged={} assignment_visits={} assignment_nonempty={} accepted_visibility_samples={} accepted_density_samples={} prepare_ms={:.3} run_imaging_ms={:.3} worker_wall_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_controller_overhead_ms={:.3}",
                     payload.plane_index,
                     prepare_result.blocks,
                     visibility_batches,
                     visibility_samples,
                     timings.rows_seen,
                     timings.rows_flagged,
+                    timings.cube_assignment_visits,
+                    timings.cube_assignment_nonempty,
+                    timings.cube_visibility_samples_accepted,
+                    timings.cube_density_samples_accepted,
                     duration_ms(prepare_elapsed),
                     duration_ms(run_imaging_elapsed),
                     duration_ms(worker_started.elapsed()),
@@ -7221,7 +7261,7 @@ fn run_independent_shared_cube_slab_planes(
         if standard_mfs_profile_detail_enabled() {
             let timings = plane_result.result.accumulate_timings;
             eprintln!(
-                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} prepare_ms={:.3} run_imaging_ms={:.3} batches={} samples={} rows_seen={} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3}",
+                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} prepare_ms={:.3} run_imaging_ms={:.3} batches={} samples={} rows_seen={} assignment_visits={} assignment_nonempty={} accepted_visibility_samples={} accepted_density_samples={} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3}",
                 plane_result.plane_index,
                 plane_result.batch_index,
                 plane_result.batch_task_count,
@@ -7232,6 +7272,10 @@ fn run_independent_shared_cube_slab_planes(
                 plane_result.result.visibility_batches,
                 plane_result.result.visibility_samples,
                 timings.rows_seen,
+                timings.cube_assignment_visits,
+                timings.cube_assignment_nonempty,
+                timings.cube_visibility_samples_accepted,
+                timings.cube_density_samples_accepted,
                 duration_ms(timings.adapt_samples),
                 duration_ms(timings.cube_spectral_lookup),
                 duration_ms(timings.cube_density_grid_update),
@@ -24204,6 +24248,10 @@ struct AccumulateRowTimings {
     rows_seen: usize,
     rows_flagged: usize,
     rows_skipped_by_flag_row: usize,
+    cube_assignment_visits: usize,
+    cube_assignment_nonempty: usize,
+    cube_visibility_samples_accepted: usize,
+    cube_density_samples_accepted: usize,
     cube_spectral_cache_hits: usize,
     cube_spectral_cache_misses: usize,
     cube_source_frequency_cache_hits: usize,
@@ -24249,6 +24297,18 @@ impl AccumulateRowTimings {
             rows_skipped_by_flag_row: self
                 .rows_skipped_by_flag_row
                 .saturating_sub(before.rows_skipped_by_flag_row),
+            cube_assignment_visits: self
+                .cube_assignment_visits
+                .saturating_sub(before.cube_assignment_visits),
+            cube_assignment_nonempty: self
+                .cube_assignment_nonempty
+                .saturating_sub(before.cube_assignment_nonempty),
+            cube_visibility_samples_accepted: self
+                .cube_visibility_samples_accepted
+                .saturating_sub(before.cube_visibility_samples_accepted),
+            cube_density_samples_accepted: self
+                .cube_density_samples_accepted
+                .saturating_sub(before.cube_density_samples_accepted),
             cube_spectral_cache_hits: self
                 .cube_spectral_cache_hits
                 .saturating_sub(before.cube_spectral_cache_hits),
@@ -24285,6 +24345,10 @@ impl std::ops::AddAssign for AccumulateRowTimings {
         self.rows_seen += extra.rows_seen;
         self.rows_flagged += extra.rows_flagged;
         self.rows_skipped_by_flag_row += extra.rows_skipped_by_flag_row;
+        self.cube_assignment_visits += extra.cube_assignment_visits;
+        self.cube_assignment_nonempty += extra.cube_assignment_nonempty;
+        self.cube_visibility_samples_accepted += extra.cube_visibility_samples_accepted;
+        self.cube_density_samples_accepted += extra.cube_density_samples_accepted;
         self.cube_spectral_cache_hits += extra.cube_spectral_cache_hits;
         self.cube_spectral_cache_misses += extra.cube_spectral_cache_misses;
         self.cube_source_frequency_cache_hits += extra.cube_source_frequency_cache_hits;
@@ -24296,10 +24360,14 @@ impl AccumulateRowTimings {
     fn log(self, total_elapsed: Duration) {
         if frontend_progress_enabled() {
             eprintln!(
-                "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen={} rows_flagged={} rows_skipped_by_flag_row={} cube_spectral_cache_hits={} cube_spectral_cache_misses={} cube_source_frequency_cache_hits={} cube_source_frequency_cache_misses={} flag_row_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_source_frequency_lookup_ms={:.3} cube_density_sidecar_ms={:.3} cube_density_weight_ms={:.3} cube_density_cell_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} total_elapsed_s={:.3}",
+                "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen={} rows_flagged={} rows_skipped_by_flag_row={} cube_assignment_visits={} cube_assignment_nonempty={} cube_visibility_samples_accepted={} cube_density_samples_accepted={} cube_spectral_cache_hits={} cube_spectral_cache_misses={} cube_source_frequency_cache_hits={} cube_source_frequency_cache_misses={} flag_row_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_source_frequency_lookup_ms={:.3} cube_density_sidecar_ms={:.3} cube_density_weight_ms={:.3} cube_density_cell_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} total_elapsed_s={:.3}",
                 self.rows_seen,
                 self.rows_flagged,
                 self.rows_skipped_by_flag_row,
+                self.cube_assignment_visits,
+                self.cube_assignment_nonempty,
+                self.cube_visibility_samples_accepted,
+                self.cube_density_samples_accepted,
                 self.cube_spectral_cache_hits,
                 self.cube_spectral_cache_misses,
                 self.cube_source_frequency_cache_hits,
@@ -25900,6 +25968,7 @@ impl PreparedSelection {
                     use_cube_visibility_grid_assignments,
                 );
                 for assignment in assignment_iter {
+                    timings.cube_assignment_visits += 1;
                     let output_channel = assignment.output_channel;
                     let output_frequency_hz = assignment.frequency_hz;
                     let contributions = assignment.contributions;
@@ -26587,6 +26656,7 @@ impl PreparedSelection {
                     if contributions.is_empty() {
                         continue;
                     }
+                    timings.cube_assignment_nonempty += 1;
                     let sample = {
                         let sample_started = profile_cube_detail.then(Instant::now);
                         let sample = interpolate_explicit_cube_output_sample_from_rows(
@@ -26682,6 +26752,7 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(sample.sumwt_factor);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(sample.visibility);
+                    timings.cube_visibility_samples_accepted += 1;
                     if let Some(started) = visibility_push_started {
                         timings.cube_visibility_push += started.elapsed();
                     }
@@ -27112,12 +27183,14 @@ impl PreparedSelection {
                     use_cube_visibility_grid_assignments,
                 );
                 for assignment in assignment_iter {
+                    timings.cube_assignment_visits += 1;
                     let output_channel = assignment.output_channel;
                     let output_frequency_hz = assignment.frequency_hz;
                     let contributions = assignment.contributions;
                     if contributions.is_empty() {
                         continue;
                     }
+                    timings.cube_assignment_nonempty += 1;
                     let sample = {
                         let sample_started = profile_cube_detail.then(Instant::now);
                         let sample = interpolate_paired_cube_output_sample_from_rows(
@@ -27242,6 +27315,7 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(sumwt_factor);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
+                    timings.cube_visibility_samples_accepted += 1;
                     if let Some(started) = visibility_push_started {
                         timings.cube_visibility_push += started.elapsed();
                     }
@@ -27433,29 +27507,39 @@ impl PreparedSelection {
                     use_cube_visibility_grid_assignments,
                 );
                 for assignment in assignment_iter {
+                    timings.cube_assignment_visits += 1;
                     let output_channel = assignment.output_channel;
                     let output_frequency_hz = assignment.frequency_hz;
                     let contributions = assignment.contributions;
                     if contributions.is_empty() {
                         continue;
                     }
-                    let Some(sample) = interpolate_paired_cube_output_sample_from_rows(
-                        &data_2d,
-                        &flags_2d,
-                        &weights,
-                        *pair,
-                        &self.source_channel_indices,
-                        transform.phase_shift_m,
-                        output_frequency_hz,
-                        contributions,
-                        assignment.nearest_weight,
-                    )?
-                    else {
+                    timings.cube_assignment_nonempty += 1;
+                    let sample = {
+                        let sample_started = profile_cube_detail.then(Instant::now);
+                        let sample = interpolate_paired_cube_output_sample_from_rows(
+                            &data_2d,
+                            &flags_2d,
+                            &weights,
+                            *pair,
+                            &self.source_channel_indices,
+                            transform.phase_shift_m,
+                            output_frequency_hz,
+                            contributions,
+                            assignment.nearest_weight,
+                        )?;
+                        if let Some(started) = sample_started {
+                            timings.cube_visibility_sample += started.elapsed();
+                        }
+                        sample
+                    };
+                    let Some(sample) = sample else {
                         continue;
                     };
                     if !(output_frequency_hz.is_finite() && output_frequency_hz > 0.0) {
                         continue;
                     }
+                    let density_sidecar_started = profile_cube_detail.then(Instant::now);
                     if use_density_batches && use_casa_cube_grid_interpolation {
                         push_paired_cube_density_sample_from_contributions(
                             &mut channel_density_batches[output_channel],
@@ -27513,6 +27597,10 @@ impl PreparedSelection {
                             }
                         }
                     }
+                    if let Some(started) = density_sidecar_started {
+                        timings.cube_density_sidecar += started.elapsed();
+                    }
+                    let visibility_push_started = profile_cube_detail.then(Instant::now);
                     let lambda_scale = output_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                     let batch = &mut channel_batches[output_channel];
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
@@ -27547,6 +27635,10 @@ impl PreparedSelection {
                     batch.first_flagged.push(false);
                     batch.second_flagged.push(false);
                     batch.gridable.push(is_cross);
+                    timings.cube_visibility_samples_accepted += 1;
+                    if let Some(started) = visibility_push_started {
+                        timings.cube_visibility_push += started.elapsed();
+                    }
                     if use_model_interpolation_batches {
                         channel_model_interpolation_samples[output_channel].push(
                             combine_model_channel_contributions(
@@ -44853,7 +44945,7 @@ deconvolver=mtmfs
             },
         ];
 
-        let (results, elapsed) = run_independent_imaging_planes(tasks, 3, |(delay_ms, label)| {
+        let (results, elapsed) = run_independent_imaging_planes(tasks, 3, |&(delay_ms, label)| {
             std::thread::sleep(Duration::from_millis(delay_ms));
             Ok((label.to_string(), ImagingStageTimings::default()))
         })
