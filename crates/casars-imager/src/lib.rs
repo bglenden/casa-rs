@@ -51,7 +51,8 @@ use casa_imaging::{
     VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
     WTermMode, WeightDensityMode, WeightingMode, WeightingRoutePlan,
     estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
-    run_cube, run_imaging, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+    run_cube, run_imaging, run_imaging_owned_with_execution_config,
+    run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
     run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
@@ -7347,6 +7348,7 @@ fn run_independent_shared_cube_slab_planes(
     }
 
     let plane_stokes = cube.plane_stokes;
+    let plane_execution_config = standard_mfs_execution_config(&slab_config);
     let channels = std::mem::take(&mut cube.channels);
     let gridder_modes = std::mem::take(&mut cube.gridder_modes);
     let tasks = channels
@@ -7409,24 +7411,27 @@ fn run_independent_shared_cube_slab_planes(
             let run_imaging_started = Instant::now();
             let cube_result = if use_owned_single_plane_dirty {
                 let channel_frequency_hz = channel.channel_frequency_hz;
-                let plane_result = run_imaging(&ImagingRequest {
-                    geometry,
-                    visibility_batches: channel.visibility_batches,
-                    gridder_mode: GridderMode::Standard,
-                    plane_stokes,
-                    weighting: payload.weighting,
-                    reffreq_hz: channel_frequency_hz,
-                    selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
-                    deconvolver: payload.deconvolver,
-                    multiscale_scales: payload.multiscale_scales,
-                    small_scale_bias: payload.small_scale_bias,
-                    clean,
-                    clean_mask: None,
-                    initial_model: None,
-                    w_term_mode: payload.w_term_mode,
-                    w_project_planes: payload.w_project_planes,
-                    compatibility: CompatibilityMode::CasaStandardMfs,
-                })
+                let plane_result = run_imaging_owned_with_execution_config(
+                    ImagingRequest {
+                        geometry,
+                        visibility_batches: channel.visibility_batches,
+                        gridder_mode: GridderMode::Standard,
+                        plane_stokes,
+                        weighting: payload.weighting,
+                        reffreq_hz: channel_frequency_hz,
+                        selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+                        deconvolver: payload.deconvolver,
+                        multiscale_scales: payload.multiscale_scales,
+                        small_scale_bias: payload.small_scale_bias,
+                        clean,
+                        clean_mask: None,
+                        initial_model: None,
+                        w_term_mode: payload.w_term_mode,
+                        w_project_planes: payload.w_project_planes,
+                        compatibility: CompatibilityMode::CasaStandardMfs,
+                    },
+                    plane_execution_config,
+                )
                 .map_err(|error| error.to_string())?;
                 single_plane_imaging_result_to_cube_result(channel_frequency_hz, plane_result)
             } else {

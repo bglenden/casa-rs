@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use casa_tables::Table;
@@ -494,78 +495,31 @@ impl MeasurementSet {
         let mut columns = Vec::new();
         buffer.clear_for_request(request);
 
-        let mut corr_count = 0usize;
-        if request.include_data {
-            let started = Instant::now();
-            let (data, row_corr_count, report) = read_complex_channel_column(
-                self,
-                request.data_column.name(),
-                &request.row_indices,
-                request.channel_start,
-                request.channel_count,
-                buffer.data.take(),
-            )?;
-            timings.data_ns = elapsed_ns(started.elapsed());
-            corr_count = row_corr_count;
-            buffer.data = Some(data);
-            columns.push(report);
-        }
-
-        if request.include_flags {
-            let started = Instant::now();
-            let (flags, row_corr_count, report) = read_bool_channel_column(
-                self,
-                "FLAG",
-                &request.row_indices,
-                request.channel_start,
-                request.channel_count,
-                buffer.flags.take(),
-            )?;
-            timings.flags_ns = elapsed_ns(started.elapsed());
-            corr_count = merge_corr_count(corr_count, row_corr_count)?;
-            buffer.flags = Some(flags);
-            columns.push(report);
-        }
-
-        if request.include_weights {
-            let started = Instant::now();
-            let (weights, row_corr_count, report) =
-                read_float_row_column(self, "WEIGHT", &request.row_indices, buffer.weights.take())?;
-            timings.weights_ns = elapsed_ns(started.elapsed());
-            corr_count = merge_corr_count(corr_count, row_corr_count)?;
-            buffer.weights = Some(weights);
-            columns.push(report);
-        }
-
-        if request.include_weight_spectrum
-            && main_table_has_column(self.main_table(), "WEIGHT_SPECTRUM")
-        {
-            let started = Instant::now();
-            let (weights, row_corr_count, report) = read_float_channel_column(
-                self,
-                "WEIGHT_SPECTRUM",
-                &request.row_indices,
-                request.channel_start,
-                request.channel_count,
-                buffer.weight_spectrum.take(),
-            )?;
-            timings.weight_spectrum_ns = elapsed_ns(started.elapsed());
-            corr_count = merge_corr_count(corr_count, row_corr_count)?;
-            buffer.weight_spectrum = Some(weights);
-            columns.push(report);
-        } else if request.include_weight_spectrum {
+        let data_existing = buffer.data.take();
+        let flags_existing = buffer.flags.take();
+        let weights_existing = buffer.weights.take();
+        let weight_spectrum_existing = buffer.weight_spectrum.take();
+        let uvw_existing = buffer.uvw.take();
+        let scalar_existing = ScalarColumnExistingBuffers {
+            antenna1: buffer.antenna1.take(),
+            antenna2: buffer.antenna2.take(),
+            data_desc_ids: buffer.data_desc_ids.take(),
+            field_ids: buffer.field_ids.take(),
+            flag_row: buffer.flag_row.take(),
+            time: buffer.time.take(),
+            interval: buffer.interval.take(),
+            exposure: buffer.exposure.take(),
+            array_ids: buffer.array_ids.take(),
+            observation_ids: buffer.observation_ids.take(),
+            scan_numbers: buffer.scan_numbers.take(),
+            state_ids: buffer.state_ids.take(),
+        };
+        let read_weight_spectrum = request.include_weight_spectrum
+            && main_table_has_column(self.main_table(), "WEIGHT_SPECTRUM");
+        if request.include_weight_spectrum && !read_weight_spectrum {
             buffer.weight_spectrum = None;
         }
-
-        if request.include_uvw {
-            let started = Instant::now();
-            let (uvw, report) = read_uvw_column(self, &request.row_indices, buffer.uvw.take())?;
-            timings.uvw_ns = elapsed_ns(started.elapsed());
-            buffer.uvw = Some(uvw);
-            columns.push(report);
-        }
-
-        if request.include_antenna_ids
+        let read_scalars = request.include_antenna_ids
             || request.include_data_desc_ids
             || request.include_field_ids
             || request.include_flag_row
@@ -575,124 +529,127 @@ impl MeasurementSet {
             || request.include_array_ids
             || request.include_observation_ids
             || request.include_scan_numbers
-            || request.include_state_ids
-        {
-            let started = Instant::now();
-            if request.include_antenna_ids {
-                let (antenna1, report) = read_i32_scalar_column(
-                    self,
-                    "ANTENNA1",
-                    &request.row_indices,
-                    buffer.antenna1.take(),
-                )?;
-                let (antenna2, report2) = read_i32_scalar_column(
-                    self,
-                    "ANTENNA2",
-                    &request.row_indices,
-                    buffer.antenna2.take(),
-                )?;
-                buffer.antenna1 = Some(antenna1);
-                buffer.antenna2 = Some(antenna2);
-                columns.push(report);
-                columns.push(report2);
-            }
-            if request.include_data_desc_ids {
-                let (data_desc_ids, report) = read_i32_scalar_column(
-                    self,
-                    "DATA_DESC_ID",
-                    &request.row_indices,
-                    buffer.data_desc_ids.take(),
-                )?;
-                buffer.data_desc_ids = Some(data_desc_ids);
-                columns.push(report);
-            }
-            if request.include_field_ids {
-                let (field_ids, report) = read_i32_scalar_column(
-                    self,
-                    "FIELD_ID",
-                    &request.row_indices,
-                    buffer.field_ids.take(),
-                )?;
-                buffer.field_ids = Some(field_ids);
-                columns.push(report);
-            }
-            if request.include_flag_row {
-                let (flag_row, report) = read_bool_scalar_column(
-                    self,
-                    "FLAG_ROW",
-                    &request.row_indices,
-                    buffer.flag_row.take(),
-                )?;
-                buffer.flag_row = Some(flag_row);
-                columns.push(report);
-            }
-            if request.include_time {
-                let (time, report) =
-                    read_f64_scalar_column(self, "TIME", &request.row_indices, buffer.time.take())?;
-                buffer.time = Some(time);
-                columns.push(report);
-            }
-            if request.include_interval {
-                let (interval, report) = read_f64_scalar_column(
-                    self,
-                    "INTERVAL",
-                    &request.row_indices,
-                    buffer.interval.take(),
-                )?;
-                buffer.interval = Some(interval);
-                columns.push(report);
-            }
-            if request.include_exposure {
-                let (exposure, report) = read_f64_scalar_column(
-                    self,
-                    "EXPOSURE",
-                    &request.row_indices,
-                    buffer.exposure.take(),
-                )?;
-                buffer.exposure = Some(exposure);
-                columns.push(report);
-            }
-            if request.include_array_ids {
-                let (array_ids, report) = read_i32_scalar_column(
-                    self,
-                    "ARRAY_ID",
-                    &request.row_indices,
-                    buffer.array_ids.take(),
-                )?;
-                buffer.array_ids = Some(array_ids);
-                columns.push(report);
-            }
-            if request.include_observation_ids {
-                let (observation_ids, report) = read_i32_scalar_column(
-                    self,
-                    "OBSERVATION_ID",
-                    &request.row_indices,
-                    buffer.observation_ids.take(),
-                )?;
-                buffer.observation_ids = Some(observation_ids);
-                columns.push(report);
-            }
-            if request.include_scan_numbers {
-                let (scan_numbers, report) = read_i32_scalar_column(
-                    self,
-                    "SCAN_NUMBER",
-                    &request.row_indices,
-                    buffer.scan_numbers.take(),
-                )?;
-                buffer.scan_numbers = Some(scan_numbers);
-                columns.push(report);
-            }
-            if request.include_state_ids {
-                let (state_ids, report) = read_i32_scalar_column(
-                    self,
-                    "STATE_ID",
-                    &request.row_indices,
-                    buffer.state_ids.take(),
-                )?;
-                buffer.state_ids = Some(state_ids);
-                columns.push(report);
-            }
-            timings.scalar_ns = elapsed_ns(started.elapsed());
+            || request.include_state_ids;
+
+        let parallel_reads = thread::scope(|scope| {
+            let data_handle = request.include_data.then(|| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    read_complex_channel_column(
+                        self,
+                        request.data_column.name(),
+                        &request.row_indices,
+                        request.channel_start,
+                        request.channel_count,
+                        data_existing,
+                    )
+                    .map(|result| (result, started.elapsed()))
+                })
+            });
+            let flags_handle = request.include_flags.then(|| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    read_bool_channel_column(
+                        self,
+                        "FLAG",
+                        &request.row_indices,
+                        request.channel_start,
+                        request.channel_count,
+                        flags_existing,
+                    )
+                    .map(|result| (result, started.elapsed()))
+                })
+            });
+            let weights_handle = request.include_weights.then(|| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    read_float_row_column(self, "WEIGHT", &request.row_indices, weights_existing)
+                        .map(|result| (result, started.elapsed()))
+                })
+            });
+            let weight_spectrum_handle = read_weight_spectrum.then(|| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    read_float_channel_column(
+                        self,
+                        "WEIGHT_SPECTRUM",
+                        &request.row_indices,
+                        request.channel_start,
+                        request.channel_count,
+                        weight_spectrum_existing,
+                    )
+                    .map(|result| (result, started.elapsed()))
+                })
+            });
+            let uvw_handle = request.include_uvw.then(|| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    read_uvw_column(self, &request.row_indices, uvw_existing)
+                        .map(|result| (result, started.elapsed()))
+                })
+            });
+            let scalar_handle = read_scalars.then(|| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    read_scalar_columns(self, request, scalar_existing)
+                        .map(|result| (result, started.elapsed()))
+                })
+            });
+            Ok::<_, MsError>(ParallelVisibilityReads {
+                data: join_visibility_buffer_worker(data_handle)?,
+                flags: join_visibility_buffer_worker(flags_handle)?,
+                weights: join_visibility_buffer_worker(weights_handle)?,
+                weight_spectrum: join_visibility_buffer_worker(weight_spectrum_handle)?,
+                uvw: join_visibility_buffer_worker(uvw_handle)?,
+                scalars: join_visibility_buffer_worker(scalar_handle)?,
+            })
+        })?;
+
+        let mut corr_count = 0usize;
+        if let Some(((data, row_corr_count, report), elapsed)) = parallel_reads.data {
+            timings.data_ns = elapsed_ns(elapsed);
+            corr_count = merge_corr_count(corr_count, row_corr_count)?;
+            buffer.data = Some(data);
+            columns.push(report);
+        }
+        if let Some(((flags, row_corr_count, report), elapsed)) = parallel_reads.flags {
+            timings.flags_ns = elapsed_ns(elapsed);
+            corr_count = merge_corr_count(corr_count, row_corr_count)?;
+            buffer.flags = Some(flags);
+            columns.push(report);
+        }
+        if let Some(((weights, row_corr_count, report), elapsed)) = parallel_reads.weights {
+            timings.weights_ns = elapsed_ns(elapsed);
+            corr_count = merge_corr_count(corr_count, row_corr_count)?;
+            buffer.weights = Some(weights);
+            columns.push(report);
+        }
+        if let Some(((weights, row_corr_count, report), elapsed)) = parallel_reads.weight_spectrum {
+            timings.weight_spectrum_ns = elapsed_ns(elapsed);
+            corr_count = merge_corr_count(corr_count, row_corr_count)?;
+            buffer.weight_spectrum = Some(weights);
+            columns.push(report);
+        }
+        if let Some(((uvw, report), elapsed)) = parallel_reads.uvw {
+            timings.uvw_ns = elapsed_ns(elapsed);
+            buffer.uvw = Some(uvw);
+            columns.push(report);
+        }
+        if let Some((scalars, elapsed)) = parallel_reads.scalars {
+            timings.scalar_ns = elapsed_ns(elapsed);
+            buffer.antenna1 = scalars.antenna1;
+            buffer.antenna2 = scalars.antenna2;
+            buffer.data_desc_ids = scalars.data_desc_ids;
+            buffer.field_ids = scalars.field_ids;
+            buffer.flag_row = scalars.flag_row;
+            buffer.time = scalars.time;
+            buffer.interval = scalars.interval;
+            buffer.exposure = scalars.exposure;
+            buffer.array_ids = scalars.array_ids;
+            buffer.observation_ids = scalars.observation_ids;
+            buffer.scan_numbers = scalars.scan_numbers;
+            buffer.state_ids = scalars.state_ids;
+            columns.extend(scalars.reports);
         }
 
         validate_source_partition(request, corr_count)?;
@@ -722,6 +679,205 @@ impl MeasurementSet {
             allocation,
         })
     }
+}
+
+type TimedRead<T> = Option<(T, Duration)>;
+type DataReadResult = (
+    VisibilityComplexSamples,
+    usize,
+    VisibilityBufferColumnReport,
+);
+type BoolChannelReadResult = (Vec<bool>, usize, VisibilityBufferColumnReport);
+type FloatReadResult = (VisibilityFloatSamples, usize, VisibilityBufferColumnReport);
+type UvwReadResult = (Vec<f64>, VisibilityBufferColumnReport);
+
+struct ParallelVisibilityReads {
+    data: TimedRead<DataReadResult>,
+    flags: TimedRead<BoolChannelReadResult>,
+    weights: TimedRead<FloatReadResult>,
+    weight_spectrum: TimedRead<FloatReadResult>,
+    uvw: TimedRead<UvwReadResult>,
+    scalars: TimedRead<ScalarColumnReadResult>,
+}
+
+struct ScalarColumnExistingBuffers {
+    antenna1: Option<Vec<i32>>,
+    antenna2: Option<Vec<i32>>,
+    data_desc_ids: Option<Vec<i32>>,
+    field_ids: Option<Vec<i32>>,
+    flag_row: Option<Vec<bool>>,
+    time: Option<Vec<f64>>,
+    interval: Option<Vec<f64>>,
+    exposure: Option<Vec<f64>>,
+    array_ids: Option<Vec<i32>>,
+    observation_ids: Option<Vec<i32>>,
+    scan_numbers: Option<Vec<i32>>,
+    state_ids: Option<Vec<i32>>,
+}
+
+struct ScalarColumnReadResult {
+    antenna1: Option<Vec<i32>>,
+    antenna2: Option<Vec<i32>>,
+    data_desc_ids: Option<Vec<i32>>,
+    field_ids: Option<Vec<i32>>,
+    flag_row: Option<Vec<bool>>,
+    time: Option<Vec<f64>>,
+    interval: Option<Vec<f64>>,
+    exposure: Option<Vec<f64>>,
+    array_ids: Option<Vec<i32>>,
+    observation_ids: Option<Vec<i32>>,
+    scan_numbers: Option<Vec<i32>>,
+    state_ids: Option<Vec<i32>>,
+    reports: Vec<VisibilityBufferColumnReport>,
+}
+
+fn join_visibility_buffer_worker<T>(
+    handle: Option<thread::ScopedJoinHandle<'_, MsResult<(T, Duration)>>>,
+) -> MsResult<Option<(T, Duration)>> {
+    handle
+        .map(|handle| {
+            handle
+                .join()
+                .map_err(|_| invalid_input("visibility buffer read worker panicked".to_string()))?
+        })
+        .transpose()
+}
+
+fn read_scalar_columns(
+    ms: &MeasurementSet,
+    request: &VisibilityBufferRequest,
+    mut existing: ScalarColumnExistingBuffers,
+) -> MsResult<ScalarColumnReadResult> {
+    let mut result = ScalarColumnReadResult {
+        antenna1: None,
+        antenna2: None,
+        data_desc_ids: None,
+        field_ids: None,
+        flag_row: None,
+        time: None,
+        interval: None,
+        exposure: None,
+        array_ids: None,
+        observation_ids: None,
+        scan_numbers: None,
+        state_ids: None,
+        reports: Vec::new(),
+    };
+    if request.include_antenna_ids {
+        let (antenna1, report) = read_i32_scalar_column(
+            ms,
+            "ANTENNA1",
+            &request.row_indices,
+            existing.antenna1.take(),
+        )?;
+        let (antenna2, report2) = read_i32_scalar_column(
+            ms,
+            "ANTENNA2",
+            &request.row_indices,
+            existing.antenna2.take(),
+        )?;
+        result.antenna1 = Some(antenna1);
+        result.antenna2 = Some(antenna2);
+        result.reports.push(report);
+        result.reports.push(report2);
+    }
+    if request.include_data_desc_ids {
+        let (data_desc_ids, report) = read_i32_scalar_column(
+            ms,
+            "DATA_DESC_ID",
+            &request.row_indices,
+            existing.data_desc_ids.take(),
+        )?;
+        result.data_desc_ids = Some(data_desc_ids);
+        result.reports.push(report);
+    }
+    if request.include_field_ids {
+        let (field_ids, report) = read_i32_scalar_column(
+            ms,
+            "FIELD_ID",
+            &request.row_indices,
+            existing.field_ids.take(),
+        )?;
+        result.field_ids = Some(field_ids);
+        result.reports.push(report);
+    }
+    if request.include_flag_row {
+        let (flag_row, report) = read_bool_scalar_column(
+            ms,
+            "FLAG_ROW",
+            &request.row_indices,
+            existing.flag_row.take(),
+        )?;
+        result.flag_row = Some(flag_row);
+        result.reports.push(report);
+    }
+    if request.include_time {
+        let (time, report) =
+            read_f64_scalar_column(ms, "TIME", &request.row_indices, existing.time.take())?;
+        result.time = Some(time);
+        result.reports.push(report);
+    }
+    if request.include_interval {
+        let (interval, report) = read_f64_scalar_column(
+            ms,
+            "INTERVAL",
+            &request.row_indices,
+            existing.interval.take(),
+        )?;
+        result.interval = Some(interval);
+        result.reports.push(report);
+    }
+    if request.include_exposure {
+        let (exposure, report) = read_f64_scalar_column(
+            ms,
+            "EXPOSURE",
+            &request.row_indices,
+            existing.exposure.take(),
+        )?;
+        result.exposure = Some(exposure);
+        result.reports.push(report);
+    }
+    if request.include_array_ids {
+        let (array_ids, report) = read_i32_scalar_column(
+            ms,
+            "ARRAY_ID",
+            &request.row_indices,
+            existing.array_ids.take(),
+        )?;
+        result.array_ids = Some(array_ids);
+        result.reports.push(report);
+    }
+    if request.include_observation_ids {
+        let (observation_ids, report) = read_i32_scalar_column(
+            ms,
+            "OBSERVATION_ID",
+            &request.row_indices,
+            existing.observation_ids.take(),
+        )?;
+        result.observation_ids = Some(observation_ids);
+        result.reports.push(report);
+    }
+    if request.include_scan_numbers {
+        let (scan_numbers, report) = read_i32_scalar_column(
+            ms,
+            "SCAN_NUMBER",
+            &request.row_indices,
+            existing.scan_numbers.take(),
+        )?;
+        result.scan_numbers = Some(scan_numbers);
+        result.reports.push(report);
+    }
+    if request.include_state_ids {
+        let (state_ids, report) = read_i32_scalar_column(
+            ms,
+            "STATE_ID",
+            &request.row_indices,
+            existing.state_ids.take(),
+        )?;
+        result.state_ids = Some(state_ids);
+        result.reports.push(report);
+    }
+    Ok(result)
 }
 
 fn validate_source_partition(request: &VisibilityBufferRequest, corr_count: usize) -> MsResult<()> {

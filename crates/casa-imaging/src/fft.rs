@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal centered 2-D FFT helpers.
 
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+
 use ndarray::{Array2, Axis};
 use num_complex::{Complex32, Complex64};
-use rustfft::FftPlanner;
+use rustfft::{Fft, FftPlanner};
+
+type FftKey = (usize, bool);
+
+static FFT32_CACHE: LazyLock<Mutex<HashMap<FftKey, Arc<dyn Fft<f32>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static FFT64_CACHE: LazyLock<Mutex<HashMap<FftKey, Arc<dyn Fft<f64>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(crate) fn fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut transformed = input.clone();
@@ -45,57 +55,115 @@ pub(crate) fn centered_ifft2_f64(input: &Array2<Complex64>) -> Array2<Complex64>
 }
 
 fn transform_axis(data: &mut Array2<Complex32>, axis: Axis, inverse: bool) {
-    let len = data.len_of(axis);
+    if axis.index() == 0 {
+        transform_rows(data, inverse);
+    } else {
+        transform_columns(data, inverse);
+    }
+}
+
+fn transform_axis_f64(data: &mut Array2<Complex64>, axis: Axis, inverse: bool) {
+    if axis.index() == 0 {
+        transform_rows_f64(data, inverse);
+    } else {
+        transform_columns_f64(data, inverse);
+    }
+}
+
+fn fft32(len: usize, inverse: bool) -> Arc<dyn Fft<f32>> {
+    let mut cache = FFT32_CACHE.lock().expect("f32 FFT cache lock poisoned");
+    if let Some(fft) = cache.get(&(len, inverse)) {
+        return Arc::clone(fft);
+    }
     let mut planner = FftPlanner::<f32>::new();
     let fft = if inverse {
         planner.plan_fft_inverse(len)
     } else {
         planner.plan_fft_forward(len)
     };
-
-    if axis.index() == 0 {
-        for row_index in 0..data.shape()[0] {
-            let mut lane = data.row(row_index).to_vec();
-            fft.process(&mut lane);
-            for (column_index, value) in lane.into_iter().enumerate() {
-                data[(row_index, column_index)] = value;
-            }
-        }
-    } else {
-        for column_index in 0..data.shape()[1] {
-            let mut lane = data.column(column_index).to_vec();
-            fft.process(&mut lane);
-            for (row_index, value) in lane.into_iter().enumerate() {
-                data[(row_index, column_index)] = value;
-            }
-        }
-    }
+    cache.insert((len, inverse), Arc::clone(&fft));
+    fft
 }
 
-fn transform_axis_f64(data: &mut Array2<Complex64>, axis: Axis, inverse: bool) {
-    let len = data.len_of(axis);
+fn fft64(len: usize, inverse: bool) -> Arc<dyn Fft<f64>> {
+    let mut cache = FFT64_CACHE.lock().expect("f64 FFT cache lock poisoned");
+    if let Some(fft) = cache.get(&(len, inverse)) {
+        return Arc::clone(fft);
+    }
     let mut planner = FftPlanner::<f64>::new();
     let fft = if inverse {
         planner.plan_fft_inverse(len)
     } else {
         planner.plan_fft_forward(len)
     };
+    cache.insert((len, inverse), Arc::clone(&fft));
+    fft
+}
 
-    if axis.index() == 0 {
-        for row_index in 0..data.shape()[0] {
-            let mut lane = data.row(row_index).to_vec();
+fn transform_rows(data: &mut Array2<Complex32>, inverse: bool) {
+    let row_len = data.shape()[1];
+    let fft = fft32(row_len, inverse);
+    for mut row in data.rows_mut() {
+        if let Some(row) = row.as_slice_mut() {
+            fft.process(row);
+        } else {
+            let mut lane = row.to_vec();
             fft.process(&mut lane);
             for (column_index, value) in lane.into_iter().enumerate() {
-                data[(row_index, column_index)] = value;
+                row[column_index] = value;
             }
         }
-    } else {
-        for column_index in 0..data.shape()[1] {
-            let mut lane = data.column(column_index).to_vec();
+    }
+}
+
+fn transform_columns(data: &mut Array2<Complex32>, inverse: bool) {
+    let [row_count, column_count]: [usize; 2] = data
+        .shape()
+        .try_into()
+        .expect("2-D FFT input should have exactly two axes");
+    let fft = fft32(row_count, inverse);
+    let mut lane = vec![Complex32::default(); row_count];
+    for column_index in 0..column_count {
+        for row_index in 0..row_count {
+            lane[row_index] = data[(row_index, column_index)];
+        }
+        fft.process(&mut lane);
+        for row_index in 0..row_count {
+            data[(row_index, column_index)] = lane[row_index];
+        }
+    }
+}
+
+fn transform_rows_f64(data: &mut Array2<Complex64>, inverse: bool) {
+    let row_len = data.shape()[1];
+    let fft = fft64(row_len, inverse);
+    for mut row in data.rows_mut() {
+        if let Some(row) = row.as_slice_mut() {
+            fft.process(row);
+        } else {
+            let mut lane = row.to_vec();
             fft.process(&mut lane);
-            for (row_index, value) in lane.into_iter().enumerate() {
-                data[(row_index, column_index)] = value;
+            for (column_index, value) in lane.into_iter().enumerate() {
+                row[column_index] = value;
             }
+        }
+    }
+}
+
+fn transform_columns_f64(data: &mut Array2<Complex64>, inverse: bool) {
+    let [row_count, column_count]: [usize; 2] = data
+        .shape()
+        .try_into()
+        .expect("2-D FFT input should have exactly two axes");
+    let fft = fft64(row_count, inverse);
+    let mut lane = vec![Complex64::default(); row_count];
+    for column_index in 0..column_count {
+        for row_index in 0..row_count {
+            lane[row_index] = data[(row_index, column_index)];
+        }
+        fft.process(&mut lane);
+        for row_index in 0..row_count {
+            data[(row_index, column_index)] = lane[row_index];
         }
     }
 }
