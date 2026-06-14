@@ -270,6 +270,10 @@ impl ManagedImagingOutput {
                             result.run.stage_timings.weighting_ns,
                         ),
                         (
+                            "executor_build".to_string(),
+                            result.run.stage_timings.executor_build_ns,
+                        ),
+                        (
                             "major_cycle_refresh".to_string(),
                             result.run.stage_timings.major_cycle_refresh_ns,
                         ),
@@ -396,6 +400,10 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
             (
                 "weighting".to_string(),
                 summary.stage_timings.weighting.as_nanos() as u64,
+            ),
+            (
+                "executor_build".to_string(),
+                summary.stage_timings.executor_build.as_nanos() as u64,
             ),
             (
                 "major_cycle_refresh".to_string(),
@@ -698,6 +706,7 @@ mod tests {
         let stage_timings = ImagingStageTimings {
             controller_overhead: Duration::from_nanos(11),
             weighting: Duration::from_nanos(12),
+            executor_build: Duration::from_nanos(28),
             psf_grid: Duration::from_nanos(13),
             psf_fft: Duration::from_nanos(14),
             psf_normalize: Duration::from_nanos(15),
@@ -785,6 +794,7 @@ mod tests {
             .iter()
             .cloned()
             .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(stage_timings["executor_build"], 28);
         assert_eq!(stage_timings["psf_normalize"], 15);
         assert_eq!(stage_timings["model_fft"], 16);
         assert_eq!(stage_timings["minor_cycle"], 18);
@@ -905,19 +915,20 @@ mod tests {
                 stage_timings: crate::ImagerCoreStageTimings {
                     controller_overhead_ns: 1,
                     weighting_ns: 2,
-                    psf_grid_ns: 3,
-                    psf_fft_ns: 4,
-                    psf_normalize_ns: 5,
-                    model_fft_ns: 6,
-                    residual_degrid_grid_ns: 7,
-                    residual_fft_ns: 8,
-                    residual_normalize_ns: 9,
-                    minor_cycle_ns: 10,
-                    minor_cycle_solve_ns: 11,
-                    major_cycle_refresh_ns: 12,
-                    beam_fit_ns: 13,
-                    restore_ns: 14,
-                    total_ns: 15,
+                    executor_build_ns: 3,
+                    psf_grid_ns: 4,
+                    psf_fft_ns: 5,
+                    psf_normalize_ns: 6,
+                    model_fft_ns: 7,
+                    residual_degrid_grid_ns: 8,
+                    residual_fft_ns: 9,
+                    residual_normalize_ns: 10,
+                    minor_cycle_ns: 11,
+                    minor_cycle_solve_ns: 12,
+                    major_cycle_refresh_ns: 13,
+                    beam_fit_ns: 14,
+                    restore_ns: 15,
+                    total_ns: 16,
                 },
                 frontend_timings: crate::ImagerFrontendTaskStageTimings {
                     open_measurement_set_ns: 16,
@@ -968,7 +979,7 @@ mod tests {
         );
         assert_eq!(
             output.run.stage_timings.values_ns[0],
-            ("controller_total".to_string(), 15)
+            ("controller_total".to_string(), 16)
         );
         let stage_timings = output
             .run
@@ -977,13 +988,14 @@ mod tests {
             .iter()
             .cloned()
             .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(stage_timings["psf_normalize"], 5);
-        assert_eq!(stage_timings["model_fft"], 6);
-        assert_eq!(stage_timings["minor_cycle"], 10);
-        assert_eq!(stage_timings["minor_cycle_solve"], 11);
-        assert_eq!(stage_timings["major_cycle_refresh"], 12);
-        assert_eq!(stage_timings["beam_fit"], 13);
-        assert_eq!(stage_timings["restore"], 14);
+        assert_eq!(stage_timings["executor_build"], 3);
+        assert_eq!(stage_timings["psf_normalize"], 6);
+        assert_eq!(stage_timings["model_fft"], 7);
+        assert_eq!(stage_timings["minor_cycle"], 11);
+        assert_eq!(stage_timings["minor_cycle_solve"], 12);
+        assert_eq!(stage_timings["major_cycle_refresh"], 13);
+        assert_eq!(stage_timings["beam_fit"], 14);
+        assert_eq!(stage_timings["restore"], 15);
         assert_eq!(
             output.run.frontend_timings.values_ns[6],
             ("total".to_string(), 22)

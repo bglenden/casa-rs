@@ -1243,6 +1243,8 @@ pub struct ImagerCoreStageTimings {
     pub controller_overhead_ns: u64,
     /// Imaging-weighting and taper time.
     pub weighting_ns: u64,
+    /// Backend executor/sample-plan setup time.
+    pub executor_build_ns: u64,
     /// PSF grid time.
     pub psf_grid_ns: u64,
     /// PSF FFT time.
@@ -1577,6 +1579,7 @@ fn core_stage_timings(timings: &casa_imaging::ImagingStageTimings) -> ImagerCore
     ImagerCoreStageTimings {
         controller_overhead_ns: timings.controller_overhead.as_nanos() as u64,
         weighting_ns: timings.weighting.as_nanos() as u64,
+        executor_build_ns: timings.executor_build.as_nanos() as u64,
         psf_grid_ns: timings.psf_grid.as_nanos() as u64,
         psf_fft_ns: timings.psf_fft.as_nanos() as u64,
         psf_normalize_ns: timings.psf_normalize.as_nanos() as u64,

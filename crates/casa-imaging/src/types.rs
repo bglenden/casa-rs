@@ -2113,6 +2113,9 @@ pub struct ImagingStageTimings {
     pub controller_overhead: Duration,
     /// Time spent applying geometry-dependent imaging weights and tapers.
     pub weighting: Duration,
+    /// Time spent building backend executor state, including reusable sample
+    /// plans and grid workspaces.
+    pub executor_build: Duration,
     /// Time spent gridding PSF/sample weights.
     pub psf_grid: Duration,
     /// Time spent FFTing the PSF grid.
@@ -2160,6 +2163,7 @@ impl Default for ImagingStageTimings {
         Self {
             controller_overhead: Duration::ZERO,
             weighting: Duration::ZERO,
+            executor_build: Duration::ZERO,
             psf_grid: Duration::ZERO,
             psf_fft: Duration::ZERO,
             psf_normalize: Duration::ZERO,

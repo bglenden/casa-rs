@@ -67,6 +67,7 @@ RUST_STAGE_FIELDS = {
     "frontend_total",
     "controller_overhead",
     "weighting",
+    "executor_build",
     "psf_grid",
     "psf_fft",
     "psf_normalize",

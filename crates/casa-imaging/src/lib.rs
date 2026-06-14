@@ -835,10 +835,14 @@ fn run_standard_mfs_imaging_with_weighted_batches(
 ) -> Result<ImagingResult, ImagingError> {
     let use_metal_executor = should_use_standard_mfs_metal_backend(request);
     let use_tiled_executor = should_use_standard_mfs_tiled_backend(request);
-    let mut standard_executor = (!(use_metal_executor || use_tiled_executor)
-        && should_use_standard_mfs_executor(request, weighted_batches))
-    .then(|| StandardMfsCpuExecutor::new(gridder, weighted_batches))
-    .transpose()?;
+    let mut standard_executor = None;
+    if !(use_metal_executor || use_tiled_executor)
+        && should_use_standard_mfs_executor(request, weighted_batches)
+    {
+        let executor_build_started = Instant::now();
+        standard_executor = Some(StandardMfsCpuExecutor::new(gridder, weighted_batches)?);
+        stage_timings.executor_build += executor_build_started.elapsed();
+    }
     let [nx, ny] = request.geometry.image_shape;
     let mut model = request
         .initial_model
@@ -20718,6 +20722,7 @@ fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
 fn add_stage_timings(total: &mut ImagingStageTimings, part: ImagingStageTimings) {
     total.controller_overhead += part.controller_overhead;
     total.weighting += part.weighting;
+    total.executor_build += part.executor_build;
     total.psf_grid += part.psf_grid;
     total.psf_fft += part.psf_fft;
     total.psf_normalize += part.psf_normalize;

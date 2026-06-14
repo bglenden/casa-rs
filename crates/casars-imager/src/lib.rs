@@ -7319,7 +7319,7 @@ fn run_independent_shared_cube_slab_planes(
                 .sum::<usize>();
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
-                    "cube_shared_plane_worker plane={} batches={} samples={} density_batches={} density_samples={} model_batches={} model_samples={} weight_density_mode={:?} gridder_mode={:?} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} psf_peak_normalization={:.9e} max_psf_sidelobe={:.9e} major_cycles={} actual_minor_iterations={} reported_minor_iterations={} initial_peak={:.9e} final_peak={:.9e} stop_reason={:?} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_controller_overhead_ms={:.3}",
+                    "cube_shared_plane_worker plane={} batches={} samples={} density_batches={} density_samples={} model_batches={} model_samples={} weight_density_mode={:?} gridder_mode={:?} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} psf_peak_normalization={:.9e} max_psf_sidelobe={:.9e} major_cycles={} actual_minor_iterations={} reported_minor_iterations={} initial_peak={:.9e} final_peak={:.9e} stop_reason={:?} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_controller_overhead_ms={:.3}",
                     payload.plane_index,
                     visibility_batches,
                     visibility_samples,
@@ -7345,6 +7345,7 @@ fn run_independent_shared_cube_slab_planes(
                     duration_ms(worker_started.elapsed()),
                     duration_ms(stage_timings.total),
                     duration_ms(stage_timings.weighting),
+                    duration_ms(stage_timings.executor_build),
                     duration_ms(stage_timings.psf_grid),
                     duration_ms(stage_timings.psf_fft),
                     duration_ms(stage_timings.psf_normalize),
@@ -7368,7 +7369,7 @@ fn run_independent_shared_cube_slab_planes(
         add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
-                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} batches={} samples={} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3}",
+                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} batches={} samples={} core_total_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3}",
                 plane_result.plane_index,
                 plane_result.batch_index,
                 plane_result.batch_task_count,
@@ -7378,6 +7379,7 @@ fn run_independent_shared_cube_slab_planes(
                 plane_result.result.visibility_batches,
                 plane_result.result.visibility_samples,
                 duration_ms(plane_result.stage_timings.total),
+                duration_ms(plane_result.stage_timings.executor_build),
                 duration_ms(plane_result.stage_timings.psf_grid),
                 duration_ms(plane_result.stage_timings.psf_fft),
             );
@@ -8284,6 +8286,7 @@ fn slab_config_for_cube_planes(
 fn add_imaging_stage_timings(total: &mut ImagingStageTimings, part: ImagingStageTimings) {
     total.controller_overhead += part.controller_overhead;
     total.weighting += part.weighting;
+    total.executor_build += part.executor_build;
     total.psf_grid += part.psf_grid;
     total.psf_fft += part.psf_fft;
     total.psf_normalize += part.psf_normalize;
@@ -9442,6 +9445,7 @@ fn subtract_joint_shifted_psf(
 fn add_stage_timings(target: &mut ImagingStageTimings, extra: ImagingStageTimings) {
     target.controller_overhead += extra.controller_overhead;
     target.weighting += extra.weighting;
+    target.executor_build += extra.executor_build;
     target.psf_grid += extra.psf_grid;
     target.psf_fft += extra.psf_fft;
     target.psf_normalize += extra.psf_normalize;
