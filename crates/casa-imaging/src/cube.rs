@@ -678,6 +678,54 @@ fn blank_plane_diagnostics(
     }
 }
 
+fn compute_dirty_cube_plane_initial_residual(
+    request: &ImagingRequest,
+    weighted_batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>, Array2<f32>), ImagingError> {
+    let [nx, ny] = request.geometry.image_shape;
+    let model = Array2::<f32>::zeros((nx, ny));
+    if request.clean.niter == 0
+        && request.w_term_mode == WTermMode::None
+        && !standard_mfs_fixed_tile_backend_enabled()
+        && !standard_mfs_metal_backend_enabled()
+        && standard_mfs_sample_count(weighted_batches) <= standard_mfs_executor_max_samples()
+    {
+        let executor_build_started = Instant::now();
+        let mut executor = StandardMfsCpuExecutor::new(gridder, weighted_batches)?;
+        let executor_build_elapsed = executor_build_started.elapsed();
+        stage_timings.executor_build += executor_build_elapsed;
+        if crate::profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_executor_build caller=dirty_cube_initial samples={} elapsed_ms={:.3}",
+                standard_mfs_sample_count(weighted_batches),
+                crate::profile::millis(executor_build_elapsed),
+            );
+        }
+        let psf_state = compute_psf_standard(&mut executor, stage_timings)?;
+        let residual = compute_residual_standard_with_executor(
+            &mut executor,
+            &model,
+            &psf_state,
+            stage_timings,
+        )?;
+        return Ok((psf_state, model, residual));
+    }
+
+    let psf_state = compute_psf(request, weighted_batches, gridder, stage_timings)?;
+    let residual = compute_residual(
+        request,
+        weighted_batches,
+        gridder,
+        &model,
+        &psf_state,
+        crate::StandardMfsExecutionConfig::default(),
+        stage_timings,
+    )?;
+    Ok((psf_state, model, residual))
+}
+
 fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, ImagingError> {
     let total_started = Instant::now();
     request.validate()?;
@@ -771,13 +819,13 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             warnings,
             is_blank,
         ) =
-            match compute_psf(
+            match compute_dirty_cube_plane_initial_residual(
                 &plane_request,
                 &weighted_batches,
                 &gridder,
                 &mut plane_stage_timings,
             ) {
-                Ok(psf_state) => {
+                Ok((psf_state, model, residual)) => {
                     let BeamFitOutcome {
                         beam: auto_mask_beam,
                         ..
@@ -786,16 +834,6 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                         plane_request.geometry.cell_size_rad,
                         plane_request.clean.psf_cutoff,
                     );
-                    let model = Array2::<f32>::zeros((nx, ny));
-                    let residual = compute_residual(
-                        &plane_request,
-                        &weighted_batches,
-                        &gridder,
-                        &model,
-                        &psf_state,
-                        crate::StandardMfsExecutionConfig::default(),
-                        &mut plane_stage_timings,
-                    )?;
                     let multiscale_state =
                         matches!(plane_request.deconvolver, Deconvolver::Multiscale).then(|| {
                             let scales = effective_multiscale_scales(&plane_request);

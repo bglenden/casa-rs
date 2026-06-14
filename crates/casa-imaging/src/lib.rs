@@ -14353,7 +14353,17 @@ fn compute_psf(
     if standard_mfs_sample_count(batches) > standard_mfs_executor_max_samples() {
         return compute_psf_standard_streaming(batches, gridder, stage_timings);
     }
+    let executor_build_started = Instant::now();
     let mut executor = StandardMfsCpuExecutor::new(gridder, batches)?;
+    let executor_build_elapsed = executor_build_started.elapsed();
+    stage_timings.executor_build += executor_build_elapsed;
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "standard_mfs_executor_build caller=compute_psf samples={} elapsed_ms={:.3}",
+            standard_mfs_sample_count(batches),
+            profile::millis(executor_build_elapsed),
+        );
+    }
     compute_psf_standard(&mut executor, stage_timings)
 }
 
@@ -15272,7 +15282,17 @@ fn compute_residual_standard(
     if !use_direct_point_predict
         && standard_mfs_sample_count(batches) <= standard_mfs_executor_max_samples()
     {
+        let executor_build_started = Instant::now();
         let mut executor = StandardMfsCpuExecutor::new(gridder, batches)?;
+        let executor_build_elapsed = executor_build_started.elapsed();
+        stage_timings.executor_build += executor_build_elapsed;
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_executor_build caller=compute_residual_standard samples={} elapsed_ms={:.3}",
+                standard_mfs_sample_count(batches),
+                profile::millis(executor_build_elapsed),
+            );
+        }
         return compute_residual_standard_with_executor(
             &mut executor,
             model,
