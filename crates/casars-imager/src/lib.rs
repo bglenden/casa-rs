@@ -7731,21 +7731,21 @@ impl CubeSlabProductWriters {
         let slab_nchan = result.psf.dim().3;
         let start = [0, 0, 0, plane_start];
         self.psf
-            .put_slice(&result.psf.clone().into_dyn(), &start)
+            .put_slice_view(result.psf.view().into_dyn(), &start)
             .map_err(|error| format!("write slab psf: {error}"))?;
         self.residual
-            .put_slice(&result.residual.clone().into_dyn(), &start)
+            .put_slice_view(result.residual.view().into_dyn(), &start)
             .map_err(|error| format!("write slab residual: {error}"))?;
         if let Some(model) = self.model.as_mut() {
             model
-                .put_slice(&result.model.clone().into_dyn(), &start)
+                .put_slice_view(result.model.view().into_dyn(), &start)
                 .map_err(|error| format!("write slab model: {error}"))?;
         }
         self.image
-            .put_slice(&result.image.clone().into_dyn(), &start)
+            .put_slice_view(result.image.view().into_dyn(), &start)
             .map_err(|error| format!("write slab image: {error}"))?;
         self.sumwt
-            .put_slice(&result.sumwt.clone().into_dyn(), &start)
+            .put_slice_view(result.sumwt.view().into_dyn(), &start)
             .map_err(|error| format!("write slab sumwt: {error}"))?;
         for (offset, beam) in result.beams.iter().copied().enumerate() {
             let index = plane_start + offset;

@@ -28,7 +28,7 @@ use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
     Value,
 };
-use ndarray::{IxDyn, Slice, SliceInfoElem};
+use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 
 use crate::error::ImageError;
 use crate::image_expr::ImageExpr;
@@ -1293,6 +1293,15 @@ impl<T: ImagePixel> PagedImage<T> {
         <Self as LatticeMut<T>>::put_slice(self, data, start).map_err(Into::into)
     }
 
+    /// Writes a borrowed full-value slice at the given start position.
+    pub fn put_slice_view(
+        &mut self,
+        data: ArrayViewD<'_, T>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        paged_image_put_slice_view(self, data, start).map_err(Into::into)
+    }
+
     /// Writes a single pixel.
     pub fn put_at(&mut self, value: T, pos: &[usize]) -> Result<(), ImageError> {
         <Self as LatticeMut<T>>::put_at(self, value, pos).map_err(Into::into)
@@ -2288,6 +2297,60 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
     }
 }
 
+fn paged_image_put_slice_view<T: ImagePixel>(
+    image: &mut PagedImage<T>,
+    data: ArrayViewD<'_, T>,
+    start: &[usize],
+) -> Result<(), LatticeError> {
+    if start.len() != image.shape.len() {
+        return Err(LatticeError::NdimMismatch {
+            expected: image.shape.len(),
+            got: start.len(),
+        });
+    }
+    let end: Vec<usize> = start
+        .iter()
+        .zip(data.shape().iter())
+        .map(|(&s, &n)| s + n)
+        .collect();
+    for (&limit, &dim) in end.iter().zip(image.shape.iter()) {
+        if limit > dim {
+            return Err(LatticeError::ShapeMismatch {
+                expected: image.shape.clone(),
+                got: end,
+            });
+        }
+    }
+    if let Some(ref tio) = image.tiled_io {
+        let fortran_view = data.t();
+        if let Some(s) = fortran_view.as_slice() {
+            tio.borrow_mut()
+                .put_slice_fortran::<T>(s, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?;
+            return Ok(());
+        }
+        let contiguous = data.as_standard_layout();
+        let slice = contiguous.as_slice().expect("contiguous C-order data");
+        tio.borrow_mut()
+            .put_slice_c_order::<T>(slice, start, data.shape())
+            .map_err(|e| LatticeError::Table(e.to_string()))?;
+        return Ok(());
+    }
+    let mut array = image
+        .read_array()
+        .map_err(|e| LatticeError::Table(e.to_string()))?;
+    {
+        let mut view = array.slice_each_axis_mut(|axis| {
+            let idx = axis.axis.index();
+            Slice::from(start[idx] as isize..end[idx] as isize)
+        });
+        view.assign(&data);
+    }
+    image
+        .write_array(&array)
+        .map_err(|e| LatticeError::Table(e.to_string()))
+}
+
 impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
     fn with_traversal_cache_hint_mut<R>(
         &mut self,
@@ -2347,55 +2410,7 @@ impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
     }
 
     fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), LatticeError> {
-        if start.len() != self.shape.len() {
-            return Err(LatticeError::NdimMismatch {
-                expected: self.shape.len(),
-                got: start.len(),
-            });
-        }
-        let end: Vec<usize> = start
-            .iter()
-            .zip(data.shape().iter())
-            .map(|(&s, &n)| s + n)
-            .collect();
-        for (&limit, &dim) in end.iter().zip(self.shape.iter()) {
-            if limit > dim {
-                return Err(LatticeError::ShapeMismatch {
-                    expected: self.shape.clone(),
-                    got: end,
-                });
-            }
-        }
-        // Tile-aware path.
-        if let Some(ref tio) = self.tiled_io {
-            // Try Fortran-contiguous first (zero-copy fast path).
-            let fortran_view = data.t();
-            if let Some(s) = fortran_view.as_slice() {
-                tio.borrow_mut()
-                    .put_slice_fortran::<T>(s, start, data.shape())
-                    .map_err(|e| LatticeError::Table(e.to_string()))?;
-                return Ok(());
-            }
-            // C-order input: use the C-order put method.
-            let contiguous = data.as_standard_layout();
-            let slice = contiguous.as_slice().expect("contiguous C-order data");
-            tio.borrow_mut()
-                .put_slice_c_order::<T>(slice, start, data.shape())
-                .map_err(|e| LatticeError::Table(e.to_string()))?;
-            return Ok(());
-        }
-        let mut array = self
-            .read_array()
-            .map_err(|e| LatticeError::Table(e.to_string()))?;
-        {
-            let mut view = array.slice_each_axis_mut(|axis| {
-                let idx = axis.axis.index();
-                Slice::from(start[idx] as isize..end[idx] as isize)
-            });
-            view.assign(data);
-        }
-        self.write_array(&array)
-            .map_err(|e| LatticeError::Table(e.to_string()))
+        paged_image_put_slice_view(self, data.view(), start)
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
@@ -2699,6 +2714,23 @@ mod tests {
         assert_eq!(reopened.history().unwrap(), vec!["hello".to_string()]);
         assert_eq!(reopened.default_mask_name().as_deref(), Some("mask0"));
         assert_eq!(image_pixel_type(&path).unwrap(), ImagePixelType::Float32);
+    }
+
+    #[test]
+    fn put_slice_view_writes_borrowed_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4], make_coords(), &path).unwrap();
+        let data = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+
+        image.put_slice_view(data.view(), &[1, 1]).unwrap();
+
+        let observed = image
+            .get_slice(&[1, 1], &[2, 2])
+            .unwrap()
+            .into_raw_vec_and_offset()
+            .0;
+        assert_eq!(observed, vec![1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]
