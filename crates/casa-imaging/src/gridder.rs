@@ -1492,9 +1492,16 @@ impl StandardGridder {
     }
 
     pub(crate) fn corrected_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
-        self.corrected_image_from_grid(
-            &raw.mapv(|value| Complex32::new(value.re as f32, value.im as f32)),
-        )
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                image[(x, y)] = raw[(grid_x, grid_y)].re as f32
+                    * (self.correction_x[grid_x] * self.correction_y[grid_y]);
+            }
+        }
+        image
     }
 
     pub(crate) fn corrected_complex_image_from_grid(
@@ -3444,6 +3451,29 @@ mod tests {
         let correction = gridder.correction_image();
         assert!(correction[(16, 16)].is_finite());
         assert!(correction[(16, 16)] > 0.0);
+    }
+
+    #[test]
+    fn f64_grid_correction_matches_f32_projection_path() {
+        let gridder = StandardGridder::new(ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        })
+        .unwrap();
+        let mut raw = Array2::<Complex64>::zeros(gridder.grid_shape());
+        for ((x, y), value) in raw.indexed_iter_mut() {
+            *value = Complex64::new(
+                (x as f64 * 0.125) - (y as f64 * 0.03125),
+                (y as f64 * 0.0625) + (x as f64 * 0.015625),
+            );
+        }
+
+        let expected = gridder.corrected_image_from_grid(
+            &raw.mapv(|value| Complex32::new(value.re as f32, value.im as f32)),
+        );
+        let actual = gridder.corrected_image_from_grid_f64(&raw);
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
