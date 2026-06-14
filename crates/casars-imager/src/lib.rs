@@ -67,7 +67,7 @@ use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::spectral_selection::CubeRowSpectralContributions;
+use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralContributions};
 use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
@@ -35425,35 +35425,79 @@ struct CubeVisibilityAssignment<'a> {
     nearest_weight: bool,
 }
 
+enum CubeVisibilityAssignmentsInner<'a> {
+    Grid(std::slice::Iter<'a, CubeGridChannelContributions>),
+    Output {
+        frequencies_hz: &'a [f64],
+        contributions: std::iter::Enumerate<std::slice::Iter<'a, Vec<CubeChannelContribution>>>,
+    },
+}
+
+struct CubeVisibilityAssignments<'a> {
+    inner: CubeVisibilityAssignmentsInner<'a>,
+}
+
+impl<'a> Iterator for CubeVisibilityAssignments<'a> {
+    type Item = CubeVisibilityAssignment<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.inner {
+            CubeVisibilityAssignmentsInner::Grid(iter) => {
+                iter.next().map(|grid| CubeVisibilityAssignment {
+                    output_channel: grid.output_channel,
+                    frequency_hz: grid.grid_frequency_hz,
+                    contributions: grid.contributions.as_slice(),
+                    nearest_weight: true,
+                })
+            }
+            CubeVisibilityAssignmentsInner::Output {
+                frequencies_hz,
+                contributions,
+            } => contributions.next().map(|(output_channel, contributions)| {
+                CubeVisibilityAssignment {
+                    output_channel,
+                    frequency_hz: frequencies_hz[output_channel],
+                    contributions: contributions.as_slice(),
+                    nearest_weight: false,
+                }
+            }),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.inner {
+            CubeVisibilityAssignmentsInner::Grid(iter) => iter.size_hint(),
+            CubeVisibilityAssignmentsInner::Output { contributions, .. } => {
+                contributions.size_hint()
+            }
+        }
+    }
+}
+
+impl ExactSizeIterator for CubeVisibilityAssignments<'_> {}
+
 fn cube_visibility_assignments<'a>(
     row_spectral_contributions: &'a CubeRowSpectralContributions,
     output_channel_frequencies_hz: &'a [f64],
     use_grid_assignments: bool,
-) -> Vec<CubeVisibilityAssignment<'a>> {
+) -> CubeVisibilityAssignments<'a> {
     if use_grid_assignments {
-        return row_spectral_contributions
-            .grid_channel_contributions
-            .iter()
-            .map(|grid| CubeVisibilityAssignment {
-                output_channel: grid.output_channel,
-                frequency_hz: grid.grid_frequency_hz,
-                contributions: grid.contributions.as_slice(),
-                nearest_weight: true,
-            })
-            .collect();
+        return CubeVisibilityAssignments {
+            inner: CubeVisibilityAssignmentsInner::Grid(
+                row_spectral_contributions.grid_channel_contributions.iter(),
+            ),
+        };
     }
 
-    row_spectral_contributions
-        .output_channel_contributions
-        .iter()
-        .enumerate()
-        .map(|(output_channel, contributions)| CubeVisibilityAssignment {
-            output_channel,
-            frequency_hz: output_channel_frequencies_hz[output_channel],
-            contributions: contributions.as_slice(),
-            nearest_weight: false,
-        })
-        .collect()
+    CubeVisibilityAssignments {
+        inner: CubeVisibilityAssignmentsInner::Output {
+            frequencies_hz: output_channel_frequencies_hz,
+            contributions: row_spectral_contributions
+                .output_channel_contributions
+                .iter()
+                .enumerate(),
+        },
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -40898,7 +40942,8 @@ mod tests {
             &row_spectral_contributions,
             &output_channel_frequencies_hz,
             false,
-        );
+        )
+        .collect::<Vec<_>>();
         assert_eq!(output_assignments.len(), 2);
         assert_eq!(output_assignments[0].output_channel, 0);
         assert_eq!(output_assignments[0].frequency_hz, 20.0);
@@ -40909,7 +40954,8 @@ mod tests {
             &row_spectral_contributions,
             &output_channel_frequencies_hz,
             true,
-        );
+        )
+        .collect::<Vec<_>>();
         assert_eq!(grid_assignments.len(), 1);
         assert_eq!(grid_assignments[0].output_channel, 0);
         assert_eq!(grid_assignments[0].frequency_hz, 10.5);
