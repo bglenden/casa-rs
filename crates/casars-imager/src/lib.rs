@@ -6832,6 +6832,7 @@ struct IndependentImagingPlaneResult<R> {
     stage_timings: ImagingStageTimings,
 }
 
+#[cfg(test)]
 fn run_owned_independent_imaging_planes<T, R, F>(
     tasks: Vec<IndependentImagingPlaneTask<T>>,
     worker_count: usize,
@@ -6971,6 +6972,153 @@ where
     }
     results.sort_by_key(|result| result.plane_index);
     Ok((results, started_at.elapsed()))
+}
+
+fn run_owned_independent_imaging_planes_with_consumer<T, R, F, C>(
+    tasks: Vec<IndependentImagingPlaneTask<T>>,
+    worker_count: usize,
+    run_plane: F,
+    mut consume_result: C,
+) -> Result<Duration, String>
+where
+    T: Send,
+    R: Send,
+    F: Fn(T) -> Result<(R, ImagingStageTimings), String> + Sync,
+    C: FnMut(IndependentImagingPlaneResult<R>) -> Result<(), String>,
+{
+    let started_at = Instant::now();
+    let task_count = tasks.len();
+    if task_count == 0 {
+        return Ok(started_at.elapsed());
+    }
+    let worker_count = worker_count.max(1).min(task_count);
+    let pending = Mutex::new(
+        tasks
+            .into_iter()
+            .enumerate()
+            .rev()
+            .collect::<Vec<(usize, IndependentImagingPlaneTask<T>)>>(),
+    );
+    let stop_workers = AtomicBool::new(false);
+    let (result_tx, result_rx) =
+        mpsc::channel::<Result<IndependentImagingPlaneResult<R>, String>>();
+    if standard_mfs_profile_detail_enabled() {
+        let planes = {
+            let pending = pending
+                .lock()
+                .map_err(|_| "independent imaging task queue lock poisoned".to_string())?;
+            pending
+                .iter()
+                .rev()
+                .map(|(_, task)| task.plane_index.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        eprintln!(
+            "independent_plane_executor_owned_streaming_start tasks={} worker_count={} planes={}",
+            task_count, worker_count, planes,
+        );
+    }
+
+    let mut first_error = None::<String>;
+    let mut completed = 0usize;
+    let mut completion_timings = Vec::<(usize, Duration)>::with_capacity(task_count);
+    std::thread::scope(|scope| {
+        for worker_slot in 0..worker_count {
+            let pending = &pending;
+            let result_tx = result_tx.clone();
+            let run_plane = &run_plane;
+            let stop_workers = &stop_workers;
+            scope.spawn(move || {
+                loop {
+                    if stop_workers.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let next = match pending.lock() {
+                        Ok(mut pending) => pending.pop(),
+                        Err(_) => {
+                            let _ = result_tx.send(Err(
+                                "independent imaging task queue lock poisoned".to_string(),
+                            ));
+                            stop_workers.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                    };
+                    let Some((task_ordinal, task)) = next else {
+                        break;
+                    };
+                    let worker_started_at = Instant::now();
+                    let result = run_plane(task.payload).map(|(result, stage_timings)| {
+                        let wave_start = (task_ordinal / worker_count) * worker_count;
+                        let wave_task_count =
+                            task_count.saturating_sub(wave_start).min(worker_count);
+                        IndependentImagingPlaneResult {
+                            plane_index: task.plane_index,
+                            batch_index: task_ordinal / worker_count,
+                            batch_task_count: wave_task_count,
+                            worker_slot,
+                            worker_elapsed: worker_started_at.elapsed(),
+                            result,
+                            stage_timings,
+                        }
+                    });
+                    if result.is_err() {
+                        stop_workers.store(true, Ordering::Relaxed);
+                    }
+                    if result_tx.send(result).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(result_tx);
+        for result in result_rx {
+            match result {
+                Ok(result) => {
+                    completion_timings.push((result.plane_index, result.worker_elapsed));
+                    if first_error.is_none() {
+                        if let Err(error) = consume_result(result) {
+                            first_error = Some(error);
+                            stop_workers.store(true, Ordering::Relaxed);
+                        } else {
+                            completed += 1;
+                        }
+                    }
+                }
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                        stop_workers.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    });
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    if completed != task_count {
+        return Err(format!(
+            "owned independent imaging plane streaming executor completed {} of {} tasks",
+            completed, task_count
+        ));
+    }
+    if standard_mfs_profile_detail_enabled() {
+        completion_timings.sort_by_key(|(plane_index, _)| *plane_index);
+        let worker_elapsed_ms = completion_timings
+            .iter()
+            .map(|(plane_index, elapsed)| format!("{plane_index}:{:.3}", duration_ms(*elapsed)))
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "independent_plane_executor_owned_streaming_done tasks={} worker_count={} plane_elapsed_ms=[{}] wall_ms={:.3}",
+            task_count,
+            worker_count,
+            worker_elapsed_ms,
+            duration_ms(started_at.elapsed()),
+        );
+    }
+    Ok(started_at.elapsed())
 }
 
 fn publish_multi_plane_group<R, W, A>(
@@ -7381,7 +7529,7 @@ fn run_independent_shared_cube_slab_planes(
         })
         .collect::<Vec<_>>();
 
-    let (plane_results, plane_run_elapsed) = run_owned_independent_imaging_planes(
+    let plane_run_elapsed = run_owned_independent_imaging_planes_with_consumer(
         tasks,
         worker_count,
         |payload| {
@@ -7528,40 +7676,41 @@ fn run_independent_shared_cube_slab_planes(
                 stage_timings,
             ))
         },
+        |plane_result| {
+            add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} batches={} samples={} owned_single_plane_dirty={} core_total_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
+                    plane_result.plane_index,
+                    plane_result.batch_index,
+                    plane_result.batch_task_count,
+                    plane_result.worker_slot,
+                    duration_ms(plane_result.worker_elapsed),
+                    duration_ms(plane_result.result.run_imaging_elapsed),
+                    plane_result.result.visibility_batches,
+                    plane_result.result.visibility_samples,
+                    plane_result.result.used_owned_single_plane_dirty,
+                    duration_ms(plane_result.stage_timings.total),
+                    duration_ms(plane_result.stage_timings.executor_build),
+                    duration_ms(plane_result.stage_timings.psf_grid),
+                    duration_ms(plane_result.stage_timings.psf_fft),
+                    duration_ms(plane_result.stage_timings.residual_degrid_grid),
+                    duration_ms(plane_result.stage_timings.residual_fft),
+                );
+            }
+            let write_started_at = Instant::now();
+            product_bytes += publish_multi_plane_group(
+                plane_result.plane_index,
+                plane_result.result.cube_result,
+                product_writers,
+                aggregate,
+            )?;
+            product_write_elapsed += write_started_at.elapsed();
+            Ok(())
+        },
     )?;
 
     let run_elapsed = slab_started.elapsed();
-    for plane_result in plane_results {
-        add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
-        if standard_mfs_profile_detail_enabled() {
-            eprintln!(
-                "cube_shared_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} batches={} samples={} owned_single_plane_dirty={} core_total_ms={:.3} core_executor_build_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
-                plane_result.plane_index,
-                plane_result.batch_index,
-                plane_result.batch_task_count,
-                plane_result.worker_slot,
-                duration_ms(plane_result.worker_elapsed),
-                duration_ms(plane_result.result.run_imaging_elapsed),
-                plane_result.result.visibility_batches,
-                plane_result.result.visibility_samples,
-                plane_result.result.used_owned_single_plane_dirty,
-                duration_ms(plane_result.stage_timings.total),
-                duration_ms(plane_result.stage_timings.executor_build),
-                duration_ms(plane_result.stage_timings.psf_grid),
-                duration_ms(plane_result.stage_timings.psf_fft),
-                duration_ms(plane_result.stage_timings.residual_degrid_grid),
-                duration_ms(plane_result.stage_timings.residual_fft),
-            );
-        }
-        let write_started_at = Instant::now();
-        product_bytes += publish_multi_plane_group(
-            plane_result.plane_index,
-            plane_result.result.cube_result,
-            product_writers,
-            aggregate,
-        )?;
-        product_write_elapsed += write_started_at.elapsed();
-    }
 
     Ok(CubeSlabRunOutcome {
         run_elapsed,
@@ -45204,6 +45353,49 @@ deconvolver=mtmfs
                 .map(|result| (result.plane_index, result.result.as_str()))
                 .collect::<Vec<_>>(),
             vec![(0, "zero"), (1, "one"), (2, "two")]
+        );
+    }
+
+    #[test]
+    fn independent_plane_streaming_consumer_receives_completion_order() {
+        let tasks = vec![
+            IndependentImagingPlaneTask {
+                plane_index: 2,
+                payload: (30u64, "two"),
+            },
+            IndependentImagingPlaneTask {
+                plane_index: 0,
+                payload: (0u64, "zero"),
+            },
+            IndependentImagingPlaneTask {
+                plane_index: 1,
+                payload: (10u64, "one"),
+            },
+        ];
+        let mut consumed = Vec::<(usize, String)>::new();
+
+        let elapsed = run_owned_independent_imaging_planes_with_consumer(
+            tasks,
+            3,
+            |(delay_ms, label)| {
+                std::thread::sleep(Duration::from_millis(delay_ms));
+                Ok((label.to_string(), ImagingStageTimings::default()))
+            },
+            |result| {
+                consumed.push((result.plane_index, result.result));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(elapsed >= Duration::ZERO);
+        assert_eq!(
+            consumed,
+            vec![
+                (0, "zero".to_string()),
+                (1, "one".to_string()),
+                (2, "two".to_string())
+            ]
         );
     }
 
