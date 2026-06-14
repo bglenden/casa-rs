@@ -54,6 +54,19 @@ pub(crate) fn centered_ifft2_f64(input: &Array2<Complex64>) -> Array2<Complex64>
     fftshift2_f64(&shifted)
 }
 
+pub(crate) fn centered_ifft2_f64_owned(mut input: Array2<Complex64>) -> Array2<Complex64> {
+    if !shift2_in_place_even_f64(&mut input) {
+        return centered_ifft2_f64(&input);
+    }
+    transform_axis_f64(&mut input, Axis(0), true);
+    transform_axis_f64(&mut input, Axis(1), true);
+    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f64;
+    input.mapv_inplace(|value| value * scale);
+    let shifted = shift2_in_place_even_f64(&mut input);
+    debug_assert!(shifted);
+    input
+}
+
 fn transform_axis(data: &mut Array2<Complex32>, axis: Axis, inverse: bool) {
     if axis.index() == 0 {
         transform_rows(data, inverse);
@@ -184,6 +197,31 @@ fn ifftshift2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
     shift2_f64(input, true)
 }
 
+fn shift2_in_place_even_f64(input: &mut Array2<Complex64>) -> bool {
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    if nx % 2 != 0 || ny % 2 != 0 {
+        return false;
+    }
+    let Some(storage) = input.as_slice_memory_order_mut() else {
+        return false;
+    };
+    let hx = nx / 2;
+    let hy = ny / 2;
+    for x in 0..hx {
+        for y in 0..hy {
+            let q00 = x * ny + y;
+            let q11 = (x + hx) * ny + y + hy;
+            storage.swap(q00, q11);
+
+            let q10 = (x + hx) * ny + y;
+            let q01 = x * ny + y + hy;
+            storage.swap(q10, q01);
+        }
+    }
+    true
+}
+
 fn shift2(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
     let nx = input.shape()[0];
     let ny = input.shape()[1];
@@ -223,9 +261,9 @@ fn shift2_f64(input: &Array2<Complex64>, inverse: bool) -> Array2<Complex64> {
 #[cfg(test)]
 mod tests {
     use ndarray::Array2;
-    use num_complex::Complex32;
+    use num_complex::{Complex32, Complex64};
 
-    use super::{centered_fft2, centered_ifft2};
+    use super::{centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned};
 
     #[test]
     fn fft_round_trip_preserves_image() {
@@ -239,6 +277,32 @@ mod tests {
         for (expected, actual) in image.iter().zip(restored.iter()) {
             assert!((expected.re - actual.re).abs() < 1.0e-5);
             assert!((expected.im - actual.im).abs() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn owned_f64_ifft_matches_borrowed_for_even_shape() {
+        let image = Array2::from_shape_fn((8, 6), |(x, y)| {
+            Complex64::new((x * 13 + y * 7) as f64, (x as isize - y as isize) as f64)
+        });
+        let borrowed = centered_ifft2_f64(&image);
+        let owned = centered_ifft2_f64_owned(image);
+        for (expected, actual) in borrowed.iter().zip(owned.iter()) {
+            assert!((expected.re - actual.re).abs() < 1.0e-10);
+            assert!((expected.im - actual.im).abs() < 1.0e-10);
+        }
+    }
+
+    #[test]
+    fn owned_f64_ifft_matches_borrowed_for_odd_shape() {
+        let image = Array2::from_shape_fn((7, 5), |(x, y)| {
+            Complex64::new((x * 11 + y * 5) as f64, (y as isize - x as isize) as f64)
+        });
+        let borrowed = centered_ifft2_f64(&image);
+        let owned = centered_ifft2_f64_owned(image);
+        for (expected, actual) in borrowed.iter().zip(owned.iter()) {
+            assert!((expected.re - actual.re).abs() < 1.0e-10);
+            assert!((expected.im - actual.im).abs() < 1.0e-10);
         }
     }
 }

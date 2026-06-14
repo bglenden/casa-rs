@@ -67,7 +67,7 @@ use execution::{
     StandardMfsVisibilityPlan, finite_visibility,
 };
 pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
-use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
+use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned};
 use gridder::{
     PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
     ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
@@ -3193,10 +3193,10 @@ where
     stage_timings.psf_grid += split_grid_elapsed;
     stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
 
-    dirty_grids_to_psf_and_residual(
+    dirty_grids_to_psf_and_residual_owned(
         gridder,
-        &psf_grid,
-        &residual_grid,
+        psf_grid,
+        residual_grid,
         accumulation,
         stage_timings,
     )
@@ -3285,10 +3285,10 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
         let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
         stage_timings.psf_grid += split_grid_elapsed;
         stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
-        return dirty_grids_to_psf_and_residual(
+        return dirty_grids_to_psf_and_residual_owned(
             gridder,
-            &psf_grid,
-            &residual_grid,
+            psf_grid,
+            residual_grid,
             accumulation,
             stage_timings,
         )
@@ -3380,10 +3380,10 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
     stage_timings.psf_grid += split_grid_elapsed;
     stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
 
-    dirty_grids_to_psf_and_residual(
+    dirty_grids_to_psf_and_residual_owned(
         gridder,
-        &psf_grid,
-        &residual_grid,
+        psf_grid,
+        residual_grid,
         accumulation,
         stage_timings,
     )
@@ -3459,10 +3459,10 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
                             profile::millis(grid_elapsed)
                         );
                     }
-                    return dirty_grids_to_psf_and_residual(
+                    return dirty_grids_to_psf_and_residual_owned(
                         gridder,
-                        &psf_grid,
-                        &residual_grid,
+                        psf_grid,
+                        residual_grid,
                         accumulation,
                         stage_timings,
                     )
@@ -3503,10 +3503,10 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
                     profile::millis(grid_elapsed)
                 );
             }
-            return dirty_grids_to_psf_and_residual(
+            return dirty_grids_to_psf_and_residual_owned(
                 gridder,
-                &psf_grid,
-                &residual_grid,
+                psf_grid,
+                residual_grid,
                 accumulation,
                 stage_timings,
             )
@@ -3570,10 +3570,10 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
         }
     }
 
-    dirty_grids_to_psf_and_residual(
+    dirty_grids_to_psf_and_residual_owned(
         gridder,
-        &psf_grid,
-        &residual_grid,
+        psf_grid,
+        residual_grid,
         accumulation,
         stage_timings,
     )
@@ -4263,10 +4263,10 @@ fn accumulate_weighted_residual_sample_array(
     Ok(())
 }
 
-fn dirty_grids_to_psf_and_residual(
+fn dirty_grids_to_psf_and_residual_owned(
     gridder: &StandardGridder,
-    psf_grid: &Array2<Complex64>,
-    residual_grid: &Array2<Complex64>,
+    psf_grid: Array2<Complex64>,
+    residual_grid: Array2<Complex64>,
     accumulation: StandardMfsDirtyAccumulation,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<(PsfState, Array2<f32>), ImagingError> {
@@ -4275,7 +4275,7 @@ fn dirty_grids_to_psf_and_residual(
     }
 
     let psf_fft_started = Instant::now();
-    let raw_psf = centered_ifft2_f64(psf_grid);
+    let raw_psf = centered_ifft2_f64_owned(psf_grid);
     stage_timings.psf_fft += psf_fft_started.elapsed();
     let psf_normalize_started = Instant::now();
     let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
@@ -4290,7 +4290,7 @@ fn dirty_grids_to_psf_and_residual(
     stage_timings.psf_normalize += psf_normalize_started.elapsed();
 
     let residual_fft_started = Instant::now();
-    let raw_residual = centered_ifft2_f64(residual_grid);
+    let raw_residual = centered_ifft2_f64_owned(residual_grid);
     stage_timings.residual_fft += residual_fft_started.elapsed();
     let residual_normalize_started = Instant::now();
     let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
