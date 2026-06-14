@@ -12986,6 +12986,7 @@ fn read_columnar_prepared_source(
         channel_count,
     )
     .with_source_partition(source_partition);
+    request.include_uvw = false;
     request.include_antenna_ids = false;
     request.include_data_desc_ids = false;
     request.include_field_ids = false;
@@ -36193,6 +36194,7 @@ mod tests {
         let view = source.source_view().unwrap();
 
         assert_eq!(source.geometry_rows.len(), 1);
+        assert!(source.visibility.uvw.is_none());
         assert_eq!(source.fill_report.channel_start, 1);
         assert_eq!(source.fill_report.channel_count, 2);
         assert_eq!(view.partition.shape.channel_count, 4);
