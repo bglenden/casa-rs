@@ -428,6 +428,12 @@ pub struct StandardMfsExecutionConfig {
     /// plan. `CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE` remains a debug
     /// override for performance screening.
     pub metal_grouped_input_cache: bool,
+    /// Optional maximum sample count for the materialized CPU sample-plan executor.
+    ///
+    /// `None` keeps the default/env threshold. Frontends can set `Some(0)` for
+    /// dirty-only workloads where streaming taps during gridding is cheaper than
+    /// allocating and filling a per-plane materialized sample plan.
+    pub materialized_sample_plan_max_samples: Option<usize>,
     /// Optional frontend-computed maximum absolute W coordinate, in wavelengths.
     ///
     /// W-projection needs this value before kernels can be built. Supplying it
@@ -837,7 +843,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     let use_tiled_executor = should_use_standard_mfs_tiled_backend(request);
     let mut standard_executor = None;
     if !(use_metal_executor || use_tiled_executor)
-        && should_use_standard_mfs_executor(request, weighted_batches)
+        && should_use_standard_mfs_executor(request, weighted_batches, execution_config)
     {
         let executor_build_started = Instant::now();
         standard_executor = Some(StandardMfsCpuExecutor::new(gridder, weighted_batches)?);
@@ -4342,11 +4348,15 @@ fn psf_grid_to_state(
 fn should_use_standard_mfs_executor(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
+    execution_config: StandardMfsExecutionConfig,
 ) -> bool {
     if !matches!(request.w_term_mode, WTermMode::None) {
         return false;
     }
-    standard_mfs_sample_count(weighted_batches) <= standard_mfs_executor_max_samples()
+    let max_samples = execution_config
+        .materialized_sample_plan_max_samples
+        .unwrap_or_else(standard_mfs_executor_max_samples);
+    standard_mfs_sample_count(weighted_batches) <= max_samples
 }
 
 fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
@@ -22263,6 +22273,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
             |consumer| {
@@ -22339,6 +22350,7 @@ mod tests {
             fixed_tile_max_live_row_blocks: 1,
             fixed_tile_use_planned_run_blocks: false,
             metal_grouped_input_cache: false,
+            materialized_sample_plan_max_samples: None,
             w_project_max_abs_w_lambda: None,
         };
         let batch_streaming = run_standard_mfs_weighted_streaming_with_execution_config(

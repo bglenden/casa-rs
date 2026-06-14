@@ -19620,6 +19620,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -19633,6 +19634,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -19775,6 +19777,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: true,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -19921,6 +19924,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -20036,6 +20040,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -20228,6 +20233,7 @@ mod tests {
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )

@@ -7348,7 +7348,10 @@ fn run_independent_shared_cube_slab_planes(
     }
 
     let plane_stokes = cube.plane_stokes;
-    let plane_execution_config = standard_mfs_execution_config(&slab_config);
+    let mut plane_execution_config = standard_mfs_execution_config(&slab_config);
+    if clean.niter == 0 {
+        plane_execution_config.materialized_sample_plan_max_samples = Some(0);
+    }
     let channels = std::mem::take(&mut cube.channels);
     let gridder_modes = std::mem::take(&mut cube.gridder_modes);
     let tasks = channels
@@ -22453,6 +22456,7 @@ fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConf
             .unwrap_or(1),
         fixed_tile_use_planned_run_blocks: false,
         metal_grouped_input_cache: false,
+        materialized_sample_plan_max_samples: None,
         w_project_max_abs_w_lambda: None,
     }
 }
@@ -37747,6 +37751,7 @@ mod tests {
             fixed_tile_max_live_row_blocks: 1,
             fixed_tile_use_planned_run_blocks: false,
             metal_grouped_input_cache: false,
+            materialized_sample_plan_max_samples: None,
             w_project_max_abs_w_lambda: None,
         };
         assert_eq!(execution.fixed_tile_resident_bytes, Some(enabled.bytes));
