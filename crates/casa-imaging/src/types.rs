@@ -2010,6 +2010,12 @@ pub struct ImagingDiagnostics {
     pub gridded_samples: usize,
     /// Number of scalar samples dropped during gridding setup.
     pub skipped_samples: usize,
+    /// Sum of weighted-sample contributions used for FFT/image normalization.
+    pub normalization_sumwt: f32,
+    /// CASA-style reported `sumwt` persisted for the primary output plane.
+    pub reported_sumwt: f32,
+    /// PSF peak measured after `normalization_sumwt` scaling and before unit-peak normalization.
+    pub psf_peak_normalization: f32,
     /// CASA-style major-cycle count for this plane.
     ///
     /// When CLEAN is requested, this follows CASA's external `nmajordone`

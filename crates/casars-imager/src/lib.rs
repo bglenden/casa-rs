@@ -29,8 +29,6 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-#[cfg(test)]
-use casa_imaging::run_cube;
 use casa_imaging::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason,
     ColumnarComplexSamplesRef, ColumnarFloatSamplesRef, ColumnarVisibilitySourceRef,
@@ -53,7 +51,7 @@ use casa_imaging::{
     VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
     WTermMode, WeightDensityMode, WeightingMode, WeightingRoutePlan,
     estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
-    run_imaging, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+    run_cube, run_imaging, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
     run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
@@ -7051,6 +7049,9 @@ struct SharedCubePlaneTaskPayload {
     plane_index: usize,
     plane_stokes: PlaneStokes,
     weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    restoring_beam_mode: RestoringBeamMode,
     deconvolver: Deconvolver,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
@@ -7241,6 +7242,9 @@ fn run_independent_shared_cube_slab_planes(
                     plane_index,
                     plane_stokes,
                     weighting: config.weighting,
+                    weight_density_mode: standard_mfs_streaming_weight_density_mode(config),
+                    uv_taper: config.uv_taper,
+                    restoring_beam_mode: config.restoring_beam_mode,
                     deconvolver: config.deconvolver,
                     multiscale_scales: config.multiscale_scales.clone(),
                     small_scale_bias: config.small_scale_bias,
@@ -7259,48 +7263,84 @@ fn run_independent_shared_cube_slab_planes(
         |payload| {
             let worker_started = Instant::now();
             let plane_stokes = payload.plane_stokes;
-            let channel = payload.channel;
-            let channel_frequency_hz = channel.channel_frequency_hz;
+            let mut channel = payload.channel;
+            let slab_plane_offset = payload.plane_index.saturating_sub(slab_plane_start);
+            localize_single_plane_cube_model_interpolation(
+                &mut channel,
+                payload.plane_index,
+                slab_plane_offset,
+                clean.niter > 0,
+            )?;
             let visibility_batches = channel.visibility_batches.len();
             let visibility_samples = visibility_batches_sample_count(&channel.visibility_batches);
-            let plane_request = ImagingRequest {
+            let density_batches = channel.density_batches.len();
+            let density_samples = visibility_batches_sample_count(&channel.density_batches);
+            let model_batches = channel.model_interpolation_batches.len();
+            let model_samples =
+                model_interpolation_batch_sample_count(&channel.model_interpolation_batches);
+            let cube_request = CubeImagingRequest {
                 geometry,
-                visibility_batches: channel.visibility_batches,
-                gridder_mode: payload.gridder_mode,
+                channels: vec![channel],
                 plane_stokes,
                 weighting: payload.weighting,
-                reffreq_hz: channel_frequency_hz,
-                selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+                weight_density_mode: payload.weight_density_mode,
+                uv_taper: payload.uv_taper,
+                restoring_beam_mode: payload.restoring_beam_mode,
                 deconvolver: payload.deconvolver,
                 multiscale_scales: payload.multiscale_scales,
                 small_scale_bias: payload.small_scale_bias,
                 clean,
                 clean_mask: None,
-                initial_model: None,
+                channel_clean_mask: None,
+                auto_mask: None,
+                psf_cutoff: clean.psf_cutoff,
                 w_term_mode: payload.w_term_mode,
                 w_project_planes: payload.w_project_planes,
                 compatibility: CompatibilityMode::CasaStandardMfs,
             };
             let run_imaging_started = Instant::now();
-            let plane_result = match run_imaging(&plane_request) {
-                Ok(result) => result,
-                Err(ImagingError::NoUsableSamples) => blank_dirty_plane_result(
-                    &plane_request,
-                    "no usable visibility samples remain after validation and flagging; writing blank cube plane"
-                        .to_string(),
-                ),
-                Err(error) => return Err(error.to_string()),
-            };
+            let cube_result = run_cube(&cube_request).map_err(|error| error.to_string())?;
             let run_imaging_elapsed = run_imaging_started.elapsed();
-            let cube_result =
-                single_plane_cube_result(plane_stokes, channel_frequency_hz, plane_result);
             let stage_timings = cube_result.diagnostics.stage_timings;
+            let plane_diagnostics = cube_result
+                .diagnostics
+                .channel_diagnostics
+                .first()
+                .ok_or_else(|| {
+                    format!(
+                        "shared cube plane {} returned no channel diagnostics",
+                        payload.plane_index
+                    )
+                })?;
+            let reported_minor_iterations = plane_diagnostics
+                .minor_cycle_traces
+                .iter()
+                .map(|trace| trace.reported_updates)
+                .sum::<usize>();
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
-                    "cube_shared_plane_worker plane={} batches={} samples={} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_controller_overhead_ms={:.3}",
+                    "cube_shared_plane_worker plane={} batches={} samples={} density_batches={} density_samples={} model_batches={} model_samples={} weight_density_mode={:?} gridder_mode={:?} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} psf_peak_normalization={:.9e} max_psf_sidelobe={:.9e} major_cycles={} actual_minor_iterations={} reported_minor_iterations={} initial_peak={:.9e} final_peak={:.9e} stop_reason={:?} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_weighting_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_normalize_ms={:.3} core_controller_overhead_ms={:.3}",
                     payload.plane_index,
                     visibility_batches,
                     visibility_samples,
+                    density_batches,
+                    density_samples,
+                    model_batches,
+                    model_samples,
+                    payload.weight_density_mode,
+                    payload.gridder_mode,
+                    plane_diagnostics.gridded_samples,
+                    plane_diagnostics.skipped_samples,
+                    plane_diagnostics.normalization_sumwt,
+                    plane_diagnostics.reported_sumwt,
+                    plane_diagnostics.psf_peak_normalization,
+                    plane_diagnostics.max_psf_sidelobe_level,
+                    plane_diagnostics.major_cycles,
+                    plane_diagnostics.minor_iterations,
+                    reported_minor_iterations,
+                    plane_diagnostics.initial_residual_peak_jy_per_beam,
+                    plane_diagnostics.final_residual_peak_jy_per_beam,
+                    plane_diagnostics.clean_stop_reason,
                     duration_ms(run_imaging_elapsed),
                     duration_ms(worker_started.elapsed()),
                     duration_ms(stage_timings.total),
@@ -7362,112 +7402,53 @@ fn run_independent_shared_cube_slab_planes(
     })
 }
 
-fn blank_dirty_plane_result(request: &ImagingRequest, warning: String) -> ImagingResult {
-    let [nx, ny] = request.geometry.image_shape;
-    ImagingResult {
-        psf: Array4::zeros((nx, ny, 1, 1)),
-        residual: Array4::zeros((nx, ny, 1, 1)),
-        model: Array4::zeros((nx, ny, 1, 1)),
-        image: Array4::zeros((nx, ny, 1, 1)),
-        sumwt: Array4::zeros((1, 1, 1, 1)),
-        beam: None,
-        diagnostics: ImagingDiagnostics {
-            warnings: vec![warning],
-            gridded_samples: 0,
-            skipped_samples: 0,
-            major_cycles: 0,
-            minor_iterations: 0,
-            clean_stop_reason: None,
-            minor_cycle_traces: Vec::new(),
-            initial_residual_peak_jy_per_beam: 0.0,
-            final_residual_peak_jy_per_beam: 0.0,
-            max_abs_w_lambda: 0.0,
-            fractional_bandwidth: 0.0,
-            max_psf_sidelobe_level: 0.0,
-            final_cycle_threshold_jy_per_beam: request.clean.threshold_jy_per_beam,
-            clean_mask_pixels: request
-                .clean_mask
-                .as_ref()
-                .map(|mask| mask.iter().filter(|value| **value).count())
-                .unwrap_or(nx.saturating_mul(ny)),
-            beam_fit_attempts: 0,
-            beam_fit_cutoff_used: Some(request.clean.psf_cutoff),
-            beam_fit_debug: None,
-            mosaic_weight_image: None,
-            stage_timings: ImagingStageTimings::default(),
-        },
-        compatibility: CompatibilityMetadata {
-            axis_order: [
-                AxisKind::RightAscension,
-                AxisKind::Declination,
-                AxisKind::Stokes,
-                AxisKind::Frequency,
-            ],
-            plane_stokes: request.plane_stokes,
-            reffreq_hz: request.reffreq_hz,
-            channel_frequencies_hz: vec![request.reffreq_hz],
-            psf_units: String::new(),
-            residual_units: "Jy/beam".to_string(),
-            model_units: "Jy/pixel".to_string(),
-            image_units: "Jy/beam".to_string(),
-        },
+fn localize_single_plane_cube_model_interpolation(
+    channel: &mut CubeChannelRequest,
+    plane_index: usize,
+    slab_plane_offset: usize,
+    require_model_interpolation: bool,
+) -> Result<(), String> {
+    if channel.model_interpolation_batches.is_empty() {
+        if require_model_interpolation {
+            channel.model_interpolation_batches = channel
+                .visibility_batches
+                .iter()
+                .map(|batch| CubeModelInterpolationBatch {
+                    sample_contributions: (0..batch.len())
+                        .map(|_| {
+                            vec![CubeModelChannelContribution {
+                                model_channel_index: 0,
+                                factor: 1.0,
+                            }]
+                        })
+                        .collect(),
+                })
+                .collect();
+        }
+        return Ok(());
     }
-}
-
-fn single_plane_cube_result(
-    plane_stokes: PlaneStokes,
-    channel_frequency_hz: f64,
-    plane_result: ImagingResult,
-) -> CubeImagingResult {
-    let mut diagnostics = plane_result.diagnostics;
-    let warnings = diagnostics
-        .warnings
-        .iter()
-        .map(|warning| format!("channel 0: {warning}"))
-        .collect();
-    let gridded_samples = diagnostics.gridded_samples;
-    let skipped_samples = diagnostics.skipped_samples;
-    let major_cycles = diagnostics.major_cycles;
-    let minor_iterations = diagnostics.minor_iterations;
-    let clean_stop_reason = diagnostics.clean_stop_reason;
-    let stage_timings = diagnostics.stage_timings;
-    let beam = plane_result.beam;
-    diagnostics.warnings.clear();
-    CubeImagingResult {
-        psf: plane_result.psf,
-        residual: plane_result.residual,
-        model: plane_result.model,
-        image: plane_result.image,
-        sumwt: plane_result.sumwt,
-        clean_mask: None,
-        restored_beams: vec![beam],
-        beams: vec![beam],
-        diagnostics: CubeImagingDiagnostics {
-            warnings,
-            gridded_samples,
-            skipped_samples,
-            major_cycles,
-            minor_iterations,
-            clean_stop_reason,
-            channel_diagnostics: vec![diagnostics],
-            stage_timings,
-        },
-        compatibility: CompatibilityMetadata {
-            axis_order: [
-                AxisKind::RightAscension,
-                AxisKind::Declination,
-                AxisKind::Stokes,
-                AxisKind::Frequency,
-            ],
-            plane_stokes,
-            reffreq_hz: channel_frequency_hz,
-            channel_frequencies_hz: vec![channel_frequency_hz],
-            psf_units: String::new(),
-            residual_units: "Jy/beam".to_string(),
-            model_units: "Jy/pixel".to_string(),
-            image_units: "Jy/beam".to_string(),
-        },
+    for batch in &mut channel.model_interpolation_batches {
+        for sample_contributions in &mut batch.sample_contributions {
+            if sample_contributions.is_empty() {
+                continue;
+            }
+            if sample_contributions.len() != 1 {
+                return Err(format!(
+                    "shared cube plane {plane_index} has model interpolation with {} dependent planes; independent plane execution requires one local model plane",
+                    sample_contributions.len()
+                ));
+            }
+            let contribution = &mut sample_contributions[0];
+            if contribution.model_channel_index != slab_plane_offset {
+                return Err(format!(
+                    "shared cube plane {plane_index} has model interpolation dependency on slab-local plane {}; independent plane execution requires slab-local plane {slab_plane_offset}",
+                    contribution.model_channel_index,
+                ));
+            }
+            contribution.model_channel_index = 0;
+        }
     }
+    Ok(())
 }
 
 struct CubeSlabProductWriters {
@@ -9339,6 +9320,9 @@ fn finish_joint_outlier_field_result(
             warnings,
             gridded_samples: field.dirty.diagnostics.gridded_samples,
             skipped_samples: field.dirty.diagnostics.skipped_samples,
+            normalization_sumwt: field.dirty.diagnostics.normalization_sumwt,
+            reported_sumwt: field.dirty.diagnostics.reported_sumwt,
+            psf_peak_normalization: field.dirty.diagnostics.psf_peak_normalization,
             major_cycles: nmajordone,
             minor_iterations: field.minor_iterations,
             clean_stop_reason: Some(CleanStopReason::IterationLimitReached),
@@ -40159,6 +40143,9 @@ mod tests {
             warnings: Vec::new(),
             gridded_samples: 0,
             skipped_samples: 0,
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            psf_peak_normalization: 0.0,
             major_cycles: 0,
             minor_iterations: 0,
             clean_stop_reason: None,

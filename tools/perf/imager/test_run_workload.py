@@ -1213,6 +1213,119 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         )
         self.assertEqual([64, 1], metrics["scale_offset_gradient_fit"]["shape"])
 
+    def test_product_comparison_display_plane_uses_middle_extra_axis(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        cube = np.zeros((4, 4, 1, 7), dtype=np.float64)
+        cube[:, :, 0, 0] = 1.0
+        cube[:, :, 0, 3] = 5.0
+
+        plane = namespace["display_plane"](cube)
+
+        self.assertEqual((4, 4), plane.shape)
+        np.testing.assert_allclose(5.0, plane)
+
+    def test_product_comparison_display_plane_bounds_select_center_cube_plane(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        blc, trc = namespace["display_plane_bounds"]([2048, 2048, 1, 64])
+
+        self.assertEqual([0, 0, 0, 32], blc)
+        self.assertEqual([2047, 2047, 0, 32], trc)
+
+    def test_model_review_panel_uses_restored_beam_visualization(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        class FakeAxis:
+            def __init__(self):
+                self.images = []
+                self.titles = []
+
+            def imshow(self, *args, **kwargs):
+                self.images.append((args, kwargs))
+                return object()
+
+            def set_title(self, title, *args, **kwargs):
+                self.titles.append(title)
+                return None
+
+            def set_aspect(self, *args, **kwargs):
+                return None
+
+            def set_box_aspect(self, *args, **kwargs):
+                return None
+
+            def set_xticks(self, *args, **kwargs):
+                return None
+
+            def set_yticks(self, *args, **kwargs):
+                return None
+
+        class FakeFigure:
+            def suptitle(self, *args, **kwargs):
+                return None
+
+            def colorbar(self, *args, **kwargs):
+                return None
+
+            def savefig(self, *args, **kwargs):
+                return None
+
+        class FakePlot:
+            def __init__(self):
+                self.axes = [FakeAxis(), FakeAxis(), FakeAxis()]
+
+            def subplots(self, *args, **kwargs):
+                return FakeFigure(), self.axes
+
+            def close(self, *args, **kwargs):
+                return None
+
+        fake_plot = FakePlot()
+        namespace["plt"] = fake_plot
+
+        raw_rust = np.zeros((4, 4, 1, 3), dtype=np.float64)
+        raw_casa = np.zeros((4, 4, 1, 3), dtype=np.float64)
+        restored_rust = np.ones((4, 4, 1, 3), dtype=np.float64) * 2.0
+        restored_casa = np.ones((4, 4, 1, 3), dtype=np.float64) * 1.5
+        restored_diff = restored_rust - restored_casa
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            panel = namespace["write_review_panel"](
+                temp_dir,
+                ".model",
+                raw_rust,
+                raw_casa,
+                raw_rust - raw_casa,
+                display={
+                    "status": "available",
+                    "rust_data": restored_rust,
+                    "casa_data": restored_casa,
+                    "diff_data": restored_diff,
+                    "transform": "restored_model_from_image_minus_residual",
+                    "description": ".model visualized as restoring-beam-convolved model via .image - .residual",
+                    "product_label": ".model restored-beam visualization",
+                    "value_label": "Jy/beam",
+                },
+            )
+
+        self.assertEqual("written", panel["status"])
+        self.assertEqual("derived", panel["display_status"])
+        self.assertEqual(
+            "restored_model_from_image_minus_residual",
+            panel["display_transform"],
+        )
+        self.assertEqual([1.5, 2.0], panel["casa_rs_and_casa_color_limits"])
+        self.assertEqual([-0.5, 0.5], panel["difference_color_limits"])
+        self.assertIn("restored-beam visualization", fake_plot.axes[0].titles[0])
+        np.testing.assert_allclose(2.0, fake_plot.axes[0].images[0][0][0])
+
     def test_product_comparison_rolls_up_structured_review_labels(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):

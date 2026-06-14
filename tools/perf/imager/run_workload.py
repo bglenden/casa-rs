@@ -1805,6 +1805,7 @@ def main():
     os.makedirs(request["panel_dir"], exist_ok=True)
     max_elements = int(request["max_elements_per_product"])
     beam_info = estimate_beam_info(request["casa_prefix"] + ".psf", max_elements)
+    panel_displays = product_panel_displays(request, max_elements)
     for suffix in request["products"]:
         rust_path = request["rust_prefix"] + suffix
         casa_path = request["casa_prefix"] + suffix
@@ -1815,6 +1816,7 @@ def main():
             request["panel_dir"],
             suffix,
             beam_info,
+            panel_displays.get(suffix),
         )
     output = {
         "status": "completed",
@@ -1878,7 +1880,76 @@ def structured_difference_rollup_summary(overall, product_labels):
     return f"overall {overall}; " + "; ".join(parts)
 
 
-def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info):
+def product_panel_displays(request, max_elements):
+    displays = {}
+    if ".model" not in request["products"]:
+        return displays
+    restored = restored_model_panel_display(
+        rust_prefix=request["rust_prefix"],
+        casa_prefix=request["casa_prefix"],
+        max_elements=max_elements,
+    )
+    if restored is not None:
+        displays[".model"] = restored
+    return displays
+
+
+def restored_model_panel_display(rust_prefix, casa_prefix, max_elements):
+    required = {
+        "rust_image": rust_prefix + ".image",
+        "rust_residual": rust_prefix + ".residual",
+        "casa_image": casa_prefix + ".image",
+        "casa_residual": casa_prefix + ".residual",
+    }
+    missing = [path for path in required.values() if not os.path.isdir(path)]
+    if missing:
+        return {
+            "status": "unavailable",
+            "reason": "restored model visualization requires .image and .residual",
+            "missing_paths": missing,
+        }
+    try:
+        rust_image = load_image_display_plane(required["rust_image"], max_elements)
+        rust_residual = load_image_display_plane(required["rust_residual"], max_elements)
+        casa_image = load_image_display_plane(required["casa_image"], max_elements)
+        casa_residual = load_image_display_plane(required["casa_residual"], max_elements)
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "reason": f"failed to load restored model visualization inputs: {error}",
+        }
+    inputs = [rust_image, rust_residual, casa_image, casa_residual]
+    shapes = [item["shape"] for item in inputs]
+    strides = [item["sample_stride"] for item in inputs]
+    if any(shape != shapes[0] for shape in shapes):
+        return {
+            "status": "unavailable",
+            "reason": "restored model visualization inputs have mismatched shapes",
+            "shapes": shapes,
+        }
+    if any(stride != strides[0] for stride in strides):
+        return {
+            "status": "unavailable",
+            "reason": "restored model visualization inputs have mismatched sampling strides",
+            "sample_strides": strides,
+        }
+    rust_display = rust_image["data"] - rust_residual["data"]
+    casa_display = casa_image["data"] - casa_residual["data"]
+    return {
+        "status": "available",
+        "rust_data": rust_display,
+        "casa_data": casa_display,
+        "diff_data": rust_display - casa_display,
+        "transform": "restored_model_from_image_minus_residual",
+        "description": ".model visualized as restoring-beam-convolved model via .image - .residual",
+        "product_label": ".model restored",
+        "value_label": "Jy/beam",
+        "shape": shapes[0],
+        "sample_stride": strides[0],
+    }
+
+
+def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info, panel_display=None):
     if not os.path.isdir(rust_path) or not os.path.isdir(casa_path):
         return {
             "status": "missing",
@@ -1936,6 +2007,7 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info
         casa_data=casa_data,
         diff_data=diff_full,
         review=structure.get("review") if isinstance(structure, dict) else None,
+        display=panel_display,
     )
     return {
         "status": "compared",
@@ -2504,15 +2576,37 @@ def peak_summary(data):
     }
 
 
-def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, review=None):
+def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, review=None, display=None):
     if plt is None:
         return {
             "status": "skipped",
             "reason": f"matplotlib unavailable: {MATPLOTLIB_ERROR}",
         }
-    rust_plane = display_plane(rust_data)
-    casa_plane = display_plane(casa_data)
-    diff_plane = display_plane(diff_data)
+    display_status = "raw_product"
+    display_transform = None
+    display_description = None
+    display_reason = None
+    product_label = suffix if suffix else ".image"
+    value_label = product_value_label(suffix)
+    panel_rust_data = rust_data
+    panel_casa_data = casa_data
+    panel_diff_data = diff_data
+    if isinstance(display, dict):
+        if display.get("status") == "available":
+            panel_rust_data = display["rust_data"]
+            panel_casa_data = display["casa_data"]
+            panel_diff_data = display["diff_data"]
+            product_label = display.get("product_label") or product_label
+            value_label = display.get("value_label") or value_label
+            display_status = "derived"
+            display_transform = display.get("transform")
+            display_description = display.get("description")
+        else:
+            display_status = display.get("status", "unavailable")
+            display_reason = display.get("reason")
+    rust_plane = display_plane(panel_rust_data)
+    casa_plane = display_plane(panel_casa_data)
+    diff_plane = display_plane(panel_diff_data)
     shared = np.concatenate(
         [
             rust_plane[np.isfinite(rust_plane)].ravel(),
@@ -2521,21 +2615,116 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
     )
     if shared.size == 0:
         return {"status": "skipped", "reason": "no finite pixels for panel scaling"}
-    image_vmin = finite_float(np.nanmin(shared))
-    image_vmax = finite_float(np.nanmax(shared))
+    image_vmin, image_vmax = panel_color_limits(shared)
     finite_diff = diff_plane[np.isfinite(diff_plane)]
-    diff_abs = finite_float(np.nanmax(np.abs(finite_diff))) if finite_diff.size else None
-    if diff_abs is None:
-        diff_abs = 0.0
+    diff_abs = panel_symmetric_abs_limit(finite_diff)
     safe_name = suffix.strip(".").replace(".", "_") or "image"
-    product_label = suffix if suffix else ".image"
-    value_label = product_value_label(suffix)
     review_label = None
     review_summary = None
     if isinstance(review, dict):
         review_label = review.get("label")
         review_summary = review.get("summary")
     panel_path = os.path.join(panel_dir, f"{safe_name}.review.png")
+    render_review_panel_figure(
+        panel_path=panel_path,
+        rust_plane=rust_plane,
+        casa_plane=casa_plane,
+        diff_plane=diff_plane,
+        product_label=product_label,
+        value_label=value_label,
+        image_vmin=image_vmin,
+        image_vmax=image_vmax,
+        diff_abs=diff_abs,
+        review_label=review_label,
+    )
+    zoom_panel = write_zoom_review_panel(
+        panel_dir=panel_dir,
+        safe_name=safe_name,
+        rust_plane=rust_plane,
+        casa_plane=casa_plane,
+        diff_plane=diff_plane,
+        product_label=product_label,
+        value_label=value_label,
+        review_label=review_label,
+    )
+    return {
+        "status": "written",
+        "path": panel_path,
+        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
+        "difference_color_limits": [-diff_abs, diff_abs],
+        "structured_difference_label": review_label,
+        "structured_difference_summary": review_summary,
+        "display_status": display_status,
+        "display_transform": display_transform,
+        "display_description": display_description,
+        "display_reason": display_reason,
+        "zoom_panel": zoom_panel,
+    }
+
+
+def write_zoom_review_panel(
+    panel_dir,
+    safe_name,
+    rust_plane,
+    casa_plane,
+    diff_plane,
+    product_label,
+    value_label,
+    review_label,
+):
+    bounds = zoom_bounds_for_planes(rust_plane, casa_plane)
+    if bounds is None:
+        return {"status": "skipped", "reason": "no finite nonzero support for zoom panel"}
+    x0, x1, y0, y1 = bounds
+    rust_zoom = rust_plane[x0:x1, y0:y1]
+    casa_zoom = casa_plane[x0:x1, y0:y1]
+    diff_zoom = diff_plane[x0:x1, y0:y1]
+    shared = np.concatenate(
+        [
+            rust_zoom[np.isfinite(rust_zoom)].ravel(),
+            casa_zoom[np.isfinite(casa_zoom)].ravel(),
+        ]
+    )
+    if shared.size == 0:
+        return {"status": "skipped", "reason": "no finite pixels for zoom panel scaling"}
+    image_vmin, image_vmax = panel_color_limits(shared)
+    finite_diff = diff_zoom[np.isfinite(diff_zoom)]
+    diff_abs = panel_symmetric_abs_limit(finite_diff)
+    zoom_path = os.path.join(panel_dir, f"{safe_name}.zoom.review.png")
+    zoom_label = f"{product_label} zoom"
+    render_review_panel_figure(
+        panel_path=zoom_path,
+        rust_plane=rust_zoom,
+        casa_plane=casa_zoom,
+        diff_plane=diff_zoom,
+        product_label=zoom_label,
+        value_label=value_label,
+        image_vmin=image_vmin,
+        image_vmax=image_vmax,
+        diff_abs=diff_abs,
+        review_label=review_label,
+    )
+    return {
+        "status": "written",
+        "path": zoom_path,
+        "bounds": {"x_start": x0, "x_end": x1, "y_start": y0, "y_end": y1},
+        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
+        "difference_color_limits": [-diff_abs, diff_abs],
+    }
+
+
+def render_review_panel_figure(
+    panel_path,
+    rust_plane,
+    casa_plane,
+    diff_plane,
+    product_label,
+    value_label,
+    image_vmin,
+    image_vmax,
+    diff_abs,
+    review_label,
+):
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
     if review_label:
         fig.suptitle(
@@ -2584,14 +2773,6 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
         axis.set_yticks([])
     fig.savefig(panel_path, dpi=160)
     plt.close(fig)
-    return {
-        "status": "written",
-        "path": panel_path,
-        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
-        "difference_color_limits": [-diff_abs, diff_abs],
-        "structured_difference_label": review_label,
-        "structured_difference_summary": review_summary,
-    }
 
 
 def product_value_label(suffix):
@@ -2606,10 +2787,68 @@ def product_value_label(suffix):
     return "value"
 
 
+def zoom_bounds_for_planes(rust_plane, casa_plane):
+    if rust_plane.ndim != 2 or casa_plane.ndim != 2 or rust_plane.shape != casa_plane.shape:
+        return None
+    finite = np.isfinite(rust_plane) & np.isfinite(casa_plane)
+    if not np.any(finite):
+        return None
+    amplitude = np.maximum(np.abs(rust_plane), np.abs(casa_plane))
+    amplitude = np.where(finite, amplitude, 0.0)
+    peak = finite_absmax(amplitude)
+    if peak <= 0.0:
+        return None
+    support = amplitude >= peak * 1.0e-3
+    if not np.any(support):
+        peak_index = np.unravel_index(int(np.nanargmax(amplitude)), amplitude.shape)
+        xs = np.asarray([peak_index[0]])
+        ys = np.asarray([peak_index[1]])
+    else:
+        xs, ys = np.nonzero(support)
+    height, width = rust_plane.shape
+    x_min = int(np.min(xs))
+    x_max = int(np.max(xs)) + 1
+    y_min = int(np.min(ys))
+    y_max = int(np.max(ys)) + 1
+    support_side = max(x_max - x_min, y_max - y_min)
+    min_side = min(min(height, width), max(32, min(height, width) // 16))
+    side = min(min(height, width), max(min_side, support_side * 4))
+    x_center = (x_min + x_max) // 2
+    y_center = (y_min + y_max) // 2
+    x0 = max(0, min(height - side, x_center - side // 2))
+    y0 = max(0, min(width - side, y_center - side // 2))
+    return int(x0), int(x0 + side), int(y0), int(y0 + side)
+
+
+def panel_color_limits(values):
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0, 0.0
+    vmin = finite_float(np.nanmin(finite))
+    vmax = finite_float(np.nanmax(finite))
+    if vmin is None or vmax is None:
+        return 0.0, 0.0
+    if vmax > vmin:
+        return vmin, vmax
+    abs_peak = finite_absmax(finite)
+    delta = abs_peak * 1.0e-6 if abs_peak > 0.0 else 1.0
+    return vmin - delta, vmax + delta
+
+
+def panel_symmetric_abs_limit(values):
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 1.0
+    abs_peak = finite_float(np.nanmax(np.abs(finite)))
+    if abs_peak is None or abs_peak <= 0.0:
+        return 1.0
+    return abs_peak
+
+
 def display_plane(data):
     plane = np.squeeze(data)
     while plane.ndim > 2:
-        plane = plane[..., 0]
+        plane = plane[..., plane.shape[-1] // 2]
     if plane.ndim == 0:
         plane = np.asarray([[float(plane)]])
     elif plane.ndim == 1:
@@ -2638,6 +2877,52 @@ def load_image(path, max_elements):
         "sample_stride": stride,
         "data": np.asarray(data, dtype=np.float64),
     }
+
+
+def load_image_display_plane(path, max_elements):
+    tool = image()
+    try:
+        tool.open(path)
+        shape = [int(v) for v in tool.shape()]
+        blc, trc = display_plane_bounds(shape)
+        plane_shape = [shape[0] if shape else 1, shape[1] if len(shape) > 1 else 1]
+        spatial_stride = stride_for(plane_shape, max_elements)
+        inc = [1] * len(shape)
+        if len(inc) >= 1:
+            inc[0] = spatial_stride[0]
+        if len(inc) >= 2:
+            inc[1] = spatial_stride[1]
+        data = tool.getchunk(
+            blc=blc,
+            trc=trc,
+            inc=inc,
+            dropdeg=False,
+            getmask=False,
+        )
+    finally:
+        tool.close()
+    return {
+        "shape": shape,
+        "display_bounds": {
+            "blc": blc,
+            "trc": trc,
+            "inc": inc,
+        },
+        "sample_stride": inc,
+        "data": np.asarray(data, dtype=np.float64),
+    }
+
+
+def display_plane_bounds(shape):
+    if not shape:
+        return [], []
+    blc = [0] * len(shape)
+    trc = [max(0, int(size) - 1) for size in shape]
+    for axis in range(2, len(shape)):
+        center = max(0, int(shape[axis]) // 2)
+        blc[axis] = center
+        trc[axis] = center
+    return blc, trc
 
 
 def stride_for(shape, max_elements):

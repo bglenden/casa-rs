@@ -652,6 +652,9 @@ fn blank_plane_diagnostics(
         warnings: vec![warning],
         gridded_samples: 0,
         skipped_samples: 0,
+        normalization_sumwt: 0.0,
+        reported_sumwt: 0.0,
+        psf_peak_normalization: 0.0,
         major_cycles: casa_major_cycle_count(0, request.clean.niter),
         minor_iterations: 0,
         clean_stop_reason,
@@ -878,6 +881,8 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
     let mut total_reported_minor_iterations = 0usize;
     let mut cube_major_cycle_blocks = 0usize;
     let mut cube_clean_stop_reason = None::<CleanStopReason>;
+    let mut refresh_flags = vec![false; planes.len()];
+    let mut final_refresh_pending = false;
     let cube_minor_cycle_capture = cube_minor_cycle_capture_config();
     let cube_clean_started = Instant::now();
     let cube_max_psf_sidelobe_level = planes
@@ -950,7 +955,6 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         });
         let mut any_model_update = false;
         let mut updated_model_channels = vec![false; planes.len()];
-        let mut refresh_flags = vec![false; planes.len()];
         for (plane_index, plane) in planes.iter_mut().enumerate() {
             if plane.is_blank {
                 continue;
@@ -1081,6 +1085,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             break;
         }
         refresh_flags = cube_refresh_flags(&planes, &updated_model_channels);
+        final_refresh_pending = true;
         cube_major_cycle_blocks += 1;
         if total_reported_minor_iterations >= request.clean.niter {
             cube_clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
@@ -1091,80 +1096,8 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             }
             break;
         }
-        let refreshed_planes = refresh_flags.iter().filter(|flag| **flag).count();
-        let mut cube_model_timings = ResidualComputationTimings::default();
-        let cube_model_grids = build_cube_model_grids(
-            &planes[0].gridder,
-            planes.iter().map(|plane| &plane.model),
-            &mut cube_model_timings,
-        );
-        let model_channel_frequencies_hz = planes
-            .iter()
-            .map(|plane| plane.request.reffreq_hz)
-            .collect::<Vec<_>>();
-        let mut cube_model_fft_accounted = false;
-        for (plane, should_refresh) in planes.iter_mut().zip(refresh_flags.iter().copied()) {
-            if plane.is_blank || !should_refresh {
-                continue;
-            }
-            let refresh_started = Instant::now();
-            let mut residual_timings = ResidualComputationTimings::default();
-            if !cube_model_fft_accounted {
-                plane.stage_timings.model_fft += cube_model_timings.model_fft;
-                cube_model_fft_accounted = true;
-            }
-            plane.residual = compute_residual_trace_cube_standard_with_model_grids(
-                &plane.weighted_batches,
-                Some(&plane.residual_sample_plans),
-                &plane.model_interpolation_batches,
-                &plane.gridder,
-                &cube_model_grids,
-                plane.request.reffreq_hz,
-                &model_channel_frequencies_hz,
-                CubePredictionLambdaMode::OutputChannel,
-                &plane.psf_state,
-                false,
-                &mut residual_timings,
-            )?
-            .residual_image;
-            plane.stage_timings.major_cycle_refresh += refresh_started.elapsed();
-            plane.stage_timings.residual_degrid_grid += residual_timings.degrid_grid;
-            plane.stage_timings.residual_fft += residual_timings.fft;
-            plane.stage_timings.residual_normalize += residual_timings.normalize;
-            plane.major_cycles += 1;
-            let (refreshed_peak, refreshed_nsigma_threshold_jy_per_beam) = residual_metrics(
-                &plane.residual,
-                plane.request.clean_mask.as_ref(),
-                plane.request.clean,
-            );
-            plane.cached_peak_residual_jy_per_beam = refreshed_peak;
-            plane.cached_nsigma_threshold_jy_per_beam = refreshed_nsigma_threshold_jy_per_beam;
-            if plane.request.deconvolver == Deconvolver::Multiscale {
-                let scales = effective_multiscale_scales(&plane.request);
-                plane.multiscale_state = Some(build_multiscale_state(
-                    &plane.residual,
-                    &plane.psf_state.psf,
-                    &scales,
-                    plane.request.small_scale_bias,
-                    plane.request.clean_mask.as_ref(),
-                ));
-            }
-            if plane.request.deconvolver == Deconvolver::Clark {
-                update_divergence_state(
-                    &mut plane.warnings,
-                    &mut plane.min_residual_peak_jy_per_beam,
-                    refreshed_peak,
-                    &mut plane.divergence_warned,
-                );
-                if let Some(stop_reason) = tolerant_clean_stop_reason(
-                    refreshed_peak,
-                    plane.request.clean.threshold_jy_per_beam,
-                    refreshed_nsigma_threshold_jy_per_beam,
-                ) {
-                    plane.clean_stop_reason = Some(stop_reason);
-                }
-            }
-        }
+        let refreshed_planes = refresh_cube_residuals_exact(&mut planes, &refresh_flags)?;
+        final_refresh_pending = false;
         let global_peak_after_refresh = planes
             .iter()
             .filter(|plane| !plane.is_blank)
@@ -1231,6 +1164,10 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 true,
             );
         }
+    }
+
+    if final_refresh_pending {
+        refresh_cube_residuals_exact(&mut planes, &refresh_flags)?;
     }
 
     let mut fitted_beams = Vec::with_capacity(nchan);
@@ -1350,6 +1287,9 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             warnings: plane.warnings,
             gridded_samples: plane.psf_state.gridded_samples,
             skipped_samples: plane.psf_state.skipped_samples,
+            normalization_sumwt: plane.psf_state.normalization_sumwt,
+            reported_sumwt: plane.psf_state.reported_sumwt,
+            psf_peak_normalization: plane.psf_state.psf_peak,
             major_cycles: casa_major_cycle_count(plane.major_cycles, plane.request.clean.niter),
             minor_iterations: plane.minor_iterations,
             clean_stop_reason: plane.clean_stop_reason,
@@ -1603,4 +1543,242 @@ fn cube_refresh_flags(planes: &[CubePlaneWork], updated_model_channels: &[bool])
                     .any(|(depends_on_model, updated)| *depends_on_model && *updated)
         })
         .collect()
+}
+
+fn refresh_cube_residuals_exact(
+    planes: &mut [CubePlaneWork],
+    refresh_flags: &[bool],
+) -> Result<usize, ImagingError> {
+    let refreshed_planes = refresh_flags.iter().filter(|flag| **flag).count();
+    if refreshed_planes == 0 {
+        return Ok(0);
+    }
+
+    let mut cube_model_timings = ResidualComputationTimings::default();
+    let cube_model_grids = build_cube_model_grids(
+        &planes[0].gridder,
+        planes.iter().map(|plane| &plane.model),
+        &mut cube_model_timings,
+    );
+    let model_channel_frequencies_hz = planes
+        .iter()
+        .map(|plane| plane.request.reffreq_hz)
+        .collect::<Vec<_>>();
+    let mut cube_model_fft_accounted = false;
+    for (plane, should_refresh) in planes.iter_mut().zip(refresh_flags.iter().copied()) {
+        if plane.is_blank || !should_refresh {
+            continue;
+        }
+        let refresh_started = Instant::now();
+        let mut residual_timings = ResidualComputationTimings::default();
+        if !cube_model_fft_accounted {
+            plane.stage_timings.model_fft += cube_model_timings.model_fft;
+            cube_model_fft_accounted = true;
+        }
+        plane.residual = compute_residual_trace_cube_standard_with_model_grids(
+            &plane.weighted_batches,
+            Some(&plane.residual_sample_plans),
+            &plane.model_interpolation_batches,
+            &plane.gridder,
+            &cube_model_grids,
+            plane.request.reffreq_hz,
+            &model_channel_frequencies_hz,
+            CubePredictionLambdaMode::OutputChannel,
+            &plane.psf_state,
+            false,
+            &mut residual_timings,
+        )?
+        .residual_image;
+        plane.stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        plane.stage_timings.residual_degrid_grid += residual_timings.degrid_grid;
+        plane.stage_timings.residual_fft += residual_timings.fft;
+        plane.stage_timings.residual_normalize += residual_timings.normalize;
+        plane.major_cycles += 1;
+        let (refreshed_peak, refreshed_nsigma_threshold_jy_per_beam) = residual_metrics(
+            &plane.residual,
+            plane.request.clean_mask.as_ref(),
+            plane.request.clean,
+        );
+        plane.cached_peak_residual_jy_per_beam = refreshed_peak;
+        plane.cached_nsigma_threshold_jy_per_beam = refreshed_nsigma_threshold_jy_per_beam;
+        if plane.request.deconvolver == Deconvolver::Multiscale {
+            let scales = effective_multiscale_scales(&plane.request);
+            plane.multiscale_state = Some(build_multiscale_state(
+                &plane.residual,
+                &plane.psf_state.psf,
+                &scales,
+                plane.request.small_scale_bias,
+                plane.request.clean_mask.as_ref(),
+            ));
+        }
+        if plane.request.deconvolver == Deconvolver::Clark {
+            update_divergence_state(
+                &mut plane.warnings,
+                &mut plane.min_residual_peak_jy_per_beam,
+                refreshed_peak,
+                &mut plane.divergence_warned,
+            );
+            if let Some(stop_reason) = tolerant_clean_stop_reason(
+                refreshed_peak,
+                plane.request.clean.threshold_jy_per_beam,
+                refreshed_nsigma_threshold_jy_per_beam,
+            ) {
+                plane.clean_stop_reason = Some(stop_reason);
+            }
+        }
+    }
+    Ok(refreshed_planes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::s;
+    use num_complex::Complex32;
+
+    fn tiny_cube_request(niter: usize, visibility: Complex32) -> CubeImagingRequest {
+        let geometry = ImageGeometry {
+            image_shape: [8, 8],
+            cell_size_rad: [1.0, 1.0],
+        };
+        let model_interpolation_batches = if niter > 0 {
+            vec![CubeModelInterpolationBatch {
+                sample_contributions: vec![vec![CubeModelChannelContribution {
+                    model_channel_index: 0,
+                    factor: 1.0,
+                }]],
+            }]
+        } else {
+            Vec::new()
+        };
+        CubeImagingRequest {
+            geometry,
+            channels: vec![CubeChannelRequest {
+                channel_frequency_hz: 1.0,
+                visibility_batches: vec![VisibilityBatch {
+                    u_lambda: vec![0.0],
+                    v_lambda: vec![0.0],
+                    w_lambda: vec![0.0],
+                    weight: vec![1.0],
+                    sumwt_factor: vec![1.0],
+                    gridable: vec![true],
+                    visibility: vec![visibility],
+                }],
+                density_batches: Vec::new(),
+                model_interpolation_batches,
+            }],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            weight_density_mode: WeightDensityMode::Combined,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter,
+                major_cycle_limit: None,
+                gain: 0.5,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: niter.max(1),
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        }
+    }
+
+    #[test]
+    fn hogbom_cube_refreshes_residual_when_iteration_limit_is_reached() {
+        let request = tiny_cube_request(1, Complex32::new(1.0, 0.0));
+        let clean = run_cube(&request).unwrap();
+
+        assert_eq!(clean.diagnostics.minor_iterations, 1);
+        assert_eq!(
+            clean.diagnostics.channel_diagnostics[0].minor_iterations, 2,
+            "CASA-inclusive Hogbom commits one extra internal component"
+        );
+        assert!(clean.diagnostics.channel_diagnostics[0].major_cycles >= 2);
+        let model_sum = clean.model.iter().copied().sum::<f32>();
+        assert!(model_sum > 0.0, "test must exercise a real model update");
+
+        let gridder = StandardGridder::new(request.geometry).unwrap();
+        let model_plane = clean.model.slice(s![.., .., 0, 0]).to_owned();
+        let mut residual_timings = ResidualComputationTimings::default();
+        let model_grids = build_cube_model_grids(&gridder, [&model_plane], &mut residual_timings);
+        let planned_batches =
+            build_standard_residual_sample_plans(&gridder, &request.channels[0].visibility_batches);
+        let channel_diagnostics = &clean.diagnostics.channel_diagnostics[0];
+        let psf_state = PsfState {
+            psf: clean.psf.slice(s![.., .., 0, 0]).to_owned(),
+            normalization_sumwt: channel_diagnostics.normalization_sumwt,
+            reported_sumwt: channel_diagnostics.reported_sumwt,
+            psf_peak: channel_diagnostics.psf_peak_normalization,
+            gridded_samples: channel_diagnostics.gridded_samples,
+            skipped_samples: channel_diagnostics.skipped_samples,
+        };
+        let exact_refreshed_residual = compute_residual_trace_cube_standard_with_model_grids(
+            &request.channels[0].visibility_batches,
+            Some(&planned_batches),
+            &request.channels[0].model_interpolation_batches,
+            &gridder,
+            &model_grids,
+            request.channels[0].channel_frequency_hz,
+            &[request.channels[0].channel_frequency_hz],
+            CubePredictionLambdaMode::OutputChannel,
+            &psf_state,
+            false,
+            &mut residual_timings,
+        )
+        .unwrap()
+        .residual_image;
+        let max_exact_error = clean
+            .residual
+            .slice(s![.., .., 0, 0])
+            .iter()
+            .zip(exact_refreshed_residual.iter())
+            .map(|(actual, exact)| (actual - exact).abs())
+            .fold(0.0f32, f32::max);
+        let max_image_residual_error = clean
+            .image
+            .slice(s![.., .., 0, 0])
+            .iter()
+            .zip(exact_refreshed_residual.iter())
+            .map(|(actual, exact)| (actual - exact).abs())
+            .fold(0.0f32, f32::max);
+        let max_model_value = clean
+            .model
+            .slice(s![.., .., 0, 0])
+            .iter()
+            .copied()
+            .fold(0.0f32, f32::max);
+        let max_stale_error = clean
+            .residual
+            .slice(s![.., .., 0, 0])
+            .iter()
+            .zip(clean.model.slice(s![.., .., 0, 0]).iter())
+            .zip(exact_refreshed_residual.iter())
+            .map(|((residual, model), exact)| (residual + model - exact).abs())
+            .fold(0.0f32, f32::max);
+
+        assert!(
+            max_exact_error < 1.0e-6,
+            "cube CLEAN must return the exact final residual after the iteration-limit stop"
+        );
+        assert!(
+            max_model_value > 1.0e-3
+                && (max_image_residual_error > 1.0e-3 || max_stale_error > 1.0e-3),
+            "regression guard should fail if the exact refresh is not distinguishable"
+        );
+    }
 }
