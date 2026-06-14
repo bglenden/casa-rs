@@ -3029,7 +3029,7 @@ fn prepare_source_row_block_plane_inner(
         build_cube_mosaic_metadata,
     } = descriptor;
     let row_count = source_block.row_count();
-    let thread_count = standard_mfs_density_prepare_threads(row_count);
+    let thread_count = standard_mfs_density_prepare_threads_for_config(config, row_count);
     if thread_count <= 1 || row_count < 2 {
         let mut prepared = new_source_row_block_prepared_selection(
             config,
@@ -7207,8 +7207,11 @@ fn run_independent_shared_cube_slab_planes(
     let mut product_write_elapsed = Duration::ZERO;
     let mut product_bytes = 0usize;
     let mut stage_timings = ImagingStageTimings::default();
-    let slab_config =
+    let mut slab_config =
         slab_config_for_cube_planes(config, base_channel_start, slab_plane_start, slab_plane_end)?;
+    if slab_config.imaging_prepare_workers.is_none() && worker_count > 1 {
+        slab_config.imaging_prepare_workers = Some(worker_count);
+    }
     let prepare_started = Instant::now();
     let prepare_result = prepare_cube_slab_from_shared_columnar_source(
         ms,
@@ -7241,10 +7244,11 @@ fn run_independent_shared_cube_slab_planes(
         let timings = prepare_result.accumulate_timings;
         let stats = prepare_result.batch_stats;
         eprintln!(
-            "cube_shared_slab_prepare slab_plane_start={} slab_plane_end={} blocks={} prepared_samples={} visibility_batches={} visibility_capacity={} visibility_capacity_surplus={} density_samples={} density_batches={} model_samples={} model_batches={} rows_seen={} rows_flagged={} assignment_visits={} assignment_nonempty={} accepted_visibility_samples={} accepted_density_samples={} prepare_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3}",
+            "cube_shared_slab_prepare slab_plane_start={} slab_plane_end={} blocks={} prepare_workers={} prepared_samples={} visibility_batches={} visibility_capacity={} visibility_capacity_surplus={} density_samples={} density_batches={} model_samples={} model_batches={} rows_seen={} rows_flagged={} assignment_visits={} assignment_nonempty={} accepted_visibility_samples={} accepted_density_samples={} prepare_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3}",
             slab_plane_start,
             slab_plane_end,
             prepare_result.blocks,
+            slab_config.imaging_prepare_workers.unwrap_or(1),
             prepare_result.prepared_samples,
             stats.visibility_batches,
             stats.visibility_capacity,
@@ -22062,12 +22066,29 @@ fn env_standard_mfs_grid_threads() -> Option<usize> {
 }
 
 fn standard_mfs_density_prepare_threads(row_count: usize) -> usize {
+    standard_mfs_prepare_threads_for_request(row_count, None)
+}
+
+fn standard_mfs_density_prepare_threads_for_config(config: &CliConfig, row_count: usize) -> usize {
+    let requested = config
+        .imaging_prepare_workers
+        .or_else(|| env_usize("CASA_RS_IMAGING_PREPARE_WORKERS"));
+    standard_mfs_prepare_threads_for_request(row_count, requested)
+}
+
+fn standard_mfs_prepare_threads_for_request(
+    row_count: usize,
+    requested_override: Option<usize>,
+) -> usize {
     if row_count == 0 {
         return 1;
     }
-    let requested = env::var("CASA_RS_STANDARD_MFS_DENSITY_THREADS")
-        .ok()
-        .and_then(|value| parse_standard_mfs_grid_threads(&value))
+    let requested = requested_override
+        .or_else(|| {
+            env::var("CASA_RS_STANDARD_MFS_DENSITY_THREADS")
+                .ok()
+                .and_then(|value| parse_standard_mfs_grid_threads(&value))
+        })
         .or_else(env_standard_mfs_grid_threads)
         .unwrap_or(1);
     let available = std::thread::available_parallelism().map_or(1, |value| value.get());
@@ -37505,6 +37526,25 @@ mod tests {
         assert_eq!(plan.row_block_rows, 1024);
         assert_eq!(plan.row_block_rows_source, "cli-imaging");
         assert_eq!(plan.worker_buffers, 2);
+    }
+
+    #[test]
+    fn configured_prepare_threads_precede_legacy_thread_envs() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let _density_threads = EnvGuard::set("CASA_RS_STANDARD_MFS_DENSITY_THREADS", "1");
+        let _grid_threads = EnvGuard::set("CASA_RS_STANDARD_MFS_GRID_THREADS", "1");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_prepare_workers = Some(10);
+
+        assert_eq!(
+            standard_mfs_density_prepare_threads_for_config(&config, 32_768),
+            10.min(std::thread::available_parallelism().map_or(1, |value| value.get()))
+        );
+        assert_eq!(
+            standard_mfs_density_prepare_threads_for_config(&config, 4),
+            4
+        );
     }
 
     #[test]
