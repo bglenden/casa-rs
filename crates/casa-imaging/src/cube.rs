@@ -753,10 +753,14 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             &gridder,
         )?;
         plane_stage_timings.weighting += weighting_started.elapsed();
-        let executor_build_started = Instant::now();
-        let residual_sample_plans =
-            build_standard_residual_sample_plans(&gridder, &weighted_batches);
-        plane_stage_timings.executor_build += executor_build_started.elapsed();
+        let residual_sample_plans = if plane_request.clean.niter > 0 {
+            let executor_build_started = Instant::now();
+            let plans = build_standard_residual_sample_plans(&gridder, &weighted_batches);
+            plane_stage_timings.executor_build += executor_build_started.elapsed();
+            plans
+        } else {
+            Vec::new()
+        };
         let (
             psf_state,
             auto_mask_beam,
