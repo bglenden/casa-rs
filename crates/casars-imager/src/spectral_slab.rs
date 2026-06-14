@@ -1718,8 +1718,8 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
             },
             candidate.shape.slab_count,
             prepared_residency_rank(candidate.prepared_residency),
-            std::cmp::Reverse(candidate.shape.active_planes),
             candidate.planned_active_bytes,
+            candidate.shape.active_planes,
         ) < (
             current.modeled_total_io_bytes,
             current.modeled_source_read_bytes,
@@ -1733,8 +1733,8 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
             },
             current.shape.slab_count,
             prepared_residency_rank(current.prepared_residency),
-            std::cmp::Reverse(current.shape.active_planes),
             current.planned_active_bytes,
+            current.shape.active_planes,
         )
     });
     if replace {
