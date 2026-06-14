@@ -1274,11 +1274,6 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             Array2::<f32>::zeros((nx, ny))
         } else {
             let restore_started = Instant::now();
-            let restored_model = restore_model(
-                &plane.model,
-                plane.request.geometry.cell_size_rad,
-                restored_beam,
-            );
             let residual_to_add = match (restored_beam, beam) {
                 (Some(restored_beam), Some(fitted_beam))
                     if request.restoring_beam_mode == RestoringBeamMode::Common =>
@@ -1300,8 +1295,18 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 }
                 _ => plane.residual.clone(),
             };
+            let restored_image = if plane.request.clean.niter == 0 {
+                residual_to_add
+            } else {
+                let restored_model = restore_model(
+                    &plane.model,
+                    plane.request.geometry.cell_size_rad,
+                    restored_beam,
+                );
+                &restored_model + &residual_to_add
+            };
             plane.stage_timings.restore += restore_started.elapsed();
-            &restored_model + &residual_to_add
+            restored_image
         };
         plane.stage_timings.total = plane.stage_timings.total.saturating_add(Duration::ZERO);
 
