@@ -938,8 +938,23 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         return Ok(());
     }
     let request = ImagerRunTaskRequest::from_cli_config(&config);
+    let cli_started_at = Instant::now();
     let summary = run_from_config(&config)?;
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "frontend stage=cli/run_from_config_return stage_elapsed_s={:.3}",
+            cli_started_at.elapsed().as_secs_f64(),
+        );
+    }
+    let result_started_at = Instant::now();
     let result = ImagerRunTaskResult::from_run(request, &summary);
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "frontend stage=cli/result_summary_build stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+            result_started_at.elapsed().as_secs_f64(),
+            cli_started_at.elapsed().as_secs_f64(),
+        );
+    }
     if managed_output {
         println!(
             "{}",
@@ -948,8 +963,17 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         );
         return Ok(());
     }
+    let warnings_started_at = Instant::now();
     for warning in &result.run.warnings {
         eprintln!("warning: {warning}");
+    }
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "frontend stage=cli/warning_emit count={} stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+            result.run.warnings.len(),
+            warnings_started_at.elapsed().as_secs_f64(),
+            cli_started_at.elapsed().as_secs_f64(),
+        );
     }
     if summary.gridded_samples == 0
         && summary.stage_timings.total == Duration::ZERO
@@ -6620,7 +6644,25 @@ fn run_standard_cube_slab_from_open_ms(
     );
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
 
+    let finalization_started_at = Instant::now();
     let channel_summaries = aggregate.channel_summaries()?;
+    let finalization_elapsed = finalization_started_at.elapsed();
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "frontend stage=cube_slab/channel_summaries channels={} stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+            channel_summaries.len(),
+            finalization_elapsed.as_secs_f64(),
+            total_start.elapsed().as_secs_f64(),
+        );
+    }
+    let frontend_total = total_start.elapsed();
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "frontend stage=cube_slab/run_summary_ready stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+            finalization_elapsed.as_secs_f64(),
+            frontend_total.as_secs_f64(),
+        );
+    }
     Ok(RunSummary {
         warnings: aggregate.warnings,
         gridded_samples: aggregate.gridded_samples,
@@ -6639,7 +6681,7 @@ fn run_standard_cube_slab_from_open_ms(
             run_imaging: run_imaging_time,
             build_coordinate_system,
             write_products: write_products_time,
-            total: total_start.elapsed(),
+            total: frontend_total,
         },
     })
 }

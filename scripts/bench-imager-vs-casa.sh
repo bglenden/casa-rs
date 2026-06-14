@@ -284,10 +284,12 @@ PY
     "$@" >/dev/null 2>>"$stderr_file" &
     local command_pid="$!"
     local heartbeat_start="$SECONDS"
+    local last_heartbeat="$SECONDS"
     while kill -0 "$command_pid" 2>/dev/null; do
-      sleep 30
-      if kill -0 "$command_pid" 2>/dev/null; then
+      sleep 1
+      if (( SECONDS - last_heartbeat >= 30 )) && kill -0 "$command_pid" 2>/dev/null; then
         echo "benchmark_command_progress command=$(basename "$1") elapsed_s=$((SECONDS - heartbeat_start))" >&2
+        last_heartbeat="$SECONDS"
       fi
     done
     wait "$command_pid"
@@ -318,7 +320,7 @@ emit_rust_backend_diagnostics() {
     return 0
   fi
   grep -E \
-    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|visibility_source_stream_consumer|standard_mfs_profile_run|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|cube_slab_executor_limitation|cube_source_row_blocks|frontend stage=prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks))' \
+    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|visibility_source_stream_consumer|standard_mfs_profile_run|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|cube_slab_executor_limitation|cube_source_row_blocks|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cli/))' \
     "$stderr_file" || true
 }
 
