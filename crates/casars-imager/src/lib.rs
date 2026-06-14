@@ -6254,6 +6254,24 @@ fn run_standard_cube_slab_from_open_ms(
             let direct_contiguous_channel_map = channel_read_range.is_some_and(|range| {
                 range.count == slab.plane_end.saturating_sub(slab.plane_start)
             });
+            let direct_dirty_spectral_plan = if direct_dirty_cube_shared_source_eligible(
+                &slab_config,
+                clean,
+                slab.plane_end.saturating_sub(slab.plane_start),
+                direct_contiguous_channel_map,
+            ) {
+                Some(build_standard_cube_row_spectral_reusable_plan(
+                    &slab_config,
+                    &selection,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    &active_selected_rows,
+                    Some(&derived_engine),
+                )?)
+            } else {
+                None
+            };
             let shared_source = read_shared_columnar_cube_slab_source(
                 ms,
                 &slab_config,
@@ -6354,6 +6372,7 @@ fn run_standard_cube_slab_from_open_ms(
                 slab_channel_frequencies_hz,
                 channel_read_range.map_or(0, |range| range.start),
                 direct_contiguous_channel_map,
+                direct_dirty_spectral_plan.as_deref(),
                 &table_values.corr_types,
                 memory_plan.worker_count,
                 ms,
@@ -7266,7 +7285,7 @@ struct SharedCubePlaneTaskPayload {
 
 struct DirectDirtyCubePlaneTaskPayload {
     plane_index: usize,
-    source_channel: usize,
+    output_channel: usize,
     channel_frequency_hz: f64,
 }
 
@@ -7375,6 +7394,221 @@ fn direct_cube_plane_weight(
     }
 }
 
+fn direct_cube_plane_channel_slot(
+    buffer: &VisibilityBuffer,
+    source_channel: usize,
+) -> Result<usize, String> {
+    if !buffer.channel_range().contains(&source_channel) {
+        return Err(format!(
+            "direct dirty cube source channel {source_channel} is outside buffered channel range {}..{}",
+            buffer.channel_start,
+            buffer.channel_start.saturating_add(buffer.channel_count),
+        ));
+    }
+    Ok(source_channel - buffer.channel_start)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_explicit_cube_output_sample_from_buffer(
+    buffer: &VisibilityBuffer,
+    data: &VisibilityComplexSamples,
+    flags: &[bool],
+    row_slot: usize,
+    corr_index: usize,
+    source_channel_indices: &[usize],
+    phase_shift_m: f64,
+    interpolation_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<ExplicitCubeOutputSample>, String> {
+    let mut visibility = Complex32::new(0.0, 0.0);
+    let mut weight = 0.0f32;
+    let mut sumwt_factor = 0.0f32;
+    let mut nearest_weight_candidate = None::<(f32, f32)>;
+
+    for contribution in contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&source_channel) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let channel_slot = direct_cube_plane_channel_slot(buffer, source_channel)?;
+        let index = buffer.channel_row_corr_index(channel_slot, row_slot, corr_index);
+        if flags
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("FLAG sample index {index} is out of bounds"))?
+        {
+            return Ok(None);
+        }
+        let source_visibility = direct_cube_plane_complex_sample(data, index)?;
+        let source_weight = direct_cube_plane_weight(buffer, channel_slot, row_slot, corr_index)?;
+        if !(source_visibility.re.is_finite()
+            && source_visibility.im.is_finite()
+            && source_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        visibility += source_visibility * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => nearest_weight_candidate = Some((contribution.factor, source_weight)),
+                Some((best_factor, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate = Some((contribution.factor, source_weight));
+                }
+                _ => {}
+            }
+        } else {
+            weight += source_weight * contribution.factor;
+        }
+        sumwt_factor += contribution.factor;
+    }
+
+    if nearest_weight {
+        let Some((_, nearest_source_weight)) = nearest_weight_candidate else {
+            return Ok(None);
+        };
+        weight = nearest_source_weight;
+        sumwt_factor = 1.0;
+    }
+
+    if !(visibility.re.is_finite()
+        && visibility.im.is_finite()
+        && weight.is_finite()
+        && weight > 0.0
+        && sumwt_factor.is_finite()
+        && sumwt_factor > 0.0)
+    {
+        return Ok(None);
+    }
+
+    visibility = phase_rotate_visibility(visibility, phase_shift_m, interpolation_frequency_hz);
+
+    Ok(Some(ExplicitCubeOutputSample {
+        visibility,
+        weight,
+        weight_source: WeightSourceKind::Weight,
+        sumwt_factor,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_paired_cube_output_sample_from_buffer(
+    buffer: &VisibilityBuffer,
+    data: &VisibilityComplexSamples,
+    flags: &[bool],
+    row_slot: usize,
+    pair: (usize, usize),
+    source_channel_indices: &[usize],
+    phase_shift_m: f64,
+    interpolation_frequency_hz: f64,
+    contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
+) -> Result<Option<PairedCubeOutputSample>, String> {
+    let mut first_visibility = Complex32::new(0.0, 0.0);
+    let mut second_visibility = Complex32::new(0.0, 0.0);
+    let mut first_weight = 0.0f32;
+    let mut second_weight = 0.0f32;
+    let mut nearest_weight_candidate = None::<(f32, f32, f32)>;
+
+    for contribution in contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&source_channel) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let channel_slot = direct_cube_plane_channel_slot(buffer, source_channel)?;
+        let first_index = buffer.channel_row_corr_index(channel_slot, row_slot, pair.0);
+        let second_index = buffer.channel_row_corr_index(channel_slot, row_slot, pair.1);
+        if flags
+            .get(first_index)
+            .copied()
+            .ok_or_else(|| format!("FLAG sample index {first_index} is out of bounds"))?
+            || flags
+                .get(second_index)
+                .copied()
+                .ok_or_else(|| format!("FLAG sample index {second_index} is out of bounds"))?
+        {
+            return Ok(None);
+        }
+        let source_first_visibility = direct_cube_plane_complex_sample(data, first_index)?;
+        let source_second_visibility = direct_cube_plane_complex_sample(data, second_index)?;
+        let source_first_weight = direct_cube_plane_weight(buffer, channel_slot, row_slot, pair.0)?;
+        let source_second_weight =
+            direct_cube_plane_weight(buffer, channel_slot, row_slot, pair.1)?;
+        if !(source_first_visibility.re.is_finite()
+            && source_first_visibility.im.is_finite()
+            && source_second_visibility.re.is_finite()
+            && source_second_visibility.im.is_finite()
+            && source_first_weight.is_finite()
+            && source_second_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        first_visibility += source_first_visibility * contribution.factor;
+        second_visibility += source_second_visibility * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        source_first_weight,
+                        source_second_weight,
+                    ));
+                }
+                Some((best_factor, _, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        source_first_weight,
+                        source_second_weight,
+                    ));
+                }
+                _ => {}
+            }
+        } else {
+            first_weight += source_first_weight * contribution.factor;
+            second_weight += source_second_weight * contribution.factor;
+        }
+    }
+
+    if nearest_weight {
+        let Some((_, nearest_first_weight, nearest_second_weight)) = nearest_weight_candidate
+        else {
+            return Ok(None);
+        };
+        first_weight = nearest_first_weight;
+        second_weight = nearest_second_weight;
+    }
+
+    if !(first_visibility.re.is_finite()
+        && first_visibility.im.is_finite()
+        && second_visibility.re.is_finite()
+        && second_visibility.im.is_finite()
+        && first_weight.is_finite()
+        && first_weight > 0.0
+        && second_weight.is_finite()
+        && second_weight > 0.0)
+    {
+        return Ok(None);
+    }
+
+    first_visibility =
+        phase_rotate_visibility(first_visibility, phase_shift_m, interpolation_frequency_hz);
+    second_visibility =
+        phase_rotate_visibility(second_visibility, phase_shift_m, interpolation_frequency_hz);
+
+    Ok(Some(PairedCubeOutputSample {
+        first_visibility,
+        second_visibility,
+        first_weight,
+        second_weight,
+        first_weight_source: WeightSourceKind::Weight,
+        second_weight_source: WeightSourceKind::Weight,
+    }))
+}
+
 fn direct_dirty_cube_shared_source_eligible(
     config: &CliConfig,
     clean: CleanConfig,
@@ -7393,21 +7627,16 @@ fn direct_dirty_cube_shared_source_eligible(
 
 fn direct_dirty_cube_plane_push_planned_samples(
     shared_source: &SharedColumnarCubeSlabSource,
-    source_channel: usize,
-    channel_frequency_hz: f64,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
     polarization: DirectCubePlanePolarization,
     planned_sample_builder: &StandardMfsPlannedSampleBuilder,
     planned: &mut Vec<StandardMfsPlannedWeightedSample>,
     consumer: &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
 ) -> Result<(), String> {
-    let lambda_scale = channel_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     for block in &shared_source.blocks {
         planned.clear();
         let buffer = &block.visibility;
-        if !buffer.channel_range().contains(&source_channel) {
-            continue;
-        }
-        let channel_slot = source_channel - buffer.channel_start;
         let data = buffer
             .data
             .as_ref()
@@ -7433,23 +7662,53 @@ fn direct_dirty_cube_plane_push_planned_samples(
             })?;
             let transform = geometry_row.transform;
             let uvw_m = transform.uvw_m;
+            let selected_row = &geometry_row.selected_row;
+            let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+                "internal error: missing row time for direct dirty cube spectral plan".to_string()
+            })?;
+            let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+            let row_spectral_contributions =
+                spectral_plan.spectral(&cache_key).ok_or_else(|| {
+                    format!(
+                        "direct dirty cube spectral plan missing row time/field entry ({}, {})",
+                        row_time_mjd_sec, selected_row.field_id
+                    )
+                })?;
+            let Some(assignment) =
+                spectral_plan.assignment_for_output(&row_spectral_contributions, output_channel)
+            else {
+                continue;
+            };
+            if assignment.contributions.is_empty()
+                || !(assignment.frequency_hz.is_finite() && assignment.frequency_hz > 0.0)
+            {
+                continue;
+            }
             let (visibility, natural_weight, sumwt_factor) = match polarization {
                 DirectCubePlanePolarization::Explicit {
                     corr_index,
                     sumwt_factor,
                 } => {
-                    let index = buffer.channel_row_corr_index(channel_slot, row_slot, corr_index);
-                    if flags
-                        .get(index)
-                        .copied()
-                        .ok_or_else(|| format!("FLAG sample index {index} is out of bounds"))?
-                    {
+                    let Some(sample) = direct_explicit_cube_output_sample_from_buffer(
+                        buffer,
+                        data,
+                        flags,
+                        row_slot,
+                        corr_index,
+                        &spectral_plan.source_channel_indices,
+                        transform.phase_shift_m,
+                        assignment.frequency_hz,
+                        assignment.contributions,
+                        assignment.nearest_weight,
+                    )?
+                    else {
                         continue;
-                    }
-                    let visibility = direct_cube_plane_complex_sample(data, index)?;
-                    let natural_weight =
-                        direct_cube_plane_weight(buffer, channel_slot, row_slot, corr_index)?;
-                    (visibility, natural_weight, sumwt_factor)
+                    };
+                    (
+                        sample.visibility,
+                        sample.weight,
+                        sample.sumwt_factor * sumwt_factor,
+                    )
                 }
                 DirectCubePlanePolarization::CollapsedPair {
                     first_corr_index,
@@ -7457,50 +7716,37 @@ fn direct_dirty_cube_plane_push_planned_samples(
                     transform: pair_transform,
                     sumwt_factor,
                 } => {
-                    let first_index =
-                        buffer.channel_row_corr_index(channel_slot, row_slot, first_corr_index);
-                    let second_index =
-                        buffer.channel_row_corr_index(channel_slot, row_slot, second_corr_index);
-                    if flags.get(first_index).copied().ok_or_else(|| {
-                        format!("FLAG sample index {first_index} is out of bounds")
-                    })? || flags.get(second_index).copied().ok_or_else(|| {
-                        format!("FLAG sample index {second_index} is out of bounds")
-                    })? {
-                        continue;
-                    }
-                    let first_visibility = direct_cube_plane_complex_sample(data, first_index)?;
-                    let second_visibility = direct_cube_plane_complex_sample(data, second_index)?;
-                    let first_weight =
-                        direct_cube_plane_weight(buffer, channel_slot, row_slot, first_corr_index)?;
-                    let second_weight = direct_cube_plane_weight(
+                    let Some(sample) = direct_paired_cube_output_sample_from_buffer(
                         buffer,
-                        channel_slot,
+                        data,
+                        flags,
                         row_slot,
-                        second_corr_index,
-                    )?;
-                    if !(first_weight.is_finite()
-                        && first_weight > 0.0
-                        && second_weight.is_finite()
-                        && second_weight > 0.0)
-                    {
+                        (first_corr_index, second_corr_index),
+                        &spectral_plan.source_channel_indices,
+                        transform.phase_shift_m,
+                        assignment.frequency_hz,
+                        assignment.contributions,
+                        assignment.nearest_weight,
+                    )?
+                    else {
+                        continue;
+                    };
+                    let visibility = collapse_paired_visibility(
+                        sample.first_visibility,
+                        sample.second_visibility,
+                        pair_transform,
+                    );
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
                         continue;
                     }
-                    (
-                        collapse_paired_visibility(
-                            first_visibility,
-                            second_visibility,
-                            pair_transform,
-                        ),
-                        0.5 * (first_weight + second_weight),
-                        sumwt_factor,
-                    )
+                    let combined_weight = 0.5 * (sample.first_weight + sample.second_weight);
+                    (visibility, combined_weight, sumwt_factor)
                 }
             };
             if !(natural_weight.is_finite() && natural_weight > 0.0) {
                 continue;
             }
-            let visibility =
-                phase_rotate_visibility(visibility, transform.phase_shift_m, channel_frequency_hz);
+            let lambda_scale = assignment.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let sample = StandardMfsWeightedSample {
                 u_lambda: uvw_m[0] * lambda_scale,
                 v_lambda: uvw_m[1] * lambda_scale,
@@ -7535,8 +7781,9 @@ fn run_direct_dirty_cube_plane_from_shared_source(
     small_scale_bias: f32,
     execution_config: StandardMfsExecutionConfig,
     shared_source: &SharedColumnarCubeSlabSource,
-    source_channel: usize,
+    output_channel: usize,
     channel_frequency_hz: f64,
+    spectral_plan: &CubeRowSpectralReusablePlan,
     corr_types: &[i32],
 ) -> Result<CubeImagingResult, String> {
     let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
@@ -7548,8 +7795,8 @@ fn run_direct_dirty_cube_plane_from_shared_source(
     ) -> Result<(), ImagingError>| {
         direct_dirty_cube_plane_push_planned_samples(
             shared_source,
-            source_channel,
-            channel_frequency_hz,
+            output_channel,
+            spectral_plan,
             polarization,
             &planned_sample_builder,
             &mut planned,
@@ -7739,6 +7986,7 @@ fn run_independent_shared_cube_slab_planes(
     slab_channel_frequencies_hz: &[f64],
     source_channel_start: usize,
     direct_contiguous_channel_map: bool,
+    direct_dirty_spectral_plan: Option<&CubeRowSpectralReusablePlan>,
     corr_types: &[i32],
     worker_count: usize,
     ms: &MeasurementSet,
@@ -7779,13 +8027,18 @@ fn run_independent_shared_cube_slab_planes(
                 slab_channel_frequencies_hz.len()
             ));
         }
+        let spectral_plan = direct_dirty_spectral_plan.ok_or_else(|| {
+            "direct dirty cube slab requires a reusable spectral routing plan".to_string()
+        })?;
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
-                "cube_shared_direct_dirty_source slab_plane_start={} slab_plane_end={} blocks={} source_channel_start={} materialization=none",
+                "cube_shared_direct_dirty_source slab_plane_start={} slab_plane_end={} blocks={} source_channel_start={} materialization=none spectral_plan_entries={} visibility_grid_assignments={}",
                 slab_plane_start,
                 slab_plane_end,
                 shared_source.blocks.len(),
                 source_channel_start,
+                spectral_plan.spectral_entries(),
+                spectral_plan.use_visibility_grid_assignments,
             );
         }
         let tasks = slab_channel_frequencies_hz
@@ -7798,7 +8051,7 @@ fn run_independent_shared_cube_slab_planes(
                     plane_index,
                     payload: DirectDirtyCubePlaneTaskPayload {
                         plane_index,
-                        source_channel: source_channel_start + plane_offset,
+                        output_channel: plane_offset,
                         channel_frequency_hz,
                     },
                 }
@@ -7824,8 +8077,9 @@ fn run_independent_shared_cube_slab_planes(
                     slab_config.small_scale_bias,
                     plane_execution_config,
                     shared_source,
-                    payload.source_channel,
+                    payload.output_channel,
                     payload.channel_frequency_hz,
+                    spectral_plan,
                     corr_types,
                 )?;
                 let stage_timings = cube_result.diagnostics.stage_timings;
@@ -7845,9 +8099,8 @@ fn run_independent_shared_cube_slab_planes(
                 let reported_sumwt = plane_diagnostics.reported_sumwt;
                 if standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "cube_shared_direct_plane_worker plane={} source_channel={} blocks={} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
+                        "cube_shared_direct_plane_worker plane={} blocks={} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
                         payload.plane_index,
-                        payload.source_channel,
                         shared_source.blocks.len(),
                         gridded_samples,
                         skipped_samples,
@@ -12957,6 +13210,17 @@ fn build_mosaic_cube_row_spectral_reusable_plan(
     let mut plan = CubeRowSpectralReusablePlan {
         spectral: HashMap::with_capacity(keys.len()),
         source_frequencies: HashMap::new(),
+        source_channel_indices: Arc::from(
+            prepared.source_channel_indices.clone().into_boxed_slice(),
+        ),
+        output_channel_frequencies_hz: Arc::from(
+            cube_setup
+                .output_channel_frequencies_hz
+                .clone()
+                .into_boxed_slice(),
+        ),
+        use_visibility_grid_assignments: prepared.casa_cube_grid_interpolation
+            || prepared.cube_visibility_grid_assignments,
     };
     let needs_source_frequency_cache = prepared.casa_cube_grid_interpolation;
     if needs_source_frequency_cache {
@@ -13220,6 +13484,167 @@ fn build_mosaic_cube_row_spectral_reusable_plan(
         duration_ms(started_at.elapsed()),
     );
     Ok(Some(Arc::new(plan)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_standard_cube_row_spectral_reusable_plan(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<Arc<CubeRowSpectralReusablePlan>, String> {
+    let started_at = Instant::now();
+    let cube_context = cube_setup_context_for_selection(selection, derived_engine)?;
+    let mut prepared = PreparedSelection::new(
+        config,
+        selection.selected_ddid,
+        ddid_info,
+        spectral_window,
+        polarization,
+        selection.phase_center.clone(),
+        Some(cube_context),
+        false,
+        false,
+    );
+    if let Some(init_error) = prepared.initialization_error.take() {
+        return Err(init_error);
+    }
+    let cube_setup = prepared
+        .cube_spectral_setup
+        .take()
+        .ok_or_else(|| "internal error: missing standard cube spectral setup".to_string())?;
+    let derived_engine = derived_engine.ok_or_else(|| {
+        "internal error: missing derived engine for standard cube spectral plan".to_string()
+    })?;
+    let mut keys = BTreeSet::<(u64, usize)>::new();
+    for row in active_selected_rows {
+        let row_time_mjd_sec = row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for standard cube spectral plan".to_string()
+        })?;
+        keys.insert((row_time_mjd_sec.to_bits(), row.field_id));
+    }
+    let keys = keys.into_iter().collect::<Vec<_>>();
+    let needs_source_frequency_cache = prepared.casa_cube_grid_interpolation;
+    let mut plan = CubeRowSpectralReusablePlan {
+        spectral: HashMap::with_capacity(keys.len()),
+        source_frequencies: if needs_source_frequency_cache {
+            HashMap::with_capacity(keys.len())
+        } else {
+            HashMap::new()
+        },
+        source_channel_indices: Arc::from(
+            prepared.source_channel_indices.clone().into_boxed_slice(),
+        ),
+        output_channel_frequencies_hz: Arc::from(
+            cube_setup
+                .output_channel_frequencies_hz
+                .clone()
+                .into_boxed_slice(),
+        ),
+        use_visibility_grid_assignments: prepared.casa_cube_grid_interpolation
+            || prepared.cube_visibility_grid_assignments,
+    };
+
+    let mut stats = ReusablePlanBuildStats::default();
+    if cube_setup.source_freq_ref == cube_setup.output_freq_ref && !keys.is_empty() {
+        let (time_bits, field_id) = keys[0];
+        let row_time_mjd_sec = f64::from_bits(time_bits);
+        let contributions = Arc::new(
+            cube_setup
+                .row_spectral_contributions(
+                    &prepared.source_channel_frequencies_hz,
+                    &prepared.source_channel_widths_hz,
+                    row_time_mjd_sec,
+                    field_id,
+                    derived_engine,
+                )
+                .map_err(|error| error.to_string())?,
+        );
+        accumulate_reusable_plan_build_stats(&mut stats, &contributions);
+        let source_frequencies = if needs_source_frequency_cache {
+            stats.source_frequency_values += prepared.source_channel_frequencies_hz.len();
+            Some(Arc::new(prepared.source_channel_frequencies_hz.clone()))
+        } else {
+            None
+        };
+        for &cache_key in &keys {
+            plan.spectral.insert(cache_key, Arc::clone(&contributions));
+            if let Some(source_frequencies) = source_frequencies.as_ref() {
+                plan.source_frequencies
+                    .insert(cache_key, Arc::clone(source_frequencies));
+            }
+        }
+    } else {
+        for &cache_key in &keys {
+            let (time_bits, field_id) = cache_key;
+            let row_time_mjd_sec = f64::from_bits(time_bits);
+            let contributions = Arc::new(
+                cube_setup
+                    .row_spectral_contributions(
+                        &prepared.source_channel_frequencies_hz,
+                        &prepared.source_channel_widths_hz,
+                        row_time_mjd_sec,
+                        field_id,
+                        derived_engine,
+                    )
+                    .map_err(|error| error.to_string())?,
+            );
+            accumulate_reusable_plan_build_stats(&mut stats, &contributions);
+            let source_frequencies = if needs_source_frequency_cache {
+                let source_frequencies = Arc::new(
+                    cube_setup
+                        .row_source_frequencies_for_interpolation(
+                            &prepared.source_channel_frequencies_hz,
+                            row_time_mjd_sec,
+                            field_id,
+                            derived_engine,
+                        )
+                        .map_err(|error| error.to_string())?,
+                );
+                stats.source_frequency_values += source_frequencies.len();
+                Some(source_frequencies)
+            } else {
+                None
+            };
+            plan.spectral.insert(cache_key, contributions);
+            if let Some(source_frequencies) = source_frequencies {
+                plan.source_frequencies
+                    .insert(cache_key, source_frequencies);
+            }
+        }
+    }
+
+    let estimated_bytes = stats
+        .grid_contributions
+        .saturating_add(stats.padded_grid_contributions)
+        .saturating_add(stats.output_contributions)
+        .saturating_mul(std::mem::size_of::<CubeChannelContribution>())
+        .saturating_add(
+            stats
+                .source_frequency_values
+                .saturating_mul(std::mem::size_of::<f64>()),
+        );
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "standard_cube_reusable_plan_summary entries={} source_frequency_entries={} selected_channels={} output_channels={} grid_assignments={} grid_contributions={} padded_grid_assignments={} padded_grid_contributions={} output_contributions={} estimated_payload_gib={:.6} build_ms={:.3} visibility_grid_assignments={}",
+            plan.spectral_entries(),
+            plan.source_frequency_entries(),
+            plan.source_channel_indices.len(),
+            plan.output_channel_frequencies_hz.len(),
+            stats.grid_assignments,
+            stats.grid_contributions,
+            stats.padded_grid_assignments,
+            stats.padded_grid_contributions,
+            stats.output_contributions,
+            bytes_to_gib(estimated_bytes),
+            duration_ms(started_at.elapsed()),
+            plan.use_visibility_grid_assignments,
+        );
+    }
+    Ok(Arc::new(plan))
 }
 
 fn accumulate_reusable_plan_build_stats(
@@ -25191,6 +25616,9 @@ impl AccumulateRowTimings {
 struct CubeRowSpectralReusablePlan {
     spectral: HashMap<(u64, usize), Arc<CubeRowSpectralContributions>>,
     source_frequencies: HashMap<(u64, usize), Arc<Vec<f64>>>,
+    source_channel_indices: Arc<[usize]>,
+    output_channel_frequencies_hz: Arc<[f64]>,
+    use_visibility_grid_assignments: bool,
 }
 
 impl CubeRowSpectralReusablePlan {
@@ -25208,6 +25636,36 @@ impl CubeRowSpectralReusablePlan {
 
     fn source_frequency_entries(&self) -> usize {
         self.source_frequencies.len()
+    }
+
+    fn assignment_for_output<'a>(
+        &self,
+        contributions: &'a CubeRowSpectralContributions,
+        output_channel: usize,
+    ) -> Option<CubeVisibilityAssignment<'a>> {
+        if self.use_visibility_grid_assignments {
+            return contributions
+                .grid_channel_contributions
+                .iter()
+                .find(|grid| grid.output_channel == output_channel)
+                .map(|grid| CubeVisibilityAssignment {
+                    output_channel: grid.output_channel,
+                    frequency_hz: grid.grid_frequency_hz,
+                    contributions: grid.contributions.as_slice(),
+                    nearest_weight: true,
+                });
+        }
+
+        let frequency_hz = *self.output_channel_frequencies_hz.get(output_channel)?;
+        let channel_contributions = contributions
+            .output_channel_contributions
+            .get(output_channel)?;
+        Some(CubeVisibilityAssignment {
+            output_channel,
+            frequency_hz,
+            contributions: channel_contributions.as_slice(),
+            nearest_weight: false,
+        })
     }
 }
 
