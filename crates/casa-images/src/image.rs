@@ -22,7 +22,7 @@ use casa_lattices::{
 };
 use casa_tables::{
     ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema, TilePixel,
-    TiledFileIO,
+    TiledFileIO, TiledFileIoStats,
 };
 use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
@@ -1300,6 +1300,20 @@ impl<T: ImagePixel> PagedImage<T> {
         start: &[usize],
     ) -> Result<(), ImageError> {
         paged_image_put_slice_view(self, data, start).map_err(Into::into)
+    }
+
+    /// Returns current tiled-I/O diagnostic counters for this image.
+    pub fn tiled_io_stats(&self) -> Option<TiledFileIoStats> {
+        self.tiled_io
+            .as_ref()
+            .map(|tiled_io| tiled_io.borrow().io_stats())
+    }
+
+    /// Clears tiled-I/O diagnostic counters for this image.
+    pub fn reset_tiled_io_stats(&mut self) {
+        if let Some(tiled_io) = &self.tiled_io {
+            tiled_io.borrow_mut().reset_io_stats();
+        }
     }
 
     /// Writes a single pixel.

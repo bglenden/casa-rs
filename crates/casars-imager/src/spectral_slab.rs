@@ -226,10 +226,43 @@ impl PlaneComponent {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum PlaneStateResidency {
+    #[default]
+    FullActiveGroup,
+    StreamingPlaneResults,
+}
+
+impl PlaneStateResidency {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FullActiveGroup => "full_active_group",
+            Self::StreamingPlaneResults => "streaming_plane_results",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SourceBufferResidency {
+    #[default]
+    RowBlockStream,
+    FullSlabRawSource,
+}
+
+impl SourceBufferResidency {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RowBlockStream => "row_block_stream",
+            Self::FullSlabRawSource => "full_slab_raw_source",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PlaneStateRequirements {
     required: BTreeSet<PlaneComponent>,
     mutable: BTreeSet<PlaneComponent>,
+    residency: PlaneStateResidency,
 }
 
 impl PlaneStateRequirements {
@@ -271,6 +304,7 @@ impl PlaneStateRequirements {
         Self {
             required: components.into_iter().collect(),
             mutable: BTreeSet::new(),
+            residency: PlaneStateResidency::FullActiveGroup,
         }
     }
 
@@ -285,11 +319,33 @@ impl PlaneStateRequirements {
         self
     }
 
+    pub(crate) fn with_streaming_plane_results(mut self) -> Self {
+        self.residency = PlaneStateResidency::StreamingPlaneResults;
+        self
+    }
+
     pub(crate) fn estimated_bytes_per_plane(&self, image_pixels: usize) -> usize {
         self.required
             .iter()
             .map(|component| self.estimated_component_bytes(*component, image_pixels))
             .sum()
+    }
+
+    pub(crate) fn estimated_resident_bytes_for_active_planes(
+        &self,
+        image_pixels: usize,
+        active_planes: usize,
+    ) -> usize {
+        match self.residency {
+            PlaneStateResidency::FullActiveGroup => self
+                .estimated_bytes_per_plane(image_pixels)
+                .saturating_mul(active_planes),
+            PlaneStateResidency::StreamingPlaneResults => 0,
+        }
+    }
+
+    pub(crate) fn residency_name(&self) -> &'static str {
+        self.residency.as_str()
     }
 
     fn estimated_component_bytes(&self, component: PlaneComponent, image_pixels: usize) -> usize {
@@ -763,13 +819,53 @@ impl VisibilitySourceShape {
         rows: usize,
         source_channels: usize,
     ) -> usize {
-        let raw_source_bytes = rows.saturating_mul(
-            self.row_fixed_resident_bytes()
-                .saturating_add(source_channels.saturating_mul(self.row_channel_bytes())),
-        );
-        raw_source_bytes
+        self.raw_source_buffer_bytes_for_rows(rows, source_channels)
             .saturating_add(self.live_prepared_bytes_for_rows(residency, rows, source_channels))
             .saturating_add(self.live_bucket_bytes_for_rows(residency, rows, source_channels))
+    }
+
+    pub(crate) fn resident_source_buffer_bytes(
+        &self,
+        source_residency: SourceBufferResidency,
+        prepared_residency: PreparedVisibilityResidency,
+        row_block_rows: usize,
+        source_channels: usize,
+    ) -> usize {
+        match source_residency {
+            SourceBufferResidency::RowBlockStream => self.source_buffer_bytes_for_rows(
+                prepared_residency,
+                row_block_rows,
+                source_channels,
+            ),
+            SourceBufferResidency::FullSlabRawSource => self
+                .raw_source_buffer_bytes_for_rows(self.active_rows, source_channels)
+                .saturating_add(self.live_source_scratch_bytes_for_rows(
+                    prepared_residency,
+                    row_block_rows,
+                    source_channels,
+                )),
+        }
+    }
+
+    pub(crate) fn live_source_scratch_bytes_for_rows(
+        &self,
+        residency: PreparedVisibilityResidency,
+        rows: usize,
+        source_channels: usize,
+    ) -> usize {
+        self.live_prepared_bytes_for_rows(residency, rows, source_channels)
+            .saturating_add(self.live_bucket_bytes_for_rows(residency, rows, source_channels))
+    }
+
+    pub(crate) fn raw_source_buffer_bytes_for_rows(
+        &self,
+        rows: usize,
+        source_channels: usize,
+    ) -> usize {
+        rows.saturating_mul(
+            self.row_fixed_resident_bytes()
+                .saturating_add(source_channels.saturating_mul(self.row_channel_bytes())),
+        )
     }
 
     pub(crate) fn prepared_staging_bytes_for_source_channels(
@@ -1047,6 +1143,10 @@ pub(crate) struct SpectralMemoryPlan {
     pub(crate) live_prepared_visibility_bytes: usize,
     pub(crate) live_bucket_bytes: usize,
     pub(crate) product_scratch_bytes: usize,
+    pub(crate) product_batch_planes: usize,
+    pub(crate) resident_plane_state_bytes: usize,
+    pub(crate) plane_state_residency: PlaneStateResidency,
+    pub(crate) source_buffer_residency: SourceBufferResidency,
     pub(crate) gpu_staging_bytes: usize,
     pub(crate) safety_margin_bytes: usize,
     pub(crate) planned_active_bytes: usize,
@@ -1091,7 +1191,7 @@ pub(crate) struct SpectralMemoryPlan {
 impl SpectralMemoryPlan {
     pub(crate) fn log_line(&self) -> String {
         format!(
-            "spectral_slab_plan schedule={} best_modeled_schedule={} executor_capabilities={} nplanes={} image_shape={}x{} active_planes={} slab_count={} row_block_rows={} cache_budget_bytes={} cache_kind={} visibility_cache_policy={} prepared_residency={} visibility_cache_bytes={} visibility_cache_source_channels={} worker_count={} backend={} memory_target_bytes={} fixed_frontend_bytes={} source_stream_buffer_bytes={} worker_staging_bytes={} per_plane_state_bytes={} component_memory_bytes={} visibility_staging_bytes_per_plane={} prepared_visibility_staging_bytes={} live_prepared_visibility_bytes={} live_bucket_bytes={} product_scratch_bytes={} gpu_staging_bytes={} safety_margin_bytes={} planned_active_bytes={} source_channel_visits={} max_slab_source_channels={} full_source_channel_count={} source_cell_channel_count={} corr_count={} visibility_data_element_bytes={} data_channel_read_granularity={} flag_channel_read_granularity={} weight_spectrum_channel_read_granularity={} visibility_row_channel_bytes={} visibility_row_fixed_bytes={} visibility_row_fixed_resident_bytes={} visibility_row_cache_overhead_bytes={} visibility_resident_cache_layout={} best_modeled_total_io_bytes={} best_modeled_source_read_bytes={} best_modeled_visibility_cache_io_bytes={} best_modeled_output_spill_io_bytes={} best_modeled_product_write_bytes={} best_modeled_active_planes={} best_modeled_slab_count={} best_modeled_source_channel_visits={} modeled_total_io_bytes={} modeled_source_read_bytes={} modeled_visibility_cache_fill_bytes={} modeled_visibility_cache_read_bytes={} modeled_visibility_cache_io_bytes={} modeled_output_spill_read_bytes={} modeled_output_spill_write_bytes={} modeled_output_spill_io_bytes={} modeled_product_write_bytes={} modeled_no_cache_source_read_bytes={} modeled_full_cache_source_read_bytes={} visibility_cache_saved_read_bytes={} candidate_io_costs={} warnings={}",
+            "spectral_slab_plan schedule={} best_modeled_schedule={} executor_capabilities={} nplanes={} image_shape={}x{} active_planes={} slab_count={} row_block_rows={} cache_budget_bytes={} cache_kind={} visibility_cache_policy={} prepared_residency={} visibility_cache_bytes={} visibility_cache_source_channels={} worker_count={} backend={} memory_target_bytes={} fixed_frontend_bytes={} source_stream_buffer_bytes={} worker_staging_bytes={} per_plane_state_bytes={} component_memory_bytes={} visibility_staging_bytes_per_plane={} prepared_visibility_staging_bytes={} live_prepared_visibility_bytes={} live_bucket_bytes={} product_scratch_bytes={} product_batch_planes={} resident_plane_state_bytes={} plane_state_residency={} source_buffer_residency={} gpu_staging_bytes={} safety_margin_bytes={} planned_active_bytes={} source_channel_visits={} max_slab_source_channels={} full_source_channel_count={} source_cell_channel_count={} corr_count={} visibility_data_element_bytes={} data_channel_read_granularity={} flag_channel_read_granularity={} weight_spectrum_channel_read_granularity={} visibility_row_channel_bytes={} visibility_row_fixed_bytes={} visibility_row_fixed_resident_bytes={} visibility_row_cache_overhead_bytes={} visibility_resident_cache_layout={} best_modeled_total_io_bytes={} best_modeled_source_read_bytes={} best_modeled_visibility_cache_io_bytes={} best_modeled_output_spill_io_bytes={} best_modeled_product_write_bytes={} best_modeled_active_planes={} best_modeled_slab_count={} best_modeled_source_channel_visits={} modeled_total_io_bytes={} modeled_source_read_bytes={} modeled_visibility_cache_fill_bytes={} modeled_visibility_cache_read_bytes={} modeled_visibility_cache_io_bytes={} modeled_output_spill_read_bytes={} modeled_output_spill_write_bytes={} modeled_output_spill_io_bytes={} modeled_product_write_bytes={} modeled_no_cache_source_read_bytes={} modeled_full_cache_source_read_bytes={} visibility_cache_saved_read_bytes={} candidate_io_costs={} warnings={}",
             self.schedule_kind.as_str(),
             self.best_modeled_schedule_kind.as_str(),
             self.executor_capabilities.as_str(),
@@ -1120,6 +1220,10 @@ impl SpectralMemoryPlan {
             self.live_prepared_visibility_bytes,
             self.live_bucket_bytes,
             self.product_scratch_bytes,
+            self.product_batch_planes,
+            self.resident_plane_state_bytes,
+            self.plane_state_residency.as_str(),
+            self.source_buffer_residency.as_str(),
             self.gpu_staging_bytes,
             self.safety_margin_bytes,
             self.planned_active_bytes,
@@ -1202,18 +1306,78 @@ pub(crate) struct SpectralMemoryPlannerInput {
     pub(crate) worker_staging_bytes: usize,
     pub(crate) gpu_staging_bytes: usize,
     pub(crate) safety_margin_bytes: usize,
-    pub(crate) product_scratch_bytes: usize,
+    pub(crate) executor_scratch: ExecutorScratchShape,
+    pub(crate) source_buffer_residency: SourceBufferResidency,
+    pub(crate) product_write_bytes_per_plane: usize,
     pub(crate) max_row_block_rows: usize,
     pub(crate) max_worker_count: usize,
     pub(crate) requirements: PlaneStateRequirements,
     pub(crate) prepared_residency: PreparedVisibilityResidency,
-    pub(crate) executor_prepared_slab_sample_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ExecutorScratchShape {
+    pub(crate) fixed_bytes: usize,
+    pub(crate) per_worker_bytes: usize,
+    pub(crate) per_worker_row_block_bytes: usize,
+    pub(crate) per_worker_row_block_limit_bytes: usize,
+    pub(crate) per_product_batch_plane_bytes: usize,
+    pub(crate) per_product_pending_plane_bytes: usize,
+}
+
+impl ExecutorScratchShape {
+    pub(crate) fn bytes_for_worker_count_and_rows(
+        self,
+        worker_count: usize,
+        row_block_rows: usize,
+        product_batch_planes: usize,
+    ) -> usize {
+        let worker_count = worker_count.max(1);
+        self.fixed_bytes
+            .saturating_add(self.per_worker_bytes.saturating_mul(worker_count))
+            .saturating_add(
+                self.per_product_batch_plane_bytes
+                    .saturating_mul(product_batch_planes.max(1)),
+            )
+            .saturating_add(if product_batch_planes > 1 {
+                self.per_product_pending_plane_bytes
+                    .saturating_mul(product_batch_planes)
+            } else {
+                0
+            })
+            .saturating_add(
+                self.per_worker_row_block_bytes
+                    .saturating_mul(row_block_rows)
+                    .saturating_mul(worker_count),
+            )
+    }
+
+    fn max_row_block_rows(self) -> Option<usize> {
+        if self.per_worker_row_block_bytes == 0 || self.per_worker_row_block_limit_bytes == 0 {
+            return None;
+        }
+        Some((self.per_worker_row_block_limit_bytes / self.per_worker_row_block_bytes).max(1))
+    }
+
+    fn max_product_batch_planes(
+        self,
+        worker_count: usize,
+        active_planes: usize,
+        enable_batching: bool,
+    ) -> usize {
+        if self.per_product_batch_plane_bytes == 0 || !enable_batching {
+            1
+        } else {
+            worker_count.max(1).min(active_planes.max(1))
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 struct CandidatePlan {
     schedule_kind: ImagingScheduleKind,
     shape: VisibilitySlabShape,
+    worker_count: usize,
     prepared_residency: PreparedVisibilityResidency,
     visibility_cache_policy: VisibilityCachePolicy,
     visibility_cache_bytes: usize,
@@ -1224,6 +1388,9 @@ struct CandidatePlan {
     visibility_staging_bytes_per_plane: usize,
     live_prepared_visibility_bytes: usize,
     live_bucket_bytes: usize,
+    product_scratch_bytes: usize,
+    product_batch_planes: usize,
+    resident_plane_state_bytes: usize,
     planned_active_bytes: usize,
     modeled_total_io_bytes: usize,
     modeled_source_read_bytes: usize,
@@ -1233,6 +1400,7 @@ struct CandidatePlan {
     modeled_output_spill_write_bytes: usize,
     modeled_product_write_bytes: usize,
     modeled_no_cache_source_read_bytes: usize,
+    modeled_runtime_cost_bytes: usize,
 }
 
 impl SpectralExecutorCapabilities {
@@ -1274,12 +1442,10 @@ pub(crate) fn plan_spectral_memory(
     let image_pixels = input.output.image_pixels();
     let per_plane_state_bytes = input.requirements.estimated_bytes_per_plane(image_pixels);
     let component_memory_breakdown = input.requirements.component_memory_breakdown(image_pixels);
-    let product_scratch_bytes = input.product_scratch_bytes;
-    let modeled_product_write_bytes = per_plane_state_bytes.saturating_mul(nplanes);
+    let modeled_product_write_bytes = input.product_write_bytes_per_plane.saturating_mul(nplanes);
     let fixed_reserved_bytes = input
         .fixed_frontend_bytes
         .saturating_add(input.worker_staging_bytes)
-        .saturating_add(product_scratch_bytes)
         .saturating_add(input.gpu_staging_bytes)
         .saturating_add(input.safety_margin_bytes);
     let row_channel_bytes = input.visibility.row_channel_bytes();
@@ -1287,6 +1453,8 @@ pub(crate) fn plan_spectral_memory(
     let row_fixed_resident_bytes = input.visibility.row_fixed_resident_bytes();
     let row_cache_overhead_bytes = input.visibility.row_cache_overhead_bytes();
     let modeled_full_cache_source_read_bytes = input.visibility.full_source_read_bytes();
+    let enable_product_batching =
+        modeled_product_write_bytes > modeled_full_cache_source_read_bytes;
     let max_row_block_rows = input
         .max_row_block_rows
         .max(1)
@@ -1297,6 +1465,7 @@ pub(crate) fn plan_spectral_memory(
     let mut rejected = Vec::<String>::new();
     let mut full_source_cache_candidate_fit = false;
     let mut candidate_io_costs = Vec::<String>::new();
+    let mut candidate_count = 0usize;
     let prepared_residency = input.prepared_residency;
 
     for shape in input.visibility.slab_shapes.iter().copied() {
@@ -1312,123 +1481,174 @@ pub(crate) fn plan_spectral_memory(
             ));
             continue;
         }
-        let active_plane_state_bytes = per_plane_state_bytes.saturating_mul(shape.active_planes);
-        let prepared_visibility_staging_bytes = input
-            .visibility
-            .prepared_staging_bytes_for_source_channels(
+        let active_plane_state_bytes = input
+            .requirements
+            .estimated_resident_bytes_for_active_planes(image_pixels, shape.active_planes);
+        let prepared_visibility_staging_bytes =
+            input.visibility.prepared_staging_bytes_for_source_channels(
                 prepared_residency,
                 shape.max_slab_source_channels,
-            )
-            .saturating_add(
-                input
-                    .visibility
-                    .active_rows
-                    .saturating_mul(shape.max_slab_source_channels)
-                    .saturating_mul(input.executor_prepared_slab_sample_bytes),
             );
-        let static_resident_bytes = fixed_reserved_bytes
-            .saturating_add(active_plane_state_bytes)
-            .saturating_add(prepared_visibility_staging_bytes);
         let no_cache_source_read_bytes = input.visibility.no_cache_source_read_bytes(shape);
         let cache_read_bytes = input.visibility.cache_read_bytes(shape);
+        let max_shape_workers = input
+            .max_worker_count
+            .max(1)
+            .min(shape.active_planes.max(1));
 
-        for schedule_kind in ALL_IMAGING_SCHEDULES {
-            let candidate = match schedule_kind {
-                ImagingScheduleKind::SourceFirst => {
-                    let source_channels = input.visibility.full_source_channel_count;
-                    build_streaming_candidate(
-                        schedule_kind,
-                        shape,
-                        prepared_residency,
-                        VisibilityCachePolicy::Disabled,
-                        0,
-                        0,
-                        source_channels,
-                        static_resident_bytes,
-                        prepared_visibility_staging_bytes,
-                        modeled_full_cache_source_read_bytes,
-                        modeled_full_cache_source_read_bytes,
-                        0,
-                        0,
-                        per_plane_state_bytes,
-                        modeled_product_write_bytes,
-                        max_row_block_rows,
-                        &input,
+        for worker_count in 1..=max_shape_workers {
+            let max_product_batch_planes = input.executor_scratch.max_product_batch_planes(
+                worker_count,
+                shape.active_planes,
+                enable_product_batching,
+            );
+            for product_batch_planes in 1..=max_product_batch_planes {
+                let base_scratch_bytes = input
+                    .executor_scratch
+                    .fixed_bytes
+                    .saturating_add(
+                        input
+                            .executor_scratch
+                            .per_worker_bytes
+                            .saturating_mul(worker_count),
                     )
-                }
-                ImagingScheduleKind::SlabFirst => {
-                    let source_channels = shape.max_slab_source_channels;
-                    build_streaming_candidate(
-                        schedule_kind,
-                        shape,
-                        prepared_residency,
-                        VisibilityCachePolicy::Disabled,
-                        0,
-                        0,
-                        source_channels,
-                        static_resident_bytes,
-                        prepared_visibility_staging_bytes,
-                        no_cache_source_read_bytes,
-                        no_cache_source_read_bytes,
-                        0,
-                        0,
-                        per_plane_state_bytes,
-                        modeled_product_write_bytes,
-                        max_row_block_rows,
-                        &input,
-                    )
-                }
-                ImagingScheduleKind::Hybrid => {
-                    if !input.visibility.full_source_cacheable {
-                        rejected.push("hybrid_full_source_cache_not_enabled".to_string());
-                        continue;
-                    }
-                    let visibility_cache_bytes = input.visibility.full_source_cache_bytes();
-                    let source_channels = input.visibility.full_source_channel_count;
-                    let candidate = build_streaming_candidate(
-                        schedule_kind,
-                        shape,
-                        prepared_residency,
-                        VisibilityCachePolicy::FullSource,
-                        visibility_cache_bytes,
-                        input.visibility.full_source_channel_count,
-                        source_channels,
-                        static_resident_bytes,
-                        prepared_visibility_staging_bytes,
-                        no_cache_source_read_bytes,
-                        modeled_full_cache_source_read_bytes,
-                        visibility_cache_bytes,
-                        cache_read_bytes,
-                        per_plane_state_bytes,
-                        modeled_product_write_bytes,
-                        max_row_block_rows,
-                        &input,
+                    .saturating_add(
+                        input
+                            .executor_scratch
+                            .per_product_batch_plane_bytes
+                            .saturating_mul(product_batch_planes),
                     );
-                    if candidate.is_some() {
-                        full_source_cache_candidate_fit = true;
+                let base_scratch_bytes = if product_batch_planes > 1 {
+                    base_scratch_bytes.saturating_add(
+                        input
+                            .executor_scratch
+                            .per_product_pending_plane_bytes
+                            .saturating_mul(product_batch_planes),
+                    )
+                } else {
+                    base_scratch_bytes
+                };
+                let slab_resident_bytes = active_plane_state_bytes
+                    .saturating_add(prepared_visibility_staging_bytes)
+                    .saturating_add(base_scratch_bytes);
+                let static_resident_bytes =
+                    fixed_reserved_bytes.saturating_add(slab_resident_bytes);
+
+                for schedule_kind in ALL_IMAGING_SCHEDULES {
+                    let candidate = match schedule_kind {
+                        ImagingScheduleKind::SourceFirst => {
+                            let source_channels = input.visibility.full_source_channel_count;
+                            build_streaming_candidate(
+                                schedule_kind,
+                                shape,
+                                worker_count,
+                                prepared_residency,
+                                VisibilityCachePolicy::Disabled,
+                                0,
+                                0,
+                                source_channels,
+                                static_resident_bytes,
+                                prepared_visibility_staging_bytes,
+                                active_plane_state_bytes,
+                                modeled_full_cache_source_read_bytes,
+                                modeled_full_cache_source_read_bytes,
+                                0,
+                                0,
+                                per_plane_state_bytes,
+                                modeled_product_write_bytes,
+                                max_row_block_rows,
+                                product_batch_planes,
+                                &input,
+                            )
+                        }
+                        ImagingScheduleKind::SlabFirst => {
+                            let source_channels = shape.max_slab_source_channels;
+                            build_streaming_candidate(
+                                schedule_kind,
+                                shape,
+                                worker_count,
+                                prepared_residency,
+                                VisibilityCachePolicy::Disabled,
+                                0,
+                                0,
+                                source_channels,
+                                static_resident_bytes,
+                                prepared_visibility_staging_bytes,
+                                active_plane_state_bytes,
+                                no_cache_source_read_bytes,
+                                no_cache_source_read_bytes,
+                                0,
+                                0,
+                                per_plane_state_bytes,
+                                modeled_product_write_bytes,
+                                max_row_block_rows,
+                                product_batch_planes,
+                                &input,
+                            )
+                        }
+                        ImagingScheduleKind::Hybrid => {
+                            if !input.visibility.full_source_cacheable {
+                                rejected.push("hybrid_full_source_cache_not_enabled".to_string());
+                                continue;
+                            }
+                            let visibility_cache_bytes = input.visibility.full_source_cache_bytes();
+                            let source_channels = input.visibility.full_source_channel_count;
+                            let candidate = build_streaming_candidate(
+                                schedule_kind,
+                                shape,
+                                worker_count,
+                                prepared_residency,
+                                VisibilityCachePolicy::FullSource,
+                                visibility_cache_bytes,
+                                input.visibility.full_source_channel_count,
+                                source_channels,
+                                static_resident_bytes,
+                                prepared_visibility_staging_bytes,
+                                active_plane_state_bytes,
+                                no_cache_source_read_bytes,
+                                modeled_full_cache_source_read_bytes,
+                                visibility_cache_bytes,
+                                cache_read_bytes,
+                                per_plane_state_bytes,
+                                modeled_product_write_bytes,
+                                max_row_block_rows,
+                                product_batch_planes,
+                                &input,
+                            );
+                            if candidate.is_some() {
+                                full_source_cache_candidate_fit = true;
+                            }
+                            candidate
+                        }
+                    };
+                    let Some(candidate) = candidate else {
+                        rejected.push(format!(
+                            "{}_does_not_fit_active_planes={}_workers={}_product_batch_planes={}",
+                            schedule_kind.as_str(),
+                            shape.active_planes,
+                            worker_count,
+                            product_batch_planes
+                        ));
+                        continue;
+                    };
+                    let executable = input.executor_capabilities.supports(candidate);
+                    candidate_count = candidate_count.saturating_add(1);
+                    if candidate_io_costs.len() < 16 {
+                        candidate_io_costs.push(candidate_io_cost_fragment(candidate, executable));
                     }
-                    candidate
+                    consider_candidate(&mut best_modeled, candidate);
+                    if executable {
+                        consider_candidate(&mut selected, candidate);
+                    } else {
+                        rejected.push(format!(
+                            "{}_not_supported_by_executor_active_planes={}_workers={}_product_batch_planes={}",
+                            schedule_kind.as_str(),
+                            shape.active_planes,
+                            worker_count,
+                            product_batch_planes
+                        ));
+                    }
                 }
-            };
-            let Some(candidate) = candidate else {
-                rejected.push(format!(
-                    "{}_does_not_fit_active_planes={}",
-                    schedule_kind.as_str(),
-                    shape.active_planes
-                ));
-                continue;
-            };
-            let executable = input.executor_capabilities.supports(candidate);
-            candidate_io_costs.push(candidate_io_cost_fragment(candidate, executable));
-            consider_candidate(&mut best_modeled, candidate);
-            if executable {
-                consider_candidate(&mut selected, candidate);
-            } else {
-                rejected.push(format!(
-                    "{}_not_supported_by_executor_active_planes={}",
-                    schedule_kind.as_str(),
-                    shape.active_planes
-                ));
             }
         }
     }
@@ -1464,6 +1684,13 @@ pub(crate) fn plan_spectral_memory(
             }
         ));
     };
+    let candidate_io_costs = summarized_candidate_io_costs(
+        candidate_io_costs,
+        candidate_count,
+        best_modeled,
+        best,
+        input.executor_capabilities.supports(best_modeled),
+    );
     let remaining = input
         .memory_target_bytes
         .saturating_sub(best.planned_active_bytes);
@@ -1519,7 +1746,7 @@ pub(crate) fn plan_spectral_memory(
         prepared_residency: best.prepared_residency,
         visibility_cache_bytes: best.visibility_cache_bytes,
         visibility_cache_source_channels: best.visibility_cache_source_channels,
-        worker_count: planned_plane_worker_count(input.max_worker_count, best.shape.active_planes),
+        worker_count: best.worker_count,
         backend: "cpu_slab",
         memory_target_bytes: input.memory_target_bytes,
         fixed_frontend_bytes: input.fixed_frontend_bytes,
@@ -1531,7 +1758,11 @@ pub(crate) fn plan_spectral_memory(
         prepared_visibility_staging_bytes: best.prepared_visibility_staging_bytes,
         live_prepared_visibility_bytes: best.live_prepared_visibility_bytes,
         live_bucket_bytes: best.live_bucket_bytes,
-        product_scratch_bytes,
+        product_scratch_bytes: best.product_scratch_bytes,
+        product_batch_planes: best.product_batch_planes,
+        resident_plane_state_bytes: best.resident_plane_state_bytes,
+        plane_state_residency: input.requirements.residency,
+        source_buffer_residency: input.source_buffer_residency,
         gpu_staging_bytes: input.gpu_staging_bytes,
         safety_margin_bytes: input.safety_margin_bytes,
         planned_active_bytes: best.planned_active_bytes,
@@ -1588,10 +1819,36 @@ pub(crate) fn plan_spectral_memory(
     })
 }
 
+fn summarized_candidate_io_costs(
+    mut fragments: Vec<String>,
+    candidate_count: usize,
+    best_modeled: CandidatePlan,
+    selected: CandidatePlan,
+    best_modeled_executable: bool,
+) -> Vec<String> {
+    let sampled = fragments.len();
+    if candidate_count > sampled {
+        fragments.push(format!(
+            "omitted_candidate_count={}",
+            candidate_count.saturating_sub(sampled)
+        ));
+    }
+    fragments.push(format!(
+        "best_modeled={}",
+        candidate_io_cost_fragment(best_modeled, best_modeled_executable)
+    ));
+    fragments.push(format!(
+        "selected={}",
+        candidate_io_cost_fragment(selected, true)
+    ));
+    fragments
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_streaming_candidate(
     schedule_kind: ImagingScheduleKind,
     shape: VisibilitySlabShape,
+    worker_count: usize,
     prepared_residency: PreparedVisibilityResidency,
     visibility_cache_policy: VisibilityCachePolicy,
     visibility_cache_bytes: usize,
@@ -1599,6 +1856,7 @@ fn build_streaming_candidate(
     source_channels: usize,
     static_resident_bytes: usize,
     prepared_visibility_staging_bytes: usize,
+    resident_plane_state_bytes: usize,
     modeled_no_cache_source_read_bytes: usize,
     modeled_source_read_bytes: usize,
     modeled_visibility_cache_fill_bytes: usize,
@@ -1606,23 +1864,70 @@ fn build_streaming_candidate(
     per_plane_state_bytes: usize,
     modeled_product_write_bytes: usize,
     max_row_block_rows: usize,
+    product_batch_planes: usize,
     input: &SpectralMemoryPlannerInput,
 ) -> Option<CandidatePlan> {
     let static_plus_cache_bytes = static_resident_bytes.saturating_add(visibility_cache_bytes);
     if static_plus_cache_bytes >= input.memory_target_bytes {
         return None;
     }
-    let per_source_row_buffer_bytes =
-        input
+    let raw_full_slab_source_bytes = match input.source_buffer_residency {
+        SourceBufferResidency::RowBlockStream => 0,
+        SourceBufferResidency::FullSlabRawSource => input
             .visibility
-            .source_buffer_bytes_for_rows(prepared_residency, 1, source_channels);
+            .raw_source_buffer_bytes_for_rows(input.visibility.active_rows, source_channels),
+    };
+    let static_plus_cache_and_raw_source_bytes =
+        static_plus_cache_bytes.saturating_add(raw_full_slab_source_bytes);
+    if static_plus_cache_and_raw_source_bytes >= input.memory_target_bytes {
+        return None;
+    }
+    let per_source_row_buffer_bytes = match input.source_buffer_residency {
+        SourceBufferResidency::RowBlockStream => {
+            input
+                .visibility
+                .source_buffer_bytes_for_rows(prepared_residency, 1, source_channels)
+        }
+        SourceBufferResidency::FullSlabRawSource => input
+            .visibility
+            .live_source_scratch_bytes_for_rows(prepared_residency, 1, source_channels),
+    };
     if per_source_row_buffer_bytes == 0 {
         return None;
     }
-    let row_buffer_budget = input.memory_target_bytes - static_plus_cache_bytes;
-    let row_block_rows =
-        (row_buffer_budget / per_source_row_buffer_bytes).clamp(1, max_row_block_rows);
-    let source_stream_buffer_bytes = input.visibility.source_buffer_bytes_for_rows(
+    let max_row_block_rows = input
+        .executor_scratch
+        .max_row_block_rows()
+        .map(|limit| max_row_block_rows.min(limit))
+        .unwrap_or(max_row_block_rows)
+        .min(source_resident_locality_row_block_cap(
+            schedule_kind,
+            shape,
+            input.source_buffer_residency,
+            input.visibility.active_rows,
+            worker_count,
+        ))
+        .max(1);
+    let per_row_executor_scratch_bytes = input
+        .executor_scratch
+        .per_worker_row_block_bytes
+        .saturating_mul(worker_count.max(1));
+    let per_resident_row_bytes =
+        per_source_row_buffer_bytes.saturating_add(per_row_executor_scratch_bytes);
+    if per_resident_row_bytes == 0 {
+        return None;
+    }
+    let row_buffer_budget = input.memory_target_bytes - static_plus_cache_and_raw_source_bytes;
+    let row_block_rows = (row_buffer_budget / per_resident_row_bytes).clamp(1, max_row_block_rows);
+    let product_scratch_bytes = input.executor_scratch.bytes_for_worker_count_and_rows(
+        worker_count,
+        row_block_rows,
+        product_batch_planes,
+    );
+    let row_block_executor_scratch_bytes =
+        per_row_executor_scratch_bytes.saturating_mul(row_block_rows);
+    let source_stream_buffer_bytes = input.visibility.resident_source_buffer_bytes(
+        input.source_buffer_residency,
         prepared_residency,
         row_block_rows,
         source_channels,
@@ -1637,7 +1942,9 @@ fn build_streaming_candidate(
         row_block_rows,
         source_channels,
     );
-    let planned_active_bytes = static_plus_cache_bytes.saturating_add(source_stream_buffer_bytes);
+    let planned_active_bytes = static_plus_cache_bytes
+        .saturating_add(source_stream_buffer_bytes)
+        .saturating_add(row_block_executor_scratch_bytes);
     if planned_active_bytes > input.memory_target_bytes {
         return None;
     }
@@ -1660,6 +1967,7 @@ fn build_streaming_candidate(
     Some(CandidatePlan {
         schedule_kind,
         shape,
+        worker_count,
         prepared_residency,
         visibility_cache_policy,
         visibility_cache_bytes,
@@ -1671,6 +1979,9 @@ fn build_streaming_candidate(
             / shape.active_planes.max(1),
         live_prepared_visibility_bytes,
         live_bucket_bytes,
+        product_scratch_bytes,
+        product_batch_planes,
+        resident_plane_state_bytes,
         planned_active_bytes,
         modeled_total_io_bytes,
         modeled_source_read_bytes,
@@ -1680,6 +1991,15 @@ fn build_streaming_candidate(
         modeled_output_spill_write_bytes,
         modeled_product_write_bytes,
         modeled_no_cache_source_read_bytes,
+        modeled_runtime_cost_bytes: modeled_runtime_cost_bytes(
+            modeled_total_io_bytes,
+            per_plane_state_bytes,
+            input.output.plane_count,
+            input.visibility.active_rows,
+            row_block_rows,
+            shape,
+            worker_count,
+        ),
     })
 }
 
@@ -1699,15 +2019,92 @@ fn source_first_output_spill_bytes(
     (bytes, bytes)
 }
 
-fn planned_plane_worker_count(max_worker_count: usize, active_planes: usize) -> usize {
-    max_worker_count.max(1).min(active_planes.max(1))
+fn source_resident_locality_row_block_cap(
+    schedule_kind: ImagingScheduleKind,
+    shape: VisibilitySlabShape,
+    source_buffer_residency: SourceBufferResidency,
+    active_rows: usize,
+    worker_count: usize,
+) -> usize {
+    if source_buffer_residency != SourceBufferResidency::FullSlabRawSource
+        || (schedule_kind == ImagingScheduleKind::SlabFirst && shape.slab_count > 1)
+    {
+        return active_rows.max(1);
+    }
+    let min_source_blocks = if worker_count <= 1 {
+        1
+    } else {
+        integer_sqrt(worker_count).saturating_add(2)
+    };
+    active_rows.div_ceil(min_source_blocks).max(1)
+}
+
+fn integer_sqrt(value: usize) -> usize {
+    if value <= 1 {
+        return value;
+    }
+    let mut root = 1usize;
+    while root
+        .saturating_add(1)
+        .saturating_mul(root.saturating_add(1))
+        <= value
+    {
+        root += 1;
+    }
+    root
+}
+
+fn modeled_runtime_cost_bytes(
+    modeled_total_io_bytes: usize,
+    per_plane_state_bytes: usize,
+    nplanes: usize,
+    active_rows: usize,
+    row_block_rows: usize,
+    shape: VisibilitySlabShape,
+    worker_count: usize,
+) -> usize {
+    let worker_count = worker_count.max(1);
+    let source_block_count = shape
+        .slab_count
+        .saturating_mul(active_rows.div_ceil(row_block_rows.max(1)));
+    modeled_total_io_bytes
+        .saturating_add(
+            per_plane_state_bytes.saturating_mul(total_plane_worker_waves(
+                nplanes,
+                shape.active_planes,
+                worker_count,
+            )),
+        )
+        .saturating_add(
+            per_plane_state_bytes
+                .saturating_div(worker_count)
+                .saturating_mul(source_block_count),
+        )
+}
+
+fn total_plane_worker_waves(nplanes: usize, active_planes: usize, worker_count: usize) -> usize {
+    let active_planes = active_planes.max(1);
+    let worker_count = worker_count.max(1);
+    let full_slabs = nplanes / active_planes;
+    let remainder = nplanes % active_planes;
+    full_slabs
+        .saturating_mul(active_planes.div_ceil(worker_count))
+        .saturating_add(if remainder == 0 {
+            0
+        } else {
+            remainder.div_ceil(worker_count)
+        })
 }
 
 fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan) {
     let replace = best.is_none_or(|current| {
         (
+            candidate.modeled_runtime_cost_bytes,
             candidate.modeled_total_io_bytes,
             candidate.modeled_source_read_bytes,
+            candidate
+                .modeled_visibility_cache_fill_bytes
+                .saturating_add(candidate.modeled_visibility_cache_read_bytes),
             candidate
                 .modeled_output_spill_read_bytes
                 .saturating_add(candidate.modeled_output_spill_write_bytes),
@@ -1716,14 +2113,17 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
                 VisibilityCachePolicy::FullSource => 0usize,
                 VisibilityCachePolicy::Disabled => 1usize,
             },
+            usize::MAX.saturating_sub(candidate.worker_count),
             candidate.shape.slab_count,
             usize::MAX.saturating_sub(candidate.row_block_rows),
             prepared_residency_rank(candidate.prepared_residency),
-            candidate.planned_active_bytes,
-            candidate.shape.active_planes,
         ) < (
+            current.modeled_runtime_cost_bytes,
             current.modeled_total_io_bytes,
             current.modeled_source_read_bytes,
+            current
+                .modeled_visibility_cache_fill_bytes
+                .saturating_add(current.modeled_visibility_cache_read_bytes),
             current
                 .modeled_output_spill_read_bytes
                 .saturating_add(current.modeled_output_spill_write_bytes),
@@ -1732,11 +2132,10 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
                 VisibilityCachePolicy::FullSource => 0usize,
                 VisibilityCachePolicy::Disabled => 1usize,
             },
+            usize::MAX.saturating_sub(current.worker_count),
             current.shape.slab_count,
             usize::MAX.saturating_sub(current.row_block_rows),
             prepared_residency_rank(current.prepared_residency),
-            current.planned_active_bytes,
-            current.shape.active_planes,
         )
     });
     if replace {
@@ -1762,8 +2161,9 @@ fn candidate_io_cost_fragment(candidate: CandidatePlan, executable: bool) -> Str
         .modeled_output_spill_read_bytes
         .saturating_add(candidate.modeled_output_spill_write_bytes);
     format!(
-        "{}:total={},source={},cache={},spill={},product={},active_planes={},slab_count={},row_block_rows={},cache_policy={},residency={},executable={}",
+        "{}:runtime={},total={},source={},cache={},spill={},product={},active_planes={},slab_count={},row_block_rows={},worker_count={},scratch={},product_batch_planes={},cache_policy={},residency={},executable={}",
         candidate.schedule_kind.as_str(),
+        candidate.modeled_runtime_cost_bytes,
         candidate.modeled_total_io_bytes,
         candidate.modeled_source_read_bytes,
         cache_io,
@@ -1772,6 +2172,9 @@ fn candidate_io_cost_fragment(candidate: CandidatePlan, executable: bool) -> Str
         candidate.shape.active_planes,
         candidate.shape.slab_count,
         candidate.row_block_rows,
+        candidate.worker_count,
+        candidate.product_scratch_bytes,
+        candidate.product_batch_planes,
         visibility_cache_policy_name(candidate.visibility_cache_policy),
         prepared_residency_name(candidate.prepared_residency),
         executable,
@@ -2344,10 +2747,23 @@ mod tests {
             worker_staging_bytes: 0,
             gpu_staging_bytes: 0,
             safety_margin_bytes: 0,
-            product_scratch_bytes: image_shape[0]
+            executor_scratch: ExecutorScratchShape {
+                fixed_bytes: image_shape[0]
+                    .saturating_mul(image_shape[1])
+                    .saturating_mul(std::mem::size_of::<f32>())
+                    .saturating_mul(3),
+                per_worker_bytes: 0,
+                per_worker_row_block_bytes: 0,
+                per_worker_row_block_limit_bytes: 0,
+                per_product_batch_plane_bytes: 0,
+                per_product_pending_plane_bytes: 0,
+            },
+            source_buffer_residency: SourceBufferResidency::RowBlockStream,
+            product_write_bytes_per_plane: image_shape[0]
                 .saturating_mul(image_shape[1])
                 .saturating_mul(std::mem::size_of::<f32>())
-                .saturating_mul(3),
+                .saturating_mul(3)
+                .saturating_add(std::mem::size_of::<f32>()),
             max_row_block_rows: 32_768,
             max_worker_count: 4,
             requirements: PlaneStateRequirements::dirty_standard(),
@@ -2356,7 +2772,6 @@ mod tests {
                 bucket_sample_bytes: 32,
                 max_live_row_blocks: 1,
             },
-            executor_prepared_slab_sample_bytes: 0,
         }
     }
 
@@ -2614,14 +3029,135 @@ mod tests {
     }
 
     #[test]
+    fn memory_planner_balances_workers_scratch_and_row_blocks_for_large_dirty_cube() {
+        let visibility =
+            test_visibility_shape(866_313, 1024, 2, 8, false, test_slab_shapes(1024, 1));
+        let mut input = planner_input(1024, [4096, 4096], visibility, 16 * 1024 * 1024 * 1024);
+        input.executor_capabilities =
+            SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache();
+        input.fixed_frontend_bytes = 60_445_282;
+        input.executor_scratch = ExecutorScratchShape {
+            fixed_bytes: 450_080_580,
+            per_worker_bytes: 1_130_801_990,
+            per_worker_row_block_bytes: 64,
+            per_worker_row_block_limit_bytes: 0,
+            per_product_batch_plane_bytes: 0,
+            per_product_pending_plane_bytes: 0,
+        };
+        input.requirements =
+            PlaneStateRequirements::dirty_standard().with_streaming_plane_results();
+        input.source_buffer_residency = SourceBufferResidency::FullSlabRawSource;
+        input.max_row_block_rows = 866_313;
+        input.max_worker_count = 10;
+        input.prepared_residency = PreparedVisibilityResidency {
+            sample_lanes_per_source_channel: 2,
+            bucket_sample_bytes: 32,
+            max_live_row_blocks: 1,
+        };
+
+        let max_worker_count = input.max_worker_count;
+        let plan = plan_spectral_memory(input).unwrap();
+
+        assert!(plan.active_planes >= 45);
+        assert!(plan.slab_count <= 23);
+        assert!(plan.row_block_rows > 20_000);
+        assert!(plan.worker_count >= 3);
+        assert!(plan.worker_count <= max_worker_count);
+        assert_eq!(plan.schedule_kind, ImagingScheduleKind::SlabFirst);
+        assert_eq!(
+            plan.plane_state_residency,
+            PlaneStateResidency::StreamingPlaneResults
+        );
+        assert_eq!(
+            plan.source_buffer_residency,
+            SourceBufferResidency::FullSlabRawSource
+        );
+        assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
+    }
+
+    #[test]
+    fn memory_planner_keeps_source_locality_cap_for_one_slab_dirty_cube() {
+        let mut visibility =
+            test_visibility_shape(3_086_235, 64, 2, 8, false, test_slab_shapes(64, 64));
+        visibility.weight_spectrum_element_bytes = None;
+        visibility.weight_spectrum_channel_read_granularity = None;
+        let mut input = planner_input(64, [2048, 2048], visibility, 28 * 1024 * 1024 * 1024);
+        input.executor_capabilities =
+            SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache();
+        input.fixed_frontend_bytes = 233_378_040;
+        input.executor_scratch = ExecutorScratchShape {
+            fixed_bytes: 651_443_456,
+            per_worker_bytes: 243_526_803,
+            per_worker_row_block_bytes: 64,
+            per_worker_row_block_limit_bytes: 0,
+            per_product_batch_plane_bytes: 0,
+            per_product_pending_plane_bytes: 0,
+        };
+        input.requirements =
+            PlaneStateRequirements::dirty_standard().with_streaming_plane_results();
+        input.source_buffer_residency = SourceBufferResidency::FullSlabRawSource;
+        input.max_row_block_rows = 3_086_235;
+        input.max_worker_count = 10;
+
+        let plan = plan_spectral_memory(input).unwrap();
+
+        assert_eq!(plan.active_planes, 64);
+        assert_eq!(plan.slab_count, 1);
+        assert_eq!(plan.worker_count, 10);
+        assert_eq!(plan.row_block_rows, 617_247);
+        assert_eq!(plan.schedule_kind, ImagingScheduleKind::SourceFirst);
+        assert_eq!(
+            plan.plane_state_residency,
+            PlaneStateResidency::StreamingPlaneResults
+        );
+        assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
+    }
+
+    #[test]
+    fn memory_planner_allows_medium_dirty_cube_full_active_group_when_it_fits() {
+        let mut visibility =
+            test_visibility_shape(3_086_235, 64, 2, 8, false, test_slab_shapes(64, 1));
+        visibility.weight_spectrum_element_bytes = None;
+        visibility.weight_spectrum_channel_read_granularity = None;
+        let mut input = planner_input(64, [2048, 2048], visibility, 28 * 1024 * 1024 * 1024);
+        input.executor_capabilities =
+            SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache();
+        input.fixed_frontend_bytes = 233_378_040;
+        input.executor_scratch = ExecutorScratchShape {
+            fixed_bytes: 651_443_456,
+            per_worker_bytes: 243_526_803,
+            per_worker_row_block_bytes: 64,
+            per_worker_row_block_limit_bytes: 50_331_648,
+            per_product_batch_plane_bytes: 0,
+            per_product_pending_plane_bytes: 0,
+        };
+        input.requirements = PlaneStateRequirements::dirty_standard();
+        input.source_buffer_residency = SourceBufferResidency::FullSlabRawSource;
+        input.max_row_block_rows = 3_086_235;
+        input.max_worker_count = 10;
+
+        let plan = plan_spectral_memory(input).unwrap();
+
+        assert_eq!(plan.active_planes, 64);
+        assert_eq!(plan.slab_count, 1);
+        assert_eq!(plan.worker_count, 10);
+        assert_eq!(
+            plan.plane_state_residency,
+            PlaneStateResidency::FullActiveGroup
+        );
+        assert!(plan.resident_plane_state_bytes > 0);
+        assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
+    }
+
+    #[test]
     fn memory_planner_uses_bounded_row_block_visibility_residency() {
         let visibility = test_visibility_shape(
-            50_000_000,
-            1024,
+            3_086_235,
+            64,
             4,
             8,
             false,
-            reread_all_source_slab_shapes(128, 1024),
+            reread_all_source_slab_shapes(128, 64),
         );
         let plan = plan_spectral_memory(planner_input(
             128,
@@ -2641,14 +3177,52 @@ mod tests {
         );
         assert_eq!(plan.prepared_visibility_staging_bytes, 0);
         assert_eq!(plan.visibility_staging_bytes_per_plane, 0);
+        assert!(plan.source_stream_buffer_bytes > 0);
         assert!(plan.live_prepared_visibility_bytes > 0);
         assert!(plan.live_bucket_bytes > 0);
-        assert!(plan.row_block_rows < 50_000_000);
+        assert!(plan.row_block_rows < 3_086_235);
+        assert!(plan.row_block_rows > 1_000);
         assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
         assert!(
             plan.log_line()
                 .contains("prepared_residency=row_block_stream")
         );
+    }
+
+    #[test]
+    fn memory_planner_keeps_medium_cube_row_blocks_after_source_residency_accounting() {
+        let mut visibility =
+            test_visibility_shape(3_086_235, 512, 2, 8, false, test_slab_shapes(512, 1));
+        visibility.weight_spectrum_element_bytes = None;
+        visibility.weight_spectrum_channel_read_granularity = None;
+        let mut input = planner_input(512, [2048, 2048], visibility, 16 * 1024 * 1024 * 1024);
+        input.executor_capabilities =
+            SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache();
+        input.fixed_frontend_bytes = 233_378_040;
+        input.executor_scratch = ExecutorScratchShape {
+            fixed_bytes: 651_443_456,
+            per_worker_bytes: 243_526_803,
+            per_worker_row_block_bytes: 64,
+            per_worker_row_block_limit_bytes: 50_331_648,
+            per_product_batch_plane_bytes: 0,
+            per_product_pending_plane_bytes: 0,
+        };
+        input.requirements =
+            PlaneStateRequirements::dirty_standard().with_streaming_plane_results();
+        input.source_buffer_residency = SourceBufferResidency::FullSlabRawSource;
+        input.max_row_block_rows = 3_086_235;
+        input.max_worker_count = 10;
+
+        let plan = plan_spectral_memory(input).unwrap();
+
+        assert!(plan.active_planes >= 100);
+        assert!(plan.slab_count <= 5);
+        assert!(plan.row_block_rows >= 40_000);
+        assert!(plan.row_block_rows <= 900_000);
+        assert!(plan.worker_count >= 5);
+        assert_eq!(plan.prepared_visibility_staging_bytes, 0);
+        assert!(plan.source_stream_buffer_bytes > 0);
+        assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
     }
 
     #[test]
@@ -2667,6 +3241,7 @@ mod tests {
         let base_candidate = CandidatePlan {
             schedule_kind: ImagingScheduleKind::SlabFirst,
             shape: base_shape,
+            worker_count: 4,
             prepared_residency: residency,
             visibility_cache_policy: VisibilityCachePolicy::Disabled,
             visibility_cache_bytes: 0,
@@ -2677,6 +3252,9 @@ mod tests {
             visibility_staging_bytes_per_plane: 197_519_040,
             live_prepared_visibility_bytes: 1_013_804_288,
             live_bucket_bytes: 253_451_072,
+            product_scratch_bytes: 256,
+            product_batch_planes: 1,
+            resident_plane_state_bytes: 9_283_394_880,
             planned_active_bytes: 17_179_862_010,
             modeled_total_io_bytes: 8_146_785_696,
             modeled_source_read_bytes: 3_851_621_280,
@@ -2686,6 +3264,7 @@ mod tests {
             modeled_output_spill_write_bytes: 0,
             modeled_product_write_bytes: 4_295_164_416,
             modeled_no_cache_source_read_bytes: 3_851_621_280,
+            modeled_runtime_cost_bytes: 17_179_862_010,
         };
         let mut best = Some(base_candidate);
 

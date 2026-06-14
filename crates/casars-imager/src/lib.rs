@@ -77,7 +77,7 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
-use casa_tables::{ColumnSchema, RequiredScalarColumnValues};
+use casa_tables::{ColumnSchema, RequiredScalarColumnValues, TiledFileIoStats};
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -5938,16 +5938,14 @@ fn run_standard_cube_slab_from_open_ms(
         bucket_sample_bytes: ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES,
         max_live_row_blocks: 1,
     };
-    let executor_scratch_bytes = cube_slab_executor_scratch_bytes(
+    let executor_scratch = cube_slab_executor_scratch_shape(
         config,
         active_row_count,
+        nplanes,
         visibility_shape.prepared_staging_bytes_for_source_channels(prepared_residency, 1),
-        worker_capacity,
     );
     let memory_target = standard_mfs_memory_target(config);
-    let requirements = if clean_is_dirty(config) {
-        spectral_slab::PlaneStateRequirements::dirty_standard()
-    } else if config.deconvolver == Deconvolver::Multiscale {
+    let requirements = if config.deconvolver == Deconvolver::Multiscale {
         spectral_slab::PlaneStateRequirements::multiscale_clean()
     } else {
         spectral_slab::PlaneStateRequirements::bounded_clean()
@@ -5956,32 +5954,39 @@ fn run_standard_cube_slab_from_open_ms(
         .imaging_row_block_rows
         .or_else(|| env_usize("CASA_RS_IMAGING_PREPARE_ROW_BLOCK"))
         .filter(|value| *value > 0);
-    let memory_plan = spectral_slab::plan_spectral_memory(
-        spectral_slab::SpectralMemoryPlannerInput {
-            output: spectral_slab::ImagingOutputShape {
-                plane_count: nplanes,
-                image_shape: [config.imsize, config.imsize],
-            },
-            visibility: visibility_shape,
-            executor_capabilities:
-                spectral_slab::SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache(),
-            memory_target_bytes: memory_target.target_bytes,
-            fixed_frontend_bytes: cube_slab_frontend_shape_bytes(
-                &selection,
-                &table_values,
-                nplanes,
-            ),
-            worker_staging_bytes: 0,
-            gpu_staging_bytes: 0,
-            safety_margin_bytes: 0,
-            product_scratch_bytes: executor_scratch_bytes,
-            max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
-            max_worker_count: worker_capacity,
-            requirements,
-            prepared_residency,
-            executor_prepared_slab_sample_bytes: ESTIMATED_STANDARD_MFS_SAMPLE_BYTES,
+    let base_memory_input = spectral_slab::SpectralMemoryPlannerInput {
+        output: spectral_slab::ImagingOutputShape {
+            plane_count: nplanes,
+            image_shape: [config.imsize, config.imsize],
         },
-    )?;
+        visibility: visibility_shape,
+        executor_capabilities:
+            spectral_slab::SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache(),
+        memory_target_bytes: memory_target.target_bytes,
+        fixed_frontend_bytes: cube_slab_frontend_shape_bytes(
+            &selection,
+            &table_values,
+            nplanes,
+        ),
+        worker_staging_bytes: 0,
+        gpu_staging_bytes: 0,
+        safety_margin_bytes: 0,
+        executor_scratch,
+        source_buffer_residency: spectral_slab::SourceBufferResidency::FullSlabRawSource,
+        product_write_bytes_per_plane: cube_slab_product_write_bytes_per_plane(config),
+        max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
+        max_worker_count: worker_capacity,
+        requirements,
+        prepared_residency,
+    };
+    let memory_plan = if clean_is_dirty(config) {
+        let mut streaming_input = base_memory_input;
+        streaming_input.requirements =
+            spectral_slab::PlaneStateRequirements::dirty_standard().with_streaming_plane_results();
+        spectral_slab::plan_spectral_memory(streaming_input)?
+    } else {
+        spectral_slab::plan_spectral_memory(base_memory_input)?
+    };
     #[cfg(test)]
     let memory_plan =
         if let Some(active_planes) = env_usize("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES") {
@@ -6101,9 +6106,7 @@ fn run_standard_cube_slab_from_open_ms(
             slab_id: None,
             plane_start: 0,
             plane_end: nplanes,
-            estimated_resident_bytes: Some(
-                memory_plan.per_plane_state_bytes.saturating_mul(nplanes),
-            ),
+            estimated_resident_bytes: Some(memory_plan.resident_plane_state_bytes),
             note: "metadata",
         },
     );
@@ -6138,9 +6141,7 @@ fn run_standard_cube_slab_from_open_ms(
             slab_id: None,
             plane_start: 0,
             plane_end: nplanes,
-            estimated_resident_bytes: Some(
-                memory_plan.per_plane_state_bytes.saturating_mul(nplanes),
-            ),
+            estimated_resident_bytes: Some(memory_plan.resident_plane_state_bytes),
             note: "coords",
         },
     );
@@ -6193,9 +6194,12 @@ fn run_standard_cube_slab_from_open_ms(
         .saturating_sub(active_selected_rows.len());
 
     for slab in slab_manifest {
-        let slab_resident_bytes = memory_plan
-            .per_plane_state_bytes
-            .saturating_mul(slab.plane_end - slab.plane_start);
+        let slab_resident_bytes = match memory_plan.plane_state_residency {
+            spectral_slab::PlaneStateResidency::FullActiveGroup => memory_plan
+                .per_plane_state_bytes
+                .saturating_mul(slab.plane_end - slab.plane_start),
+            spectral_slab::PlaneStateResidency::StreamingPlaneResults => 0,
+        };
         eprintln!(
             "{}",
             spectral_slab::SpectralObservabilityEvent {
@@ -6375,6 +6379,7 @@ fn run_standard_cube_slab_from_open_ms(
                 direct_dirty_spectral_plan.as_deref(),
                 &table_values.corr_types,
                 memory_plan.worker_count,
+                memory_plan.product_batch_planes,
                 ms,
                 &selection,
                 &ddid_info,
@@ -6860,6 +6865,16 @@ struct IndependentImagingPlaneResult<R> {
     stage_timings: ImagingStageTimings,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct IndependentStreamingExecutorStats {
+    elapsed: Duration,
+    result_wait_elapsed: Duration,
+    consume_elapsed: Duration,
+    worker_elapsed_sum: Duration,
+    worker_elapsed_max: Duration,
+    completed: usize,
+}
+
 #[cfg(test)]
 fn run_owned_independent_imaging_planes<T, R, F>(
     tasks: Vec<IndependentImagingPlaneTask<T>>,
@@ -7007,7 +7022,7 @@ fn run_owned_independent_imaging_planes_with_consumer<T, R, F, C>(
     worker_count: usize,
     run_plane: F,
     mut consume_result: C,
-) -> Result<Duration, String>
+) -> Result<IndependentStreamingExecutorStats, String>
 where
     T: Send,
     R: Send,
@@ -7017,7 +7032,10 @@ where
     let started_at = Instant::now();
     let task_count = tasks.len();
     if task_count == 0 {
-        return Ok(started_at.elapsed());
+        return Ok(IndependentStreamingExecutorStats {
+            elapsed: started_at.elapsed(),
+            ..IndependentStreamingExecutorStats::default()
+        });
     }
     let worker_count = worker_count.max(1).min(task_count);
     let pending = Mutex::new(
@@ -7050,6 +7068,10 @@ where
 
     let mut first_error = None::<String>;
     let mut completed = 0usize;
+    let mut result_wait_elapsed = Duration::ZERO;
+    let mut consume_elapsed = Duration::ZERO;
+    let mut worker_elapsed_sum = Duration::ZERO;
+    let mut worker_elapsed_max = Duration::ZERO;
     let mut completion_timings = Vec::<(usize, Duration)>::with_capacity(task_count);
     std::thread::scope(|scope| {
         for worker_slot in 0..worker_count {
@@ -7100,15 +7122,27 @@ where
             });
         }
         drop(result_tx);
-        for result in result_rx {
+        loop {
+            let wait_started = Instant::now();
+            let result = result_rx.recv();
+            result_wait_elapsed += wait_started.elapsed();
+            let result = match result {
+                Ok(result) => result,
+                Err(_) => break,
+            };
             match result {
                 Ok(result) => {
                     completion_timings.push((result.plane_index, result.worker_elapsed));
+                    worker_elapsed_sum += result.worker_elapsed;
+                    worker_elapsed_max = worker_elapsed_max.max(result.worker_elapsed);
                     if first_error.is_none() {
+                        let consume_started = Instant::now();
                         if let Err(error) = consume_result(result) {
+                            consume_elapsed += consume_started.elapsed();
                             first_error = Some(error);
                             stop_workers.store(true, Ordering::Relaxed);
                         } else {
+                            consume_elapsed += consume_started.elapsed();
                             completed += 1;
                         }
                     }
@@ -7146,7 +7180,14 @@ where
             duration_ms(started_at.elapsed()),
         );
     }
-    Ok(started_at.elapsed())
+    Ok(IndependentStreamingExecutorStats {
+        elapsed: started_at.elapsed(),
+        result_wait_elapsed,
+        consume_elapsed,
+        worker_elapsed_sum,
+        worker_elapsed_max,
+        completed,
+    })
 }
 
 fn publish_multi_plane_group<R, W, A>(
@@ -7163,6 +7204,317 @@ where
     product_writer.write_plane_group(plane_start, &result)?;
     aggregate.add_plane_group(plane_start, result)?;
     Ok(product_bytes)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CubeProductPublishStats {
+    groups: usize,
+    planes: usize,
+    bytes: usize,
+    write_elapsed: Duration,
+}
+
+struct OrderedCubeProductPublisher {
+    max_batch_planes: usize,
+    pending: BTreeMap<usize, CubeImagingResult>,
+    stats: CubeProductPublishStats,
+}
+
+impl OrderedCubeProductPublisher {
+    fn new(_first_plane: usize, max_batch_planes: usize) -> Self {
+        Self {
+            max_batch_planes: max_batch_planes.max(1),
+            pending: BTreeMap::new(),
+            stats: CubeProductPublishStats::default(),
+        }
+    }
+
+    fn accept(
+        &mut self,
+        plane_start: usize,
+        result: CubeImagingResult,
+        product_writer: &mut CubeSlabProductWriters,
+        aggregate: &mut CubeSlabAggregateDiagnostics,
+    ) -> Result<(), String> {
+        if self.pending.insert(plane_start, result).is_some() {
+            return Err(format!(
+                "duplicate cube plane result for output plane {plane_start}"
+            ));
+        }
+        self.flush_ready(false, product_writer, aggregate)
+    }
+
+    fn finish(
+        mut self,
+        product_writer: &mut CubeSlabProductWriters,
+        aggregate: &mut CubeSlabAggregateDiagnostics,
+    ) -> Result<CubeProductPublishStats, String> {
+        self.flush_ready(true, product_writer, aggregate)?;
+        if !self.pending.is_empty() {
+            let pending = self
+                .pending
+                .keys()
+                .map(|plane| plane.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Err(format!(
+                "cube product publisher stopped with pending planes [{}]",
+                pending
+            ));
+        }
+        Ok(self.stats)
+    }
+
+    fn flush_ready(
+        &mut self,
+        force: bool,
+        product_writer: &mut CubeSlabProductWriters,
+        aggregate: &mut CubeSlabAggregateDiagnostics,
+    ) -> Result<(), String> {
+        while force || self.pending.len() >= self.max_batch_planes {
+            let Some((group_start, group_planes)) = self.next_flush_group(force)? else {
+                break;
+            };
+            let mut group = Vec::<CubeImagingResult>::with_capacity(group_planes);
+            let mut next_plane = group_start;
+            while group.len() < group_planes {
+                let Some(result) = self.pending.remove(&next_plane) else {
+                    return Err(format!(
+                        "cube product publisher selected missing plane {next_plane}"
+                    ));
+                };
+                next_plane = next_plane.saturating_add(cube_result_plane_count(&result)?);
+                group.push(result);
+            }
+            if group.is_empty() {
+                break;
+            }
+            let group_planes = group.iter().try_fold(0usize, |acc, result| {
+                Ok::<usize, String>(acc.saturating_add(cube_result_plane_count(result)?))
+            })?;
+            let group_result = merge_cube_product_group(group_start, group)?;
+            let write_started = Instant::now();
+            let bytes =
+                publish_multi_plane_group(group_start, group_result, product_writer, aggregate)?;
+            self.stats.write_elapsed += write_started.elapsed();
+            self.stats.groups = self.stats.groups.saturating_add(1);
+            self.stats.planes = self.stats.planes.saturating_add(group_planes);
+            self.stats.bytes = self.stats.bytes.saturating_add(bytes);
+        }
+        Ok(())
+    }
+
+    fn next_flush_group(&self, force: bool) -> Result<Option<(usize, usize)>, String> {
+        if self.pending.is_empty() || (!force && self.pending.len() < self.max_batch_planes) {
+            return Ok(None);
+        }
+        let mut best_start = None::<usize>;
+        let mut best_len = 0usize;
+        let mut current_start = None::<usize>;
+        let mut current_next = 0usize;
+        let mut current_len = 0usize;
+        for (&plane_start, result) in &self.pending {
+            let plane_count = cube_result_plane_count(result)?;
+            if current_start.is_some() && plane_start == current_next {
+                current_len = current_len.saturating_add(1);
+                current_next = current_next.saturating_add(plane_count);
+            } else {
+                if current_len > best_len {
+                    best_start = current_start;
+                    best_len = current_len;
+                }
+                current_start = Some(plane_start);
+                current_next = plane_start.saturating_add(plane_count);
+                current_len = 1;
+            }
+        }
+        if current_len > best_len {
+            best_start = current_start;
+            best_len = current_len;
+        }
+        let Some(best_start) = best_start else {
+            return Ok(None);
+        };
+        let group_len = best_len.min(self.max_batch_planes);
+        if !force && group_len == 0 {
+            Ok(None)
+        } else {
+            Ok(Some((best_start, group_len.max(1))))
+        }
+    }
+}
+
+fn cube_result_plane_count(result: &CubeImagingResult) -> Result<usize, String> {
+    let planes = result.psf.dim().3;
+    if planes == 0 {
+        return Err("cube plane result has zero spectral planes".to_string());
+    }
+    let expected = result.psf.dim();
+    for (role, dim) in [
+        ("residual", result.residual.dim()),
+        ("model", result.model.dim()),
+        ("image", result.image.dim()),
+    ] {
+        if dim != expected {
+            return Err(format!(
+                "cube plane result {role} shape {:?} does not match psf shape {:?}",
+                dim, expected
+            ));
+        }
+    }
+    if result.sumwt.dim().3 != planes {
+        return Err(format!(
+            "cube plane result sumwt has {} planes but image products have {planes}",
+            result.sumwt.dim().3
+        ));
+    }
+    Ok(planes)
+}
+
+fn merge_cube_product_group(
+    plane_start: usize,
+    group: Vec<CubeImagingResult>,
+) -> Result<CubeImagingResult, String> {
+    let mut iter = group.into_iter();
+    let Some(first) = iter.next() else {
+        return Err("cannot merge empty cube product group".to_string());
+    };
+    let first_planes = cube_result_plane_count(&first)?;
+    let image_shape = first.psf.dim();
+    let sumwt_shape = first.sumwt.dim();
+    let mut results = vec![first];
+    let mut total_planes = first_planes;
+    for result in iter {
+        let planes = cube_result_plane_count(&result)?;
+        let shape = result.psf.dim();
+        if shape.0 != image_shape.0 || shape.1 != image_shape.1 || shape.2 != image_shape.2 {
+            return Err(format!(
+                "cube product batch at plane {plane_start} has incompatible image shape {:?}; expected spatial/stokes {:?}",
+                shape, image_shape,
+            ));
+        }
+        let result_sumwt_shape = result.sumwt.dim();
+        if result_sumwt_shape.0 != sumwt_shape.0
+            || result_sumwt_shape.1 != sumwt_shape.1
+            || result_sumwt_shape.2 != sumwt_shape.2
+        {
+            return Err(format!(
+                "cube product batch at plane {plane_start} has incompatible sumwt shape {:?}; expected {:?}",
+                result_sumwt_shape, sumwt_shape
+            ));
+        }
+        total_planes = total_planes.saturating_add(planes);
+        results.push(result);
+    }
+    if results.len() == 1 {
+        return results
+            .into_iter()
+            .next()
+            .ok_or_else(|| "cannot publish empty cube product group".to_string());
+    }
+
+    let mut psf = Array4::<f32>::zeros((image_shape.0, image_shape.1, image_shape.2, total_planes));
+    let mut residual =
+        Array4::<f32>::zeros((image_shape.0, image_shape.1, image_shape.2, total_planes));
+    let mut model =
+        Array4::<f32>::zeros((image_shape.0, image_shape.1, image_shape.2, total_planes));
+    let mut image =
+        Array4::<f32>::zeros((image_shape.0, image_shape.1, image_shape.2, total_planes));
+    let mut sumwt =
+        Array4::<f32>::zeros((sumwt_shape.0, sumwt_shape.1, sumwt_shape.2, total_planes));
+    let merge_clean_mask = results.iter().any(|result| result.clean_mask.is_some());
+    let mut clean_mask = merge_clean_mask.then(|| {
+        Array4::<bool>::from_elem(
+            (image_shape.0, image_shape.1, image_shape.2, total_planes),
+            false,
+        )
+    });
+    let mut beams = Vec::<Option<BeamFit>>::with_capacity(total_planes);
+    let mut restored_beams = Vec::<Option<BeamFit>>::with_capacity(total_planes);
+    let first_compatibility = results[0].compatibility.clone();
+    let mut compatibility_channel_frequencies_hz = Vec::<f64>::with_capacity(total_planes);
+    let mut diagnostics = CubeImagingDiagnostics {
+        warnings: Vec::new(),
+        gridded_samples: 0,
+        skipped_samples: 0,
+        major_cycles: 0,
+        minor_iterations: 0,
+        clean_stop_reason: None,
+        channel_diagnostics: Vec::with_capacity(total_planes),
+        stage_timings: ImagingStageTimings::default(),
+    };
+
+    let mut offset = 0usize;
+    for mut result in results {
+        let planes = cube_result_plane_count(&result)?;
+        let range = offset..offset + planes;
+        psf.slice_mut(s![.., .., .., range.clone()])
+            .assign(&result.psf);
+        residual
+            .slice_mut(s![.., .., .., range.clone()])
+            .assign(&result.residual);
+        model
+            .slice_mut(s![.., .., .., range.clone()])
+            .assign(&result.model);
+        image
+            .slice_mut(s![.., .., .., range.clone()])
+            .assign(&result.image);
+        sumwt
+            .slice_mut(s![.., .., .., range.clone()])
+            .assign(&result.sumwt);
+        if let Some(mask) = result.clean_mask.take() {
+            if let Some(merged_mask) = clean_mask.as_mut() {
+                merged_mask
+                    .slice_mut(s![.., .., .., range.clone()])
+                    .assign(&mask);
+            }
+        }
+        beams.append(&mut result.beams);
+        restored_beams.append(&mut result.restored_beams);
+        compatibility_channel_frequencies_hz
+            .extend(result.compatibility.channel_frequencies_hz.iter().copied());
+        diagnostics
+            .warnings
+            .append(&mut result.diagnostics.warnings);
+        diagnostics.gridded_samples = diagnostics
+            .gridded_samples
+            .saturating_add(result.diagnostics.gridded_samples);
+        diagnostics.skipped_samples = diagnostics
+            .skipped_samples
+            .saturating_add(result.diagnostics.skipped_samples);
+        diagnostics.major_cycles = diagnostics
+            .major_cycles
+            .saturating_add(result.diagnostics.major_cycles);
+        diagnostics.minor_iterations = diagnostics
+            .minor_iterations
+            .saturating_add(result.diagnostics.minor_iterations);
+        diagnostics.clean_stop_reason = diagnostics
+            .clean_stop_reason
+            .or(result.diagnostics.clean_stop_reason);
+        diagnostics
+            .channel_diagnostics
+            .append(&mut result.diagnostics.channel_diagnostics);
+        add_imaging_stage_timings(
+            &mut diagnostics.stage_timings,
+            result.diagnostics.stage_timings,
+        );
+        offset += planes;
+    }
+    let mut compatibility = first_compatibility;
+    compatibility.reffreq_hz = channel_reffreq_hz(&compatibility_channel_frequencies_hz);
+    compatibility.channel_frequencies_hz = compatibility_channel_frequencies_hz;
+    Ok(CubeImagingResult {
+        psf,
+        residual,
+        model,
+        image,
+        sumwt,
+        clean_mask,
+        beams,
+        restored_beams,
+        diagnostics,
+        compatibility,
+    })
 }
 
 impl CubeSlabAggregateDiagnostics {
@@ -7989,6 +8341,7 @@ fn run_independent_shared_cube_slab_planes(
     direct_dirty_spectral_plan: Option<&CubeRowSpectralReusablePlan>,
     corr_types: &[i32],
     worker_count: usize,
+    product_batch_planes: usize,
     ms: &MeasurementSet,
     selection: &SelectedRowsContext,
     ddid_info: &[Option<(usize, usize)>],
@@ -8015,12 +8368,27 @@ fn run_independent_shared_cube_slab_planes(
     if clean.niter == 0 {
         plane_execution_config.materialized_sample_plan_max_samples = Some(0);
     }
-    if direct_dirty_cube_shared_source_eligible(
+    let direct_dirty_shared_source_eligible = direct_dirty_cube_shared_source_eligible(
         &slab_config,
         clean,
         slab_plane_count,
         direct_contiguous_channel_map,
-    ) {
+    );
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "cube_shared_direct_dirty_eligibility eligible={} slab_plane_count={} direct_contiguous_channel_map={} niter={} dirty={} weighting={:?} w_term={:?} wprojplanes={:?} uv_taper={}",
+            direct_dirty_shared_source_eligible,
+            slab_plane_count,
+            direct_contiguous_channel_map,
+            clean.niter,
+            clean_is_dirty(&slab_config),
+            slab_config.weighting,
+            slab_config.w_term_mode,
+            slab_config.w_project_planes,
+            slab_config.uv_taper.is_some(),
+        );
+    }
+    if direct_dirty_shared_source_eligible {
         if slab_channel_frequencies_hz.len() != slab_plane_count {
             return Err(format!(
                 "direct dirty cube slab expected {slab_plane_count} channel frequencies, found {}",
@@ -8057,80 +8425,85 @@ fn run_independent_shared_cube_slab_planes(
                 }
             })
             .collect::<Vec<_>>();
-        let plane_run_elapsed = run_owned_independent_imaging_planes_with_consumer(
+        let run_plane = |payload: DirectDirtyCubePlaneTaskPayload| {
+            let worker_started = Instant::now();
+            let cube_result = run_direct_dirty_cube_plane_from_shared_source(
+                geometry,
+                clean,
+                slab_config
+                    .correlation
+                    .as_deref()
+                    .map(parse_plane_stokes)
+                    .transpose()?
+                    .unwrap_or(PlaneStokes::I),
+                slab_config.weighting,
+                slab_config.deconvolver,
+                slab_config.multiscale_scales.clone(),
+                slab_config.small_scale_bias,
+                plane_execution_config,
+                shared_source,
+                payload.output_channel,
+                payload.channel_frequency_hz,
+                spectral_plan,
+                corr_types,
+            )?;
+            let stage_timings = cube_result.diagnostics.stage_timings;
+            let plane_diagnostics = cube_result
+                .diagnostics
+                .channel_diagnostics
+                .first()
+                .ok_or_else(|| {
+                    format!(
+                        "direct shared cube plane {} returned no channel diagnostics",
+                        payload.plane_index
+                    )
+                })?;
+            let gridded_samples = plane_diagnostics.gridded_samples;
+            let skipped_samples = plane_diagnostics.skipped_samples;
+            let normalization_sumwt = plane_diagnostics.normalization_sumwt;
+            let reported_sumwt = plane_diagnostics.reported_sumwt;
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "cube_shared_direct_plane_worker plane={} blocks={} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
+                    payload.plane_index,
+                    shared_source.blocks.len(),
+                    gridded_samples,
+                    skipped_samples,
+                    normalization_sumwt,
+                    reported_sumwt,
+                    duration_ms(worker_started.elapsed()),
+                    duration_ms(worker_started.elapsed()),
+                    duration_ms(stage_timings.total),
+                    duration_ms(stage_timings.psf_grid),
+                    duration_ms(stage_timings.psf_fft),
+                    duration_ms(stage_timings.residual_degrid_grid),
+                    duration_ms(stage_timings.residual_fft),
+                );
+            }
+            Ok((
+                SharedCubePlaneRunResult {
+                    cube_result,
+                    run_imaging_elapsed: worker_started.elapsed(),
+                    visibility_batches: shared_source.blocks.len(),
+                    visibility_samples: gridded_samples,
+                    used_owned_single_plane_dirty: false,
+                },
+                stage_timings,
+            ))
+        };
+        let mut product_publisher =
+            OrderedCubeProductPublisher::new(slab_plane_start, product_batch_planes);
+        let product_stats_before = product_writers.write_stats();
+        let product_io_stats_before = product_writers.tiled_io_stats();
+        let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
             tasks,
             worker_count,
-            |payload| {
-                let worker_started = Instant::now();
-                let cube_result = run_direct_dirty_cube_plane_from_shared_source(
-                    geometry,
-                    clean,
-                    slab_config
-                        .correlation
-                        .as_deref()
-                        .map(parse_plane_stokes)
-                        .transpose()?
-                        .unwrap_or(PlaneStokes::I),
-                    slab_config.weighting,
-                    slab_config.deconvolver,
-                    slab_config.multiscale_scales.clone(),
-                    slab_config.small_scale_bias,
-                    plane_execution_config,
-                    shared_source,
-                    payload.output_channel,
-                    payload.channel_frequency_hz,
-                    spectral_plan,
-                    corr_types,
-                )?;
-                let stage_timings = cube_result.diagnostics.stage_timings;
-                let plane_diagnostics = cube_result
-                    .diagnostics
-                    .channel_diagnostics
-                    .first()
-                    .ok_or_else(|| {
-                        format!(
-                            "direct shared cube plane {} returned no channel diagnostics",
-                            payload.plane_index
-                        )
-                    })?;
-                let gridded_samples = plane_diagnostics.gridded_samples;
-                let skipped_samples = plane_diagnostics.skipped_samples;
-                let normalization_sumwt = plane_diagnostics.normalization_sumwt;
-                let reported_sumwt = plane_diagnostics.reported_sumwt;
-                if standard_mfs_profile_detail_enabled() {
-                    eprintln!(
-                        "cube_shared_direct_plane_worker plane={} blocks={} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
-                        payload.plane_index,
-                        shared_source.blocks.len(),
-                        gridded_samples,
-                        skipped_samples,
-                        normalization_sumwt,
-                        reported_sumwt,
-                        duration_ms(worker_started.elapsed()),
-                        duration_ms(worker_started.elapsed()),
-                        duration_ms(stage_timings.total),
-                        duration_ms(stage_timings.psf_grid),
-                        duration_ms(stage_timings.psf_fft),
-                        duration_ms(stage_timings.residual_degrid_grid),
-                        duration_ms(stage_timings.residual_fft),
-                    );
-                }
-                Ok((
-                    SharedCubePlaneRunResult {
-                        cube_result,
-                        run_imaging_elapsed: worker_started.elapsed(),
-                        visibility_batches: shared_source.blocks.len(),
-                        visibility_samples: gridded_samples,
-                        used_owned_single_plane_dirty: false,
-                    },
-                    stage_timings,
-                ))
-            },
+            run_plane,
             |plane_result| {
                 add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
                 if standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "cube_shared_direct_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} blocks={} samples={} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3}",
+                        "cube_shared_direct_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} blocks={} samples={} core_total_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} residency=streaming_plane_results",
                         plane_result.plane_index,
                         plane_result.batch_index,
                         plane_result.batch_task_count,
@@ -8146,21 +8519,79 @@ fn run_independent_shared_cube_slab_planes(
                         duration_ms(plane_result.stage_timings.residual_fft),
                     );
                 }
-                let write_started_at = Instant::now();
-                product_bytes += publish_multi_plane_group(
+                product_publisher.accept(
                     plane_result.plane_index,
                     plane_result.result.cube_result,
                     product_writers,
                     aggregate,
                 )?;
-                product_write_elapsed += write_started_at.elapsed();
                 Ok(())
             },
         )?;
+        let publish_stats = product_publisher.finish(product_writers, aggregate)?;
+        product_write_elapsed += publish_stats.write_elapsed;
+        product_bytes += publish_stats.bytes;
+        let product_stats = product_writers
+            .write_stats()
+            .delta_since(product_stats_before);
+        let product_io_stats = product_writers
+            .tiled_io_stats()
+            .delta_since(product_io_stats_before);
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "cube_shared_direct_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=streaming_plane_results",
+                slab_plane_start,
+                slab_plane_end,
+                worker_count,
+                product_batch_planes,
+                plane_execution_stats.completed,
+                duration_ms(plane_execution_stats.elapsed),
+                duration_ms(plane_execution_stats.worker_elapsed_sum),
+                duration_ms(plane_execution_stats.worker_elapsed_max),
+                duration_ms(plane_execution_stats.result_wait_elapsed),
+                duration_ms(plane_execution_stats.consume_elapsed),
+                duration_ms(product_write_elapsed),
+                duration_ms(product_stats.role_elapsed()),
+                duration_ms(product_stats.psf_elapsed),
+                duration_ms(product_stats.residual_elapsed),
+                duration_ms(product_stats.model_elapsed),
+                duration_ms(product_stats.image_elapsed),
+                duration_ms(product_stats.sumwt_elapsed),
+                product_bytes,
+                publish_stats.groups,
+                publish_stats.planes,
+                product_stats.groups,
+                product_stats.planes,
+                product_stats.estimated_bytes,
+                product_io_stats.put_slice_c_order_calls,
+                product_io_stats.put_slice_fortran_calls,
+                product_io_stats.put_slice_tile_visits,
+                product_io_stats.put_slice_copied_elements,
+                product_io_stats.lru_hits,
+                product_io_stats.lru_misses,
+                product_io_stats.lru_zero_fill_tiles,
+                product_io_stats.lru_read_tiles,
+                product_io_stats.lru_read_bytes,
+                product_io_stats.lru_dirty_evictions,
+                product_io_stats.lru_flush_calls,
+                product_io_stats.lru_flush_write_tiles,
+                product_io_stats.lru_flush_write_bytes,
+                product_io_stats.lru_batch_flushes,
+                product_io_stats.lru_batch_flush_tiles,
+                product_io_stats.lru_batch_flush_bytes,
+                product_io_stats.flat_allocations,
+                product_io_stats.flat_allocated_bytes,
+                product_io_stats.flat_zero_fill_bytes,
+                product_io_stats.flat_bulk_read_bytes,
+                product_io_stats.flat_flush_calls,
+                product_io_stats.flat_flush_write_tiles,
+                product_io_stats.flat_flush_write_bytes,
+            );
+        }
         return Ok(CubeSlabRunOutcome {
-            run_elapsed: slab_started.elapsed(),
+            run_elapsed: plane_execution_stats.elapsed,
             slab_prepare_elapsed: Duration::ZERO,
-            plane_run_elapsed,
+            plane_run_elapsed: plane_execution_stats.elapsed,
             product_write_elapsed,
             product_bytes,
             stage_timings,
@@ -8256,7 +8687,11 @@ fn run_independent_shared_cube_slab_planes(
         })
         .collect::<Vec<_>>();
 
-    let plane_run_elapsed = run_owned_independent_imaging_planes_with_consumer(
+    let mut product_publisher =
+        OrderedCubeProductPublisher::new(slab_plane_start, product_batch_planes);
+    let product_stats_before = product_writers.write_stats();
+    let product_io_stats_before = product_writers.tiled_io_stats();
+    let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
         tasks,
         worker_count,
         |payload| {
@@ -8425,24 +8860,82 @@ fn run_independent_shared_cube_slab_planes(
                     duration_ms(plane_result.stage_timings.residual_fft),
                 );
             }
-            let write_started_at = Instant::now();
-            product_bytes += publish_multi_plane_group(
+            product_publisher.accept(
                 plane_result.plane_index,
                 plane_result.result.cube_result,
                 product_writers,
                 aggregate,
             )?;
-            product_write_elapsed += write_started_at.elapsed();
             Ok(())
         },
     )?;
+    let publish_stats = product_publisher.finish(product_writers, aggregate)?;
+    product_write_elapsed += publish_stats.write_elapsed;
+    product_bytes += publish_stats.bytes;
+    let product_stats = product_writers
+        .write_stats()
+        .delta_since(product_stats_before);
+    let product_io_stats = product_writers
+        .tiled_io_stats()
+        .delta_since(product_io_stats_before);
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "cube_shared_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=streaming_plane_results",
+            slab_plane_start,
+            slab_plane_end,
+            worker_count,
+            product_batch_planes,
+            plane_execution_stats.completed,
+            duration_ms(plane_execution_stats.elapsed),
+            duration_ms(plane_execution_stats.worker_elapsed_sum),
+            duration_ms(plane_execution_stats.worker_elapsed_max),
+            duration_ms(plane_execution_stats.result_wait_elapsed),
+            duration_ms(plane_execution_stats.consume_elapsed),
+            duration_ms(product_write_elapsed),
+            duration_ms(product_stats.role_elapsed()),
+            duration_ms(product_stats.psf_elapsed),
+            duration_ms(product_stats.residual_elapsed),
+            duration_ms(product_stats.model_elapsed),
+            duration_ms(product_stats.image_elapsed),
+            duration_ms(product_stats.sumwt_elapsed),
+            product_bytes,
+            publish_stats.groups,
+            publish_stats.planes,
+            product_stats.groups,
+            product_stats.planes,
+            product_stats.estimated_bytes,
+            product_io_stats.put_slice_c_order_calls,
+            product_io_stats.put_slice_fortran_calls,
+            product_io_stats.put_slice_tile_visits,
+            product_io_stats.put_slice_copied_elements,
+            product_io_stats.lru_hits,
+            product_io_stats.lru_misses,
+            product_io_stats.lru_zero_fill_tiles,
+            product_io_stats.lru_read_tiles,
+            product_io_stats.lru_read_bytes,
+            product_io_stats.lru_dirty_evictions,
+            product_io_stats.lru_flush_calls,
+            product_io_stats.lru_flush_write_tiles,
+            product_io_stats.lru_flush_write_bytes,
+            product_io_stats.lru_batch_flushes,
+            product_io_stats.lru_batch_flush_tiles,
+            product_io_stats.lru_batch_flush_bytes,
+            product_io_stats.flat_allocations,
+            product_io_stats.flat_allocated_bytes,
+            product_io_stats.flat_zero_fill_bytes,
+            product_io_stats.flat_bulk_read_bytes,
+            product_io_stats.flat_flush_calls,
+            product_io_stats.flat_flush_write_tiles,
+            product_io_stats.flat_flush_write_bytes,
+        );
+    }
 
     let run_elapsed = slab_started.elapsed();
 
     Ok(CubeSlabRunOutcome {
         run_elapsed,
         slab_prepare_elapsed,
-        plane_run_elapsed,
+        plane_run_elapsed: plane_execution_stats.elapsed,
         product_write_elapsed,
         product_bytes,
         stage_timings,
@@ -8503,10 +8996,51 @@ struct CubeSlabProductWriters {
     residual: PagedImage<f32>,
     model: Option<PagedImage<f32>>,
     image: PagedImage<f32>,
+    residual_path: PathBuf,
+    image_path: PathBuf,
     sumwt: PagedImage<f32>,
     beams: Vec<Option<BeamFit>>,
     restored_beams: Vec<Option<BeamFit>>,
     include_model: bool,
+    dirty_image_alias: bool,
+    stats: CubeProductWriteStats,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CubeProductWriteStats {
+    groups: usize,
+    planes: usize,
+    estimated_bytes: usize,
+    psf_elapsed: Duration,
+    residual_elapsed: Duration,
+    model_elapsed: Duration,
+    image_elapsed: Duration,
+    sumwt_elapsed: Duration,
+}
+
+impl CubeProductWriteStats {
+    fn delta_since(self, before: Self) -> Self {
+        Self {
+            groups: self.groups.saturating_sub(before.groups),
+            planes: self.planes.saturating_sub(before.planes),
+            estimated_bytes: self.estimated_bytes.saturating_sub(before.estimated_bytes),
+            psf_elapsed: self.psf_elapsed.saturating_sub(before.psf_elapsed),
+            residual_elapsed: self
+                .residual_elapsed
+                .saturating_sub(before.residual_elapsed),
+            model_elapsed: self.model_elapsed.saturating_sub(before.model_elapsed),
+            image_elapsed: self.image_elapsed.saturating_sub(before.image_elapsed),
+            sumwt_elapsed: self.sumwt_elapsed.saturating_sub(before.sumwt_elapsed),
+        }
+    }
+
+    fn role_elapsed(self) -> Duration {
+        self.psf_elapsed
+            + self.residual_elapsed
+            + self.model_elapsed
+            + self.image_elapsed
+            + self.sumwt_elapsed
+    }
 }
 
 impl CubeSlabProductWriters {
@@ -8523,10 +9057,14 @@ impl CubeSlabProductWriters {
         let image_tile_shape = cube_product_tile_shape(config.imsize, config.imsize, nplanes);
         let sumwt_shape = vec![1, 1, 1, nplanes];
         let sumwt_tile_shape = vec![1, 1, 1, nplanes.clamp(1, 64)];
-        let cache_budget_bytes = cache_budget_bytes.max(8 * 1024 * 1024);
+        let cache_budget_bytes =
+            cube_slab_product_image_cache_bytes(cache_budget_bytes, config.imsize, config.imsize);
         let reffreq_hz = channel_reffreq_hz(channel_frequencies_hz);
         let plane_stokes = plane_stokes.as_str();
         let include_model = !(config.dirty_only || config.niter == 0);
+        let dirty_image_alias = clean_is_dirty(config);
+        let residual_path = PathBuf::from(format!("{base}.residual"));
+        let image_path = PathBuf::from(format!("{base}.image"));
 
         let psf = create_slab_product_image(SlabProductImageCreate {
             path: PathBuf::from(format!("{base}.psf")),
@@ -8541,7 +9079,7 @@ impl CubeSlabProductWriters {
             cache_budget_bytes,
         })?;
         let residual = create_slab_product_image(SlabProductImageCreate {
-            path: PathBuf::from(format!("{base}.residual")),
+            path: residual_path.clone(),
             shape: image_shape.clone(),
             tile_shape: image_tile_shape.clone(),
             coords,
@@ -8570,7 +9108,7 @@ impl CubeSlabProductWriters {
             None
         };
         let image = create_slab_product_image(SlabProductImageCreate {
-            path: PathBuf::from(format!("{base}.image")),
+            path: image_path.clone(),
             shape: image_shape,
             tile_shape: image_tile_shape,
             coords,
@@ -8599,33 +9137,71 @@ impl CubeSlabProductWriters {
             residual,
             model,
             image,
+            residual_path,
+            image_path,
             sumwt,
             beams: vec![None; nplanes],
             restored_beams: vec![None; nplanes],
             include_model,
+            dirty_image_alias,
+            stats: CubeProductWriteStats::default(),
         })
+    }
+
+    fn write_stats(&self) -> CubeProductWriteStats {
+        self.stats
+    }
+
+    fn tiled_io_stats(&self) -> TiledFileIoStats {
+        let mut stats = TiledFileIoStats::default();
+        accumulate_tiled_io_stats(&mut stats, self.psf.tiled_io_stats());
+        accumulate_tiled_io_stats(&mut stats, self.residual.tiled_io_stats());
+        if let Some(model) = &self.model {
+            accumulate_tiled_io_stats(&mut stats, model.tiled_io_stats());
+        }
+        accumulate_tiled_io_stats(&mut stats, self.image.tiled_io_stats());
+        accumulate_tiled_io_stats(&mut stats, self.sumwt.tiled_io_stats());
+        stats
     }
 
     fn write_slab(&mut self, plane_start: usize, result: &CubeImagingResult) -> Result<(), String> {
         let slab_nchan = result.psf.dim().3;
         let start = [0, 0, 0, plane_start];
+        self.stats.groups = self.stats.groups.saturating_add(1);
+        self.stats.planes = self.stats.planes.saturating_add(slab_nchan);
+        self.stats.estimated_bytes = self
+            .stats
+            .estimated_bytes
+            .saturating_add(self.estimated_slab_product_bytes(result));
+        let psf_started = Instant::now();
         self.psf
             .put_slice_view(result.psf.view().into_dyn(), &start)
             .map_err(|error| format!("write slab psf: {error}"))?;
+        self.stats.psf_elapsed += psf_started.elapsed();
+        let residual_started = Instant::now();
         self.residual
             .put_slice_view(result.residual.view().into_dyn(), &start)
             .map_err(|error| format!("write slab residual: {error}"))?;
+        self.stats.residual_elapsed += residual_started.elapsed();
         if let Some(model) = self.model.as_mut() {
+            let model_started = Instant::now();
             model
                 .put_slice_view(result.model.view().into_dyn(), &start)
                 .map_err(|error| format!("write slab model: {error}"))?;
+            self.stats.model_elapsed += model_started.elapsed();
         }
-        self.image
-            .put_slice_view(result.image.view().into_dyn(), &start)
-            .map_err(|error| format!("write slab image: {error}"))?;
+        if !self.dirty_image_alias {
+            let image_started = Instant::now();
+            self.image
+                .put_slice_view(result.image.view().into_dyn(), &start)
+                .map_err(|error| format!("write slab image: {error}"))?;
+            self.stats.image_elapsed += image_started.elapsed();
+        }
+        let sumwt_started = Instant::now();
         self.sumwt
             .put_slice_view(result.sumwt.view().into_dyn(), &start)
             .map_err(|error| format!("write slab sumwt: {error}"))?;
+        self.stats.sumwt_elapsed += sumwt_started.elapsed();
         for (offset, beam) in result.beams.iter().copied().enumerate() {
             let index = plane_start + offset;
             if index < self.beams.len() {
@@ -8659,13 +9235,84 @@ impl CubeSlabProductWriters {
             set_tiled_product_info_and_save(model, ImageBeamSet::default(), "model")?;
         }
         set_tiled_product_info_and_save(&mut self.image, image_beams, "image")?;
+        if self.dirty_image_alias {
+            alias_tiled_product_payload(&self.residual_path, &self.image_path, "image")?;
+        }
         set_tiled_product_info_and_save(&mut self.sumwt, ImageBeamSet::default(), "sumwt")?;
         Ok(())
     }
 
     fn estimated_slab_product_bytes(&self, result: &CubeImagingResult) -> usize {
-        estimated_cube_slab_product_bytes(result, self.include_model)
+        estimated_cube_slab_product_bytes(result, self.include_model, self.dirty_image_alias)
     }
+}
+
+fn accumulate_tiled_io_stats(total: &mut TiledFileIoStats, next: Option<TiledFileIoStats>) {
+    let Some(next) = next else {
+        return;
+    };
+    total.put_slice_c_order_calls = total
+        .put_slice_c_order_calls
+        .saturating_add(next.put_slice_c_order_calls);
+    total.put_slice_fortran_calls = total
+        .put_slice_fortran_calls
+        .saturating_add(next.put_slice_fortran_calls);
+    total.put_slice_tile_visits = total
+        .put_slice_tile_visits
+        .saturating_add(next.put_slice_tile_visits);
+    total.put_slice_copied_elements = total
+        .put_slice_copied_elements
+        .saturating_add(next.put_slice_copied_elements);
+    total.flat_allocations = total.flat_allocations.saturating_add(next.flat_allocations);
+    total.flat_allocated_bytes = total
+        .flat_allocated_bytes
+        .saturating_add(next.flat_allocated_bytes);
+    total.flat_zero_fill_bytes = total
+        .flat_zero_fill_bytes
+        .saturating_add(next.flat_zero_fill_bytes);
+    total.flat_bulk_read_bytes = total
+        .flat_bulk_read_bytes
+        .saturating_add(next.flat_bulk_read_bytes);
+    total.flat_flush_calls = total.flat_flush_calls.saturating_add(next.flat_flush_calls);
+    total.flat_flush_write_tiles = total
+        .flat_flush_write_tiles
+        .saturating_add(next.flat_flush_write_tiles);
+    total.flat_flush_write_bytes = total
+        .flat_flush_write_bytes
+        .saturating_add(next.flat_flush_write_bytes);
+    total.lru_hits = total.lru_hits.saturating_add(next.lru_hits);
+    total.lru_misses = total.lru_misses.saturating_add(next.lru_misses);
+    total.lru_zero_fill_tiles = total
+        .lru_zero_fill_tiles
+        .saturating_add(next.lru_zero_fill_tiles);
+    total.lru_read_tiles = total.lru_read_tiles.saturating_add(next.lru_read_tiles);
+    total.lru_read_bytes = total.lru_read_bytes.saturating_add(next.lru_read_bytes);
+    total.lru_batch_loads = total.lru_batch_loads.saturating_add(next.lru_batch_loads);
+    total.lru_batch_load_tiles = total
+        .lru_batch_load_tiles
+        .saturating_add(next.lru_batch_load_tiles);
+    total.lru_batch_load_bytes = total
+        .lru_batch_load_bytes
+        .saturating_add(next.lru_batch_load_bytes);
+    total.lru_dirty_evictions = total
+        .lru_dirty_evictions
+        .saturating_add(next.lru_dirty_evictions);
+    total.lru_flush_calls = total.lru_flush_calls.saturating_add(next.lru_flush_calls);
+    total.lru_flush_write_tiles = total
+        .lru_flush_write_tiles
+        .saturating_add(next.lru_flush_write_tiles);
+    total.lru_flush_write_bytes = total
+        .lru_flush_write_bytes
+        .saturating_add(next.lru_flush_write_bytes);
+    total.lru_batch_flushes = total
+        .lru_batch_flushes
+        .saturating_add(next.lru_batch_flushes);
+    total.lru_batch_flush_tiles = total
+        .lru_batch_flush_tiles
+        .saturating_add(next.lru_batch_flush_tiles);
+    total.lru_batch_flush_bytes = total
+        .lru_batch_flush_bytes
+        .saturating_add(next.lru_batch_flush_bytes);
 }
 
 impl MultiPlaneProductWriter<CubeImagingResult> for CubeSlabProductWriters {
@@ -8736,6 +9383,66 @@ fn cube_product_tile_shape(nx: usize, ny: usize, _nplanes: usize) -> Vec<usize> 
     vec![nx.clamp(1, 128), ny.clamp(1, 128), 1, 1]
 }
 
+fn cube_slab_product_image_cache_bytes(cache_budget_bytes: usize, nx: usize, ny: usize) -> usize {
+    let tile_shape = cube_product_tile_shape(nx, ny, 1);
+    let tile_bytes = tile_shape
+        .iter()
+        .copied()
+        .product::<usize>()
+        .saturating_mul(std::mem::size_of::<f32>());
+    let plane_tiles = nx
+        .div_ceil(tile_shape[0].max(1))
+        .saturating_mul(ny.div_ceil(tile_shape[1].max(1)));
+    let floor_bytes = 8 * 1024 * 1024;
+    let floor_tiles = (floor_bytes / tile_bytes.max(1)).max(1);
+    let plane_bytes = nx
+        .saturating_mul(ny)
+        .saturating_mul(std::mem::size_of::<f32>());
+    let shape_floor_bytes = if plane_tiles <= floor_tiles.saturating_mul(2) {
+        floor_bytes
+    } else {
+        plane_bytes
+    };
+    cache_budget_bytes
+        .max(shape_floor_bytes)
+        .min(plane_bytes.max(floor_bytes))
+}
+
+fn cube_slab_product_writer_cache_resident_bytes(
+    nx: usize,
+    ny: usize,
+    output_plane_count: usize,
+    include_model: bool,
+    dirty_image_alias: bool,
+) -> usize {
+    let image_product_count = if include_model {
+        4usize
+    } else if dirty_image_alias {
+        2usize
+    } else {
+        3usize
+    };
+    let image_cache_bytes = cube_slab_product_image_cache_bytes(0, nx, ny);
+    let sumwt_bytes = output_plane_count.saturating_mul(std::mem::size_of::<f32>());
+    image_product_count
+        .saturating_mul(image_cache_bytes)
+        .saturating_add(sumwt_bytes)
+}
+
+fn cube_slab_product_write_bytes_per_plane(config: &CliConfig) -> usize {
+    let image_product_count = if clean_is_dirty(config) {
+        2usize
+    } else {
+        4usize
+    };
+    config
+        .imsize
+        .saturating_mul(config.imsize)
+        .saturating_mul(std::mem::size_of::<f32>())
+        .saturating_mul(image_product_count)
+        .saturating_add(std::mem::size_of::<f32>())
+}
+
 fn set_tiled_product_info_and_save(
     image: &mut PagedImage<f32>,
     beam_set: ImageBeamSet,
@@ -8761,6 +9468,36 @@ fn set_tiled_product_info_and_save(
     Ok(())
 }
 
+fn alias_tiled_product_payload(
+    source_product: &Path,
+    target_product: &Path,
+    role: &str,
+) -> Result<(), String> {
+    let source_payload = source_product.join("table.f0_TSM0");
+    let target_payload = target_product.join("table.f0_TSM0");
+    if !source_payload.exists() {
+        return Err(format!(
+            "alias {role} tiled payload: source {} does not exist",
+            source_payload.display()
+        ));
+    }
+    if target_payload.exists() {
+        fs::remove_file(&target_payload).map_err(|error| {
+            format!(
+                "alias {role} tiled payload remove {}: {error}",
+                target_payload.display()
+            )
+        })?;
+    }
+    fs::hard_link(&source_payload, &target_payload).map_err(|error| {
+        format!(
+            "alias {role} tiled payload link {} -> {}: {error}",
+            source_payload.display(),
+            target_payload.display()
+        )
+    })
+}
+
 fn channel_reffreq_hz(channel_frequencies_hz: &[f64]) -> f64 {
     if channel_frequencies_hz.is_empty() {
         0.0
@@ -8769,41 +9506,86 @@ fn channel_reffreq_hz(channel_frequencies_hz: &[f64]) -> f64 {
     }
 }
 
-fn estimated_cube_slab_product_bytes(result: &CubeImagingResult, include_model: bool) -> usize {
+fn estimated_cube_slab_product_bytes(
+    result: &CubeImagingResult,
+    include_model: bool,
+    dirty_image_alias: bool,
+) -> usize {
     let mut elements = result
         .psf
         .len()
         .saturating_add(result.residual.len())
-        .saturating_add(result.image.len())
         .saturating_add(result.sumwt.len());
+    if !dirty_image_alias {
+        elements = elements.saturating_add(result.image.len());
+    }
     if include_model {
         elements = elements.saturating_add(result.model.len());
     }
     elements.saturating_mul(std::mem::size_of::<f32>())
 }
 
+#[cfg(test)]
 fn cube_slab_executor_scratch_bytes(
     config: &CliConfig,
     active_rows: usize,
+    output_plane_count: usize,
     cloned_plane_visibility_bytes: usize,
     worker_count: usize,
 ) -> usize {
-    let worker_count = worker_count.max(1);
+    cube_slab_executor_scratch_shape(
+        config,
+        active_rows,
+        output_plane_count,
+        cloned_plane_visibility_bytes,
+    )
+    .bytes_for_worker_count_and_rows(
+        worker_count,
+        active_rows,
+        worker_count.max(1).min(output_plane_count.max(1)),
+    )
+}
+
+fn cube_slab_executor_scratch_shape(
+    config: &CliConfig,
+    active_rows: usize,
+    output_plane_count: usize,
+    cloned_plane_visibility_bytes: usize,
+) -> spectral_slab::ExecutorScratchShape {
     let image_pixels = config.imsize.saturating_mul(config.imsize);
     let one_plane_run_result_bytes = image_pixels
         .saturating_mul(std::mem::size_of::<f32>())
         .saturating_mul(5);
     let one_plane_write_clone_bytes = image_pixels
         .saturating_mul(std::mem::size_of::<f32>())
-        .saturating_mul(if clean_is_dirty(config) { 3 } else { 4 });
+        .saturating_mul(if clean_is_dirty(config) { 2 } else { 4 });
     let standard_mfs_workspace_bytes = standard_mfs_workspace_scratch_bytes(config.imsize);
-    let planned_sample_scratch = active_rows.saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
-    one_plane_run_result_bytes
-        .saturating_mul(worker_count)
-        .saturating_add(one_plane_write_clone_bytes)
-        .saturating_add(standard_mfs_workspace_bytes.saturating_mul(worker_count))
-        .saturating_add(planned_sample_scratch)
-        .saturating_add(cloned_plane_visibility_bytes)
+    let fixed_planned_sample_scratch = if clean_is_dirty(config) {
+        0
+    } else {
+        active_rows.saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES)
+    };
+    let product_writer_cache_bytes = cube_slab_product_writer_cache_resident_bytes(
+        config.imsize,
+        config.imsize,
+        output_plane_count,
+        !clean_is_dirty(config),
+        clean_is_dirty(config),
+    );
+    spectral_slab::ExecutorScratchShape {
+        fixed_bytes: fixed_planned_sample_scratch
+            .saturating_add(product_writer_cache_bytes)
+            .saturating_add(cloned_plane_visibility_bytes),
+        per_worker_bytes: one_plane_run_result_bytes.saturating_add(standard_mfs_workspace_bytes),
+        per_worker_row_block_bytes: if clean_is_dirty(config) {
+            ESTIMATED_STANDARD_MFS_SAMPLE_BYTES
+        } else {
+            0
+        },
+        per_worker_row_block_limit_bytes: if clean_is_dirty(config) { 0 } else { 0 },
+        per_product_batch_plane_bytes: one_plane_write_clone_bytes,
+        per_product_pending_plane_bytes: one_plane_run_result_bytes,
+    }
 }
 
 fn standard_mfs_workspace_scratch_bytes(imsize: usize) -> usize {
@@ -22724,12 +23506,13 @@ fn standard_mfs_memory_plan_with_visibility_shape(
             worker_staging_bytes: 0,
             gpu_staging_bytes: 0,
             safety_margin_bytes: 0,
-            product_scratch_bytes: 0,
+            executor_scratch: spectral_slab::ExecutorScratchShape::default(),
+            source_buffer_residency: spectral_slab::SourceBufferResidency::RowBlockStream,
+            product_write_bytes_per_plane: 0,
             max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
             max_worker_count: worker_buffers,
             requirements: spectral_slab::PlaneStateRequirements::default(),
             prepared_residency,
-            executor_prepared_slab_sample_bytes: 0,
         })
         .unwrap_or_else(|_| {
             let fallback_source_bytes = visibility_shape.source_buffer_bytes_for_rows(
@@ -22755,12 +23538,13 @@ fn standard_mfs_memory_plan_with_visibility_shape(
                 worker_staging_bytes: 0,
                 gpu_staging_bytes: 0,
                 safety_margin_bytes: 0,
-                product_scratch_bytes: 0,
+                executor_scratch: spectral_slab::ExecutorScratchShape::default(),
+                source_buffer_residency: spectral_slab::SourceBufferResidency::RowBlockStream,
+                product_write_bytes_per_plane: 0,
                 max_row_block_rows: 1,
                 max_worker_count: worker_buffers,
                 requirements: spectral_slab::PlaneStateRequirements::default(),
                 prepared_residency,
-                executor_prepared_slab_sample_bytes: 0,
             })
             .expect("single-row fallback source/output memory shape must fit")
         });
@@ -38499,8 +39283,24 @@ mod tests {
 
         let workspace_bytes = standard_mfs_workspace_scratch_bytes(config.imsize);
         assert_eq!(workspace_bytes, 200_000_000);
-        let one_worker = cube_slab_executor_scratch_bytes(&config, 0, 0, 1);
-        let four_workers = cube_slab_executor_scratch_bytes(&config, 0, 0, 4);
+        let product_writer_cache_bytes = cube_slab_product_writer_cache_resident_bytes(
+            config.imsize,
+            config.imsize,
+            8,
+            false,
+            true,
+        );
+        assert_eq!(
+            product_writer_cache_bytes,
+            2 * 8 * 1024 * 1024 + 8 * std::mem::size_of::<f32>()
+        );
+        assert_eq!(
+            cube_slab_product_writer_cache_resident_bytes(4096, 4096, 1024, false, true),
+            2 * 4096 * 4096 * std::mem::size_of::<f32>() + 1024 * std::mem::size_of::<f32>()
+        );
+        let one_worker = cube_slab_executor_scratch_bytes(&config, 0, 8, 0, 1);
+        let four_workers = cube_slab_executor_scratch_bytes(&config, 0, 8, 0, 4);
+        assert!(one_worker > product_writer_cache_bytes);
         assert!(one_worker > workspace_bytes);
         assert!(four_workers > one_worker.saturating_add(workspace_bytes.saturating_mul(2)));
     }
@@ -46306,7 +47106,7 @@ deconvolver=mtmfs
         ];
         let mut consumed = Vec::<(usize, String)>::new();
 
-        let elapsed = run_owned_independent_imaging_planes_with_consumer(
+        let stats = run_owned_independent_imaging_planes_with_consumer(
             tasks,
             3,
             |(delay_ms, label)| {
@@ -46320,7 +47120,9 @@ deconvolver=mtmfs
         )
         .unwrap();
 
-        assert!(elapsed >= Duration::ZERO);
+        assert_eq!(stats.completed, 3);
+        assert!(stats.elapsed >= Duration::ZERO);
+        assert!(stats.worker_elapsed_sum >= stats.worker_elapsed_max);
         assert_eq!(
             consumed,
             vec![
