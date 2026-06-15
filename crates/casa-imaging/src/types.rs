@@ -389,20 +389,6 @@ pub enum UvTaperSize {
     BaselineHwhmLambda(f64),
 }
 
-impl UvTaperSize {
-    fn validate(self, axis: &str) -> Result<(), ImagingError> {
-        let value = match self {
-            Self::ImageFwhmRad(value) | Self::BaselineHwhmLambda(value) => value,
-        };
-        if !(value.is_finite() && value > 0.0) {
-            return Err(ImagingError::InvalidRequest(format!(
-                "{axis} UV taper size must be finite and > 0"
-            )));
-        }
-        Ok(())
-    }
-}
-
 /// CASA-style Gaussian UV taper applied after imaging-weight calculation.
 ///
 /// This follows `casa::VisImagingWeight::setFilter()` / `filter()`: the taper
@@ -417,19 +403,6 @@ pub struct GaussianUvTaper {
     pub minor: UvTaperSize,
     /// Position angle in radians, zero along +y and increasing toward -x.
     pub position_angle_rad: f64,
-}
-
-impl GaussianUvTaper {
-    pub(crate) fn validate(self) -> Result<(), ImagingError> {
-        self.major.validate("major")?;
-        self.minor.validate("minor")?;
-        if !self.position_angle_rad.is_finite() {
-            return Err(ImagingError::InvalidRequest(
-                "UV taper position angle must be finite".to_string(),
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Compatibility target for the first imaging wave.
@@ -467,82 +440,6 @@ pub struct CubeModelInterpolationBatch {
     /// Model-channel contributions for each scalar sample in the paired
     /// visibility batch.
     pub sample_contributions: Vec<Vec<CubeModelChannelContribution>>,
-}
-
-/// One spectral plane of a cube-imaging request.
-///
-/// Each entry carries the already-selected scalar visibility batches for one
-/// output spectral plane, along with the cube-model interpolation state needed
-/// by the CASA-style major cycle when predicting visibilities for that plane.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CubeChannelRequest {
-    /// World frequency in Hz for this output spectral plane.
-    pub channel_frequency_hz: f64,
-    /// Chunked scalar visibility samples for this spectral plane.
-    pub visibility_batches: Vec<VisibilityBatch>,
-    /// Optional source-channel samples used only to build per-plane cube
-    /// weighting density.
-    pub density_batches: Vec<VisibilityBatch>,
-    /// Per-sample model-channel interpolation state used during cube
-    /// prediction and residual refresh.
-    pub model_interpolation_batches: Vec<CubeModelInterpolationBatch>,
-}
-
-impl CubeChannelRequest {
-    pub(crate) fn validate(&self, _require_model_interpolation: bool) -> Result<(), ImagingError> {
-        if !(self.channel_frequency_hz.is_finite() && self.channel_frequency_hz > 0.0) {
-            return Err(ImagingError::InvalidRequest(
-                "cube channel frequencies must be finite positive Hz".to_string(),
-            ));
-        }
-        if self.visibility_batches.is_empty() {
-            return Err(ImagingError::InvalidRequest(
-                "each cube channel requires at least one visibility batch".to_string(),
-            ));
-        }
-        for batch in &self.density_batches {
-            batch.validate()?;
-        }
-        for batch in &self.visibility_batches {
-            batch.validate()?;
-        }
-        if self.model_interpolation_batches.is_empty() {
-            return Ok(());
-        }
-        if self.model_interpolation_batches.len() != self.visibility_batches.len() {
-            return Err(ImagingError::InvalidRequest(format!(
-                "cube model interpolation batch count {} does not match visibility batch count {}",
-                self.model_interpolation_batches.len(),
-                self.visibility_batches.len()
-            )));
-        }
-        for (batch_index, (batch, interpolation)) in self
-            .visibility_batches
-            .iter()
-            .zip(self.model_interpolation_batches.iter())
-            .enumerate()
-        {
-            if interpolation.sample_contributions.len() != batch.len() {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "cube model interpolation batch {batch_index} length {} does not match visibility batch length {}",
-                    interpolation.sample_contributions.len(),
-                    batch.len()
-                )));
-            }
-            for (sample_index, sample_contributions) in
-                interpolation.sample_contributions.iter().enumerate()
-            {
-                for contribution in sample_contributions {
-                    if !(contribution.factor.is_finite() && contribution.factor >= 0.0) {
-                        return Err(ImagingError::InvalidRequest(format!(
-                            "cube model interpolation factor at batch {batch_index} sample {sample_index} must be finite and >= 0"
-                        )));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Minor-cycle deconvolver requested for the Cotton-Schwab controller.
@@ -1814,142 +1711,6 @@ impl Default for CubeAutoMultiThresholdConfig {
             min_percent_change: -1.0,
             fast_noise: true,
         }
-    }
-}
-
-/// Top-level request consumed by the pure imaging engine for spectral cubes.
-///
-/// Each output spectral plane is imaged independently through the same core
-/// controller used for MFS imaging and then stacked on a real spectral axis in
-/// CASA ordering. This cleaned-cube wave intentionally stays narrow: runtime
-/// Doppler/frame correction is still handled in the frontend adapter, and
-/// deconvolution support is currently limited to the point-source
-/// deconvolvers Hogbom and Clark.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CubeImagingRequest {
-    /// Requested two-dimensional geometry shared by every spectral plane.
-    pub geometry: ImageGeometry,
-    /// Ordered spectral planes to image. Their order is preserved in the
-    /// output cube's spectral axis.
-    pub channels: Vec<CubeChannelRequest>,
-    /// Scalar Stokes plane to produce.
-    pub plane_stokes: PlaneStokes,
-    /// Weighting policy applied independently to each channel plane.
-    pub weighting: WeightingMode,
-    /// Whether uniform/Briggs density estimates are shared or per plane.
-    pub weight_density_mode: WeightDensityMode,
-    /// Optional CASA-style Gaussian UV taper applied after weighting.
-    pub uv_taper: Option<GaussianUvTaper>,
-    /// Restoring-beam policy for the restored cube products.
-    pub restoring_beam_mode: RestoringBeamMode,
-    /// Requested minor-cycle deconvolver.
-    pub deconvolver: Deconvolver,
-    /// Requested multiscale kernel sizes in pixels.
-    ///
-    /// This is ignored by point-source deconvolvers. Under
-    /// [`Deconvolver::Multiscale`], an empty list defaults internally to the
-    /// CASA-style single point scale `[0]`.
-    pub multiscale_scales: Vec<f32>,
-    /// CASA-style multiscale selection bias shared by every plane.
-    ///
-    /// This follows the same semantics as [`ImagingRequest::small_scale_bias`].
-    pub small_scale_bias: f32,
-    /// Deconvolver-independent CLEAN and major/minor-cycle controls applied to
-    /// each spectral plane.
-    pub clean: CleanConfig,
-    /// Optional image-plane clean mask shared by every spectral plane. `true`
-    /// pixels are eligible for component picks.
-    pub clean_mask: Option<Array2<bool>>,
-    /// Optional CASA-style cube clean mask with shape `(nx, ny, 1, nchan)`.
-    ///
-    /// This represents masks that differ by output spectral channel, matching
-    /// CASA image-mask semantics. When both [`Self::clean_mask`] and this
-    /// field are present, a pixel must be true in both masks to be eligible.
-    pub channel_clean_mask: Option<Array4<bool>>,
-    /// Optional CASA `auto-multithresh` mask updates run inside the cube CLEAN
-    /// controller.
-    ///
-    /// The initial mask is generated from the first residual before any minor
-    /// iterations. Later major-cycle residual refreshes update the positive
-    /// mask and may grow existing mask regions, matching CASA's
-    /// `iterdone > 0` growth gate.
-    pub auto_mask: Option<CubeAutoMultiThresholdConfig>,
-    /// Restoring-beam fit cutoff used for each channel PSF.
-    pub psf_cutoff: f32,
-    /// Requested `w`-term handling mode.
-    pub w_term_mode: WTermMode,
-    /// Optional explicit `wproject` plane budget shared by every plane.
-    ///
-    /// Ignored unless [`Self::w_term_mode`] is [`WTermMode::WProject`].
-    pub w_project_planes: Option<usize>,
-    /// Declared compatibility target for the run.
-    pub compatibility: CompatibilityMode,
-}
-
-impl CubeImagingRequest {
-    pub(crate) fn validate(&self) -> Result<(), ImagingError> {
-        self.geometry.validate()?;
-        self.weighting.validate()?;
-        if let Some(taper) = self.uv_taper {
-            taper.validate()?;
-        }
-        self.clean.validate()?;
-        if !(self.psf_cutoff.is_finite() && (0.0..1.0).contains(&self.psf_cutoff)) {
-            return Err(ImagingError::InvalidRequest(
-                "psf_cutoff must be finite and in the interval [0, 1)".to_string(),
-            ));
-        }
-        for scale in &self.multiscale_scales {
-            if !(scale.is_finite() && *scale >= 0.0) {
-                return Err(ImagingError::InvalidRequest(
-                    "multiscale scales must be finite and >= 0 pixels".to_string(),
-                ));
-            }
-        }
-        if !(self.small_scale_bias.is_finite() && (-1.0..=1.0).contains(&self.small_scale_bias)) {
-            return Err(ImagingError::InvalidRequest(
-                "small_scale_bias must be finite and in the interval [-1, 1]".to_string(),
-            ));
-        }
-        if let Some(mask) = &self.clean_mask {
-            if mask.dim() != (self.geometry.nx(), self.geometry.ny()) {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "clean mask shape {:?} does not match image shape {:?}",
-                    mask.dim(),
-                    (self.geometry.nx(), self.geometry.ny())
-                )));
-            }
-        }
-        if let Some(mask) = &self.channel_clean_mask {
-            let expected = (
-                self.geometry.nx(),
-                self.geometry.ny(),
-                1,
-                self.channels.len(),
-            );
-            if mask.dim() != expected {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "channel clean mask shape {:?} does not match cube image shape {:?}",
-                    mask.dim(),
-                    expected
-                )));
-            }
-        }
-        if matches!(self.w_project_planes, Some(0)) {
-            return Err(ImagingError::InvalidRequest(
-                "w_project_planes must be >= 1 when provided".to_string(),
-            ));
-        }
-        if self.channels.is_empty() {
-            return Err(ImagingError::InvalidRequest(
-                "cube imaging requires at least one spectral plane".to_string(),
-            ));
-        }
-        let require_model_interpolation = self.clean.niter > 0;
-        for channel in &self.channels {
-            channel.validate(require_model_interpolation)?;
-        }
-        Ok(())
     }
 }
 

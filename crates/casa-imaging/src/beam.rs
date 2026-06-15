@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! PSF beam fitting and restoration helpers following CASA's `psfcutoff` flow.
 
-use casa_images::GaussianBeam;
 use ndarray::Array2;
 
 use crate::{BeamFit, BeamFitDebugSummary};
@@ -118,50 +117,6 @@ pub(crate) fn restore_model(
         return model.clone();
     };
     apply_kernel(model, &kernel)
-}
-
-pub(crate) fn rescale_residual_to_restored_beam(
-    residual: &Array2<f32>,
-    cell_size_rad: [f64; 2],
-    restored_beam: BeamFit,
-    fitted_psf_beam: BeamFit,
-) -> Result<Array2<f32>, String> {
-    let restored = beamfit_to_gaussian(restored_beam);
-    let fitted = beamfit_to_gaussian(fitted_psf_beam);
-    let Some(convolving_beam) = restored
-        .deconvolving_beam(fitted)
-        .map_err(|error| format!("deconvolve restoring beam: {error}"))?
-    else {
-        return Ok(residual.clone());
-    };
-    let pixel_width = cell_size_rad[0].hypot(cell_size_rad[1]);
-    if convolving_beam.minor <= pixel_width {
-        return Ok(residual.clone());
-    }
-    let Some(kernel) = gaussian_kernel(gaussian_to_beamfit(convolving_beam), cell_size_rad, true)
-    else {
-        return Ok(residual.clone());
-    };
-    let mut rescaled = apply_kernel(residual, &kernel);
-    let area_ratio = restored.area() / fitted.area();
-    rescaled.mapv_inplace(|value| (f64::from(value) * area_ratio) as f32);
-    Ok(rescaled)
-}
-
-pub(crate) fn beamfit_to_gaussian(beam: BeamFit) -> GaussianBeam {
-    GaussianBeam::new(
-        beam.major_fwhm_rad,
-        beam.minor_fwhm_rad,
-        beam.position_angle_rad,
-    )
-}
-
-pub(crate) fn gaussian_to_beamfit(beam: GaussianBeam) -> BeamFit {
-    BeamFit {
-        major_fwhm_rad: beam.major,
-        minor_fwhm_rad: beam.minor,
-        position_angle_rad: beam.position_angle,
-    }
 }
 
 fn apply_kernel(model: &Array2<f32>, kernel: &[(isize, isize, f32)]) -> Array2<f32> {

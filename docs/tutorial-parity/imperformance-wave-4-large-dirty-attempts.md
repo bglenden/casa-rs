@@ -476,12 +476,12 @@ Status: keep as a narrow feed-path improvement; rejected as the large dirty win
 
 Hypothesis: the direct dirty replay path was still paying generic extraction overhead for the common cube case where each output plane receives one source-channel contribution from `Complex32` DATA, `Float32` WEIGHT, and no WEIGHT_SPECTRUM. Whole-plane product writes are now efficient enough that removing per-sample enum matching, contribution-loop overhead, and paired-correlation helper calls should reduce the source-to-plane feed cost without changing the product layout.
 
-Implementation kept:
+Implementation kept at the time, then removed by the later shared-source simplification:
 
-- Added a typed read-only `DirectDirtyFastBlockAccess` over `VisibilityBuffer` DATA/FLAG/WEIGHT.
+- Added a typed read-only fast block accessor over `VisibilityBuffer` DATA/FLAG/WEIGHT.
 - Routed single-contribution explicit and collapsed-pair dirty samples through direct `Complex32`/`Float32` slice access.
 - Preserved the generic helper path for multiple contributions, Complex64, Float64, WEIGHT_SPECTRUM, and other uncommon cases.
-- Added `fast_samples` and `fallback_samples` to `cube_shared_direct_plane_replay` so medium/large runs show whether the hot path is active.
+- Added fast/fallback sample counters to `cube_shared_direct_plane_replay` so medium/large runs showed whether the hot path was active.
 
 Verification:
 

@@ -27,7 +27,6 @@
 use std::collections::{BTreeMap, HashMap};
 
 mod beam;
-mod cube;
 mod error;
 mod execution;
 mod fft;
@@ -47,16 +46,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use casa_images::ImageBeamSet;
 use casa_lattices::array_madfm;
 use libm::{erfc, j1};
 use ndarray::{Array2, Array4, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 
-use beam::{
-    BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
-    gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
-};
+use beam::{BeamFitOutcome, estimate_psf_sidelobe_level, fit_beam_from_psf, restore_model};
 #[cfg(all(target_os = "macos", not(coverage)))]
 use execution::{
     MtmfsMetalInputCache, StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill,
@@ -85,11 +80,7 @@ use weighting::{
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CubePredictionLambdaMode {
-    OutputChannel,
-    ModelChannel,
-}
+pub use trace::CubePredictionLambdaMode;
 
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
@@ -101,6 +92,23 @@ const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
 const STANDARD_MFS_INITIAL_DIRTY_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND";
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HogbomMinorCycleOutcome {
+    pub(crate) updated_model: bool,
+    pub(crate) actual_updates: usize,
+    pub(crate) reported_updates: usize,
+    pub(crate) stop_reason: Option<CleanStopReason>,
+    pub(crate) final_cycle_threshold_jy_per_beam: f32,
+    pub(crate) final_nsigma_threshold_jy_per_beam: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct MinorCycleProbe {
+    pub(crate) initial_scale_pixels: Option<f32>,
+    pub(crate) initial_candidate_strength_jy_per_beam: Option<f32>,
+    pub(crate) initial_candidate_position: Option<[usize; 2]>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StandardMfsBackendSelection {
     Cpu,
@@ -110,35 +118,31 @@ enum StandardMfsBackendSelection {
     MetalRowRunGrouped,
 }
 
-pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
-pub use cube::{run_cube, run_dirty_cube};
 pub(crate) use trace::{ResidualRefreshTraceInternal, ResidualSampleTraceInternal};
 pub use trace::{
     trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
-    trace_w_project_plan, trace_weighting,
+    trace_residual_refresh, trace_w_project_plan, trace_weighting,
 };
 
 pub use error::ImagingError;
 pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason,
     ColumnarComplexSamplesRef, ColumnarFloatSamplesRef, ColumnarVisibilitySourceRef,
-    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest,
-    CubeImagingDiagnostics, CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult, GaussianUvTaper,
-    GeometryRoutePlan, GridderMode, GridderRoutePlan, GroupedVisibilityMetadata,
-    GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
-    ImagingRequest, ImagingResult, ImagingSourceBlockView, ImagingSourcePartition,
-    ImagingSourcePartitionId, ImagingSourceShape, ImagingStageTimings, MinorCycleTrace,
-    ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult, OutputPlaneContribution,
-    ParallelHandBatch, PlaneStokes, PolarizationRoutePlan, PrimaryBeamModel, PsfBeamFitResult,
-    ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode, SourceChannelRoute,
-    SpectralRoutePlan, StandardMfsPairCollapseTransform, StandardMfsPlannedWeightedSample,
-    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsRoutableSample, StandardMfsRoutedSample,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
+    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
+    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+    DirtyImagingResult, GaussianUvTaper, GeometryRoutePlan, GridderMode, GridderRoutePlan,
+    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry,
+    ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingSourceBlockView,
+    ImagingSourcePartition, ImagingSourcePartitionId, ImagingSourceShape, ImagingStageTimings,
+    MinorCycleTrace, ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult,
+    OutputPlaneContribution, ParallelHandBatch, PlaneStokes, PolarizationRoutePlan,
+    PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics, ResidualSampleDiagnostics,
+    RestoringBeamMode, SourceChannelRoute, SpectralRoutePlan, StandardMfsPairCollapseTransform,
+    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsRoutedVisibilityRunBlock,
+    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
     WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
     WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingRoutePlan,
     WeightingSampleDiagnostics,
@@ -14574,39 +14578,6 @@ fn compute_mtmfs_alpha_products(
     (Some(alpha), Some(alpha_error))
 }
 
-fn select_restored_cube_beams(
-    fitted_beams: &[Option<BeamFit>],
-    mode: RestoringBeamMode,
-) -> Result<Vec<Option<BeamFit>>, ImagingError> {
-    match mode {
-        RestoringBeamMode::PerPlane => Ok(fitted_beams.to_vec()),
-        RestoringBeamMode::Common => {
-            let Some(first) = fitted_beams.iter().flatten().next().copied() else {
-                return Ok(vec![None; fitted_beams.len()]);
-            };
-            let mut beam_set =
-                ImageBeamSet::with_shape(fitted_beams.len().max(1), 1, beamfit_to_gaussian(first));
-            for (channel, beam) in fitted_beams.iter().enumerate() {
-                if let Some(beam) = beam {
-                    beam_set
-                        .set_beam(Some(channel), Some(0), beamfit_to_gaussian(*beam))
-                        .map_err(|error| {
-                            ImagingError::InvalidRequest(format!(
-                                "set common restoring beam input for channel {channel}: {error}"
-                            ))
-                        })?;
-                }
-            }
-            let common = beam_set.common_beam().map_err(|error| {
-                ImagingError::InvalidRequest(format!(
-                    "determine common restoring beam across cube planes: {error}"
-                ))
-            })?;
-            Ok(vec![Some(gaussian_to_beamfit(common)); fitted_beams.len()])
-        }
-    }
-}
-
 fn compute_psf(
     request: &ImagingRequest,
     batches: &[VisibilityBatch],
@@ -20730,13 +20701,6 @@ fn nsigma_threshold_jy_per_beam(
     }
 }
 
-fn global_nsigma_threshold_jy_per_beam(nsigma_thresholds_jy_per_beam: &[f32]) -> f32 {
-    nsigma_thresholds_jy_per_beam
-        .iter()
-        .copied()
-        .fold(0.0f32, f32::max)
-}
-
 fn residual_noise_values(
     residual: &Array2<f32>,
     clean_mask: Option<&Array2<bool>>,
@@ -21033,6 +20997,7 @@ fn peak_abs_value(image: &Array2<f32>) -> f32 {
         .fold(0.0f32, |best, value| best.max(value.abs()))
 }
 
+#[cfg(test)]
 fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
     CleanConfig {
         niter: 0,
@@ -21047,35 +21012,6 @@ fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
         max_psf_fraction: 0.8,
         hogbom_iteration_mode: HogbomIterationMode::Strict,
     }
-}
-
-fn add_stage_timings(total: &mut ImagingStageTimings, part: ImagingStageTimings) {
-    total.controller_overhead += part.controller_overhead;
-    total.weighting += part.weighting;
-    total.executor_build += part.executor_build;
-    total.psf_grid_alloc += part.psf_grid_alloc;
-    total.planned_sample_replay += part.planned_sample_replay;
-    total.grid_update += part.grid_update;
-    total.psf_grid += part.psf_grid;
-    total.psf_fft += part.psf_fft;
-    total.psf_image_correction += part.psf_image_correction;
-    total.psf_normalize += part.psf_normalize;
-    total.model_fft += part.model_fft;
-    total.residual_grid_alloc += part.residual_grid_alloc;
-    total.residual_degrid_grid += part.residual_degrid_grid;
-    total.residual_fft += part.residual_fft;
-    total.residual_image_correction += part.residual_image_correction;
-    total.residual_normalize += part.residual_normalize;
-    total.clean_cycle_setup += part.clean_cycle_setup;
-    total.deconvolver_setup += part.deconvolver_setup;
-    total.minor_cycle += part.minor_cycle;
-    total.minor_cycle_solve += part.minor_cycle_solve;
-    total.major_cycle_refresh += part.major_cycle_refresh;
-    total.residual_refresh_overhead += part.residual_refresh_overhead;
-    total.multiscale_scale_refresh += part.multiscale_scale_refresh;
-    total.beam_fit += part.beam_fit;
-    total.restore += part.restore;
-    total.total += part.total;
 }
 
 fn casa_major_cycle_count(refreshes: usize, clean_niter: usize) -> usize {
@@ -21112,13 +21048,12 @@ mod tests {
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::compute_dirty_psf_and_residual_standard_metal;
     use super::{
-        CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
-        CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
-        GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
-        ImageGeometry, ImagingRequest, ImagingStageTimings, MosaicGridderConfig, MtmfsRequest,
-        ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PsfState, RestoringBeamMode,
-        SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock, StandardGridder,
-        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
+        CleanConfig, CleanStopReason, CompatibilityMode, CubeModelChannelContribution,
+        CubeModelInterpolationBatch, Deconvolver, GridderMode, GroupedVisibilityMetadata,
+        GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImagingRequest,
+        ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes,
+        PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
+        StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
         StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
         StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
@@ -21131,15 +21066,14 @@ mod tests {
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
         mosaic_projector_sampling, parse_standard_mfs_backend_selection,
         parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
-        primary_beam_voltage_pattern_for_offsets, run_cube, run_dirty_cube, run_hogbom_minor_cycle,
-        run_imaging, run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        primary_beam_voltage_pattern_for_offsets, run_hogbom_minor_cycle, run_imaging,
+        run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
         run_standard_mfs_weighted_streaming_with_execution_config, tolerant_clean_stop_reason,
         trace_cube_channel_residual_refresh,
-        trace_cube_channel_residual_refresh_model_channel_lambda,
-        trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
+        trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
 
@@ -22375,17 +22309,22 @@ mod tests {
             .collect()
     }
 
+    struct TestCubeTraceChannel {
+        channel_frequency_hz: f64,
+        visibility_batches: Vec<VisibilityBatch>,
+        model_interpolation_batches: Vec<CubeModelInterpolationBatch>,
+    }
+
     fn cube_channel_request_identity(
         channel_frequency_hz: f64,
         visibility_batches: Vec<VisibilityBatch>,
         model_channel_index: usize,
-    ) -> CubeChannelRequest {
+    ) -> TestCubeTraceChannel {
         let model_interpolation_batches =
             identity_cube_model_interpolation_batches(model_channel_index, &visibility_batches);
-        CubeChannelRequest {
+        TestCubeTraceChannel {
             channel_frequency_hz,
             visibility_batches,
-            density_batches: Vec::new(),
             model_interpolation_batches,
         }
     }
@@ -23295,172 +23234,6 @@ mod tests {
     }
 
     #[test]
-    fn trace_cube_weighting_exposes_combined_density_and_taper_effects() {
-        let geometry = ImageGeometry {
-            image_shape: [64, 64],
-            cell_size_rad: [1.0e-4, 1.0e-4],
-        };
-        let make_batch = |weight: f32| VisibilityBatch {
-            u_lambda: vec![100.0],
-            v_lambda: vec![50.0],
-            w_lambda: vec![0.0],
-            weight: vec![weight],
-            sumwt_factor: vec![1.0],
-            gridable: vec![true],
-            visibility: vec![Complex32::new(1.0, 0.0)],
-        };
-        let diagnostics = trace_cube_weighting(&CubeImagingRequest {
-            geometry,
-            channels: vec![
-                cube_channel_request_identity(1.4e9, vec![make_batch(1.0)], 0),
-                cube_channel_request_identity(1.41e9, vec![make_batch(3.0)], 1),
-            ],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Uniform,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: Some(crate::GaussianUvTaper {
-                major: crate::UvTaperSize::BaselineHwhmLambda(50.0),
-                minor: crate::UvTaperSize::BaselineHwhmLambda(50.0),
-                position_angle_rad: 0.0,
-            }),
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: dirty_clean_config(0.35),
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert_eq!(diagnostics.len(), 2);
-        for diagnostic in &diagnostics {
-            assert_eq!(diagnostic.weighting, WeightingMode::Uniform);
-            assert_eq!(diagnostic.weight_density_mode, WeightDensityMode::Combined);
-            assert!(diagnostic.uv_taper.is_some());
-            assert_eq!(diagnostic.samples.len(), 1);
-            let sample = &diagnostic.samples[0];
-            assert_close_f32(sample.density_weight.unwrap(), 4.0, 1.0e-5);
-            assert!(sample.output_weight > 0.0);
-            assert!(sample.output_weight < sample.input_weight / 4.0);
-            assert_close_f32(
-                diagnostic.normalization_sumwt,
-                sample.normalization_contribution,
-                1.0e-6,
-            );
-            assert_close_f32(
-                diagnostic.reported_sumwt,
-                sample.reported_contribution,
-                1.0e-6,
-            );
-        }
-    }
-
-    #[test]
-    fn trace_cube_channel_w_project_plan_records_channel_specific_skips_and_validation() {
-        let geometry = ImageGeometry {
-            image_shape: [64, 64],
-            cell_size_rad: [4.0e-3, 4.0e-3],
-        };
-        let channel_zero = cube_channel_request_identity(
-            1.40e9,
-            vec![VisibilityBatch {
-                u_lambda: vec![5.0],
-                v_lambda: vec![6.0],
-                w_lambda: vec![7.0],
-                weight: vec![1.0],
-                sumwt_factor: vec![1.0],
-                gridable: vec![true],
-                visibility: vec![Complex32::new(9.0, 0.0)],
-            }],
-            0,
-        );
-        let channel_one = cube_channel_request_identity(
-            1.41e9,
-            vec![VisibilityBatch {
-                u_lambda: vec![15.0, 50_000.0, 0.0, 20.0],
-                v_lambda: vec![-20.0, 0.0, 0.0, 10.0],
-                w_lambda: vec![30.0, 40.0, 50.0, f64::NAN],
-                weight: vec![1.0, 2.0, 5.0, 1.0],
-                sumwt_factor: vec![1.0, 2.0, 3.0, 1.0],
-                gridable: vec![true, true, false, true],
-                visibility: vec![
-                    Complex32::new(1.0, 0.0),
-                    Complex32::new(2.0, 0.0),
-                    Complex32::new(5.0, 0.0),
-                    Complex32::new(1.0, 1.0),
-                ],
-            }],
-            1,
-        );
-        let request = CubeImagingRequest {
-            geometry,
-            channels: vec![channel_zero, channel_one],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::PerPlane,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: dirty_clean_config(0.35),
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::WProject,
-            w_project_planes: Some(8),
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        };
-
-        let trace = trace_cube_channel_w_project_plan(&request, 1).unwrap();
-
-        assert_eq!(trace.requested_plane_count, Some(8));
-        assert_eq!(trace.plane_count, 8);
-        assert_eq!(trace.gridded_samples, 1);
-        assert_eq!(trace.samples.len(), 1);
-        assert_eq!(trace.samples[0].sample_index, 0);
-        assert_eq!(trace.samples[0].u_lambda, 15.0);
-        assert_eq!(trace.samples[0].w_lambda, 30.0);
-        assert_eq!(trace.samples[0].sumwt_factor, 1.0);
-        assert_eq!(trace.skipped_samples.len(), 3);
-        assert_eq!(trace.skipped_samples[0].sample_index, 1);
-        assert_eq!(
-            trace.skipped_samples[0].reason,
-            WProjectSkipReason::OutsideGrid
-        );
-        assert_eq!(trace.skipped_samples[1].sample_index, 2);
-        assert_eq!(
-            trace.skipped_samples[1].reason,
-            WProjectSkipReason::NotGridable
-        );
-        assert_eq!(trace.skipped_samples[2].sample_index, 3);
-        assert_eq!(
-            trace.skipped_samples[2].reason,
-            WProjectSkipReason::InvalidInput
-        );
-        assert_eq!(trace.max_abs_w_lambda, 40.0);
-
-        assert_error_contains(
-            trace_cube_channel_w_project_plan(&request, 2),
-            "cube channel index 2 is out of range for 2 channels",
-        );
-
-        let mut standard_request = request.clone();
-        standard_request.w_term_mode = WTermMode::None;
-        assert_error_contains(
-            trace_cube_channel_w_project_plan(&standard_request, 1),
-            "trace_cube_channel_w_project_plan requires w_term_mode='wproject'",
-        );
-    }
-
-    #[test]
     fn trace_cube_channel_residual_refresh_validates_channel_and_model_planes() {
         let geometry = ImageGeometry {
             image_shape: [64, 64],
@@ -23489,32 +23262,44 @@ mod tests {
             )],
             1,
         );
-        let request = CubeImagingRequest {
+        let request = ImagingRequest {
             geometry,
-            channels: vec![channel_zero, channel_one],
+            visibility_batches: channel_one.visibility_batches.clone(),
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::PerPlane,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            reffreq_hz: channel_one.channel_frequency_hz,
+            selected_frequency_range_hz: [
+                channel_one.channel_frequency_hz,
+                channel_one.channel_frequency_hz,
+            ],
             deconvolver: Deconvolver::Hogbom,
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
+        let model_frequencies_hz = [
+            channel_zero.channel_frequency_hz,
+            channel_one.channel_frequency_hz,
+        ];
         let model_planes = vec![
             Array2::<f32>::zeros((64, 64)),
             Array2::<f32>::zeros((64, 64)),
         ];
 
-        let trace = trace_cube_channel_residual_refresh(&request, 1, &model_planes).unwrap();
+        let trace = trace_cube_channel_residual_refresh(
+            &request,
+            &channel_one.model_interpolation_batches,
+            1,
+            &model_planes,
+            &model_frequencies_hz,
+        )
+        .unwrap();
         assert_eq!(trace.samples.len(), samples.len());
         assert_eq!(trace.samples[0].batch_index, 0);
         assert_eq!(trace.samples[0].sample_index, 0);
@@ -23528,12 +23313,24 @@ mod tests {
         );
 
         assert_error_contains(
-            trace_cube_channel_residual_refresh(&request, 2, &model_planes),
-            "cube residual-refresh trace channel index 2 is out of range for 2 channels",
+            trace_cube_channel_residual_refresh(
+                &request,
+                &channel_one.model_interpolation_batches,
+                2,
+                &model_planes,
+                &model_frequencies_hz,
+            ),
+            "cube residual-refresh trace identity channel index 2 is out of range for 2 model planes",
         );
         assert_error_contains(
-            trace_cube_channel_residual_refresh(&request, 0, &model_planes[..1]),
-            "cube residual-refresh trace model plane count 1 does not match request channel count 2",
+            trace_cube_channel_residual_refresh(
+                &request,
+                &channel_one.model_interpolation_batches,
+                1,
+                &model_planes[..1],
+                &model_frequencies_hz,
+            ),
+            "cube residual-refresh trace model plane count 1 does not match model frequency count 2",
         );
 
         let wrong_shape_planes = vec![
@@ -23541,7 +23338,13 @@ mod tests {
             Array2::<f32>::zeros((32, 64)),
         ];
         assert_error_contains(
-            trace_cube_channel_residual_refresh(&request, 0, &wrong_shape_planes),
+            trace_cube_channel_residual_refresh(
+                &request,
+                &channel_one.model_interpolation_batches,
+                1,
+                &wrong_shape_planes,
+                &model_frequencies_hz,
+            ),
             "cube residual-refresh trace model plane 1 shape",
         );
     }
@@ -23562,10 +23365,9 @@ mod tests {
             gridable: vec![true, true, true],
             visibility: vec![Complex32::new(0.0, 0.0); 3],
         };
-        let channel_zero = CubeChannelRequest {
+        let channel_zero = TestCubeTraceChannel {
             channel_frequency_hz: 1.0e9,
             visibility_batches: vec![batch.clone()],
-            density_batches: Vec::new(),
             model_interpolation_batches: vec![CubeModelInterpolationBatch {
                 sample_contributions: (0..batch.len())
                     .map(|_| {
@@ -23578,37 +23380,53 @@ mod tests {
             }],
         };
         let channel_one = cube_channel_request_identity(1.8e9, vec![batch.clone()], 1);
-        let request = CubeImagingRequest {
+        let request = ImagingRequest {
             geometry,
-            channels: vec![channel_zero, channel_one],
+            visibility_batches: channel_zero.visibility_batches.clone(),
+            gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::PerPlane,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            reffreq_hz: channel_zero.channel_frequency_hz,
+            selected_frequency_range_hz: [
+                channel_zero.channel_frequency_hz,
+                channel_zero.channel_frequency_hz,
+            ],
             deconvolver: Deconvolver::Hogbom,
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
+        let model_frequencies_hz = [
+            channel_zero.channel_frequency_hz,
+            channel_one.channel_frequency_hz,
+        ];
         let mut model_planes = vec![
             Array2::<f32>::zeros((64, 64)),
             Array2::<f32>::zeros((64, 64)),
         ];
         model_planes[1][(35, 29)] = 1.0;
 
-        let output_lambda_trace =
-            trace_cube_channel_residual_refresh(&request, 0, &model_planes).unwrap();
-        let model_lambda_trace =
-            trace_cube_channel_residual_refresh_model_channel_lambda(&request, 0, &model_planes)
-                .unwrap();
+        let output_lambda_trace = trace_cube_channel_residual_refresh(
+            &request,
+            &channel_zero.model_interpolation_batches,
+            0,
+            &model_planes,
+            &model_frequencies_hz,
+        )
+        .unwrap();
+        let model_lambda_trace = trace_cube_channel_residual_refresh_model_channel_lambda(
+            &request,
+            &channel_zero.model_interpolation_batches,
+            0,
+            &model_planes,
+            &model_frequencies_hz,
+        )
+        .unwrap();
 
         assert_eq!(output_lambda_trace.samples.len(), batch.len());
         assert_eq!(model_lambda_trace.samples.len(), batch.len());
@@ -24484,634 +24302,6 @@ mod tests {
         for (a, b) in full.image.iter().zip(streamed.image.iter()) {
             assert!((a - b).abs() < 1.0e-5);
         }
-    }
-
-    #[test]
-    fn dirty_cube_stacks_channel_planes_on_spectral_axis() {
-        let geometry = ImageGeometry {
-            image_shape: [32, 32],
-            cell_size_rad: [1.5e-4, 1.5e-4],
-        };
-        let samples = [(20.0, -10.0, 0.0), (-15.0, 25.0, 0.0), (30.0, 12.0, 0.0)];
-        let channel_a = cube_channel_request_identity(
-            1.40e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (16.0, 16.0),
-                1.0,
-            )],
-            0,
-        );
-        let channel_b = cube_channel_request_identity(
-            1.41e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (18.0, 14.0),
-                2.0,
-            )],
-            1,
-        );
-
-        let result = run_dirty_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![channel_a, channel_b],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: dirty_clean_config(0.35),
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert_eq!(result.image.shape(), &[32, 32, 1, 2]);
-        assert_eq!(result.sumwt.shape(), &[1, 1, 1, 2]);
-        assert_eq!(
-            result.compatibility.channel_frequencies_hz,
-            vec![1.40e9, 1.41e9]
-        );
-        assert!(result.sumwt[(0, 0, 0, 0)] > 0.0);
-        assert!(result.sumwt[(0, 0, 0, 1)] > 0.0);
-        let plane_difference = (&result.image.slice(s![.., .., 0, 0])
-            - &result.image.slice(s![.., .., 0, 1]))
-            .iter()
-            .map(|value| value.abs())
-            .fold(0.0f32, f32::max);
-        assert!(plane_difference > 1.0e-3);
-        assert_eq!(result.beams.len(), 2);
-        assert_eq!(result.diagnostics.channel_diagnostics.len(), 2);
-    }
-
-    #[test]
-    fn dirty_cube_allows_blank_planes_from_empty_channel_batches() {
-        let geometry = ImageGeometry {
-            image_shape: [32, 32],
-            cell_size_rad: [1.5e-4, 1.5e-4],
-        };
-        let samples = [(20.0, -10.0, 0.0), (-15.0, 25.0, 0.0), (30.0, 12.0, 0.0)];
-        let populated = cube_channel_request_identity(
-            1.40e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (16.0, 16.0),
-                1.0,
-            )],
-            0,
-        );
-        let blank = cube_channel_request_identity(
-            1.45e9,
-            vec![VisibilityBatch {
-                u_lambda: Vec::new(),
-                v_lambda: Vec::new(),
-                w_lambda: Vec::new(),
-                weight: Vec::new(),
-                sumwt_factor: Vec::new(),
-                gridable: Vec::new(),
-                visibility: Vec::new(),
-            }],
-            1,
-        );
-
-        let result = run_dirty_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![populated, blank],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: dirty_clean_config(0.35),
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(result.sumwt[(0, 0, 0, 0)] > 0.0);
-        assert_eq!(result.sumwt[(0, 0, 0, 1)], 0.0);
-        assert_eq!(
-            peak_abs_value(&result.image.slice(s![.., .., 0, 1]).to_owned()),
-            0.0
-        );
-        assert!(result.beams[1].is_none());
-    }
-
-    #[test]
-    fn hogbom_cube_cleans_each_channel_independently() {
-        let geometry = ImageGeometry {
-            image_shape: [48, 48],
-            cell_size_rad: [1.2e-4, 1.2e-4],
-        };
-        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = cube_channel_request_identity(
-            1.40e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (24.0, 24.0),
-                1.0,
-            )],
-            0,
-        );
-        let channel_b = cube_channel_request_identity(
-            1.41e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (26.0, 22.0),
-                1.5,
-            )],
-            1,
-        );
-
-        let result = run_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![channel_a, channel_b],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: CleanConfig {
-                niter: 20,
-                major_cycle_limit: None,
-                gain: 0.1,
-                threshold_jy_per_beam: 0.0,
-                nsigma: 0.0,
-                psf_cutoff: 0.35,
-                minor_cycle_length: 2,
-                cyclefactor: 1.0,
-                min_psf_fraction: 0.05,
-                max_psf_fraction: 0.8,
-                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-            },
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 0]).to_owned()) > 1.0e-3);
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 1]).to_owned()) > 1.0e-3);
-        assert!(
-            result.diagnostics.channel_diagnostics[0].minor_iterations > 0,
-            "expected cube plane 0 to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].minor_iterations > 0,
-            "expected cube plane 1 to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[0].major_cycles > 0,
-            "expected cube plane 0 to refresh residuals"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].major_cycles > 0,
-            "expected cube plane 1 to refresh residuals"
-        );
-    }
-
-    #[test]
-    fn cube_channel_clean_mask_restricts_only_selected_channels() {
-        let geometry = ImageGeometry {
-            image_shape: [48, 48],
-            cell_size_rad: [1.2e-4, 1.2e-4],
-        };
-        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = cube_channel_request_identity(
-            1.40e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (24.0, 24.0),
-                1.0,
-            )],
-            0,
-        );
-        let channel_b = cube_channel_request_identity(
-            1.41e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (26.0, 22.0),
-                1.5,
-            )],
-            1,
-        );
-        let mut channel_mask = Array4::<bool>::from_elem((48, 48, 1, 2), false);
-        channel_mask[(24, 24, 0, 0)] = true;
-
-        let result = run_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![channel_a, channel_b],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: CleanConfig {
-                niter: 8,
-                major_cycle_limit: None,
-                gain: 0.1,
-                threshold_jy_per_beam: 0.0,
-                nsigma: 0.0,
-                psf_cutoff: 0.35,
-                minor_cycle_length: 2,
-                cyclefactor: 1.0,
-                min_psf_fraction: 0.05,
-                max_psf_fraction: 0.8,
-                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-            },
-            clean_mask: None,
-            channel_clean_mask: Some(channel_mask),
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 0]).to_owned()) > 1.0e-3);
-        assert_eq!(
-            peak_abs_value(&result.model.slice(s![.., .., 0, 1]).to_owned()),
-            0.0,
-            "channel 1 should not clean from channel 0's mask"
-        );
-        assert_eq!(
-            result.diagnostics.channel_diagnostics[0].clean_mask_pixels,
-            1
-        );
-        assert_eq!(
-            result.diagnostics.channel_diagnostics[1].clean_mask_pixels,
-            0
-        );
-    }
-
-    #[test]
-    fn cube_hogbom_can_report_more_iterations_than_niter_with_multiple_planes() {
-        let geometry = ImageGeometry {
-            image_shape: [48, 48],
-            cell_size_rad: [1.2e-4, 1.2e-4],
-        };
-        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let make_channel = |freq_hz, center, model_channel_index| {
-            cube_channel_request_identity(
-                freq_hz,
-                vec![point_source_visibilities(
-                    &samples,
-                    geometry.cell_size_rad[0],
-                    geometry.image_shape,
-                    center,
-                    1.0,
-                )],
-                model_channel_index,
-            )
-        };
-        let result = run_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![
-                make_channel(1.40e9, (24.0, 24.0), 0),
-                make_channel(1.41e9, (26.0, 22.0), 1),
-                make_channel(1.42e9, (20.0, 28.0), 2),
-            ],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: CleanConfig {
-                niter: 1,
-                major_cycle_limit: None,
-                gain: 0.1,
-                threshold_jy_per_beam: 0.0,
-                nsigma: 0.0,
-                psf_cutoff: 0.35,
-                minor_cycle_length: 2,
-                cyclefactor: 1.0,
-                min_psf_fraction: 0.05,
-                max_psf_fraction: 0.8,
-                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-            },
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(
-            result.diagnostics.minor_iterations > 1,
-            "cube controller should spend one full cycle budget per plane before checking niter"
-        );
-    }
-
-    #[test]
-    fn cube_major_cycle_refreshes_planes_with_cross_channel_model_dependencies() {
-        let geometry = ImageGeometry {
-            image_shape: [48, 48],
-            cell_size_rad: [1.2e-4, 1.2e-4],
-        };
-        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel0_batch = point_source_visibilities(
-            &samples,
-            geometry.cell_size_rad[0],
-            geometry.image_shape,
-            (24.0, 24.0),
-            1.0,
-        );
-        let mut channel1_batch = channel0_batch.clone();
-        for visibility in &mut channel1_batch.visibility {
-            *visibility = Complex32::new(0.0, 0.0);
-        }
-        let channel0 = cube_channel_request_identity(1.40e9, vec![channel0_batch.clone()], 0);
-        let channel1 = CubeChannelRequest {
-            channel_frequency_hz: 1.41e9,
-            visibility_batches: vec![channel1_batch.clone()],
-            density_batches: Vec::new(),
-            model_interpolation_batches: identity_cube_model_interpolation_batches(
-                0,
-                &[channel1_batch],
-            ),
-        };
-
-        let result = run_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![channel0, channel1],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Hogbom,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: CleanConfig {
-                niter: 4,
-                major_cycle_limit: None,
-                gain: 0.2,
-                threshold_jy_per_beam: 0.0,
-                nsigma: 0.0,
-                psf_cutoff: 0.35,
-                minor_cycle_length: 1,
-                cyclefactor: 1.0,
-                min_psf_fraction: 0.0,
-                max_psf_fraction: 0.0,
-                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-            },
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(
-            result.diagnostics.channel_diagnostics[0].minor_iterations > 0,
-            "expected driving channel to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].major_cycles > 0,
-            "expected dependent channel to refresh after channel 0 model updates"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].final_residual_peak_jy_per_beam > 0.0,
-            "expected dependent channel residual to reflect the refreshed cross-channel prediction"
-        );
-    }
-
-    #[test]
-    fn clark_cube_cleans_each_channel_independently() {
-        let geometry = ImageGeometry {
-            image_shape: [48, 48],
-            cell_size_rad: [1.2e-4, 1.2e-4],
-        };
-        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = cube_channel_request_identity(
-            1.40e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (24.0, 24.0),
-                1.0,
-            )],
-            0,
-        );
-        let channel_b = cube_channel_request_identity(
-            1.41e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (26.0, 22.0),
-                1.5,
-            )],
-            1,
-        );
-
-        let result = run_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![channel_a, channel_b],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Clark,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            clean: CleanConfig {
-                niter: 20,
-                major_cycle_limit: None,
-                gain: 0.1,
-                threshold_jy_per_beam: 0.0,
-                nsigma: 0.0,
-                psf_cutoff: 0.35,
-                minor_cycle_length: 2,
-                cyclefactor: 1.0,
-                min_psf_fraction: 0.05,
-                max_psf_fraction: 0.8,
-                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-            },
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 0]).to_owned()) > 1.0e-3);
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 1]).to_owned()) > 1.0e-3);
-        assert!(
-            result.diagnostics.channel_diagnostics[0].minor_iterations > 0,
-            "expected cube Clark plane 0 to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].minor_iterations > 0,
-            "expected cube Clark plane 1 to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[0].major_cycles > 0,
-            "expected cube Clark plane 0 to refresh residuals"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].major_cycles > 0,
-            "expected cube Clark plane 1 to refresh residuals"
-        );
-        assert!(
-            result
-                .diagnostics
-                .channel_diagnostics
-                .iter()
-                .map(|diagnostics| diagnostics.minor_iterations)
-                .sum::<usize>()
-                <= 20,
-            "cube Clark should respect the shared cube niter budget"
-        );
-    }
-
-    #[test]
-    fn multiscale_cube_cleans_each_channel_independently() {
-        let geometry = ImageGeometry {
-            image_shape: [48, 48],
-            cell_size_rad: [1.2e-4, 1.2e-4],
-        };
-        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
-        let channel_a = cube_channel_request_identity(
-            1.40e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (24.0, 24.0),
-                1.0,
-            )],
-            0,
-        );
-        let channel_b = cube_channel_request_identity(
-            1.41e9,
-            vec![point_source_visibilities(
-                &samples,
-                geometry.cell_size_rad[0],
-                geometry.image_shape,
-                (26.0, 22.0),
-                1.5,
-            )],
-            1,
-        );
-
-        let result = run_cube(&CubeImagingRequest {
-            geometry,
-            channels: vec![channel_a, channel_b],
-            plane_stokes: PlaneStokes::I,
-            weighting: WeightingMode::Natural,
-            weight_density_mode: WeightDensityMode::Combined,
-            uv_taper: None,
-            restoring_beam_mode: RestoringBeamMode::PerPlane,
-            deconvolver: Deconvolver::Multiscale,
-            multiscale_scales: vec![0.0, 4.0],
-            small_scale_bias: 0.0,
-            clean: CleanConfig {
-                niter: 20,
-                major_cycle_limit: None,
-                gain: 0.1,
-                threshold_jy_per_beam: 0.0,
-                nsigma: 0.0,
-                psf_cutoff: 0.35,
-                minor_cycle_length: 2,
-                cyclefactor: 1.0,
-                min_psf_fraction: 0.05,
-                max_psf_fraction: 0.8,
-                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-            },
-            clean_mask: None,
-            channel_clean_mask: None,
-            auto_mask: None,
-            psf_cutoff: 0.35,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        })
-        .unwrap();
-
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 0]).to_owned()) > 1.0e-3);
-        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 1]).to_owned()) > 1.0e-3);
-        assert!(
-            result.diagnostics.channel_diagnostics[0].minor_iterations > 0,
-            "expected cube multiscale plane 0 to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].minor_iterations > 0,
-            "expected cube multiscale plane 1 to clean"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[0].major_cycles > 0,
-            "expected cube multiscale plane 0 to refresh residuals"
-        );
-        assert!(
-            result.diagnostics.channel_diagnostics[1].major_cycles > 0,
-            "expected cube multiscale plane 1 to refresh residuals"
-        );
-        assert!(
-            result
-                .diagnostics
-                .channel_diagnostics
-                .iter()
-                .map(|diagnostics| diagnostics.minor_iterations)
-                .sum::<usize>()
-                <= 20,
-            "cube multiscale should respect the shared cube niter budget"
-        );
     }
 
     #[test]
