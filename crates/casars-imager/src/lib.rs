@@ -2713,18 +2713,11 @@ fn plan_cube_per_plane_execution(
     if cfg!(target_os = "macos") && !metal_device_available {
         fallback_reasons.push("metal_device_unavailable");
     }
-    if metal_eligible
-        && !matches!(
-            config.standard_mfs_acceleration,
-            StandardMfsAccelerationPolicy::Metal
-        )
-    {
-        fallback_reasons.push("metal_requires_explicit_policy_for_cube_clean");
-    }
-
     let selected_backend = match config.standard_mfs_acceleration {
         StandardMfsAccelerationPolicy::Cpu => PerPlaneExecutionBackend::SerialCpu,
-        StandardMfsAccelerationPolicy::Metal if metal_eligible => {
+        StandardMfsAccelerationPolicy::Auto | StandardMfsAccelerationPolicy::Metal
+            if metal_eligible =>
+        {
             PerPlaneExecutionBackend::Wave3MetalGrouped
         }
         StandardMfsAccelerationPolicy::Auto
@@ -39558,10 +39551,17 @@ mod tests {
         let plan = plan_cube_per_plane_execution(&config, output_planes, hardware_threads);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
-        assert_eq!(
-            plan.selected_backend,
-            PerPlaneExecutionBackend::Wave3FixedTileCpu
-        );
+        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3MetalGrouped
+            );
+        } else {
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3FixedTileCpu
+            );
+        }
         assert!(plan.fixed_tile_cpu_eligible);
         assert_eq!(plan.per_plane_grid_threads, 1);
     }
