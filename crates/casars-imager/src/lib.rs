@@ -1232,7 +1232,7 @@ pub fn run_spectral_plan_probe_from_config(config: &CliConfig) -> Result<RunSumm
     let total_start = Instant::now();
     let stage_start = Instant::now();
     let ms_paths = measurement_set_paths(config)?;
-    if !can_run_standard_cube_slab_dirty(config, false, ms_paths.len()) {
+    if !can_run_standard_cube_slab(config, false, ms_paths.len()) {
         return Err(format!(
             "spectral plan probe currently targets the standard cube slab planner: {}",
             bounded_source_stream_rejection(config, false, ms_paths.len())
@@ -2311,7 +2311,7 @@ fn run_single_image_from_config_with_gridder_override(
     );
     eprintln!("{}", single_plane_plan.log_line());
     let standard_cube_slab_eligible =
-        can_run_standard_cube_slab_dirty(config, force_standard_gridder, ms_paths.len());
+        can_run_standard_cube_slab(config, force_standard_gridder, ms_paths.len());
     let _standard_mfs_runtime_plan = if standard_cube_slab_eligible {
         None
     } else {
@@ -2593,7 +2593,7 @@ fn can_run_mosaic_cube_one_channel_from_bounded_stream(
         && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
 }
 
-fn can_run_standard_cube_slab_dirty(
+fn can_run_standard_cube_slab(
     config: &CliConfig,
     _force_standard_gridder: bool,
     ms_count: usize,
@@ -2626,6 +2626,189 @@ fn can_run_standard_cube_slab_dirty(
             config.deconvolver,
             Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
         )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PerPlaneExecutionPhase {
+    DirtyControl,
+    CleanDeconvolution,
+}
+
+impl PerPlaneExecutionPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DirtyControl => "dirty_control",
+            Self::CleanDeconvolution => "clean_deconvolution",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PerPlaneExecutionBackend {
+    SerialCpu,
+    Wave3FixedTileCpu,
+    Wave3MetalGrouped,
+}
+
+impl PerPlaneExecutionBackend {
+    fn label(self) -> &'static str {
+        match self {
+            Self::SerialCpu => "serial_cpu",
+            Self::Wave3FixedTileCpu => "wave3_fixed_tile_cpu",
+            Self::Wave3MetalGrouped => "wave3_metal_grouped",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PerPlaneExecutionEligibility {
+    phase: PerPlaneExecutionPhase,
+    selected_backend: PerPlaneExecutionBackend,
+    fixed_tile_cpu_eligible: bool,
+    metal_eligible: bool,
+    metal_device_available: bool,
+    plane_worker_count: usize,
+    per_plane_grid_threads: usize,
+    fallback_reasons: Vec<&'static str>,
+}
+
+fn plan_cube_per_plane_execution(
+    config: &CliConfig,
+    output_planes: usize,
+    plane_worker_count: usize,
+) -> PerPlaneExecutionEligibility {
+    let phase = if clean_is_dirty(config) {
+        PerPlaneExecutionPhase::DirtyControl
+    } else {
+        PerPlaneExecutionPhase::CleanDeconvolution
+    };
+    let fixed_tile_cpu_eligible = matches!(phase, PerPlaneExecutionPhase::CleanDeconvolution)
+        && matches!(config.w_term_mode, WTermMode::None)
+        && matches!(
+            config.deconvolver,
+            Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
+        );
+    let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
+    let metal_eligible = fixed_tile_cpu_eligible
+        && cfg!(target_os = "macos")
+        && metal_device_available
+        && matches!(
+            config.deconvolver,
+            Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
+        );
+
+    let mut fallback_reasons = Vec::new();
+    if matches!(phase, PerPlaneExecutionPhase::DirtyControl) {
+        fallback_reasons.push("dirty_control_uses_dirty_backend");
+    }
+    if !matches!(config.w_term_mode, WTermMode::None) {
+        fallback_reasons.push("wterm_not_single_plane_standard");
+    }
+    if !fixed_tile_cpu_eligible && matches!(phase, PerPlaneExecutionPhase::CleanDeconvolution) {
+        fallback_reasons.push("wave3_fixed_tile_cpu_not_semantically_equivalent");
+    }
+    if !cfg!(target_os = "macos") {
+        fallback_reasons.push("metal_requires_macos");
+    }
+    if cfg!(target_os = "macos") && !metal_device_available {
+        fallback_reasons.push("metal_device_unavailable");
+    }
+    if metal_eligible
+        && !matches!(
+            config.standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Metal
+        )
+    {
+        fallback_reasons.push("metal_requires_explicit_policy_for_cube_clean");
+    }
+
+    let selected_backend = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Cpu => PerPlaneExecutionBackend::SerialCpu,
+        StandardMfsAccelerationPolicy::Metal if metal_eligible => {
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        }
+        StandardMfsAccelerationPolicy::Auto
+        | StandardMfsAccelerationPolicy::MultiCpu
+        | StandardMfsAccelerationPolicy::Metal
+            if fixed_tile_cpu_eligible =>
+        {
+            PerPlaneExecutionBackend::Wave3FixedTileCpu
+        }
+        StandardMfsAccelerationPolicy::Auto
+        | StandardMfsAccelerationPolicy::MultiCpu
+        | StandardMfsAccelerationPolicy::Metal => PerPlaneExecutionBackend::SerialCpu,
+    };
+
+    let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
+    let plane_worker_count = plane_worker_count.max(1).min(output_planes.max(1));
+    let per_plane_grid_threads = if output_planes <= plane_worker_count {
+        hardware_threads
+            .checked_div(plane_worker_count)
+            .unwrap_or(1)
+            .clamp(1, 4)
+    } else {
+        1
+    };
+
+    PerPlaneExecutionEligibility {
+        phase,
+        selected_backend,
+        fixed_tile_cpu_eligible,
+        metal_eligible,
+        metal_device_available,
+        plane_worker_count,
+        per_plane_grid_threads,
+        fallback_reasons,
+    }
+}
+
+fn cube_per_plane_runtime_config(
+    config: &CliConfig,
+    eligibility: &PerPlaneExecutionEligibility,
+) -> CliConfig {
+    let mut plane_config = config.clone();
+    plane_config.spectral_mode = SpectralMode::Mfs;
+    plane_config.cube_axis = CubeAxisConfig::default();
+    plane_config.channel_start = None;
+    plane_config.channel_count = None;
+    plane_config.per_channel_weight_density = false;
+    plane_config.standard_mfs_grid_threads =
+        Some(eligibility.per_plane_grid_threads.max(1).to_string());
+    plane_config.standard_mfs_acceleration = match eligibility.selected_backend {
+        PerPlaneExecutionBackend::SerialCpu => StandardMfsAccelerationPolicy::Cpu,
+        PerPlaneExecutionBackend::Wave3FixedTileCpu => StandardMfsAccelerationPolicy::MultiCpu,
+        PerPlaneExecutionBackend::Wave3MetalGrouped => StandardMfsAccelerationPolicy::Metal,
+    };
+    plane_config
+}
+
+fn apply_cube_per_plane_runtime_plan(
+    config: &CliConfig,
+    output_planes: usize,
+    plane_worker_count: usize,
+) -> StandardMfsRuntimePlanGuard {
+    let eligibility = plan_cube_per_plane_execution(config, output_planes, plane_worker_count);
+    let fallback_reasons = if eligibility.fallback_reasons.is_empty() {
+        "none".to_string()
+    } else {
+        eligibility.fallback_reasons.join(",")
+    };
+    eprintln!(
+        "cube_per_plane_backend_summary phase={} output_planes={} plane_worker_count={} per_plane_grid_threads={} policy={} selected_backend={} fixed_tile_cpu_eligible={} metal_eligible={} metal_device_available={} deconvolver={:?} fallback_reasons={}",
+        eligibility.phase.label(),
+        output_planes,
+        eligibility.plane_worker_count,
+        eligibility.per_plane_grid_threads,
+        standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
+        eligibility.selected_backend.label(),
+        eligibility.fixed_tile_cpu_eligible,
+        eligibility.metal_eligible,
+        eligibility.metal_device_available,
+        config.deconvolver,
+        fallback_reasons,
+    );
+    let plane_config = cube_per_plane_runtime_config(config, &eligibility);
+    apply_standard_mfs_runtime_plan(&plane_config, true, 1)
 }
 
 struct SpectralSlabMemoryLogger {
@@ -5854,6 +6037,8 @@ fn run_standard_cube_slab_from_open_ms(
         .ok_or_else(|| "standard cube slab runner requires explicit channel_count".to_string())?;
     let channel_start = effective_cube_channel_start(config)?;
     let worker_capacity = cube_slab_plane_worker_capacity(config, nplanes);
+    let _cube_per_plane_runtime_plan =
+        apply_cube_per_plane_runtime_plan(config, nplanes, worker_capacity);
     let data_description = ms
         .data_description()
         .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
@@ -6852,7 +7037,7 @@ trait MultiPlaneDiagnosticsAggregator<R> {
     fn add_plane_group(&mut self, plane_start: usize, result: R) -> Result<(), String>;
 }
 
-struct IndependentImagingPlaneTask<T> {
+struct PlaneTask<T> {
     plane_index: usize,
     payload: T,
 }
@@ -6879,7 +7064,7 @@ struct IndependentStreamingExecutorStats {
 
 #[cfg(test)]
 fn run_owned_independent_imaging_planes<T, R, F>(
-    tasks: Vec<IndependentImagingPlaneTask<T>>,
+    tasks: Vec<PlaneTask<T>>,
     worker_count: usize,
     run_plane: F,
 ) -> Result<(Vec<IndependentImagingPlaneResult<R>>, Duration), String>
@@ -6899,7 +7084,7 @@ where
             .into_iter()
             .enumerate()
             .rev()
-            .collect::<Vec<(usize, IndependentImagingPlaneTask<T>)>>(),
+            .collect::<Vec<(usize, PlaneTask<T>)>>(),
     );
     let stop_workers = AtomicBool::new(false);
     let (result_tx, result_rx) =
@@ -7020,7 +7205,7 @@ where
 }
 
 fn run_owned_independent_imaging_planes_with_consumer<T, R, F, C>(
-    tasks: Vec<IndependentImagingPlaneTask<T>>,
+    tasks: Vec<PlaneTask<T>>,
     worker_count: usize,
     run_plane: F,
     mut consume_result: C,
@@ -7045,7 +7230,7 @@ where
             .into_iter()
             .enumerate()
             .rev()
-            .collect::<Vec<(usize, IndependentImagingPlaneTask<T>)>>(),
+            .collect::<Vec<(usize, PlaneTask<T>)>>(),
     );
     let stop_workers = AtomicBool::new(false);
     let (result_tx, result_rx) =
@@ -9031,7 +9216,7 @@ fn run_independent_shared_cube_slab_planes(
             .enumerate()
             .map(|(plane_offset, channel_frequency_hz)| {
                 let plane_index = slab_plane_start + plane_offset;
-                IndependentImagingPlaneTask {
+                PlaneTask {
                     plane_index,
                     payload: DirectDirtyCubePlaneTaskPayload {
                         plane_index,
@@ -9321,7 +9506,7 @@ fn run_independent_shared_cube_slab_planes(
         .enumerate()
         .map(|(plane_offset, (channel, gridder_mode))| {
             let plane_index = slab_plane_start + plane_offset;
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index,
                 payload: SharedCubePlaneTaskPayload {
                     plane_index,
@@ -13277,7 +13462,6 @@ fn cube_slab_plane_worker_capacity(config: &CliConfig, output_planes: usize) -> 
         .standard_mfs_grid_threads
         .as_deref()
         .and_then(parse_standard_mfs_grid_threads)
-        .or_else(env_standard_mfs_grid_threads)
         .unwrap_or_else(|| cube_slab_auto_plane_workers(output_planes))
         .max(1)
 }
@@ -39344,6 +39528,190 @@ mod tests {
     }
 
     #[test]
+    fn cube_clean_per_plane_execution_uses_plane_workers_before_intra_plane_threads() {
+        let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
+        let output_planes = hardware_threads.saturating_mul(2).max(2);
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from(output_planes.to_string()),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse cube clean config");
+
+        let plan = plan_cube_per_plane_execution(&config, output_planes, hardware_threads);
+
+        assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::Wave3FixedTileCpu
+        );
+        assert!(plan.fixed_tile_cpu_eligible);
+        assert_eq!(plan.per_plane_grid_threads, 1);
+    }
+
+    #[test]
+    fn cube_clean_per_plane_execution_reports_metal_eligibility_or_rejection() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("4"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("metal"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse cube clean metal config");
+
+        let plan = plan_cube_per_plane_execution(&config, 4, 4);
+
+        assert!(plan.fixed_tile_cpu_eligible);
+        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
+            assert!(plan.metal_eligible);
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3MetalGrouped
+            );
+        } else {
+            assert!(!plan.metal_eligible);
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3FixedTileCpu
+            );
+            assert!(
+                plan.fallback_reasons
+                    .iter()
+                    .any(|reason| reason.starts_with("metal_"))
+            );
+        }
+    }
+
+    #[test]
+    fn cube_per_plane_runtime_plan_installs_wave3_backend_without_capping_plane_workers() {
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+        let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
+        let output_planes = hardware_threads.saturating_mul(2).max(2);
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from(output_planes.to_string()),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("multi-cpu"),
+            OsString::from("--niter"),
+            OsString::from("150"),
+        ])
+        .expect("parse cube clean multi-cpu config");
+
+        {
+            let _plan = apply_cube_per_plane_runtime_plan(&config, output_planes, hardware_threads);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
+                Ok("fixed_tile")
+            );
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").as_deref(),
+                Ok("1")
+            );
+            assert_eq!(
+                cube_slab_plane_worker_capacity(&config, output_planes),
+                hardware_threads.min(output_planes).max(1)
+            );
+        }
+
+        assert!(env::var_os("CASA_RS_STANDARD_MFS_BACKEND").is_none());
+        assert!(env::var_os("CASA_RS_STANDARD_MFS_GRID_THREADS").is_none());
+    }
+
+    #[test]
+    fn dirty_cube_per_plane_execution_is_diagnostic_control_not_clean_backend() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--dirty-only"),
+        ])
+        .expect("parse dirty cube config");
+
+        let plan = plan_cube_per_plane_execution(&config, 8, 4);
+
+        assert_eq!(plan.phase, PerPlaneExecutionPhase::DirtyControl);
+        assert_eq!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
+        assert!(!plan.fixed_tile_cpu_eligible);
+        assert!(
+            plan.fallback_reasons
+                .contains(&"dirty_control_uses_dirty_backend")
+        );
+    }
+
+    #[test]
     fn mosaic_mfs_multi_cpu_runtime_planner_uses_four_workers_when_available() {
         let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
             .lock()
@@ -47831,15 +48199,15 @@ deconvolver=mtmfs
     #[test]
     fn independent_plane_executor_returns_results_in_plane_order() {
         let tasks = vec![
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index: 2,
                 payload: (20u64, "two"),
             },
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index: 0,
                 payload: (0u64, "zero"),
             },
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index: 1,
                 payload: (10u64, "one"),
             },
@@ -47865,15 +48233,15 @@ deconvolver=mtmfs
     #[test]
     fn independent_plane_streaming_consumer_receives_completion_order() {
         let tasks = vec![
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index: 2,
                 payload: (30u64, "two"),
             },
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index: 0,
                 payload: (0u64, "zero"),
             },
-            IndependentImagingPlaneTask {
+            PlaneTask {
                 plane_index: 1,
                 payload: (10u64, "one"),
             },

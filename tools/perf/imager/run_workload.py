@@ -734,6 +734,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "spectral_slab_events": [],
         "spectral_slab_memory": [],
         "spectral_slab_plans": [],
+        "cube_per_plane_backend": [],
         "cube_source_row_blocks": [],
         "cube_product_summaries": [],
         "executor_limitations": [],
@@ -766,6 +767,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["spectral_slab_memory"].append(parsed)
         elif name == "spectral_slab_plan":
             buckets["spectral_slab_plans"].append(parsed)
+        elif name == "cube_per_plane_backend_summary":
+            buckets["cube_per_plane_backend"].append(parsed)
         elif name == "cube_source_row_blocks":
             buckets["cube_source_row_blocks"].append(parsed)
         elif name in {
@@ -829,6 +832,7 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
+    cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
     cube_source_rows = last_fields(buckets.get("cube_source_row_blocks", []))
     cube_product_summaries = [
         entry.get("fields", {})
@@ -859,6 +863,15 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
         "metal_device_available": runtime.get("metal_device_available"),
         "metal_grouped_input_cache": runtime.get("metal_grouped_input_cache"),
+        "cube_per_plane_backend": cube_per_plane_backend.get("selected_backend"),
+        "cube_per_plane_phase": cube_per_plane_backend.get("phase"),
+        "cube_per_plane_workers": cube_per_plane_backend.get("plane_worker_count"),
+        "cube_per_plane_grid_threads": cube_per_plane_backend.get("per_plane_grid_threads"),
+        "cube_per_plane_fixed_tile_eligible": cube_per_plane_backend.get(
+            "fixed_tile_cpu_eligible"
+        ),
+        "cube_per_plane_metal_eligible": cube_per_plane_backend.get("metal_eligible"),
+        "cube_per_plane_fallback_reasons": cube_per_plane_backend.get("fallback_reasons"),
         "row_block_rows": memory.get("row_block_rows"),
         "selected_channels": memory.get("selected_channels"),
         "active_rows": memory.get("rows_total"),
@@ -1179,6 +1192,21 @@ def build_benchmark_feature_summary(
             "resolved_tile_anchor": backend_summary.get("resolved_tile_anchor"),
             "resolved_residual_backend": backend_summary.get("resolved_residual_backend"),
             "resolved_initial_dirty_backend": backend_summary.get("resolved_initial_dirty_backend"),
+            "cube_per_plane_backend": backend_summary.get("cube_per_plane_backend"),
+            "cube_per_plane_phase": backend_summary.get("cube_per_plane_phase"),
+            "cube_per_plane_workers": backend_summary.get("cube_per_plane_workers"),
+            "cube_per_plane_grid_threads": backend_summary.get(
+                "cube_per_plane_grid_threads"
+            ),
+            "cube_per_plane_fixed_tile_eligible": backend_summary.get(
+                "cube_per_plane_fixed_tile_eligible"
+            ),
+            "cube_per_plane_metal_eligible": backend_summary.get(
+                "cube_per_plane_metal_eligible"
+            ),
+            "cube_per_plane_fallback_reasons": backend_summary.get(
+                "cube_per_plane_fallback_reasons"
+            ),
             "cpu_multi_worker_reason": backend_summary.get("single_plane_reason", {}).get("cpu_multi_worker")
             if isinstance(backend_summary.get("single_plane_reason"), dict)
             else None,
