@@ -16368,7 +16368,7 @@ static inline bool row_run_density_lookup(
         x = -u * params.density_u_scale + params.density_center_x;
         y = v * params.density_v_scale + params.density_center_y;
     } else {
-        x = -u_lambda * params.density_u_scale + params.density_center_x;
+        x = u_lambda * params.density_u_scale + params.density_center_x;
         y = -v_lambda * params.density_v_scale + params.density_center_y;
     }
     if (!isfinite(x) || !isfinite(y)) {
@@ -18719,9 +18719,9 @@ pub(crate) fn finite_visibility(visibility: Complex32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY, STANDARD_MFS_TILE_FLAG_PSF_ONLY,
-        StandardMfsBackend, StandardMfsBlockTileBuckets, StandardMfsCpuExecutor,
-        StandardMfsDirtyCpuExecutor, StandardMfsFixedTilePartition,
+        METAL_DIRTY_SHADER, STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
+        STANDARD_MFS_TILE_FLAG_PSF_ONLY, StandardMfsBackend, StandardMfsBlockTileBuckets,
+        StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, StandardMfsFixedTilePartition,
         StandardMfsRowBlockSampleAccess, StandardMfsSampleRef, StandardMfsTileId,
         StandardMfsTiledCpuExecutor,
     };
@@ -18773,6 +18773,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn metal_row_run_density_lookup_matches_cpu_cube_briggs_axes() {
+        assert!(
+            METAL_DIRTY_SHADER.contains(
+                "x = -u * params.density_u_scale + params.density_center_x;\n        y = v * params.density_v_scale + params.density_center_y;"
+            ),
+            "VisImagingWeight density convention should preserve the legacy Metal sign convention"
+        );
+        assert!(
+            METAL_DIRTY_SHADER.contains(
+                "x = u_lambda * params.density_u_scale + params.density_center_x;\n        y = -v_lambda * params.density_v_scale + params.density_center_y;"
+            ),
+            "Cube Briggs density convention must match StandardGridder::weight_density_cell_anchor"
+        );
     }
 
     #[test]

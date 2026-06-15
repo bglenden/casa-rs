@@ -903,6 +903,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             model_interpolation_batches: channel.model_interpolation_batches.clone(),
             dependent_model_channels: cube_model_dependency_mask(
                 nchan,
+                channel_index,
                 &channel.model_interpolation_batches,
             ),
             gridder,
@@ -1558,9 +1559,16 @@ fn write_capture_plane(path: &std::path::Path, plane: &Array2<f32>) -> Result<()
 
 fn cube_model_dependency_mask(
     nchan: usize,
+    identity_model_channel_index: usize,
     model_interpolation_batches: &[CubeModelInterpolationBatch],
 ) -> Vec<bool> {
     let mut dependencies = vec![false; nchan];
+    if model_interpolation_batches.is_empty() {
+        if identity_model_channel_index < nchan {
+            dependencies[identity_model_channel_index] = true;
+        }
+        return dependencies;
+    }
     for batch in model_interpolation_batches {
         for sample_contributions in &batch.sample_contributions {
             for contribution in sample_contributions {
@@ -1614,7 +1622,11 @@ fn refresh_cube_residuals_exact(
         .map(|plane| plane.request.reffreq_hz)
         .collect::<Vec<_>>();
     let mut cube_model_fft_accounted = false;
-    for (plane, should_refresh) in planes.iter_mut().zip(refresh_flags.iter().copied()) {
+    for (plane_index, (plane, should_refresh)) in planes
+        .iter_mut()
+        .zip(refresh_flags.iter().copied())
+        .enumerate()
+    {
         if plane.is_blank || !should_refresh {
             continue;
         }
@@ -1630,6 +1642,7 @@ fn refresh_cube_residuals_exact(
             &plane.model_interpolation_batches,
             &plane.gridder,
             &cube_model_grids,
+            plane_index,
             plane.request.reffreq_hz,
             &model_channel_frequencies_hz,
             CubePredictionLambdaMode::OutputChannel,
@@ -1782,6 +1795,7 @@ mod tests {
             &request.channels[0].model_interpolation_batches,
             &gridder,
             &model_grids,
+            0,
             request.channels[0].channel_frequency_hz,
             &[request.channels[0].channel_frequency_hz],
             CubePredictionLambdaMode::OutputChannel,
@@ -1829,5 +1843,17 @@ mod tests {
                 && (max_image_residual_error > 1.0e-3 || max_stale_error > 1.0e-3),
             "regression guard should fail if the exact refresh is not distinguishable"
         );
+    }
+
+    #[test]
+    fn hogbom_cube_treats_empty_model_interpolation_as_identity() {
+        let mut request = tiny_cube_request(1, Complex32::new(1.0, 0.0));
+        request.channels[0].model_interpolation_batches.clear();
+
+        let clean = run_cube(&request).unwrap();
+
+        assert_eq!(clean.diagnostics.minor_iterations, 1);
+        assert!(clean.model.iter().copied().sum::<f32>() > 0.0);
+        assert!(clean.diagnostics.channel_diagnostics[0].major_cycles >= 2);
     }
 }

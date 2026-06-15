@@ -489,7 +489,7 @@ pub struct CubeChannelRequest {
 }
 
 impl CubeChannelRequest {
-    pub(crate) fn validate(&self, require_model_interpolation: bool) -> Result<(), ImagingError> {
+    pub(crate) fn validate(&self, _require_model_interpolation: bool) -> Result<(), ImagingError> {
         if !(self.channel_frequency_hz.is_finite() && self.channel_frequency_hz > 0.0) {
             return Err(ImagingError::InvalidRequest(
                 "cube channel frequencies must be finite positive Hz".to_string(),
@@ -506,7 +506,7 @@ impl CubeChannelRequest {
         for batch in &self.visibility_batches {
             batch.validate()?;
         }
-        if self.model_interpolation_batches.is_empty() && !require_model_interpolation {
+        if self.model_interpolation_batches.is_empty() {
             return Ok(());
         }
         if self.model_interpolation_batches.len() != self.visibility_batches.len() {

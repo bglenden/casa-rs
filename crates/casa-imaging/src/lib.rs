@@ -80,7 +80,8 @@ pub use weighting::StandardMfsStreamingWeightingPlan;
 use weighting::{
     VisibilitySampleRangeRef, apply_weighting, apply_weighting_to_owned_batches,
     apply_weighting_to_owned_batches_by_sample_groups,
-    apply_weighting_to_owned_batches_by_sample_range_groups, apply_weighting_with_density_source,
+    apply_weighting_to_owned_batches_by_sample_range_groups,
+    apply_weighting_to_owned_batches_with_options, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
@@ -828,6 +829,76 @@ pub fn run_imaging_owned_with_execution_config(
     let weighting_started = Instant::now();
     let source_batches = std::mem::take(&mut request.visibility_batches);
     let weighted_batches = apply_weighting_to_owned_batches(&request, &gridder, source_batches)?;
+    stage_timings.weighting += weighting_started.elapsed();
+    request.visibility_batches = weighted_batches;
+    run_standard_mfs_imaging_with_weighted_batches(
+        &request,
+        &request.visibility_batches,
+        &gridder,
+        execution_config,
+        stage_timings,
+        total_started,
+    )
+}
+
+/// Run CASA-style standard MFS imaging from owned target batches and an
+/// explicit density source.
+///
+/// Cube and other multi-plane frontends use this when a plane is independently
+/// deconvolved but its Briggs/Uniform density weights must still come from a
+/// caller-selected source such as the whole cube or the current plane.
+pub fn run_imaging_owned_with_density_source_and_execution_config(
+    mut request: ImagingRequest,
+    density_batches: Option<&[VisibilityBatch]>,
+    weight_density_mode: WeightDensityMode,
+    uv_taper: Option<GaussianUvTaper>,
+    execution_config: StandardMfsExecutionConfig,
+) -> Result<ImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.validate()?;
+    if request.compatibility != CompatibilityMode::CasaStandardMfs {
+        return Err(ImagingError::Unsupported(
+            "only CASA standard MFS compatibility mode is implemented".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
+        ));
+    }
+    ensure_standard_mfs_backend_available()?;
+    if matches!(request.gridder_mode, GridderMode::Mosaic(_)) {
+        return Err(ImagingError::Unsupported(
+            "owned standard MFS density-source imaging does not support mosaic gridder metadata"
+                .to_string(),
+        ));
+    }
+
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let source_batches = std::mem::take(&mut request.visibility_batches);
+    let fractional_bandwidth =
+        fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz);
+    let weighted_batches = if let Some(density_batches) = density_batches {
+        apply_weighting_with_density_source(
+            request.weighting,
+            weight_density_mode,
+            uv_taper,
+            fractional_bandwidth,
+            &source_batches,
+            density_batches,
+            &gridder,
+        )?
+    } else {
+        apply_weighting_to_owned_batches_with_options(
+            request.weighting,
+            uv_taper,
+            fractional_bandwidth,
+            source_batches,
+            &gridder,
+        )?
+    };
     stage_timings.weighting += weighting_started.elapsed();
     request.visibility_batches = weighted_batches;
     run_standard_mfs_imaging_with_weighted_batches(
@@ -16461,6 +16532,7 @@ fn compute_residual_trace_cube_standard(
     model_interpolation_batches: &[CubeModelInterpolationBatch],
     gridder: &StandardGridder,
     model_planes: &[Array2<f32>],
+    identity_model_channel_index: usize,
     output_channel_frequency_hz: f64,
     model_channel_frequencies_hz: &[f64],
     prediction_lambda_mode: CubePredictionLambdaMode,
@@ -16476,6 +16548,7 @@ fn compute_residual_trace_cube_standard(
         model_interpolation_batches,
         gridder,
         &model_grids,
+        identity_model_channel_index,
         output_channel_frequency_hz,
         model_channel_frequencies_hz,
         prediction_lambda_mode,
@@ -16521,6 +16594,7 @@ fn compute_residual_trace_cube_standard_with_model_grids(
     model_interpolation_batches: &[CubeModelInterpolationBatch],
     gridder: &StandardGridder,
     model_grids: &[Option<Array2<Complex32>>],
+    identity_model_channel_index: usize,
     output_channel_frequency_hz: f64,
     model_channel_frequencies_hz: &[f64],
     prediction_lambda_mode: CubePredictionLambdaMode,
@@ -16528,7 +16602,14 @@ fn compute_residual_trace_cube_standard_with_model_grids(
     capture_samples: bool,
     timings: &mut ResidualComputationTimings,
 ) -> Result<ResidualRefreshTraceInternal, ImagingError> {
-    if model_interpolation_batches.len() != batches.len() {
+    let use_identity_model_interpolation = model_interpolation_batches.is_empty();
+    if use_identity_model_interpolation && identity_model_channel_index >= model_grids.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "cube identity model interpolation references channel {identity_model_channel_index} beyond {} model planes",
+            model_grids.len()
+        )));
+    }
+    if !use_identity_model_interpolation && model_interpolation_batches.len() != batches.len() {
         return Err(ImagingError::InvalidRequest(format!(
             "cube model interpolation batch count {} does not match visibility batch count {}",
             model_interpolation_batches.len(),
@@ -16552,12 +16633,11 @@ fn compute_residual_trace_cube_standard_with_model_grids(
         Vec::new()
     };
     let degrid_grid_started = Instant::now();
-    for (batch_index, (batch, interpolation_batch)) in batches
-        .iter()
-        .zip(model_interpolation_batches.iter())
-        .enumerate()
-    {
-        if interpolation_batch.sample_contributions.len() != batch.len() {
+    for (batch_index, batch) in batches.iter().enumerate() {
+        let interpolation_batch = model_interpolation_batches.get(batch_index);
+        if let Some(interpolation_batch) = interpolation_batch
+            && interpolation_batch.sample_contributions.len() != batch.len()
+        {
             return Err(ImagingError::InvalidRequest(format!(
                 "cube model interpolation batch {batch_index} length {} does not match visibility batch length {}",
                 interpolation_batch.sample_contributions.len(),
@@ -16590,7 +16670,14 @@ fn compute_residual_trace_cube_standard_with_model_grids(
                 });
             let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
                 let mut predicted = Complex32::new(0.0, 0.0);
-                for contribution in &interpolation_batch.sample_contributions[index] {
+                let identity_contribution = [CubeModelChannelContribution {
+                    model_channel_index: identity_model_channel_index,
+                    factor: 1.0,
+                }];
+                let contributions = interpolation_batch
+                    .map(|batch| batch.sample_contributions[index].as_slice())
+                    .unwrap_or(identity_contribution.as_slice());
+                for contribution in contributions {
                     if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
                         continue;
                     }

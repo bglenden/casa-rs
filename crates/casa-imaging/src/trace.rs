@@ -509,6 +509,7 @@ fn trace_cube_channel_residual_refresh_with_mode(
         &channel.model_interpolation_batches,
         &gridder,
         model_planes,
+        channel_index,
         channel.channel_frequency_hz,
         &request
             .channels

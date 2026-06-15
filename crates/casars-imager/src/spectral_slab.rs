@@ -1318,6 +1318,8 @@ pub(crate) struct SpectralMemoryPlannerInput {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ExecutorScratchShape {
     pub(crate) fixed_bytes: usize,
+    pub(crate) per_active_plane_bytes: usize,
+    pub(crate) per_slab_source_channel_bytes: usize,
     pub(crate) per_worker_bytes: usize,
     pub(crate) per_worker_row_block_bytes: usize,
     pub(crate) per_worker_row_block_limit_bytes: usize,
@@ -1328,12 +1330,22 @@ pub(crate) struct ExecutorScratchShape {
 impl ExecutorScratchShape {
     pub(crate) fn bytes_for_worker_count_and_rows(
         self,
+        active_planes: usize,
+        max_slab_source_channels: usize,
         worker_count: usize,
         row_block_rows: usize,
         product_batch_planes: usize,
     ) -> usize {
         let worker_count = worker_count.max(1);
         self.fixed_bytes
+            .saturating_add(
+                self.per_active_plane_bytes
+                    .saturating_mul(active_planes.max(1)),
+            )
+            .saturating_add(
+                self.per_slab_source_channel_bytes
+                    .saturating_mul(max_slab_source_channels.max(1)),
+            )
             .saturating_add(self.per_worker_bytes.saturating_mul(worker_count))
             .saturating_add(
                 self.per_product_batch_plane_bytes
@@ -1501,6 +1513,18 @@ pub(crate) fn plan_spectral_memory(
                 let base_scratch_bytes = input
                     .executor_scratch
                     .fixed_bytes
+                    .saturating_add(
+                        input
+                            .executor_scratch
+                            .per_active_plane_bytes
+                            .saturating_mul(shape.active_planes),
+                    )
+                    .saturating_add(
+                        input
+                            .executor_scratch
+                            .per_slab_source_channel_bytes
+                            .saturating_mul(shape.max_slab_source_channels),
+                    )
                     .saturating_add(
                         input
                             .executor_scratch
@@ -1915,6 +1939,8 @@ fn build_streaming_candidate(
     let row_buffer_budget = input.memory_target_bytes - static_plus_cache_and_raw_source_bytes;
     let row_block_rows = (row_buffer_budget / per_resident_row_bytes).clamp(1, max_row_block_rows);
     let product_scratch_bytes = input.executor_scratch.bytes_for_worker_count_and_rows(
+        shape.active_planes,
+        shape.max_slab_source_channels,
         worker_count,
         row_block_rows,
         product_batch_planes,
@@ -2760,6 +2786,8 @@ mod tests {
                     .saturating_mul(image_shape[1])
                     .saturating_mul(std::mem::size_of::<f32>())
                     .saturating_mul(3),
+                per_active_plane_bytes: 0,
+                per_slab_source_channel_bytes: 0,
                 per_worker_bytes: 0,
                 per_worker_row_block_bytes: 0,
                 per_worker_row_block_limit_bytes: 0,
@@ -3046,6 +3074,8 @@ mod tests {
         input.fixed_frontend_bytes = 60_445_282;
         input.executor_scratch = ExecutorScratchShape {
             fixed_bytes: 450_080_580,
+            per_active_plane_bytes: 0,
+            per_slab_source_channel_bytes: 0,
             per_worker_bytes: 1_130_801_990,
             per_worker_row_block_bytes: 64,
             per_worker_row_block_limit_bytes: 0,
@@ -3095,6 +3125,8 @@ mod tests {
         input.fixed_frontend_bytes = 233_378_040;
         input.executor_scratch = ExecutorScratchShape {
             fixed_bytes: 651_443_456,
+            per_active_plane_bytes: 0,
+            per_slab_source_channel_bytes: 0,
             per_worker_bytes: 243_526_803,
             per_worker_row_block_bytes: 64,
             per_worker_row_block_limit_bytes: 0,
@@ -3133,6 +3165,8 @@ mod tests {
         input.fixed_frontend_bytes = 233_378_040;
         input.executor_scratch = ExecutorScratchShape {
             fixed_bytes: 651_443_456,
+            per_active_plane_bytes: 0,
+            per_slab_source_channel_bytes: 0,
             per_worker_bytes: 243_526_803,
             per_worker_row_block_bytes: 64,
             per_worker_row_block_limit_bytes: 50_331_648,
@@ -3209,6 +3243,8 @@ mod tests {
         input.fixed_frontend_bytes = 233_378_040;
         input.executor_scratch = ExecutorScratchShape {
             fixed_bytes: 651_443_456,
+            per_active_plane_bytes: 0,
+            per_slab_source_channel_bytes: 0,
             per_worker_bytes: 243_526_803,
             per_worker_row_block_bytes: 64,
             per_worker_row_block_limit_bytes: 50_331_648,
@@ -3249,6 +3285,8 @@ mod tests {
         input.fixed_frontend_bytes = 60_445_282;
         input.executor_scratch = ExecutorScratchShape {
             fixed_bytes: 554_133_144,
+            per_active_plane_bytes: 0,
+            per_slab_source_channel_bytes: 0,
             per_worker_bytes: one_plane_run_result_bytes + standard_mfs_workspace_bytes,
             per_worker_row_block_bytes: 64,
             per_worker_row_block_limit_bytes: 0,

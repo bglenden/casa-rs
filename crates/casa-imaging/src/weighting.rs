@@ -474,7 +474,7 @@ pub(crate) fn apply_weighting_to_owned_batches(
     )
 }
 
-fn apply_weighting_to_owned_batches_with_options(
+pub(crate) fn apply_weighting_to_owned_batches_with_options(
     weighting: WeightingMode,
     uv_taper: Option<GaussianUvTaper>,
     fractional_bandwidth: f64,
