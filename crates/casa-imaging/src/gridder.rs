@@ -1504,6 +1504,32 @@ impl StandardGridder {
         image
     }
 
+    pub(crate) fn corrected_image_from_unshifted_centered_grid_f64(
+        &self,
+        raw: &Array2<Complex64>,
+    ) -> Array2<f32> {
+        let [grid_nx, grid_ny]: [usize; 2] = raw
+            .shape()
+            .try_into()
+            .expect("2-D grid should have exactly two axes");
+        debug_assert_eq!(grid_nx, self.grid_shape[0]);
+        debug_assert_eq!(grid_ny, self.grid_shape[1]);
+        let shift_x = grid_nx / 2;
+        let shift_y = grid_ny / 2;
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                let source_x = (grid_x + shift_x) % grid_nx;
+                let source_y = (grid_y + shift_y) % grid_ny;
+                image[(x, y)] = raw[(source_x, source_y)].re as f32
+                    * (self.correction_x[grid_x] * self.correction_y[grid_y]);
+            }
+        }
+        image
+    }
+
     pub(crate) fn corrected_complex_image_from_grid(
         &self,
         raw: &Array2<Complex32>,
@@ -3472,6 +3498,30 @@ mod tests {
             &raw.mapv(|value| Complex32::new(value.re as f32, value.im as f32)),
         );
         let actual = gridder.corrected_image_from_grid_f64(&raw);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn unshifted_centered_f64_grid_correction_matches_shifted_grid() {
+        let gridder = StandardGridder::new(ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        })
+        .unwrap();
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let unshifted = Array2::<Complex64>::from_shape_fn((grid_nx, grid_ny), |(x, y)| {
+            Complex64::new(
+                (x as f64 * 0.0625) + (y as f64 * 0.015625),
+                (y as f64 * 0.03125) - (x as f64 * 0.0078125),
+            )
+        });
+        let shifted = Array2::<Complex64>::from_shape_fn((grid_nx, grid_ny), |(x, y)| {
+            unshifted[((x + grid_nx / 2) % grid_nx, (y + grid_ny / 2) % grid_ny)]
+        });
+
+        let expected = gridder.corrected_image_from_grid_f64(&shifted);
+        let actual = gridder.corrected_image_from_unshifted_centered_grid_f64(&unshifted);
 
         assert_eq!(actual, expected);
     }

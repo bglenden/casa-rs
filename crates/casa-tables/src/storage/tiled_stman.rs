@@ -23,7 +23,7 @@ use std::io::{BufWriter, Read as IoRead, Seek, SeekFrom, Write as IoWrite};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_types::{
@@ -4711,6 +4711,12 @@ fn copy_complex32_native_bytes(dst: &mut [u8], values: &[Complex32]) {
     dst.copy_from_slice(src);
 }
 
+fn tile_values_as_bytes<T: TilePixel>(values: &[T]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
+    }
+}
+
 fn write_complex32_component_bytes(dst: &mut [u8], value: Complex32, big_endian: bool) {
     if big_endian {
         write_f32_be(dst, value.re);
@@ -6179,6 +6185,12 @@ pub struct TiledFileIoStats {
     pub lru_batch_flushes: usize,
     pub lru_batch_flush_tiles: usize,
     pub lru_batch_flush_bytes: usize,
+    pub direct_tile_write_calls: usize,
+    pub direct_tile_write_tiles: usize,
+    pub direct_tile_write_bytes: usize,
+    pub direct_tile_pack_ns: usize,
+    pub direct_tile_swap_ns: usize,
+    pub direct_tile_write_ns: usize,
 }
 
 impl TiledFileIoStats {
@@ -6250,8 +6262,30 @@ impl TiledFileIoStats {
             lru_batch_flush_bytes: self
                 .lru_batch_flush_bytes
                 .saturating_sub(before.lru_batch_flush_bytes),
+            direct_tile_write_calls: self
+                .direct_tile_write_calls
+                .saturating_sub(before.direct_tile_write_calls),
+            direct_tile_write_tiles: self
+                .direct_tile_write_tiles
+                .saturating_sub(before.direct_tile_write_tiles),
+            direct_tile_write_bytes: self
+                .direct_tile_write_bytes
+                .saturating_sub(before.direct_tile_write_bytes),
+            direct_tile_pack_ns: self
+                .direct_tile_pack_ns
+                .saturating_sub(before.direct_tile_pack_ns),
+            direct_tile_swap_ns: self
+                .direct_tile_swap_ns
+                .saturating_sub(before.direct_tile_swap_ns),
+            direct_tile_write_ns: self
+                .direct_tile_write_ns
+                .saturating_sub(before.direct_tile_write_ns),
         }
     }
+}
+
+fn duration_nanos_usize(duration: Duration) -> usize {
+    duration.as_nanos().min(usize::MAX as u128) as usize
 }
 
 /// Random-access tile I/O for a `TiledCellStMan` data file.
@@ -6299,6 +6333,7 @@ pub struct TiledFileIO {
     tile_on_disk: Vec<bool>,
     /// Persistent read file handle (used by flat cache bulk load).
     read_file: Option<std::fs::File>,
+    direct_write_buffer: Vec<u8>,
     stats: TiledFileIoStats,
 }
 
@@ -7194,6 +7229,7 @@ impl TiledFileIO {
             swap_size,
             tile_on_disk: vec![false; nr_tiles],
             read_file: None,
+            direct_write_buffer: Vec::new(),
             stats: TiledFileIoStats::default(),
         })
     }
@@ -7322,6 +7358,7 @@ impl TiledFileIO {
             swap_size,
             tile_on_disk: vec![true; nr_tiles],
             read_file,
+            direct_write_buffer: Vec::new(),
             stats: TiledFileIoStats::default(),
         })
     }
@@ -8082,6 +8119,299 @@ impl TiledFileIO {
             }
         }
         Ok(())
+    }
+
+    /// Writes a rectangular slice of C-order (row-major) data into tiles.
+    ///
+    /// Fast path for full, tile-aligned spatial plane groups. The input
+    /// remains in C-order, but the output buffer is laid out as contiguous
+    /// Fortran-order tiles and written to the tiled data file in one operation.
+    pub fn put_aligned_c_order_tiles<T: TilePixel>(
+        &mut self,
+        data: &[T],
+        start: &[usize],
+        shape: &[usize],
+    ) -> Result<bool, StorageError> {
+        let ndim = self.cube_shape.len();
+        if ndim != 4 || start.len() != ndim || shape.len() != ndim {
+            return Ok(false);
+        }
+        if self.file_tile_bytes != self.tile_bytes
+            || T::ELEM_SIZE != self.elem_size
+            || self.tile_shape[2] != 1
+            || self.tile_shape[3] != 1
+            || shape[2] != 1
+            || shape[3] == 0
+            || start[0] != 0
+            || start[1] != 0
+            || start[2] != 0
+            || self.tiles_per_dim[2] != 1
+            || shape[0] != self.cube_shape[0]
+            || shape[1] != self.cube_shape[1]
+            || shape[2] != self.cube_shape[2]
+            || !shape[0].is_multiple_of(self.tile_shape[0])
+            || !shape[1].is_multiple_of(self.tile_shape[1])
+        {
+            return Ok(false);
+        }
+        for d in 0..ndim {
+            if start[d].saturating_add(shape[d]) > self.cube_shape[d]
+                || !start[d].is_multiple_of(self.tile_shape[d])
+            {
+                return Ok(false);
+            }
+        }
+        if data.len() != shape.iter().product::<usize>() {
+            return Err(StorageError::FormatMismatch(format!(
+                "aligned tile write data length {} does not match shape {:?}",
+                data.len(),
+                shape
+            )));
+        }
+        if !matches!(self.cache, TileCache::Lru(_)) {
+            return Ok(false);
+        }
+        let lru_has_tiles = match &self.cache {
+            TileCache::Lru(lru) => lru.used_slots > 0,
+            TileCache::Flat(_) => false,
+        };
+        if lru_has_tiles {
+            self.flush()?;
+        }
+
+        let tile_x = self.tile_shape[0];
+        let tile_y = self.tile_shape[1];
+        let tiles_x = shape[0] / tile_x;
+        let tiles_y = shape[1] / tile_y;
+        let plane_tile_count = tiles_x.saturating_mul(tiles_y);
+        let tile_count = plane_tile_count.saturating_mul(shape[3]);
+        let base_tile = (start[0] / tile_x) * self.tiles_per_dim_strides[0]
+            + (start[1] / tile_y) * self.tiles_per_dim_strides[1]
+            + start[2] * self.tiles_per_dim_strides[2]
+            + start[3] * self.tiles_per_dim_strides[3];
+        if base_tile.saturating_add(tile_count) > self.nr_tiles {
+            return Ok(false);
+        }
+
+        let total_bytes = tile_count.saturating_mul(self.tile_bytes);
+        if self.direct_write_buffer.len() != total_bytes {
+            self.direct_write_buffer.resize(total_bytes, 0);
+        }
+        let pack_started = Instant::now();
+        {
+            let tile_nelem = self.tile_nelem;
+            let typed = tile_as_typed_mut::<T>(&mut self.direct_write_buffer);
+            for channel in 0..shape[3] {
+                for ty in 0..tiles_y {
+                    for tx in 0..tiles_x {
+                        let tile_number = channel * plane_tile_count + ty * tiles_x + tx;
+                        let tile_base = tile_number * tile_nelem;
+                        let src_x0 = tx * tile_x;
+                        let src_y0 = ty * tile_y;
+                        for local_x in 0..tile_x {
+                            let tile_base_x = tile_base + local_x;
+                            for local_y in 0..tile_y {
+                                let src_y = src_y0 + local_y;
+                                let src_x = src_x0 + local_x;
+                                let src_index =
+                                    ((src_x * shape[1] + src_y) * shape[2]) * shape[3] + channel;
+                                typed[tile_base_x + local_y * tile_x] = data[src_index];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.stats.direct_tile_pack_ns = self
+            .stats
+            .direct_tile_pack_ns
+            .saturating_add(duration_nanos_usize(pack_started.elapsed()));
+        if self.needs_swap {
+            let swap_started = Instant::now();
+            swap_bytes_inplace(&mut self.direct_write_buffer, self.swap_size);
+            self.stats.direct_tile_swap_ns = self
+                .stats
+                .direct_tile_swap_ns
+                .saturating_add(duration_nanos_usize(swap_started.elapsed()));
+        }
+        let file_pos = (self.file_offset + base_tile * self.file_tile_bytes) as u64;
+        let lru = match &mut self.cache {
+            TileCache::Lru(lru) => lru,
+            TileCache::Flat(_) => return Ok(false),
+        };
+        let write_started = Instant::now();
+        lru.file.seek(SeekFrom::Start(file_pos))?;
+        lru.file.write_all(&self.direct_write_buffer)?;
+        self.stats.direct_tile_write_ns = self
+            .stats
+            .direct_tile_write_ns
+            .saturating_add(duration_nanos_usize(write_started.elapsed()));
+        for tile_index in base_tile..base_tile + tile_count {
+            self.tile_on_disk[tile_index] = true;
+            lru.tile_to_slot[tile_index] = -1;
+        }
+        self.stats.direct_tile_write_calls = self.stats.direct_tile_write_calls.saturating_add(1);
+        self.stats.direct_tile_write_tiles = self
+            .stats
+            .direct_tile_write_tiles
+            .saturating_add(tile_count);
+        self.stats.direct_tile_write_bytes = self
+            .stats
+            .direct_tile_write_bytes
+            .saturating_add(total_bytes);
+        Ok(true)
+    }
+
+    /// Writes full, tile-aligned spatial plane groups from Fortran-order input.
+    pub fn put_aligned_fortran_order_tiles<T: TilePixel>(
+        &mut self,
+        data: &[T],
+        start: &[usize],
+        shape: &[usize],
+    ) -> Result<bool, StorageError> {
+        let ndim = self.cube_shape.len();
+        if ndim != 4 || start.len() != ndim || shape.len() != ndim {
+            return Ok(false);
+        }
+        if self.file_tile_bytes != self.tile_bytes
+            || T::ELEM_SIZE != self.elem_size
+            || self.tile_shape[2] != 1
+            || self.tile_shape[3] != 1
+            || shape[2] != 1
+            || shape[3] == 0
+            || start[0] != 0
+            || start[1] != 0
+            || start[2] != 0
+            || self.tiles_per_dim[2] != 1
+            || shape[0] != self.cube_shape[0]
+            || shape[1] != self.cube_shape[1]
+            || shape[2] != self.cube_shape[2]
+            || !shape[0].is_multiple_of(self.tile_shape[0])
+            || !shape[1].is_multiple_of(self.tile_shape[1])
+        {
+            return Ok(false);
+        }
+        for d in 0..ndim {
+            if start[d].saturating_add(shape[d]) > self.cube_shape[d]
+                || !start[d].is_multiple_of(self.tile_shape[d])
+            {
+                return Ok(false);
+            }
+        }
+        if data.len() != shape.iter().product::<usize>() {
+            return Err(StorageError::FormatMismatch(format!(
+                "aligned tile write data length {} does not match shape {:?}",
+                data.len(),
+                shape
+            )));
+        }
+        if !matches!(self.cache, TileCache::Lru(_)) {
+            return Ok(false);
+        }
+        let lru_has_tiles = match &self.cache {
+            TileCache::Lru(lru) => lru.used_slots > 0,
+            TileCache::Flat(_) => false,
+        };
+        if lru_has_tiles {
+            self.flush()?;
+        }
+
+        let tile_x = self.tile_shape[0];
+        let tile_y = self.tile_shape[1];
+        let tiles_x = shape[0] / tile_x;
+        let tiles_y = shape[1] / tile_y;
+        let plane_tile_count = tiles_x.saturating_mul(tiles_y);
+        let tile_count = plane_tile_count.saturating_mul(shape[3]);
+        let base_tile = (start[0] / tile_x) * self.tiles_per_dim_strides[0]
+            + (start[1] / tile_y) * self.tiles_per_dim_strides[1]
+            + start[2] * self.tiles_per_dim_strides[2]
+            + start[3] * self.tiles_per_dim_strides[3];
+        if base_tile.saturating_add(tile_count) > self.nr_tiles {
+            return Ok(false);
+        }
+
+        let total_bytes = tile_count.saturating_mul(self.tile_bytes);
+        let direct_source_is_file_order = tile_x == shape[0] && tile_y == shape[1];
+        if !(direct_source_is_file_order && !self.needs_swap) {
+            if self.direct_write_buffer.len() != total_bytes {
+                self.direct_write_buffer.resize(total_bytes, 0);
+            }
+            let pack_started = Instant::now();
+            {
+                let tile_nelem = self.tile_nelem;
+                let plane_nelem = shape[0].saturating_mul(shape[1]).saturating_mul(shape[2]);
+                let typed = tile_as_typed_mut::<T>(&mut self.direct_write_buffer);
+                if tile_x == shape[0] && tile_y == shape[1] {
+                    for channel in 0..shape[3] {
+                        let src_base = channel * plane_nelem;
+                        let tile_base = channel * tile_nelem;
+                        typed[tile_base..tile_base + plane_nelem]
+                            .copy_from_slice(&data[src_base..src_base + plane_nelem]);
+                    }
+                } else {
+                    for channel in 0..shape[3] {
+                        let channel_data_base = channel * plane_nelem;
+                        for ty in 0..tiles_y {
+                            for tx in 0..tiles_x {
+                                let tile_number = channel * plane_tile_count + ty * tiles_x + tx;
+                                let tile_base = tile_number * tile_nelem;
+                                let src_x0 = tx * tile_x;
+                                let src_y0 = ty * tile_y;
+                                for local_y in 0..tile_y {
+                                    let src_base =
+                                        channel_data_base + src_x0 + (src_y0 + local_y) * shape[0];
+                                    let tile_base_y = tile_base + local_y * tile_x;
+                                    typed[tile_base_y..tile_base_y + tile_x]
+                                        .copy_from_slice(&data[src_base..src_base + tile_x]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            self.stats.direct_tile_pack_ns = self
+                .stats
+                .direct_tile_pack_ns
+                .saturating_add(duration_nanos_usize(pack_started.elapsed()));
+            if self.needs_swap {
+                let swap_started = Instant::now();
+                swap_bytes_inplace(&mut self.direct_write_buffer, self.swap_size);
+                self.stats.direct_tile_swap_ns = self
+                    .stats
+                    .direct_tile_swap_ns
+                    .saturating_add(duration_nanos_usize(swap_started.elapsed()));
+            }
+        }
+        let file_pos = (self.file_offset + base_tile * self.file_tile_bytes) as u64;
+        let lru = match &mut self.cache {
+            TileCache::Lru(lru) => lru,
+            TileCache::Flat(_) => return Ok(false),
+        };
+        let write_started = Instant::now();
+        lru.file.seek(SeekFrom::Start(file_pos))?;
+        if direct_source_is_file_order && !self.needs_swap {
+            lru.file.write_all(tile_values_as_bytes(data))?;
+        } else {
+            lru.file.write_all(&self.direct_write_buffer)?;
+        }
+        self.stats.direct_tile_write_ns = self
+            .stats
+            .direct_tile_write_ns
+            .saturating_add(duration_nanos_usize(write_started.elapsed()));
+        for tile_index in base_tile..base_tile + tile_count {
+            self.tile_on_disk[tile_index] = true;
+            lru.tile_to_slot[tile_index] = -1;
+        }
+        self.stats.direct_tile_write_calls = self.stats.direct_tile_write_calls.saturating_add(1);
+        self.stats.direct_tile_write_tiles = self
+            .stats
+            .direct_tile_write_tiles
+            .saturating_add(tile_count);
+        self.stats.direct_tile_write_bytes = self
+            .stats
+            .direct_tile_write_bytes
+            .saturating_add(total_bytes);
+        Ok(true)
     }
 
     /// Writes a rectangular slice of C-order (row-major) data into tiles.

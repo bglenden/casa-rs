@@ -1245,18 +1245,30 @@ pub struct ImagerCoreStageTimings {
     pub weighting_ns: u64,
     /// Backend executor/sample-plan setup time.
     pub executor_build_ns: u64,
+    /// PSF grid allocation and zero-initialization time.
+    pub psf_grid_alloc_ns: u64,
+    /// Planned-sample replay/build time before scalar grid updates.
+    pub planned_sample_replay_ns: u64,
+    /// Scalar grid-update loop time after planned samples exist.
+    pub grid_update_ns: u64,
     /// PSF grid time.
     pub psf_grid_ns: u64,
     /// PSF FFT time.
     pub psf_fft_ns: u64,
+    /// PSF image correction/copy time after FFT.
+    pub psf_image_correction_ns: u64,
     /// PSF normalization time.
     pub psf_normalize_ns: u64,
     /// Model FFT time.
     pub model_fft_ns: u64,
+    /// Residual grid allocation and zero-initialization time.
+    pub residual_grid_alloc_ns: u64,
     /// Residual degrid/grid time.
     pub residual_degrid_grid_ns: u64,
     /// Residual FFT time.
     pub residual_fft_ns: u64,
+    /// Residual image correction/copy time after FFT.
+    pub residual_image_correction_ns: u64,
     /// Residual normalization time.
     pub residual_normalize_ns: u64,
     /// Minor-cycle total time.
@@ -1580,12 +1592,18 @@ fn core_stage_timings(timings: &casa_imaging::ImagingStageTimings) -> ImagerCore
         controller_overhead_ns: timings.controller_overhead.as_nanos() as u64,
         weighting_ns: timings.weighting.as_nanos() as u64,
         executor_build_ns: timings.executor_build.as_nanos() as u64,
+        psf_grid_alloc_ns: timings.psf_grid_alloc.as_nanos() as u64,
+        planned_sample_replay_ns: timings.planned_sample_replay.as_nanos() as u64,
+        grid_update_ns: timings.grid_update.as_nanos() as u64,
         psf_grid_ns: timings.psf_grid.as_nanos() as u64,
         psf_fft_ns: timings.psf_fft.as_nanos() as u64,
+        psf_image_correction_ns: timings.psf_image_correction.as_nanos() as u64,
         psf_normalize_ns: timings.psf_normalize.as_nanos() as u64,
         model_fft_ns: timings.model_fft.as_nanos() as u64,
+        residual_grid_alloc_ns: timings.residual_grid_alloc.as_nanos() as u64,
         residual_degrid_grid_ns: timings.residual_degrid_grid.as_nanos() as u64,
         residual_fft_ns: timings.residual_fft.as_nanos() as u64,
+        residual_image_correction_ns: timings.residual_image_correction.as_nanos() as u64,
         residual_normalize_ns: timings.residual_normalize.as_nanos() as u64,
         minor_cycle_ns: timings.minor_cycle.as_nanos() as u64,
         minor_cycle_solve_ns: timings.minor_cycle_solve.as_nanos() as u64,

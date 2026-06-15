@@ -68,6 +68,8 @@ RUST_STAGE_FIELDS = {
     "controller_overhead",
     "weighting",
     "executor_build",
+    "planned_sample_replay",
+    "grid_update",
     "psf_grid",
     "psf_fft",
     "psf_normalize",
@@ -733,6 +735,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "spectral_slab_memory": [],
         "spectral_slab_plans": [],
         "cube_source_row_blocks": [],
+        "cube_product_summaries": [],
         "executor_limitations": [],
         "worker_diagnostics": [],
         "metal_diagnostics": [],
@@ -765,6 +768,11 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["spectral_slab_plans"].append(parsed)
         elif name == "cube_source_row_blocks":
             buckets["cube_source_row_blocks"].append(parsed)
+        elif name in {
+            "cube_shared_direct_plane_executor_summary",
+            "cube_shared_plane_executor_summary",
+        }:
+            buckets["cube_product_summaries"].append(parsed)
         elif name.endswith("_executor_limitation"):
             buckets["executor_limitations"].append(parsed)
         elif "worker" in name or "prepare_parallel" in name:
@@ -822,6 +830,11 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
     cube_source_rows = last_fields(buckets.get("cube_source_row_blocks", []))
+    cube_product_summaries = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("cube_product_summaries", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
     executor_limitation = last_fields(buckets.get("executor_limitations", []))
     spectral_memory = [
         entry.get("fields", {})
@@ -873,6 +886,54 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "cube_source_row_blocks_visibility_capacity_bytes": cube_source_rows.get(
             "visibility_capacity_bytes"
         ),
+        "cube_product_summary_count": len(cube_product_summaries),
+        "cube_product_write_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_write_ms"
+        ),
+        "cube_product_bytes": sum_int_or_float_field(cube_product_summaries, "product_bytes"),
+        "cube_product_groups": sum_int_or_float_field(cube_product_summaries, "product_groups"),
+        "cube_product_group_planes": sum_int_or_float_field(
+            cube_product_summaries, "product_group_planes"
+        ),
+        "cube_product_tiled_c_order_calls": sum_int_or_float_field(
+            cube_product_summaries, "tiled_c_order_calls"
+        ),
+        "cube_product_tiled_fortran_calls": sum_int_or_float_field(
+            cube_product_summaries, "tiled_fortran_calls"
+        ),
+        "cube_product_tiled_tile_visits": sum_int_or_float_field(
+            cube_product_summaries, "tiled_tile_visits"
+        ),
+        "cube_product_tiled_copied_elements": sum_int_or_float_field(
+            cube_product_summaries, "tiled_copied_elements"
+        ),
+        "cube_product_tiled_lru_zero_fill_tiles": sum_int_or_float_field(
+            cube_product_summaries, "tiled_lru_zero_fill_tiles"
+        ),
+        "cube_product_tiled_lru_batch_flush_tiles": sum_int_or_float_field(
+            cube_product_summaries, "tiled_lru_batch_flush_tiles"
+        ),
+        "cube_product_tiled_lru_batch_flush_bytes": sum_int_or_float_field(
+            cube_product_summaries, "tiled_lru_batch_flush_bytes"
+        ),
+        "cube_product_tiled_direct_write_calls": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_calls"
+        ),
+        "cube_product_tiled_direct_write_tiles": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_tiles"
+        ),
+        "cube_product_tiled_direct_write_bytes": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_bytes"
+        ),
+        "cube_product_tiled_direct_pack_ns": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_pack_ns"
+        ),
+        "cube_product_tiled_direct_swap_ns": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_swap_ns"
+        ),
+        "cube_product_tiled_direct_write_ns": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_ns"
+        ),
         "executor_limitation_materialization": executor_limitation.get(
             "materialization"
         ),
@@ -886,6 +947,7 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "spectral_visibility_cache_policy": spectral_plan.get("visibility_cache_policy"),
         "spectral_prepared_residency": spectral_plan.get("prepared_residency"),
         "spectral_visibility_cache_bytes": spectral_plan.get("visibility_cache_bytes"),
+        "spectral_product_batch_planes": spectral_plan.get("product_batch_planes"),
         "spectral_source_channel_visits": spectral_plan.get("source_channel_visits"),
         "spectral_max_slab_source_channels": spectral_plan.get("max_slab_source_channels"),
         "spectral_full_source_channel_count": spectral_plan.get("full_source_channel_count"),
@@ -988,9 +1050,30 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def unique_entries_by_raw(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    unique = []
+    for entry in entries:
+        raw = entry.get("raw")
+        if raw in seen:
+            continue
+        seen.add(raw)
+        unique.append(entry)
+    return unique
+
+
 def max_int_field(entries: list[dict[str, Any]], field: str) -> int | None:
     values = [entry.get(field) for entry in entries if isinstance(entry.get(field), int)]
     return max(values) if values else None
+
+
+def sum_int_or_float_field(entries: list[dict[str, Any]], field: str) -> int | float | None:
+    values = [
+        entry.get(field)
+        for entry in entries
+        if isinstance(entry.get(field), int | float)
+    ]
+    return sum(values) if values else None
 
 
 def max_entry_by_int_field(entries: list[dict[str, Any]], field: str) -> dict[str, Any]:

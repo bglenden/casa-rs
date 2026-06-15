@@ -277,8 +277,24 @@ impl ManagedImagingOutput {
                             "major_cycle_refresh".to_string(),
                             result.run.stage_timings.major_cycle_refresh_ns,
                         ),
+                        (
+                            "psf_grid_alloc".to_string(),
+                            result.run.stage_timings.psf_grid_alloc_ns,
+                        ),
+                        (
+                            "planned_sample_replay".to_string(),
+                            result.run.stage_timings.planned_sample_replay_ns,
+                        ),
+                        (
+                            "grid_update".to_string(),
+                            result.run.stage_timings.grid_update_ns,
+                        ),
                         ("psf_grid".to_string(), result.run.stage_timings.psf_grid_ns),
                         ("psf_fft".to_string(), result.run.stage_timings.psf_fft_ns),
+                        (
+                            "psf_image_correction".to_string(),
+                            result.run.stage_timings.psf_image_correction_ns,
+                        ),
                         (
                             "psf_normalize".to_string(),
                             result.run.stage_timings.psf_normalize_ns,
@@ -288,12 +304,20 @@ impl ManagedImagingOutput {
                             result.run.stage_timings.model_fft_ns,
                         ),
                         (
+                            "residual_grid_alloc".to_string(),
+                            result.run.stage_timings.residual_grid_alloc_ns,
+                        ),
+                        (
                             "residual_degrid_grid".to_string(),
                             result.run.stage_timings.residual_degrid_grid_ns,
                         ),
                         (
                             "residual_fft".to_string(),
                             result.run.stage_timings.residual_fft_ns,
+                        ),
+                        (
+                            "residual_image_correction".to_string(),
+                            result.run.stage_timings.residual_image_correction_ns,
                         ),
                         (
                             "residual_normalize".to_string(),
@@ -426,12 +450,28 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.multiscale_scale_refresh.as_nanos() as u64,
             ),
             (
+                "psf_grid_alloc".to_string(),
+                summary.stage_timings.psf_grid_alloc.as_nanos() as u64,
+            ),
+            (
+                "planned_sample_replay".to_string(),
+                summary.stage_timings.planned_sample_replay.as_nanos() as u64,
+            ),
+            (
+                "grid_update".to_string(),
+                summary.stage_timings.grid_update.as_nanos() as u64,
+            ),
+            (
                 "psf_grid".to_string(),
                 summary.stage_timings.psf_grid.as_nanos() as u64,
             ),
             (
                 "psf_fft".to_string(),
                 summary.stage_timings.psf_fft.as_nanos() as u64,
+            ),
+            (
+                "psf_image_correction".to_string(),
+                summary.stage_timings.psf_image_correction.as_nanos() as u64,
             ),
             (
                 "psf_normalize".to_string(),
@@ -442,12 +482,20 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.model_fft.as_nanos() as u64,
             ),
             (
+                "residual_grid_alloc".to_string(),
+                summary.stage_timings.residual_grid_alloc.as_nanos() as u64,
+            ),
+            (
                 "residual_degrid_grid".to_string(),
                 summary.stage_timings.residual_degrid_grid.as_nanos() as u64,
             ),
             (
                 "residual_fft".to_string(),
                 summary.stage_timings.residual_fft.as_nanos() as u64,
+            ),
+            (
+                "residual_image_correction".to_string(),
+                summary.stage_timings.residual_image_correction.as_nanos() as u64,
             ),
             (
                 "residual_normalize".to_string(),
@@ -707,12 +755,18 @@ mod tests {
             controller_overhead: Duration::from_nanos(11),
             weighting: Duration::from_nanos(12),
             executor_build: Duration::from_nanos(28),
+            psf_grid_alloc: Duration::from_nanos(29),
+            planned_sample_replay: Duration::from_nanos(33),
+            grid_update: Duration::from_nanos(34),
             psf_grid: Duration::from_nanos(13),
             psf_fft: Duration::from_nanos(14),
+            psf_image_correction: Duration::from_nanos(30),
             psf_normalize: Duration::from_nanos(15),
             model_fft: Duration::from_nanos(16),
+            residual_grid_alloc: Duration::from_nanos(31),
             residual_degrid_grid: Duration::from_nanos(15),
             residual_fft: Duration::from_nanos(16),
+            residual_image_correction: Duration::from_nanos(32),
             residual_normalize: Duration::from_nanos(17),
             clean_cycle_setup: Duration::from_nanos(24),
             deconvolver_setup: Duration::from_nanos(25),
@@ -916,12 +970,18 @@ mod tests {
                     controller_overhead_ns: 1,
                     weighting_ns: 2,
                     executor_build_ns: 3,
+                    psf_grid_alloc_ns: 17,
+                    planned_sample_replay_ns: 21,
+                    grid_update_ns: 22,
                     psf_grid_ns: 4,
                     psf_fft_ns: 5,
+                    psf_image_correction_ns: 18,
                     psf_normalize_ns: 6,
                     model_fft_ns: 7,
+                    residual_grid_alloc_ns: 19,
                     residual_degrid_grid_ns: 8,
                     residual_fft_ns: 9,
+                    residual_image_correction_ns: 20,
                     residual_normalize_ns: 10,
                     minor_cycle_ns: 11,
                     minor_cycle_solve_ns: 12,

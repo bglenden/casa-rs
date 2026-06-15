@@ -1361,15 +1361,11 @@ impl ExecutorScratchShape {
 
     fn max_product_batch_planes(
         self,
-        worker_count: usize,
-        active_planes: usize,
-        enable_batching: bool,
+        _active_planes: usize,
+        _worker_count: usize,
+        _memory_target_bytes: usize,
     ) -> usize {
-        if self.per_product_batch_plane_bytes == 0 || !enable_batching {
-            1
-        } else {
-            worker_count.max(1).min(active_planes.max(1))
-        }
+        1
     }
 }
 
@@ -1400,6 +1396,7 @@ struct CandidatePlan {
     modeled_output_spill_write_bytes: usize,
     modeled_product_write_bytes: usize,
     modeled_no_cache_source_read_bytes: usize,
+    modeled_product_write_groups: usize,
     modeled_runtime_cost_bytes: usize,
 }
 
@@ -1453,8 +1450,6 @@ pub(crate) fn plan_spectral_memory(
     let row_fixed_resident_bytes = input.visibility.row_fixed_resident_bytes();
     let row_cache_overhead_bytes = input.visibility.row_cache_overhead_bytes();
     let modeled_full_cache_source_read_bytes = input.visibility.full_source_read_bytes();
-    let enable_product_batching =
-        modeled_product_write_bytes > modeled_full_cache_source_read_bytes;
     let max_row_block_rows = input
         .max_row_block_rows
         .max(1)
@@ -1498,9 +1493,9 @@ pub(crate) fn plan_spectral_memory(
 
         for worker_count in 1..=max_shape_workers {
             let max_product_batch_planes = input.executor_scratch.max_product_batch_planes(
-                worker_count,
                 shape.active_planes,
-                enable_product_batching,
+                worker_count,
+                input.memory_target_bytes,
             );
             for product_batch_planes in 1..=max_product_batch_planes {
                 let base_scratch_bytes = input
@@ -1964,6 +1959,10 @@ fn build_streaming_candidate(
         .saturating_add(modeled_output_spill_read_bytes)
         .saturating_add(modeled_output_spill_write_bytes)
         .saturating_add(modeled_product_write_bytes);
+    let modeled_product_write_groups = input
+        .output
+        .plane_count
+        .div_ceil(product_batch_planes.max(1));
     Some(CandidatePlan {
         schedule_kind,
         shape,
@@ -1991,9 +1990,13 @@ fn build_streaming_candidate(
         modeled_output_spill_write_bytes,
         modeled_product_write_bytes,
         modeled_no_cache_source_read_bytes,
+        modeled_product_write_groups,
         modeled_runtime_cost_bytes: modeled_runtime_cost_bytes(
             modeled_total_io_bytes,
             per_plane_state_bytes,
+            input
+                .product_write_bytes_per_plane
+                .saturating_mul(modeled_product_write_groups),
             input.output.plane_count,
             input.visibility.active_rows,
             row_block_rows,
@@ -2057,6 +2060,7 @@ fn integer_sqrt(value: usize) -> usize {
 fn modeled_runtime_cost_bytes(
     modeled_total_io_bytes: usize,
     per_plane_state_bytes: usize,
+    modeled_product_write_group_overhead_bytes: usize,
     nplanes: usize,
     active_rows: usize,
     row_block_rows: usize,
@@ -2080,6 +2084,7 @@ fn modeled_runtime_cost_bytes(
                 .saturating_div(worker_count)
                 .saturating_mul(source_block_count),
         )
+        .saturating_add(modeled_product_write_group_overhead_bytes)
 }
 
 fn total_plane_worker_waves(nplanes: usize, active_planes: usize, worker_count: usize) -> usize {
@@ -2108,6 +2113,7 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
             candidate
                 .modeled_output_spill_read_bytes
                 .saturating_add(candidate.modeled_output_spill_write_bytes),
+            candidate.modeled_product_write_groups,
             schedule_rank(candidate.schedule_kind),
             match candidate.visibility_cache_policy {
                 VisibilityCachePolicy::FullSource => 0usize,
@@ -2127,6 +2133,7 @@ fn consider_candidate(best: &mut Option<CandidatePlan>, candidate: CandidatePlan
             current
                 .modeled_output_spill_read_bytes
                 .saturating_add(current.modeled_output_spill_write_bytes),
+            current.modeled_product_write_groups,
             schedule_rank(current.schedule_kind),
             match current.visibility_cache_policy {
                 VisibilityCachePolicy::FullSource => 0usize,
@@ -2161,7 +2168,7 @@ fn candidate_io_cost_fragment(candidate: CandidatePlan, executable: bool) -> Str
         .modeled_output_spill_read_bytes
         .saturating_add(candidate.modeled_output_spill_write_bytes);
     format!(
-        "{}:runtime={},total={},source={},cache={},spill={},product={},active_planes={},slab_count={},row_block_rows={},worker_count={},scratch={},product_batch_planes={},cache_policy={},residency={},executable={}",
+        "{}:runtime={},total={},source={},cache={},spill={},product={},product_groups={},active_planes={},slab_count={},row_block_rows={},worker_count={},scratch={},product_batch_planes={},cache_policy={},residency={},executable={}",
         candidate.schedule_kind.as_str(),
         candidate.modeled_runtime_cost_bytes,
         candidate.modeled_total_io_bytes,
@@ -2169,6 +2176,7 @@ fn candidate_io_cost_fragment(candidate: CandidatePlan, executable: bool) -> Str
         cache_io,
         spill_io,
         candidate.modeled_product_write_bytes,
+        candidate.modeled_product_write_groups,
         candidate.shape.active_planes,
         candidate.shape.slab_count,
         candidate.row_block_rows,
@@ -3226,6 +3234,42 @@ mod tests {
     }
 
     #[test]
+    fn memory_planner_keeps_large_dirty_cube_product_writes_plane_local() {
+        let mut visibility =
+            test_visibility_shape(866_313, 1024, 2, 8, false, test_slab_shapes(1024, 347));
+        visibility.weight_spectrum_element_bytes = None;
+        visibility.weight_spectrum_channel_read_granularity = None;
+        let mut input = planner_input(1024, [4096, 4096], visibility, 30_064_771_072);
+        let image_pixels = 4096usize * 4096usize;
+        let one_plane_run_result_bytes = image_pixels * std::mem::size_of::<f32>() * 5;
+        let standard_mfs_workspace_bytes = 4_914usize * 4_914usize * 16 * 2;
+        let one_plane_write_clone_bytes = image_pixels * std::mem::size_of::<f32>() * 2;
+        input.executor_capabilities =
+            SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache();
+        input.fixed_frontend_bytes = 60_445_282;
+        input.executor_scratch = ExecutorScratchShape {
+            fixed_bytes: 554_133_144,
+            per_worker_bytes: one_plane_run_result_bytes + standard_mfs_workspace_bytes,
+            per_worker_row_block_bytes: 64,
+            per_worker_row_block_limit_bytes: 0,
+            per_product_batch_plane_bytes: one_plane_write_clone_bytes,
+            per_product_pending_plane_bytes: one_plane_run_result_bytes,
+        };
+        input.requirements =
+            PlaneStateRequirements::dirty_standard().with_streaming_plane_results();
+        input.source_buffer_residency = SourceBufferResidency::FullSlabRawSource;
+        input.product_write_bytes_per_plane = one_plane_write_clone_bytes + 4;
+        input.max_row_block_rows = 866_313;
+        input.max_worker_count = 10;
+
+        let plan = plan_spectral_memory(input).unwrap();
+
+        assert_eq!(plan.product_batch_planes, 1, "{}", plan.log_line());
+        assert!(plan.worker_count >= 8, "{}", plan.log_line());
+        assert!(plan.planned_active_bytes <= plan.memory_target_bytes);
+    }
+
+    #[test]
     fn candidate_tie_break_prefers_fewer_source_blocks() {
         let base_shape = VisibilitySlabShape {
             active_planes: 47,
@@ -3264,6 +3308,7 @@ mod tests {
             modeled_output_spill_write_bytes: 0,
             modeled_product_write_bytes: 4_295_164_416,
             modeled_no_cache_source_read_bytes: 3_851_621_280,
+            modeled_product_write_groups: 2,
             modeled_runtime_cost_bytes: 17_179_862_010,
         };
         let mut best = Some(base_candidate);

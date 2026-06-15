@@ -1227,7 +1227,7 @@ impl StandardMfsRoutedVisibilityRunBlock {
 /// This is the bounded row-block handoff used by streaming frontends that want
 /// to route samples to fixed tiles without retaining full visibility batches.
 /// It stores the deterministic positive-tap center for tile ownership, while
-/// core workers re-plan the prolate-spheroidal taps immediately before gridding.
+/// core workers consume the precomputed compact tap identity directly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StandardMfsPlannedWeightedSample {
     /// Baseline `u` coordinate in wavelengths.
@@ -1238,6 +1238,14 @@ pub struct StandardMfsPlannedWeightedSample {
     pub center_x: u32,
     /// Positive-tap center y cell in the padded standard grid.
     pub center_y: u32,
+    /// First x cell touched by the compact positive-tap stencil.
+    pub x_start: u32,
+    /// First y cell touched by the compact positive-tap stencil.
+    pub y_start: u32,
+    /// Compact x-axis prolate-spheroidal weight table index.
+    pub x_weight_index: u32,
+    /// Compact y-axis prolate-spheroidal weight table index.
+    pub y_weight_index: u32,
     /// Planned-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
     pub flags: u16,
     /// Number of 2-D tap visits expected for work attribution.
@@ -2116,18 +2124,32 @@ pub struct ImagingStageTimings {
     /// Time spent building backend executor state, including reusable sample
     /// plans and grid workspaces.
     pub executor_build: Duration,
+    /// Time spent allocating and zero-initializing PSF grids.
+    pub psf_grid_alloc: Duration,
+    /// Time spent replaying/building planned scalar samples before grid updates.
+    pub planned_sample_replay: Duration,
+    /// Time spent in scalar grid-update loops after planned samples exist.
+    pub grid_update: Duration,
     /// Time spent gridding PSF/sample weights.
     pub psf_grid: Duration,
     /// Time spent FFTing the PSF grid.
     pub psf_fft: Duration,
+    /// Time spent copying/correcting the PSF image after FFT and before scalar
+    /// normalization.
+    pub psf_image_correction: Duration,
     /// Time spent applying PSF correction and normalization.
     pub psf_normalize: Duration,
     /// Time spent FFTing model images before degridding.
     pub model_fft: Duration,
+    /// Time spent allocating and zero-initializing residual grids.
+    pub residual_grid_alloc: Duration,
     /// Time spent degridding/gridding residual visibilities.
     pub residual_degrid_grid: Duration,
     /// Time spent FFTing residual grids back to image space.
     pub residual_fft: Duration,
+    /// Time spent copying/correcting the residual image after FFT and before
+    /// scalar normalization.
+    pub residual_image_correction: Duration,
     /// Time spent applying residual correction and normalization.
     pub residual_normalize: Duration,
     /// Time spent preparing CLEAN cycle thresholds, peaks, and candidates.
@@ -2164,12 +2186,18 @@ impl Default for ImagingStageTimings {
             controller_overhead: Duration::ZERO,
             weighting: Duration::ZERO,
             executor_build: Duration::ZERO,
+            psf_grid_alloc: Duration::ZERO,
+            planned_sample_replay: Duration::ZERO,
+            grid_update: Duration::ZERO,
             psf_grid: Duration::ZERO,
             psf_fft: Duration::ZERO,
+            psf_image_correction: Duration::ZERO,
             psf_normalize: Duration::ZERO,
             model_fft: Duration::ZERO,
+            residual_grid_alloc: Duration::ZERO,
             residual_degrid_grid: Duration::ZERO,
             residual_fft: Duration::ZERO,
+            residual_image_correction: Duration::ZERO,
             residual_normalize: Duration::ZERO,
             clean_cycle_setup: Duration::ZERO,
             deconvolver_setup: Duration::ZERO,
@@ -2222,6 +2250,23 @@ pub struct ImagingResult {
     /// Restoring beam fitted from the PSF, when the fit succeeds.
     pub beam: Option<BeamFit>,
     /// Diagnostics collected while building the products.
+    pub diagnostics: ImagingDiagnostics,
+    /// Declared metadata contract for downstream persistence.
+    pub compatibility: CompatibilityMetadata,
+}
+
+/// Result of a dirty-only imaging run that does not materialize clean products.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirtyImagingResult {
+    /// Normalized PSF cube with degenerate Stokes/Frequency axes.
+    pub psf: Array4<f32>,
+    /// Dirty residual cube with degenerate Stokes/Frequency axes.
+    pub residual: Array4<f32>,
+    /// CASA-style `sumwt` product stored as a single degenerate pixel.
+    pub sumwt: Array4<f32>,
+    /// Restoring beam fitted from the PSF, when the fit succeeds.
+    pub beam: Option<BeamFit>,
+    /// Diagnostics collected while building the dirty products.
     pub diagnostics: ImagingDiagnostics,
     /// Declared metadata contract for downstream persistence.
     pub compatibility: CompatibilityMetadata,

@@ -2336,6 +2336,23 @@ fn paged_image_put_slice_view<T: ImagePixel>(
         }
     }
     if let Some(ref tio) = image.tiled_io {
+        if view_is_fortran_contiguous(&data)
+            && let Some(slice) = data.as_slice_memory_order()
+            && tio
+                .borrow_mut()
+                .put_aligned_fortran_order_tiles::<T>(slice, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?
+        {
+            return Ok(());
+        }
+        if let Some(slice) = data.as_slice()
+            && tio
+                .borrow_mut()
+                .put_aligned_c_order_tiles::<T>(slice, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?
+        {
+            return Ok(());
+        }
         let fortran_view = data.t();
         if let Some(s) = fortran_view.as_slice() {
             tio.borrow_mut()
@@ -2363,6 +2380,20 @@ fn paged_image_put_slice_view<T: ImagePixel>(
     image
         .write_array(&array)
         .map_err(|e| LatticeError::Table(e.to_string()))
+}
+
+fn view_is_fortran_contiguous<T>(data: &ArrayViewD<'_, T>) -> bool {
+    let mut expected = 1isize;
+    for (&dim, &stride) in data.shape().iter().zip(data.strides()) {
+        if dim <= 1 {
+            continue;
+        }
+        if stride != expected {
+            return false;
+        }
+        expected = expected.saturating_mul(dim as isize);
+    }
+    true
 }
 
 impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
@@ -2612,7 +2643,7 @@ pub fn image_pixel_type(path: impl AsRef<Path>) -> Result<ImagePixelType, ImageE
 mod tests {
     use super::*;
     use casa_lattices::LatticeError;
-    use ndarray::Dimension;
+    use ndarray::{Dimension, ShapeBuilder};
 
     fn make_coords() -> CoordinateSystem {
         CoordinateSystem::new()
@@ -2745,6 +2776,155 @@ mod tests {
             .into_raw_vec_and_offset()
             .0;
         assert_eq!(observed, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_aligned_tiled_plane() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-plane.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 2],
+            vec![2, 2, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let values = (0..16).map(|value| value as f32).collect::<Vec<_>>();
+        let data = ArrayD::from_shape_vec(IxDyn(&[4, 4, 1, 1]), values.clone()).unwrap();
+
+        image.put_slice_view(data.view(), &[0, 0, 0, 1]).unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 4);
+        assert_eq!(stats.direct_tile_write_bytes, 64);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 1]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                assert_eq!(observed[IxDyn(&[x, y, 0, 0])], data[IxDyn(&[x, y, 0, 0])]);
+            }
+        }
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_fortran_aligned_tiled_plane() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-fortran-plane.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 2],
+            vec![2, 2, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let mut data = ndarray::Array4::<f32>::zeros((4, 4, 1, 1).f());
+        for x in 0..4 {
+            for y in 0..4 {
+                data[(x, y, 0, 0)] = (x * 10 + y) as f32;
+            }
+        }
+
+        image
+            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+            .unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 4);
+        assert_eq!(stats.direct_tile_write_bytes, 64);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        assert_eq!(stats.put_slice_fortran_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 1]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                assert_eq!(observed[IxDyn(&[x, y, 0, 0])], data[(x, y, 0, 0)]);
+            }
+        }
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_fortran_whole_plane_without_pack_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-fortran-whole-plane.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 2],
+            vec![4, 4, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let mut data = ndarray::Array4::<f32>::zeros((4, 4, 1, 1).f());
+        for x in 0..4 {
+            for y in 0..4 {
+                data[(x, y, 0, 0)] = (x * 10 + y) as f32;
+            }
+        }
+
+        image
+            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+            .unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 1);
+        assert_eq!(stats.direct_tile_write_bytes, 64);
+        assert_eq!(stats.direct_tile_pack_ns, 0);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        assert_eq!(stats.put_slice_fortran_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 1]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                assert_eq!(observed[IxDyn(&[x, y, 0, 0])], data[(x, y, 0, 0)]);
+            }
+        }
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_fortran_aligned_tiled_plane_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-fortran-plane-group.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 4],
+            vec![2, 2, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let mut data = ndarray::Array4::<f32>::zeros((4, 4, 1, 3).f());
+        for x in 0..4 {
+            for y in 0..4 {
+                for channel in 0..3 {
+                    data[(x, y, 0, channel)] = (channel * 100 + x * 10 + y) as f32;
+                }
+            }
+        }
+
+        image
+            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+            .unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 12);
+        assert_eq!(stats.direct_tile_write_bytes, 192);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        assert_eq!(stats.put_slice_fortran_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 3]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                for channel in 0..3 {
+                    assert_eq!(
+                        observed[IxDyn(&[x, y, 0, channel])],
+                        data[(x, y, 0, channel)]
+                    );
+                }
+            }
+        }
     }
 
     #[test]

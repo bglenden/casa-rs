@@ -50,7 +50,7 @@ use std::{
 use casa_images::ImageBeamSet;
 use casa_lattices::array_madfm;
 use libm::{erfc, j1};
-use ndarray::{Array2, Array4, Zip, s};
+use ndarray::{Array2, Array4, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 
 use beam::{
@@ -67,7 +67,10 @@ use execution::{
     StandardMfsVisibilityPlan, finite_visibility,
 };
 pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
-use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned};
+use fft::{
+    centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned,
+    centered_ifft2_f64_owned_unshifted_even,
+};
 use gridder::{
     PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
     ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
@@ -121,19 +124,20 @@ pub use types::{
     ColumnarComplexSamplesRef, ColumnarFloatSamplesRef, ColumnarVisibilitySourceRef,
     CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest,
     CubeImagingDiagnostics, CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GeometryRoutePlan, GridderMode,
-    GridderRoutePlan, GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch,
-    HogbomIterationMode, ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult,
-    ImagingSourceBlockView, ImagingSourcePartition, ImagingSourcePartitionId, ImagingSourceShape,
-    ImagingStageTimings, MinorCycleTrace, ModelRoutePlan, MosaicGridderConfig, MtmfsRequest,
-    MtmfsResult, OutputPlaneContribution, ParallelHandBatch, PlaneStokes, PolarizationRoutePlan,
-    PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics, ResidualSampleDiagnostics,
-    RestoringBeamMode, SourceChannelRoute, SpectralRoutePlan, StandardMfsPairCollapseTransform,
-    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow,
-    StandardMfsRoutedVisibilityRun, StandardMfsRoutedVisibilityRunBlock,
-    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
+    CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult, GaussianUvTaper,
+    GeometryRoutePlan, GridderMode, GridderRoutePlan, GroupedVisibilityMetadata,
+    GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
+    ImagingRequest, ImagingResult, ImagingSourceBlockView, ImagingSourcePartition,
+    ImagingSourcePartitionId, ImagingSourceShape, ImagingStageTimings, MinorCycleTrace,
+    ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult, OutputPlaneContribution,
+    ParallelHandBatch, PlaneStokes, PolarizationRoutePlan, PrimaryBeamModel, PsfBeamFitResult,
+    ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode, SourceChannelRoute,
+    SpectralRoutePlan, StandardMfsPairCollapseTransform, StandardMfsPlannedWeightedSample,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsRoutableSample, StandardMfsRoutedSample,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
+    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
+    VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
     WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
     WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingRoutePlan,
     WeightingSampleDiagnostics,
@@ -275,12 +279,13 @@ impl StandardMfsPlannedSampleBuilder {
         if !(grid_weight.is_finite() && grid_weight > 0.0) {
             return Ok(None);
         }
-        let Some(center) = self
+        let Some(taps) = self
             .gridder
-            .locate_positive_tap_center(sample.u_lambda, sample.v_lambda)
+            .plan_positive_taps(sample.u_lambda, sample.v_lambda)
         else {
             return Ok(None);
         };
+        let center = taps.center();
         let flags = if finite_visibility(sample.visibility) {
             StandardMfsPlannedWeightedSample::FINITE_VISIBILITY
         } else {
@@ -291,6 +296,10 @@ impl StandardMfsPlannedSampleBuilder {
             v_lambda: sample.v_lambda,
             center_x: center[0] as u32,
             center_y: center[1] as u32,
+            x_start: taps.x.start as u32,
+            y_start: taps.y.start as u32,
+            x_weight_index: taps.x.weight_index as u32,
+            y_weight_index: taps.y.weight_index as u32,
             flags,
             tap_count: (STANDARD_GRIDDER_TAP_COUNT * STANDARD_GRIDDER_TAP_COUNT) as u8,
             grid_weight,
@@ -2784,6 +2793,144 @@ pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_con
     })
 }
 
+/// Run standard-MFS dirty imaging from a replayable planned-sample block source.
+pub fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+) -> Result<DirtyImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    if request.clean.niter != 0 {
+        return Err(ImagingError::InvalidRequest(
+            "dirty planned-sample standard MFS run requires niter=0".to_string(),
+        ));
+    }
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "dirty planned-sample standard MFS run requires gridder='standard'".to_string(),
+        ));
+    }
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return Err(ImagingError::Unsupported(
+            "dirty planned-sample standard MFS run does not support W-term gridding".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "dirty planned-sample standard MFS run does not support deconvolver='mtmfs'"
+                .to_string(),
+        ));
+    }
+    if let Some(initial_model) = request.initial_model.take() {
+        if initial_model.iter().any(|value| value.abs() > 0.0) {
+            return Err(ImagingError::InvalidRequest(
+                "dirty planned-sample standard MFS run does not accept a non-zero initial model"
+                    .to_string(),
+            ));
+        }
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let mut stage_timings = ImagingStageTimings::default();
+    let mut replay_plan =
+        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
+    let (psf_state, residual, max_abs_w_lambda) =
+        replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?;
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+    let mut warnings = Vec::new();
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    warnings.extend(beam_warnings);
+    stage_timings.total = total_started.elapsed();
+
+    Ok(DirtyImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            normalization_sumwt: psf_state.normalization_sumwt,
+            reported_sumwt: psf_state.reported_sumwt,
+            psf_peak_normalization: psf_state.psf_peak,
+            major_cycles: 0,
+            minor_iterations: 0,
+            clean_stop_reason: None,
+            minor_cycle_traces: Vec::new(),
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: initial_peak,
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: request.clean.threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
 fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
@@ -3160,8 +3307,12 @@ where
     ) -> Result<(), ImagingError>,
 {
     let [grid_nx, grid_ny] = gridder.grid_shape();
+    let psf_alloc_started = Instant::now();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    stage_timings.psf_grid_alloc += psf_alloc_started.elapsed();
+    let residual_alloc_started = Instant::now();
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    stage_timings.residual_grid_alloc += residual_alloc_started.elapsed();
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
     let mut accumulation = StandardMfsDirtyAccumulation {
@@ -3232,17 +3383,13 @@ struct PlannedCompactTaps {
 }
 
 #[inline(always)]
-fn planned_sample_compact_taps(
-    gridder: &StandardGridder,
-    sample: StandardMfsPlannedWeightedSample,
-) -> Result<PlannedCompactTaps, ImagingError> {
-    let taps = planned_sample_positive_taps(gridder, sample)?;
-    Ok(PlannedCompactTaps {
-        x_start: taps.x.start,
-        y_start: taps.y.start,
-        x_weight_index: taps.x.weight_index,
-        y_weight_index: taps.y.weight_index,
-    })
+fn planned_sample_compact_taps(sample: StandardMfsPlannedWeightedSample) -> PlannedCompactTaps {
+    PlannedCompactTaps {
+        x_start: sample.x_start as usize,
+        y_start: sample.y_start as usize,
+        x_weight_index: sample.x_weight_index as usize,
+        y_weight_index: sample.y_weight_index as usize,
+    }
 }
 
 fn compute_dirty_psf_and_residual_standard_sample_replay(
@@ -3303,15 +3450,17 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
     };
 
     let grid_started = Instant::now();
+    let mut grid_update_elapsed = Duration::ZERO;
     if let (Some(psf_storage), Some(residual_storage)) = (
         psf_grid.as_slice_memory_order_mut(),
         residual_grid.as_slice_memory_order_mut(),
     ) {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_compact_taps(gridder, sample)?;
+                let taps = planned_sample_compact_taps(sample);
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -3343,10 +3492,12 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
                     );
                 }
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     } else {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -3372,10 +3523,13 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
                     gridder.grid_sample_taps_real_planned_f64(&mut psf_grid, &taps, grid_weight);
                 }
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     }
     let grid_elapsed = grid_started.elapsed();
+    stage_timings.planned_sample_replay += grid_elapsed.saturating_sub(grid_update_elapsed);
+    stage_timings.grid_update += grid_update_elapsed;
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
     stage_timings.psf_grid += split_grid_elapsed;
     stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
@@ -3426,14 +3580,14 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
 ) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
-    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
-    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     if matches!(
         standard_mfs_initial_dirty_backend_selection_from_env()?,
         Some(StandardMfsBackendSelection::MetalRowRunGrouped)
     ) {
         #[cfg(all(target_os = "macos", not(coverage)))]
         {
+            let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+            let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
             let mut metal_grouped_input_cache = metal_grouped_input_cache;
             let grid_started = Instant::now();
             let metal_executor =
@@ -3530,6 +3684,8 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     )?;
     #[cfg(any(not(target_os = "macos"), coverage))]
     let _ = metal_grouped_input_cache;
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
@@ -3660,12 +3816,14 @@ fn compute_psf_standard_sample_replay(
     };
 
     let grid_started = Instant::now();
+    let mut grid_update_elapsed = Duration::ZERO;
     if let Some(psf_storage) = psf_grid.as_slice_memory_order_mut() {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_compact_taps(gridder, sample)?;
+                let taps = planned_sample_compact_taps(sample);
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -3680,10 +3838,12 @@ fn compute_psf_standard_sample_replay(
                     taps.y_weight_index,
                 );
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     } else {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -3695,10 +3855,14 @@ fn compute_psf_standard_sample_replay(
                 accumulation.gridded_samples += 1;
                 gridder.grid_sample_taps_real_planned_f64(&mut psf_grid, &taps, grid_weight);
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     }
-    stage_timings.psf_grid += grid_started.elapsed();
+    let grid_elapsed = grid_started.elapsed();
+    stage_timings.planned_sample_replay += grid_elapsed.saturating_sub(grid_update_elapsed);
+    stage_timings.grid_update += grid_update_elapsed;
+    stage_timings.psf_grid += grid_elapsed;
     psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
 }
 
@@ -3947,6 +4111,7 @@ fn compute_residual_standard_sample_replay(
 
     let mut counts = StandardMfsTiledResidualAccumulation::default();
     let degrid_grid_started = Instant::now();
+    let mut grid_update_elapsed = Duration::ZERO;
     if let (Some(model_storage), Some(residual_storage)) = (
         model_grid
             .as_ref()
@@ -3954,6 +4119,7 @@ fn compute_residual_standard_sample_replay(
         residual_grid.as_slice_memory_order_mut(),
     ) {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulate_weighted_residual_sample_storage(
                     gridder,
@@ -3963,12 +4129,14 @@ fn compute_residual_standard_sample_replay(
                     &mut counts,
                 )?;
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     } else if model_grid.is_none()
         && let Some(residual_storage) = residual_grid.as_slice_memory_order_mut()
     {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulate_weighted_residual_sample_storage(
                     gridder,
@@ -3978,10 +4146,12 @@ fn compute_residual_standard_sample_replay(
                     &mut counts,
                 )?;
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     } else {
         replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            let update_started = Instant::now();
             for &sample in samples {
                 accumulate_weighted_residual_sample_array(
                     gridder,
@@ -3991,10 +4161,13 @@ fn compute_residual_standard_sample_replay(
                     &mut counts,
                 )?;
             }
+            grid_update_elapsed += update_started.elapsed();
             Ok(())
         })?;
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
+    stage_timings.planned_sample_replay += timings.degrid_grid.saturating_sub(grid_update_elapsed);
+    stage_timings.grid_update += grid_update_elapsed;
 
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(&residual_grid);
@@ -4195,7 +4368,7 @@ fn accumulate_weighted_residual_sample_storage(
         return Ok(());
     }
     counts.valid_samples += 1;
-    let taps = planned_sample_compact_taps(gridder, sample)?;
+    let taps = planned_sample_compact_taps(sample);
     counts.planned_samples += 1;
     let residual_weight = sample.grid_weight;
     let residual_weight = f64::from(residual_weight);
@@ -4275,10 +4448,28 @@ fn dirty_grids_to_psf_and_residual_owned(
     }
 
     let psf_fft_started = Instant::now();
-    let raw_psf = centered_ifft2_f64_owned(psf_grid);
-    stage_timings.psf_fft += psf_fft_started.elapsed();
+    let mut psf = match centered_ifft2_f64_owned_unshifted_even(psf_grid) {
+        Ok(raw_psf) => {
+            stage_timings.psf_fft += psf_fft_started.elapsed();
+            let psf_correction_started = Instant::now();
+            let image = gridder.corrected_image_from_unshifted_centered_grid_f64(&raw_psf);
+            let correction_elapsed = psf_correction_started.elapsed();
+            stage_timings.psf_image_correction += correction_elapsed;
+            stage_timings.psf_normalize += correction_elapsed;
+            image
+        }
+        Err(psf_grid) => {
+            let raw_psf = centered_ifft2_f64_owned(psf_grid);
+            stage_timings.psf_fft += psf_fft_started.elapsed();
+            let psf_correction_started = Instant::now();
+            let image = gridder.corrected_image_from_grid_f64(&raw_psf);
+            let correction_elapsed = psf_correction_started.elapsed();
+            stage_timings.psf_image_correction += correction_elapsed;
+            stage_timings.psf_normalize += correction_elapsed;
+            image
+        }
+    };
     let psf_normalize_started = Instant::now();
-    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
     psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
     let psf_peak = peak_abs_value(&psf);
     if !(psf_peak.is_finite() && psf_peak > 0.0) {
@@ -4290,10 +4481,28 @@ fn dirty_grids_to_psf_and_residual_owned(
     stage_timings.psf_normalize += psf_normalize_started.elapsed();
 
     let residual_fft_started = Instant::now();
-    let raw_residual = centered_ifft2_f64_owned(residual_grid);
-    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let mut residual = match centered_ifft2_f64_owned_unshifted_even(residual_grid) {
+        Ok(raw_residual) => {
+            stage_timings.residual_fft += residual_fft_started.elapsed();
+            let residual_correction_started = Instant::now();
+            let image = gridder.corrected_image_from_unshifted_centered_grid_f64(&raw_residual);
+            let correction_elapsed = residual_correction_started.elapsed();
+            stage_timings.residual_image_correction += correction_elapsed;
+            stage_timings.residual_normalize += correction_elapsed;
+            image
+        }
+        Err(residual_grid) => {
+            let raw_residual = centered_ifft2_f64_owned(residual_grid);
+            stage_timings.residual_fft += residual_fft_started.elapsed();
+            let residual_correction_started = Instant::now();
+            let image = gridder.corrected_image_from_grid_f64(&raw_residual);
+            let correction_elapsed = residual_correction_started.elapsed();
+            stage_timings.residual_image_correction += correction_elapsed;
+            stage_timings.residual_normalize += correction_elapsed;
+            image
+        }
+    };
     let residual_normalize_started = Instant::now();
-    let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
     residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
     stage_timings.residual_normalize += residual_normalize_started.elapsed();
 
@@ -20757,16 +20966,26 @@ fn add_stage_timings(total: &mut ImagingStageTimings, part: ImagingStageTimings)
     total.controller_overhead += part.controller_overhead;
     total.weighting += part.weighting;
     total.executor_build += part.executor_build;
+    total.psf_grid_alloc += part.psf_grid_alloc;
+    total.planned_sample_replay += part.planned_sample_replay;
+    total.grid_update += part.grid_update;
     total.psf_grid += part.psf_grid;
     total.psf_fft += part.psf_fft;
+    total.psf_image_correction += part.psf_image_correction;
     total.psf_normalize += part.psf_normalize;
     total.model_fft += part.model_fft;
+    total.residual_grid_alloc += part.residual_grid_alloc;
     total.residual_degrid_grid += part.residual_degrid_grid;
     total.residual_fft += part.residual_fft;
+    total.residual_image_correction += part.residual_image_correction;
     total.residual_normalize += part.residual_normalize;
+    total.clean_cycle_setup += part.clean_cycle_setup;
+    total.deconvolver_setup += part.deconvolver_setup;
     total.minor_cycle += part.minor_cycle;
     total.minor_cycle_solve += part.minor_cycle_solve;
     total.major_cycle_refresh += part.major_cycle_refresh;
+    total.residual_refresh_overhead += part.residual_refresh_overhead;
+    total.multiscale_scale_refresh += part.multiscale_scale_refresh;
     total.beam_fit += part.beam_fit;
     total.restore += part.restore;
     total.total += part.total;
@@ -20778,7 +20997,7 @@ fn casa_major_cycle_count(refreshes: usize, clean_niter: usize) -> usize {
 
 fn expand_plane(plane: &Array2<f32>) -> Array4<f32> {
     let (nx, ny) = plane.dim();
-    let mut expanded = Array4::<f32>::zeros((nx, ny, 1, 1));
+    let mut expanded = Array4::<f32>::zeros((nx, ny, 1, 1).f());
     expanded.slice_mut(s![.., .., 0, 0]).assign(plane);
     expanded
 }

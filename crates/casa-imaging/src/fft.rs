@@ -58,13 +58,48 @@ pub(crate) fn centered_ifft2_f64_owned(mut input: Array2<Complex64>) -> Array2<C
     if !shift2_in_place_even_f64(&mut input) {
         return centered_ifft2_f64(&input);
     }
-    transform_axis_f64(&mut input, Axis(0), true);
-    transform_axis_f64(&mut input, Axis(1), true);
-    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f64;
-    input.mapv_inplace(|value| value * scale);
+    inverse_fft2_scale_f64(&mut input);
     let shifted = shift2_in_place_even_f64(&mut input);
     debug_assert!(shifted);
     input
+}
+
+pub(crate) fn centered_ifft2_f64_owned_unshifted_even(
+    mut input: Array2<Complex64>,
+) -> Result<Array2<Complex64>, Array2<Complex64>> {
+    if !is_even_contiguous_f64(&input) {
+        return Err(input);
+    }
+    inverse_fft2_scale_centered_frequency_f64(&mut input);
+    Ok(input)
+}
+
+fn inverse_fft2_scale_f64(input: &mut Array2<Complex64>) {
+    transform_axis_f64(input, Axis(0), true);
+    transform_axis_f64(input, Axis(1), true);
+    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f64;
+    input.mapv_inplace(|value| value * scale);
+}
+
+fn inverse_fft2_scale_centered_frequency_f64(input: &mut Array2<Complex64>) {
+    transform_axis_f64(input, Axis(0), true);
+    transform_axis_f64(input, Axis(1), true);
+    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f64;
+    let [nx, ny]: [usize; 2] = input
+        .shape()
+        .try_into()
+        .expect("2-D FFT input should have exactly two axes");
+    let storage = input
+        .as_slice_memory_order_mut()
+        .expect("even centered-frequency FFT input should be contiguous");
+    for x in 0..nx {
+        let row_base = x * ny;
+        let row_sign = if x % 2 == 0 { scale } else { -scale };
+        for y in 0..ny {
+            let sign = if y % 2 == 0 { row_sign } else { -row_sign };
+            storage[row_base + y] *= sign;
+        }
+    }
 }
 
 fn transform_axis(data: &mut Array2<Complex32>, axis: Axis, inverse: bool) {
@@ -116,12 +151,13 @@ fn fft64(len: usize, inverse: bool) -> Arc<dyn Fft<f64>> {
 fn transform_rows(data: &mut Array2<Complex32>, inverse: bool) {
     let row_len = data.shape()[1];
     let fft = fft32(row_len, inverse);
+    let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
     for mut row in data.rows_mut() {
         if let Some(row) = row.as_slice_mut() {
-            fft.process(row);
+            fft.process_with_scratch(row, &mut scratch);
         } else {
             let mut lane = row.to_vec();
-            fft.process(&mut lane);
+            fft.process_with_scratch(&mut lane, &mut scratch);
             for (column_index, value) in lane.into_iter().enumerate() {
                 row[column_index] = value;
             }
@@ -136,11 +172,12 @@ fn transform_columns(data: &mut Array2<Complex32>, inverse: bool) {
         .expect("2-D FFT input should have exactly two axes");
     let fft = fft32(row_count, inverse);
     let mut lane = vec![Complex32::default(); row_count];
+    let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
     for column_index in 0..column_count {
         for row_index in 0..row_count {
             lane[row_index] = data[(row_index, column_index)];
         }
-        fft.process(&mut lane);
+        fft.process_with_scratch(&mut lane, &mut scratch);
         for row_index in 0..row_count {
             data[(row_index, column_index)] = lane[row_index];
         }
@@ -150,12 +187,13 @@ fn transform_columns(data: &mut Array2<Complex32>, inverse: bool) {
 fn transform_rows_f64(data: &mut Array2<Complex64>, inverse: bool) {
     let row_len = data.shape()[1];
     let fft = fft64(row_len, inverse);
+    let mut scratch = vec![Complex64::default(); fft.get_inplace_scratch_len()];
     for mut row in data.rows_mut() {
         if let Some(row) = row.as_slice_mut() {
-            fft.process(row);
+            fft.process_with_scratch(row, &mut scratch);
         } else {
             let mut lane = row.to_vec();
-            fft.process(&mut lane);
+            fft.process_with_scratch(&mut lane, &mut scratch);
             for (column_index, value) in lane.into_iter().enumerate() {
                 row[column_index] = value;
             }
@@ -170,11 +208,12 @@ fn transform_columns_f64(data: &mut Array2<Complex64>, inverse: bool) {
         .expect("2-D FFT input should have exactly two axes");
     let fft = fft64(row_count, inverse);
     let mut lane = vec![Complex64::default(); row_count];
+    let mut scratch = vec![Complex64::default(); fft.get_inplace_scratch_len()];
     for column_index in 0..column_count {
         for row_index in 0..row_count {
             lane[row_index] = data[(row_index, column_index)];
         }
-        fft.process(&mut lane);
+        fft.process_with_scratch(&mut lane, &mut scratch);
         for row_index in 0..row_count {
             data[(row_index, column_index)] = lane[row_index];
         }
@@ -198,14 +237,14 @@ fn ifftshift2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
 }
 
 fn shift2_in_place_even_f64(input: &mut Array2<Complex64>) -> bool {
-    let nx = input.shape()[0];
-    let ny = input.shape()[1];
-    if nx % 2 != 0 || ny % 2 != 0 {
+    if !is_even_contiguous_f64(input) {
         return false;
     }
-    let Some(storage) = input.as_slice_memory_order_mut() else {
-        return false;
-    };
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    let storage = input
+        .as_slice_memory_order_mut()
+        .expect("even contiguous f64 grid should have memory-order slice");
     let hx = nx / 2;
     let hy = ny / 2;
     for x in 0..hx {
@@ -220,6 +259,12 @@ fn shift2_in_place_even_f64(input: &mut Array2<Complex64>) -> bool {
         }
     }
     true
+}
+
+fn is_even_contiguous_f64(input: &Array2<Complex64>) -> bool {
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    nx % 2 == 0 && ny % 2 == 0 && input.as_slice_memory_order().is_some()
 }
 
 fn shift2(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
@@ -263,6 +308,7 @@ mod tests {
     use ndarray::Array2;
     use num_complex::{Complex32, Complex64};
 
+    use super::centered_ifft2_f64_owned_unshifted_even;
     use super::{centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned};
 
     #[test]
@@ -290,6 +336,26 @@ mod tests {
         for (expected, actual) in borrowed.iter().zip(owned.iter()) {
             assert!((expected.re - actual.re).abs() < 1.0e-10);
             assert!((expected.im - actual.im).abs() < 1.0e-10);
+        }
+    }
+
+    #[test]
+    fn unshifted_owned_f64_ifft_can_reconstruct_centered_output() {
+        let image = Array2::from_shape_fn((8, 6), |(x, y)| {
+            Complex64::new((x * 17 + y * 3) as f64, (y as isize - x as isize) as f64)
+        });
+        let borrowed = centered_ifft2_f64(&image);
+        let unshifted =
+            centered_ifft2_f64_owned_unshifted_even(image).expect("even contiguous shape");
+        let nx = unshifted.shape()[0];
+        let ny = unshifted.shape()[1];
+        for x in 0..nx {
+            for y in 0..ny {
+                let actual = unshifted[((x + nx / 2) % nx, (y + ny / 2) % ny)];
+                let expected = borrowed[(x, y)];
+                assert!((expected.re - actual.re).abs() < 1.0e-10);
+                assert!((expected.im - actual.im).abs() < 1.0e-10);
+            }
         }
     }
 
