@@ -1,0 +1,43 @@
+{
+  "id": "wave4-standard-cube-line-medium-clean-multiscale",
+  "mode_id": "standard-cube-line-clean-multiscale",
+  "description": "Wave 4 W4-16 medium standard-gridder cube multiscale clean workload for resident clean-control correctness and backend reuse evidence.",
+  "dataset": {
+    "key": "wave1-vla-single-medium",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cube",
+    "gridder": "standard",
+    "interpolation": "nearest",
+    "field": "0",
+    "phasecenter_field": null,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 64,
+    "imsize": 1024,
+    "cell_arcsec": 0.35,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": true,
+    "deconvolver": "multiscale",
+    "scales": [0, 5, 15],
+    "nterms": 1,
+    "niter": 2,
+    "minor_cycle_length": 2,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "profile_repeats": 1,
+    "phase_probe": "1",
+    "skip_profile": "1",
+    "run_label": "w4-16-multiscale-medium",
+    "storage_label": "medium-row-correctness"
+  },
+  "comparison": {
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model"]
+  }
+}
