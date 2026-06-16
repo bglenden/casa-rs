@@ -408,6 +408,7 @@ def build_plan(
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
     optional_imaging_env = {
+        "standard_mfs_grid_threads": "IMAGER_BENCH_STANDARD_MFS_GRID_THREADS",
         "imaging_memory_target_mb": "IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB",
         "imaging_prepare_buffer_mb": "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
         "imaging_row_block_rows": "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
@@ -415,7 +416,10 @@ def build_plan(
     }
     for imaging_key, env_key in optional_imaging_env.items():
         if imaging.get(imaging_key) is not None:
-            env[env_key] = str(int_value(imaging, imaging_key, 0))
+            if imaging_key == "standard_mfs_grid_threads":
+                env[env_key] = str(imaging[imaging_key])
+            else:
+                env[env_key] = str(int_value(imaging, imaging_key, 0))
     env.setdefault("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", "1")
     env.update(extra_env)
 

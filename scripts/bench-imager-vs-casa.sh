@@ -61,6 +61,7 @@ robust="${IMAGER_BENCH_ROBUST:-0.5}"
 perchanweightdensity="${IMAGER_BENCH_PERCHANWEIGHTDENSITY:-}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
 standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
+standard_mfs_grid_threads="${IMAGER_BENCH_STANDARD_MFS_GRID_THREADS:-}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
@@ -105,6 +106,10 @@ if [[ "$wterm" != "none" && ! ( "$gridder_uses_wproject_wterm" == "1" && "$wterm
 fi
 if [[ -n "$wprojplanes" && ! "$wprojplanes" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_WPROJPLANES must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$standard_mfs_grid_threads" && "$standard_mfs_grid_threads" != "auto" && ! "$standard_mfs_grid_threads" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_STANDARD_MFS_GRID_THREADS must be auto or an unsigned integer" >&2
   exit 2
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
@@ -383,6 +388,10 @@ fi
 if [[ -n "$imaging_prepare_workers" ]]; then
   rust_source_stream_flags+=(--imaging-prepare-workers "$imaging_prepare_workers")
 fi
+rust_thread_flags=()
+if [[ -n "$standard_mfs_grid_threads" ]]; then
+  rust_thread_flags+=(--standard-mfs-grid-threads "$standard_mfs_grid_threads")
+fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
@@ -421,6 +430,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
@@ -463,6 +473,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
@@ -516,6 +527,7 @@ elif [[ -n "$scales" ]]; then
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
@@ -555,6 +567,7 @@ else
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \

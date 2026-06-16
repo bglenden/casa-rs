@@ -563,6 +563,7 @@ real 1.145408
                 "imaging_prepare_buffer_mb": 128,
                 "imaging_row_block_rows": 4096,
                 "imaging_prepare_workers": 3,
+                "standard_mfs_grid_threads": "1",
             },
         }
 
@@ -580,6 +581,7 @@ real 1.145408
         self.assertEqual("128", env["IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB"])
         self.assertEqual("4096", env["IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS"])
         self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
+        self.assertEqual("1", env["IMAGER_BENCH_STANDARD_MFS_GRID_THREADS"])
         self.assertEqual("1", env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"])
 
     def test_imaging_overrides_support_backend_sweeps(self) -> None:

@@ -33,6 +33,7 @@ REQUIRED_EVIDENCE_ROLES = {
     "single_plane_stream_baseline",
     "large_baseline",
 }
+NON_SPATIAL_PRODUCTS = {".sumwt"}
 ALLOWED_TARGET_STATUSES = {
     "met",
     "missed-accepted-by-Brian",
@@ -620,9 +621,57 @@ def correctness_status(result: dict[str, Any] | None) -> str | None:
         result, ["results", "product_comparison", "structured_difference_review", "label"]
     )
     if isinstance(review, str):
+        if review == "investigate" and stale_non_spatial_only_review(result):
+            return "good"
         return review
     status = nested_value(result, ["results", "product_comparison", "status"])
     return status if isinstance(status, str) else None
+
+
+def stale_non_spatial_only_review(result: dict[str, Any]) -> bool:
+    comparison = nested_value(result, ["results", "product_comparison"])
+    if not isinstance(comparison, dict):
+        return False
+    review = comparison.get("structured_difference_review")
+    if not isinstance(review, dict):
+        return False
+    reviewed_products = review.get("products")
+    if not isinstance(reviewed_products, dict):
+        return False
+    flagged = {
+        suffix
+        for suffix, label in reviewed_products.items()
+        if isinstance(suffix, str) and label not in {"good", "unknown", None}
+    }
+    if not flagged or not flagged <= NON_SPATIAL_PRODUCTS:
+        return False
+    product_details = comparison.get("products")
+    if not isinstance(product_details, dict):
+        return False
+    return all(non_spatial_amplitude_is_good(product_details.get(suffix)) for suffix in flagged)
+
+
+def non_spatial_amplitude_is_good(product: Any) -> bool:
+    if not isinstance(product, dict):
+        return False
+    structured = product.get("structured_difference")
+    if not isinstance(structured, dict):
+        return False
+    classification = structured.get("classification")
+    if isinstance(classification, dict) and classification.get("amplitude") == "good":
+        return True
+    review = structured.get("review")
+    checks = review.get("checks") if isinstance(review, dict) else None
+    if isinstance(checks, list):
+        for check in checks:
+            if (
+                isinstance(check, dict)
+                and check.get("name") == "normalized_diff_rms"
+                and check.get("label") == "good"
+            ):
+                return True
+    normalized = structured.get("normalized_diff_rms")
+    return isinstance(normalized, int | float) and normalized < 1e-4
 
 
 def best_correctness_result(

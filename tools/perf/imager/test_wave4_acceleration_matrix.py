@@ -250,6 +250,75 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
 
         self.assertIs(best, investigate)
 
+    def test_sumwt_only_stale_structure_flag_is_not_a_correctness_blocker(self) -> None:
+        result = fake_result(
+            "standard_cube_dirty",
+            "casa_cpp",
+            rust_seconds=180.0,
+            casa_seconds=1900.0,
+            backend="cpu_slab",
+            workers=8,
+        )
+        result["results"]["product_comparison"] = {
+            "status": "completed",
+            "structured_difference_review": {
+                "label": "investigate",
+                "products": {
+                    ".image": "good",
+                    ".residual": "good",
+                    ".psf": "good",
+                    ".sumwt": "investigate",
+                },
+            },
+            "products": {
+                ".sumwt": {
+                    "structured_difference": {
+                        "classification": {
+                            "amplitude": "good",
+                            "structure": "investigate",
+                            "overall": "investigate",
+                        },
+                        "normalized_diff_rms": 1.0e-8,
+                    }
+                }
+            },
+        }
+
+        self.assertEqual("good", wave4_acceleration_matrix.correctness_status(result))
+
+    def test_sumwt_amplitude_difference_remains_a_correctness_blocker(self) -> None:
+        result = fake_result(
+            "standard_cube_dirty",
+            "casa_cpp",
+            rust_seconds=180.0,
+            casa_seconds=1900.0,
+            backend="cpu_slab",
+            workers=8,
+        )
+        result["results"]["product_comparison"] = {
+            "status": "completed",
+            "structured_difference_review": {
+                "label": "investigate",
+                "products": {".sumwt": "investigate"},
+            },
+            "products": {
+                ".sumwt": {
+                    "structured_difference": {
+                        "classification": {
+                            "amplitude": "investigate",
+                            "structure": "investigate",
+                            "overall": "investigate",
+                        },
+                        "normalized_diff_rms": 2.0e-4,
+                    }
+                }
+            },
+        }
+
+        self.assertEqual(
+            "investigate", wave4_acceleration_matrix.correctness_status(result)
+        )
+
     def test_mosaic_resolved_metal_backends_infer_metal_default(self) -> None:
         result = fake_result(
             "mosaic_cube_clean_clark",
