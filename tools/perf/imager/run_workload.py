@@ -119,7 +119,7 @@ class HarnessError(Exception):
     """Error that should be shown without a Python traceback."""
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workload", help="workload manifest id or JSON path")
     parser.add_argument(
@@ -162,6 +162,7 @@ def main() -> None:
     parser.add_argument(
         "--stream-log",
         action="store_true",
+        default=None,
         help="stream benchmark stdout while still recording the full benchmark log",
     )
     parser.add_argument(
@@ -171,6 +172,11 @@ def main() -> None:
         metavar="KEY=VALUE",
         help="override one imaging manifest field for benchmark sweeps",
     )
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     try:
@@ -759,6 +765,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "spectral_slab_events": [],
         "spectral_slab_memory": [],
         "spectral_slab_plans": [],
+        "mosaic_cube_slab_plans": [],
         "cube_per_plane_backend": [],
         "cube_resident_clean_control": [],
         "cube_resident_clean_executor": [],
@@ -796,6 +803,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["spectral_slab_memory"].append(parsed)
         elif name == "spectral_slab_plan":
             buckets["spectral_slab_plans"].append(parsed)
+        elif name == "mosaic_cube_slab_plan":
+            buckets["mosaic_cube_slab_plans"].append(parsed)
         elif name == "cube_per_plane_backend_summary":
             buckets["cube_per_plane_backend"].append(parsed)
         elif name == "cube_resident_clean_control":
@@ -869,6 +878,7 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
+    mosaic_cube_slab_plan = last_fields(buckets.get("mosaic_cube_slab_plans", []))
     cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
     cube_resident_control = last_fields(buckets.get("cube_resident_clean_control", []))
     cube_resident_executor = last_fields(buckets.get("cube_resident_clean_executor", []))
@@ -958,6 +968,16 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "cube_resident_clean_product_write_ms": cube_resident_executor.get(
             "product_write_ms"
         ),
+        "mosaic_cube_slab_schedule": mosaic_cube_slab_plan.get("schedule"),
+        "mosaic_cube_slab_executor_capabilities": mosaic_cube_slab_plan.get(
+            "executor_capabilities"
+        ),
+        "mosaic_cube_slab_nplanes": mosaic_cube_slab_plan.get("nplanes"),
+        "mosaic_cube_slab_active_planes": mosaic_cube_slab_plan.get("active_planes"),
+        "mosaic_cube_slab_count": mosaic_cube_slab_plan.get("slab_count"),
+        "mosaic_cube_slab_worker_count": mosaic_cube_slab_plan.get("worker_count"),
+        "mosaic_cube_slab_source_reuse": mosaic_cube_slab_plan.get("source_reuse"),
+        "mosaic_cube_slab_product_state": mosaic_cube_slab_plan.get("product_state"),
         "row_block_rows": memory.get("row_block_rows"),
         "selected_channels": memory.get("selected_channels"),
         "active_rows": memory.get("rows_total"),
