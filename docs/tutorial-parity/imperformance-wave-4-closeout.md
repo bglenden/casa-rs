@@ -198,3 +198,15 @@ Closeout decision for #311:
   remains a plausible architecture direction for the large-dirty lower bound,
   but Brian accepted the current standard/cubedata agreement as sufficient for
   this ticket.
+
+Closeout decision for #317:
+
+- #317 is closed by the W4-19 mosaic dirty multi-plane executor evidence. The
+  representative large-turnaround mosaic cube dirty row no longer reports
+  `mosaic_single_plane_stream`; auto uses `mosaic_multi_plane_stream` with
+  `active_planes=4` and `worker_count=4`, improving total time from 79.572 s
+  forced single-plane to 45.486 s auto, or 1.75x. Small CASA comparison bundles
+  cover dirty mosaic products, including `.image`, `.residual`, `.psf`,
+  `.sumwt`, `.weight`, `.pb`, and `.image.pbcor`. Brian approved closing #317
+  on 2026-06-16 with the explicit scope split that mosaic clean/deconvolution
+  acceleration remains open under #316 and W4-18.
