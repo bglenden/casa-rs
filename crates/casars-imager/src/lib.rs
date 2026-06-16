@@ -49221,6 +49221,169 @@ deconvolver=mtmfs
     }
 
     #[test]
+    fn cubedata_multi_channel_slab_runner_writes_casa_products() {
+        let _forced_spectral_slab = {
+            let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+            EnvGuard::unset("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
+        };
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_cubedata.ms");
+        let image_prefix = tmp.path().join("tiny_cubedata_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9, 1.401e9, 1.402e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_channels(
+            &mut ms,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(6.0, 0.0),
+                Complex32::new(0.02, 0.0),
+                Complex32::new(0.03, 0.0),
+                Complex32::new(6.0, 0.0),
+                Complex32::new(0.02, 0.0),
+                Complex32::new(0.03, 0.0),
+            ],
+        );
+        add_main_row_channels(
+            &mut ms,
+            [-25.0, 20.0, 0.0],
+            &[
+                Complex32::new(5.0, 0.0),
+                Complex32::new(0.01, 0.0),
+                Complex32::new(0.04, 0.0),
+                Complex32::new(5.0, 0.0),
+                Complex32::new(0.01, 0.0),
+                Complex32::new(0.04, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let dirty_config = CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: Some(3),
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Cubedata,
+            cube_axis: CubeAxisConfig {
+                specmode: CubeSpecMode::Cubedata,
+                interpolation: CubeInterpolation::Nearest,
+                ..CubeAxisConfig::default()
+            },
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            nmajor: None,
+            fullsummary: false,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: false,
+            write_pb: false,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
+            w_project_planes: None,
+            dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
+            write_preview_pngs: false,
+        };
+        assert!(can_run_standard_cube_slab(&dirty_config, false, 1));
+
+        let summary = run_from_config(&dirty_config).unwrap();
+        assert!(summary.gridded_samples > 0);
+        assert_eq!(summary.channel_summaries.len(), 3);
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.shape(), &[32, 32, 1, 3]);
+        let sumwt = PagedImage::<f32>::open(format!("{}.sumwt", image_prefix.display())).unwrap();
+        assert_eq!(sumwt.shape(), &[1, 1, 1, 3]);
+
+        let slab1_prefix = tmp.path().join("tiny_cubedata_slab1_image");
+        let mut slab1_config = dirty_config.clone();
+        slab1_config.imagename = slab1_prefix.clone();
+        {
+            let _forced_slab1 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "1");
+            let slab1_summary = run_from_config(&slab1_config).unwrap();
+            assert!(slab1_summary.gridded_samples > 0);
+            assert_eq!(slab1_summary.channel_summaries.len(), 3);
+        }
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", slab1_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
+        let clean_prefix = tmp.path().join("tiny_cubedata_clean_image");
+        let mut clean_config = dirty_config.clone();
+        clean_config.imagename = clean_prefix.clone();
+        clean_config.dirty_only = false;
+        clean_config.niter = 1;
+        clean_config.minor_cycle_length = 1;
+        {
+            let _forced_slab1 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "1");
+            let clean_summary = run_from_config(&clean_config).unwrap();
+            assert_eq!(clean_summary.channel_summaries.len(), 3);
+        }
+        for suffix in ["psf", "residual", "model", "image", "sumwt"] {
+            let path = format!("{}.{}", clean_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing clean product {path}");
+        }
+    }
+
+    #[test]
     fn cube_savemodel_modelcolumn_rejects_without_bounded_stream_writer() {
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("tiny_cube_savemodel.ms");

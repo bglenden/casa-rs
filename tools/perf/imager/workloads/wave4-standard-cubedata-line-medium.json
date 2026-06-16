@@ -1,0 +1,40 @@
+{
+  "id": "wave4-standard-cubedata-line-medium",
+  "mode_id": "standard-cubedata-line",
+  "description": "Wave 4 medium standard-gridder cubedata dirty cube workload for W4-11 slab integration evidence.",
+  "dataset": {
+    "key": "wave1-vla-single-medium",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "cubedata",
+    "gridder": "standard",
+    "interpolation": "nearest",
+    "field": "0",
+    "phasecenter_field": null,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 512,
+    "imsize": 2048,
+    "cell_arcsec": 0.35,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": false,
+    "deconvolver": "hogbom",
+    "nterms": 1,
+    "scales": "",
+    "niter": 0,
+    "minor_cycle_length": 2,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "w4-11",
+    "storage_label": "about-memory"
+  },
+  "comparison": {
+    "products": [".image", ".residual", ".psf", ".sumwt"]
+  }
+}

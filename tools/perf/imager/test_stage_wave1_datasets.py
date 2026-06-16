@@ -44,6 +44,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
                 "standard-mfs-dirty-control",
                 "standard-mfs-clean-current",
                 "standard-cube-line",
+                "standard-cubedata-line",
                 "standard-cube-line-clean-hogbom-casa-niter2",
                 "standard-cube-line-clean-clark-niter2",
                 "standard-cube-line-clean-multiscale-niter2",
@@ -72,6 +73,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
         )["datasets"][0]
 
         standard = stage.build_workload_manifest(dataset, "standard-cube-line")
+        cubedata = stage.build_workload_manifest(dataset, "standard-cubedata-line")
         mfs = stage.build_workload_manifest(dataset, "standard-mfs-dirty-control")
         mosaic = stage.build_workload_manifest(dataset, "mosaic-cube-bounded")
         all_channels = dataset["shape"]["channels"]
@@ -79,6 +81,14 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertEqual("standard", standard["imaging"]["gridder"])
         self.assertEqual("0", standard["imaging"]["field"])
         self.assertEqual(all_channels, standard["imaging"]["channel_count"])
+        self.assertEqual("cubedata", cubedata["imaging"]["specmode"])
+        self.assertEqual("nearest", cubedata["imaging"]["interpolation"])
+        self.assertFalse(cubedata["imaging"]["perchanweightdensity"])
+        self.assertEqual(all_channels, cubedata["imaging"]["channel_count"])
+        self.assertEqual(
+            [".image", ".residual", ".psf", ".sumwt"],
+            cubedata["comparison"]["products"],
+        )
         self.assertEqual("mfs", mfs["imaging"]["specmode"])
         self.assertEqual(all_channels, mfs["imaging"]["channel_count"])
         self.assertEqual("mosaic", mosaic["imaging"]["gridder"])

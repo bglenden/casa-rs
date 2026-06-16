@@ -327,7 +327,7 @@ def materialize_workloads(plan: dict[str, Any], output_dir: pathlib.Path) -> Non
 
 
 def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, Any]:
-    specmode = "cube" if "cube" in mode_id else "mfs"
+    specmode = "cubedata" if "cubedata" in mode_id else ("cube" if "cube" in mode_id else "mfs")
     gridder = "mosaic" if mode_id.startswith("mosaic") else "standard"
     is_clean = "clean" in mode_id or mode_id.startswith("mtmfs")
     is_mtmfs = mode_id.startswith("mtmfs")
@@ -346,7 +346,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
         "mode": "clean" if is_clean else "dirty",
         "specmode": specmode,
         "gridder": gridder,
-        **({"interpolation": "nearest"} if specmode == "cube" else {}),
+        **({"interpolation": "nearest"} if specmode in {"cube", "cubedata"} else {}),
         "field": mosaic_field_selector(dataset) if gridder == "mosaic" else "0",
         "phasecenter_field": 0 if gridder == "mosaic" else None,
         "spw": "0",
@@ -356,6 +356,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
         "cell_arcsec": workload_cell_arcsec(dataset["instrument"]),
         "weighting": "briggs" if is_clean else "natural",
         "robust": 0.5,
+        **({"perchanweightdensity": False} if specmode == "cubedata" else {}),
         "deconvolver": deconvolver,
         "nterms": 2 if is_mtmfs else 1,
         "scales": [0, 5, 15] if deconvolver == "multiscale" else "",
@@ -431,7 +432,7 @@ def comparison_products_for_mode(is_clean: bool, is_mtmfs: bool) -> list[str]:
 
 def workload_channel_count(dataset: dict[str, Any], mode_id: str, specmode: str) -> int:
     channels = int(dataset["shape"]["channels"])
-    if specmode != "cube":
+    if specmode not in {"cube", "cubedata"}:
         return channels
     if "bounded" in mode_id:
         return min(channels, 32)

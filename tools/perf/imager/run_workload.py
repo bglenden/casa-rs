@@ -2322,6 +2322,39 @@ def structured_difference_metrics(suffix, rust_data, casa_data, diff_data, beam_
     flux_norm = robust_product_scale(casa_values)
     diff_rms = rms(diff_values)
     normalized_diff_rms = diff_rms / flux_norm if flux_norm else None
+    if non_spatial_product(suffix):
+        classification = non_spatial_difference_classification(normalized_diff_rms)
+        review = structured_difference_review(
+            suffix=suffix,
+            classification=classification,
+            normalized_diff_rms=normalized_diff_rms,
+            low_order_r2=None,
+            large_scale_power=None,
+            block_decay_slope=None,
+        )
+        return {
+            "status": "computed",
+            "mask": mask_description,
+            "masked_pixels": finite_count,
+            "analysis_pixels": int(np.count_nonzero(analysis_mask)),
+            "beam_block_side_pixels": int(beam_side),
+            "normalization": {
+                "type": "casa_support_rms_or_peak",
+                "value": finite_float(flux_norm),
+            },
+            "diff_rms": finite_float(diff_rms),
+            "normalized_diff_rms": finite_float(normalized_diff_rms),
+            "low_order_r2_quadratic": None,
+            "large_scale_power_fraction": None,
+            "scale_offset_gradient_fit": {
+                "status": "not_applicable",
+                "reason": "non_spatial_product",
+            },
+            "beam_block_rms_by_scale": [],
+            "block_rms_decay_slope_vs_independent_beams": None,
+            "classification": classification,
+            "review": review,
+        }
     low_order_r2 = low_order_r2_score(diff_plane, analysis_mask)
     large_scale_power = large_scale_power_fraction(
         diff_plane,
@@ -2392,6 +2425,10 @@ def structured_difference_mask(suffix, rust_plane, casa_plane, base_mask):
             },
         )
     return base_mask, {"type": "finite_overlap"}
+
+
+def non_spatial_product(suffix):
+    return suffix in {".sumwt"}
 
 
 def erode_mask_for_product(mask, suffix, beam_side):
@@ -2509,6 +2546,17 @@ def structured_difference_classification(
     }
 
 
+def non_spatial_difference_classification(normalized_diff_rms):
+    amplitude = classify_amplitude(normalized_diff_rms)
+    return {
+        "overall": amplitude,
+        "amplitude": amplitude,
+        "structure": "not_applicable",
+        "structure_components": {},
+        "thresholds": structured_difference_thresholds(),
+    }
+
+
 def structured_difference_review(
     suffix,
     classification,
@@ -2595,6 +2643,17 @@ def structured_difference_review_summary(suffix, classification):
     overall = classification.get("overall", "unknown")
     amplitude = classification.get("amplitude", "unknown")
     structure = classification.get("structure", "unknown")
+    if structure == "not_applicable":
+        if overall == "good":
+            return f"{suffix}: good; non-spatial product amplitude check passed."
+        if overall == "bad":
+            return (
+                f"{suffix}: bad; non-spatial product amplitude is {amplitude}. "
+                "Treat this as a correctness blocker until instrumented or explained."
+            )
+        if overall == "investigate":
+            return f"{suffix}: investigate; non-spatial product amplitude is {amplitude}."
+        return f"{suffix}: unknown; non-spatial product amplitude check did not run."
     if overall == "good":
         return f"{suffix}: good; amplitude and beam-scale structure checks passed."
     if overall == "bad":

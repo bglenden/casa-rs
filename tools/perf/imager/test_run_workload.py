@@ -1267,6 +1267,31 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         )
         self.assertEqual([64, 1], metrics["scale_offset_gradient_fit"]["shape"])
 
+    def test_product_comparison_treats_sumwt_as_non_spatial(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        casa = np.linspace(6.0e6, 6.2e6, 64, dtype=np.float64).reshape(1, 1, 1, 64)
+        rust = casa + 0.05
+        diff = rust - casa
+
+        metrics = namespace["structured_difference_metrics"](
+            ".sumwt",
+            rust,
+            casa,
+            diff,
+            {"status": "unavailable"},
+        )
+
+        self.assertEqual("computed", metrics["status"])
+        self.assertEqual("good", metrics["classification"]["overall"])
+        self.assertEqual("not_applicable", metrics["classification"]["structure"])
+        self.assertEqual([], metrics["beam_block_rms_by_scale"])
+        self.assertEqual("not_applicable", metrics["scale_offset_gradient_fit"]["status"])
+        self.assertEqual("good", metrics["review"]["label"])
+        self.assertIn("non-spatial product amplitude", metrics["review"]["summary"])
+
     def test_product_comparison_display_plane_uses_middle_extra_axis(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
