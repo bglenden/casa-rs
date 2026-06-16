@@ -40679,6 +40679,55 @@ mod tests {
     }
 
     #[test]
+    fn cube_clean_per_plane_execution_treats_clark_as_shared_clean_backend() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--deconvolver"),
+            OsString::from("clark"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("auto"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse Clark cube clean config");
+
+        let plan = plan_cube_per_plane_execution(&config, 8, 4);
+
+        assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
+        assert!(plan.fixed_tile_cpu_eligible);
+        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
+            assert!(plan.metal_eligible);
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3MetalGrouped
+            );
+        } else {
+            assert!(!plan.metal_eligible);
+            assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
+        }
+        assert!(
+            !plan
+                .fallback_reasons
+                .contains(&"wave3_fixed_tile_cpu_not_semantically_equivalent")
+        );
+    }
+
+    #[test]
     fn cube_per_plane_runtime_plan_selects_fixed_tile_cpu_without_capping_plane_workers() {
         let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
         let output_planes = hardware_threads.saturating_mul(2).max(2);
@@ -40889,6 +40938,13 @@ mod tests {
         linear_config.cube_axis.interpolation = CubeInterpolation::Linear;
         assert!(!direct_clean_cube_shared_source_eligible(
             &linear_config,
+            clean
+        ));
+
+        let mut clark_config = config.clone();
+        clark_config.deconvolver = Deconvolver::Clark;
+        assert!(direct_clean_cube_shared_source_eligible(
+            &clark_config,
             clean
         ));
     }
@@ -50029,6 +50085,35 @@ deconvolver=mtmfs
         let clean_slab1_model =
             PagedImage::<f32>::open(format!("{}.model", clean_slab1_prefix.display())).unwrap();
         assert_eq!(clean_slab1_model.shape(), &[32, 32, 1, 4]);
+
+        let clark_prefix = tmp.path().join("tiny_cube_clark_clean_image");
+        let mut clark_config = clean_config.clone();
+        clark_config.imagename = clark_prefix.clone();
+        clark_config.deconvolver = Deconvolver::Clark;
+        clark_config.niter = 2;
+        clark_config.minor_cycle_length = 1;
+        {
+            let _forced_slab2 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "2");
+            let clark_summary = run_from_config(&clark_config).unwrap();
+            assert!(clark_summary.minor_iterations > 0);
+            assert_eq!(clark_summary.channel_summaries.len(), 4);
+            let cube_cycle_threshold =
+                clark_summary.channel_summaries[0].final_cycle_threshold_jy_per_beam;
+            assert!(
+                clark_summary.channel_summaries.iter().all(|summary| {
+                    (summary.final_cycle_threshold_jy_per_beam - cube_cycle_threshold).abs()
+                        <= 1.0e-5
+                }),
+                "Clark cube clean should share the cube-level cycle threshold"
+            );
+        }
+        for suffix in ["psf", "residual", "model", "image", "sumwt"] {
+            let path = format!("{}.{}", clark_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing Clark product {path}");
+        }
+        let clark_model =
+            PagedImage::<f32>::open(format!("{}.model", clark_prefix.display())).unwrap();
+        assert_eq!(clark_model.shape(), &[32, 32, 1, 4]);
     }
 
     #[test]
