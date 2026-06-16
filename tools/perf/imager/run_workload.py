@@ -740,6 +740,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "cube_source_row_blocks": [],
         "cube_product_summaries": [],
         "cube_plane_state_store": [],
+        "visibility_geometry_cache": [],
         "executor_limitations": [],
         "worker_diagnostics": [],
         "metal_diagnostics": [],
@@ -780,6 +781,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["cube_source_row_blocks"].append(parsed)
         elif name == "cube_plane_state_store_summary":
             buckets["cube_plane_state_store"].append(parsed)
+        elif name == "visibility_geometry_cache_summary":
+            buckets["visibility_geometry_cache"].append(parsed)
         elif name in {
             "cube_shared_direct_plane_executor_summary",
             "cube_shared_plane_executor_summary",
@@ -857,6 +860,14 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     ]
     last_cube_plane_state_store = (
         cube_plane_state_store[-1] if cube_plane_state_store else {}
+    )
+    visibility_geometry_cache = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("visibility_geometry_cache", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    last_visibility_geometry_cache = (
+        visibility_geometry_cache[-1] if visibility_geometry_cache else {}
     )
     executor_limitation = last_fields(buckets.get("executor_limitations", []))
     spectral_memory = [
@@ -1010,6 +1021,35 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "cube_plane_state_store_kind": last_cube_plane_state_store.get("kind"),
         "cube_plane_state_store_cleanup_policy": last_cube_plane_state_store.get(
             "cleanup_policy"
+        ),
+        "visibility_geometry_cache_enabled": last_visibility_geometry_cache.get(
+            "enabled"
+        ),
+        "visibility_geometry_cache_budget_bytes": last_visibility_geometry_cache.get(
+            "budget_bytes"
+        ),
+        "visibility_geometry_cache_resident_bytes": last_visibility_geometry_cache.get(
+            "resident_bytes"
+        ),
+        "visibility_geometry_cache_entries": last_visibility_geometry_cache.get(
+            "entries"
+        ),
+        "visibility_geometry_cache_fills": last_visibility_geometry_cache.get("fills"),
+        "visibility_geometry_cache_hits": last_visibility_geometry_cache.get("hits"),
+        "visibility_geometry_cache_misses": last_visibility_geometry_cache.get(
+            "misses"
+        ),
+        "visibility_geometry_cache_shares": last_visibility_geometry_cache.get(
+            "shares"
+        ),
+        "visibility_geometry_cache_bypasses": last_visibility_geometry_cache.get(
+            "bypasses"
+        ),
+        "visibility_geometry_cache_rejected_model_dependent": last_visibility_geometry_cache.get(
+            "rejected_model_dependent"
+        ),
+        "visibility_geometry_cache_elapsed_ms": last_visibility_geometry_cache.get(
+            "elapsed_ms"
         ),
         "executor_limitation_materialization": executor_limitation.get(
             "materialization"

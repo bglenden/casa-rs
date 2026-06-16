@@ -752,6 +752,7 @@ spectral_slab_memory mode=cube stage=after_slab_prepare slab_id=0 plane_start=0 
 spectral_slab_memory mode=cube stage=after_slab_run slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1500000 peak_rss_bytes=1700000 delta_from_baseline_bytes=900000 delta_from_previous_bytes=500000 estimated_resident_bytes=223456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=run_cube
 cube_shared_direct_plane_executor_summary slab_plane_start=0 slab_plane_end=4 worker_count=4 product_batch_planes=2 completed=4 elapsed_ms=100.000 worker_sum_ms=300.000 worker_max_ms=90.000 result_wait_ms=10.000 consume_ms=20.000 product_write_ms=30.000 product_role_ms=29.000 product_psf_ms=10.000 product_residual_ms=11.000 product_model_ms=0.000 product_image_ms=0.000 product_sumwt_ms=1.000 product_bytes=1024 product_groups=2 product_group_planes=4 writer_groups=2 writer_planes=4 writer_estimated_bytes=1024 tiled_c_order_calls=4 tiled_fortran_calls=2 tiled_tile_visits=128 tiled_copied_elements=2048 tiled_lru_hits=1 tiled_lru_misses=2 tiled_lru_zero_fill_tiles=64 tiled_lru_read_tiles=0 tiled_lru_read_bytes=0 tiled_lru_dirty_evictions=0 tiled_lru_flush_calls=0 tiled_lru_flush_write_tiles=0 tiled_lru_flush_write_bytes=0 tiled_lru_batch_flushes=2 tiled_lru_batch_flush_tiles=64 tiled_lru_batch_flush_bytes=4096 tiled_direct_write_calls=2 tiled_direct_write_tiles=128 tiled_direct_write_bytes=8192 tiled_direct_pack_ns=1200 tiled_direct_swap_ns=0 tiled_direct_write_ns=3400 tiled_flat_allocations=0 tiled_flat_allocated_bytes=0 tiled_flat_zero_fill_bytes=0 tiled_flat_bulk_read_bytes=0 tiled_flat_flush_calls=0 tiled_flat_flush_write_tiles=0 tiled_flat_flush_write_bytes=0 residency=streaming_plane_results
 cube_plane_state_store_summary kind=product_backed_write_through slab_id=0 plane_start=0 plane_end=4 planes=4 bytes_read=0 bytes_written=1024 elapsed_ms=30.000 cleanup_policy=drop_after_write product_write_state=written components=psf,residual,image,sumwt
+visibility_geometry_cache_summary enabled=true budget_bytes=1048576 resident_bytes=2048 entries=1 fills=1 hits=3 misses=1 shares=3 bypasses=0 rejected_model_dependent=0 elapsed_ms=42.000
 cube_slab_executor_limitation materialization=full_prepared_slab planner_row_block_rows=687 inner_prepare_row_block_rows=executor_default reason=small_planner_row_blocks_are_only_valid_for_streaming_consumers
 cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_source=shape-planner source_channels=62 prepared_samples=191346570 blocks=95 visibility_batches=5890 visibility_capacity=212952516 visibility_capacity_surplus=21605946 visibility_capacity_bytes=13628961024 density_samples=0 density_batches=0 density_capacity=0 density_capacity_surplus=0 model_samples=0 model_batches=0 model_capacity=0 model_capacity_surplus=0 geometry_columns_ms=0.026 read_wall_ms=9156.943 read_data_ms=4172.764 read_flag_ms=2464.324 read_weight_ms=501.464 read_weight_spectrum_ms=0.000 read_geometry_ms=516.441 prepare_ms=11355.156 merge_ms=0.733 wall_ms=20525.010
 """
@@ -883,6 +884,20 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
             "drop_after_write",
             parsed["summary"]["cube_plane_state_store_cleanup_policy"],
         )
+        self.assertEqual(True, parsed["summary"]["visibility_geometry_cache_enabled"])
+        self.assertEqual(1048576, parsed["summary"]["visibility_geometry_cache_budget_bytes"])
+        self.assertEqual(2048, parsed["summary"]["visibility_geometry_cache_resident_bytes"])
+        self.assertEqual(1, parsed["summary"]["visibility_geometry_cache_entries"])
+        self.assertEqual(1, parsed["summary"]["visibility_geometry_cache_fills"])
+        self.assertEqual(3, parsed["summary"]["visibility_geometry_cache_hits"])
+        self.assertEqual(1, parsed["summary"]["visibility_geometry_cache_misses"])
+        self.assertEqual(3, parsed["summary"]["visibility_geometry_cache_shares"])
+        self.assertEqual(0, parsed["summary"]["visibility_geometry_cache_bypasses"])
+        self.assertEqual(
+            0,
+            parsed["summary"]["visibility_geometry_cache_rejected_model_dependent"],
+        )
+        self.assertEqual(42.0, parsed["summary"]["visibility_geometry_cache_elapsed_ms"])
         event = parsed["spectral_slab_events"][0]["fields"]
         self.assertEqual("initial_dirty", event["pass_kind"])
         self.assertEqual("source_read", event["stage"])

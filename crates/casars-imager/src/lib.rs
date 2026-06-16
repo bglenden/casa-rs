@@ -15,6 +15,7 @@ use std::ffi::OsString;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
+use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6381,6 +6382,8 @@ fn run_standard_cube_slab_from_open_ms(
         let mut plane_execution_stats = IndependentStreamingExecutorStats::default();
         let mut skipped_minor_cycle_planes = 0usize;
         let mut cleaned_planes = 0usize;
+        let geometry_cache_started_at = Instant::now();
+        let mut geometry_cache = VisibilityGeometryCache::new(true, memory_plan.cache_budget_bytes);
 
         for slab in &slab_manifest {
             let slab_config = slab_config_for_cube_planes(
@@ -6423,6 +6426,13 @@ fn run_standard_cube_slab_from_open_ms(
                 channel_read_range,
                 memory_plan.row_block_rows,
                 prepare_started_at,
+                spectral_slab::ImagingPassKind::InitialDirty,
+                slab.slab_id,
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                &mut geometry_cache,
             )?);
             source_read_elapsed += shared_source.elapsed;
             modeled_read_bytes = modeled_read_bytes.saturating_add(
@@ -6564,6 +6574,12 @@ fn run_standard_cube_slab_from_open_ms(
                 product_io_stats.direct_tile_write_bytes,
                 product_io_stats.flat_flush_write_bytes,
             );
+            eprintln!(
+                "{}",
+                geometry_cache
+                    .stats()
+                    .log_line(geometry_cache.enabled, geometry_cache_started_at.elapsed())
+            );
         }
         prepare_plane_input_time += source_read_elapsed;
         run_imaging_time += prepare_elapsed + plane_execution_stats.elapsed + clean_control_elapsed;
@@ -6615,6 +6631,8 @@ fn run_standard_cube_slab_from_open_ms(
         });
     }
 
+    let geometry_cache_started_at = Instant::now();
+    let mut geometry_cache = VisibilityGeometryCache::new(true, memory_plan.cache_budget_bytes);
     for slab in slab_manifest {
         let slab_resident_bytes = match memory_plan.plane_state_residency {
             spectral_slab::PlaneStateResidency::FullActiveGroup => memory_plan
@@ -6710,6 +6728,13 @@ fn run_standard_cube_slab_from_open_ms(
                 channel_read_range,
                 memory_plan.row_block_rows,
                 prepare_started_at,
+                spectral_slab::ImagingPassKind::InitialDirty,
+                slab.slab_id,
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                &mut geometry_cache,
             )?;
             let source_read_elapsed = shared_source.elapsed;
             prepare_plane_input_time += source_read_elapsed;
@@ -7066,6 +7091,14 @@ fn run_standard_cube_slab_from_open_ms(
                 estimated_resident_bytes: Some(slab_resident_bytes),
                 note: "result_consumed",
             },
+        );
+    }
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "{}",
+            geometry_cache
+                .stats()
+                .log_line(geometry_cache.enabled, geometry_cache_started_at.elapsed())
         );
     }
 
@@ -16040,8 +16073,9 @@ fn imaging_source_block_view_from_ms_buffer<'a>(
 #[allow(dead_code)]
 struct ColumnarPreparedSource {
     visibility: VisibilityBuffer,
-    geometry_rows: Vec<PreparedGeometryRow>,
+    geometry_rows: Arc<[PreparedGeometryRow]>,
     fill_report: VisibilityBufferFillReport,
+    geometry_cache_lookup: Option<VisibilityGeometryCacheLookup>,
 }
 
 #[allow(dead_code)]
@@ -16060,6 +16094,335 @@ struct SharedColumnarCubeSlabSource {
     modeled_physical_read_bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct VisibilityGeometryCacheKey {
+    pass_compatibility: &'static str,
+    pass_kind: &'static str,
+    field_digest: u64,
+    spw_id: usize,
+    channel_start: usize,
+    channel_count: usize,
+    stokes_key: String,
+    spectral_mode: &'static str,
+    spectral_frame_key: String,
+    interpolation: &'static str,
+    gridder_key: String,
+    weighting_key: String,
+    phase_center_field_id: Option<usize>,
+    phase_center_ra_bits: u64,
+    phase_center_dec_bits: u64,
+    mosaic_field_digest: u64,
+    flag_state_digest: u64,
+    row_block_first: Option<usize>,
+    row_block_last: Option<usize>,
+    row_block_rows: usize,
+    row_block_digest: u64,
+    backend_representation: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisibilityGeometryCacheLookup {
+    hit: bool,
+    stored: bool,
+    estimated_bytes: usize,
+}
+
+impl VisibilityGeometryCacheLookup {
+    fn event_stage(self) -> spectral_slab::SpectralEventStage {
+        if self.hit {
+            spectral_slab::SpectralEventStage::CacheHit
+        } else if self.stored {
+            spectral_slab::SpectralEventStage::CacheFill
+        } else {
+            spectral_slab::SpectralEventStage::CacheMiss
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct VisibilityGeometryCacheStats {
+    budget_bytes: usize,
+    resident_bytes: usize,
+    entries: usize,
+    fills: usize,
+    hits: usize,
+    misses: usize,
+    shares: usize,
+    bypasses: usize,
+    rejected_model_dependent: usize,
+}
+
+impl VisibilityGeometryCacheStats {
+    fn log_line(&self, enabled: bool, elapsed: Duration) -> String {
+        format!(
+            "visibility_geometry_cache_summary enabled={} budget_bytes={} resident_bytes={} entries={} fills={} hits={} misses={} shares={} bypasses={} rejected_model_dependent={} elapsed_ms={:.3}",
+            enabled,
+            self.budget_bytes,
+            self.resident_bytes,
+            self.entries,
+            self.fills,
+            self.hits,
+            self.misses,
+            self.shares,
+            self.bypasses,
+            self.rejected_model_dependent,
+            duration_ms(elapsed),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct VisibilityGeometryCacheEntry {
+    rows: Arc<[PreparedGeometryRow]>,
+    estimated_bytes: usize,
+}
+
+#[derive(Debug, Clone)]
+struct VisibilityGeometryCache {
+    enabled: bool,
+    budget_bytes: usize,
+    entries: HashMap<VisibilityGeometryCacheKey, VisibilityGeometryCacheEntry>,
+    stats: VisibilityGeometryCacheStats,
+}
+
+impl VisibilityGeometryCache {
+    fn new(enabled: bool, budget_bytes: usize) -> Self {
+        Self {
+            enabled,
+            budget_bytes,
+            entries: HashMap::new(),
+            stats: VisibilityGeometryCacheStats {
+                budget_bytes,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn get_or_insert_with<F>(
+        &mut self,
+        key: VisibilityGeometryCacheKey,
+        build: F,
+    ) -> Result<(Arc<[PreparedGeometryRow]>, VisibilityGeometryCacheLookup), String>
+    where
+        F: FnOnce() -> Result<Arc<[PreparedGeometryRow]>, String>,
+    {
+        if key.pass_compatibility != "pass_independent_geometry" {
+            self.stats.rejected_model_dependent =
+                self.stats.rejected_model_dependent.saturating_add(1);
+            return Err(format!(
+                "visibility geometry cache refuses model-dependent pass compatibility {:?}",
+                key.pass_compatibility
+            ));
+        }
+        if !self.enabled {
+            self.stats.bypasses = self.stats.bypasses.saturating_add(1);
+            let rows = build()?;
+            let estimated_bytes = estimated_geometry_rows_bytes(&rows);
+            return Ok((
+                rows,
+                VisibilityGeometryCacheLookup {
+                    hit: false,
+                    stored: false,
+                    estimated_bytes,
+                },
+            ));
+        }
+        if let Some(entry) = self.entries.get(&key) {
+            self.stats.hits = self.stats.hits.saturating_add(1);
+            self.stats.shares = self.stats.shares.saturating_add(1);
+            return Ok((
+                Arc::clone(&entry.rows),
+                VisibilityGeometryCacheLookup {
+                    hit: true,
+                    stored: true,
+                    estimated_bytes: entry.estimated_bytes,
+                },
+            ));
+        }
+
+        self.stats.misses = self.stats.misses.saturating_add(1);
+        let rows = build()?;
+        let estimated_bytes = estimated_geometry_rows_bytes(&rows);
+        let can_store =
+            estimated_bytes <= self.budget_bytes.saturating_sub(self.stats.resident_bytes);
+        if can_store {
+            self.stats.fills = self.stats.fills.saturating_add(1);
+            self.stats.resident_bytes = self.stats.resident_bytes.saturating_add(estimated_bytes);
+            self.entries.insert(
+                key,
+                VisibilityGeometryCacheEntry {
+                    rows: Arc::clone(&rows),
+                    estimated_bytes,
+                },
+            );
+            self.stats.entries = self.entries.len();
+        }
+        Ok((
+            rows,
+            VisibilityGeometryCacheLookup {
+                hit: false,
+                stored: can_store,
+                estimated_bytes,
+            },
+        ))
+    }
+
+    fn stats(&self) -> VisibilityGeometryCacheStats {
+        let mut stats = self.stats.clone();
+        stats.entries = self.entries.len();
+        stats
+    }
+}
+
+fn estimated_geometry_rows_bytes(rows: &[PreparedGeometryRow]) -> usize {
+    rows.len()
+        .saturating_mul(std::mem::size_of::<PreparedGeometryRow>())
+}
+
+fn stable_digest<T: Hash>(value: &T) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn selected_flag_state_digest(
+    selection: &SelectedRowsContext,
+    row_chunk: &[SelectedMainRow],
+) -> u64 {
+    let states = row_chunk
+        .iter()
+        .map(|row| {
+            (
+                row.row_index,
+                selection
+                    .flag_row
+                    .get(row.row_index)
+                    .copied()
+                    .unwrap_or(false),
+            )
+        })
+        .collect::<Vec<_>>();
+    stable_digest(&states)
+}
+
+fn selected_field_digest(row_chunk: &[SelectedMainRow]) -> u64 {
+    stable_digest(&row_chunk.iter().map(|row| row.field_id).collect::<Vec<_>>())
+}
+
+fn selected_row_block_digest(row_chunk: &[SelectedMainRow]) -> u64 {
+    stable_digest(
+        &row_chunk
+            .iter()
+            .map(|row| {
+                (
+                    row.row_index,
+                    row.field_id,
+                    row.ddid,
+                    row.spw_id,
+                    row.polarization_id,
+                    row.time_mjd_seconds.map(f64::to_bits),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn visibility_geometry_cache_gridder_key(config: &CliConfig) -> String {
+    let family = if config.force_standard_gridder {
+        "standard"
+    } else if config.use_pointing {
+        "mosaic"
+    } else {
+        match config.w_term_mode {
+            WTermMode::None => "standard",
+            WTermMode::Direct => "w-direct",
+            WTermMode::WProject => "wproject",
+        }
+    };
+    format!(
+        "{}:imsize={}:cell={:.12e}:wproj={}:pb={}:pbcor={}",
+        family,
+        config.imsize,
+        config.cell_arcsec,
+        config
+            .w_project_planes
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "auto".to_string()),
+        config.write_pb,
+        config.pbcor,
+    )
+}
+
+fn visibility_geometry_cache_backend_representation(config: &CliConfig) -> &'static str {
+    if config.use_pointing {
+        "columnar_visibility_buffer_with_pointing"
+    } else {
+        "columnar_visibility_buffer_standard"
+    }
+}
+
+fn optional_cube_axis_value_key(value: &Option<CubeAxisValue>) -> String {
+    value
+        .as_ref()
+        .map(canonical_cube_axis_value)
+        .unwrap_or_else(|| "default".to_string())
+}
+
+fn visibility_geometry_cache_key_for_rows(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    row_chunk: &[SelectedMainRow],
+    channel_read_range: Option<SelectedChannelReadRange>,
+    pass_kind: spectral_slab::ImagingPassKind,
+) -> VisibilityGeometryCacheKey {
+    let (channel_start, channel_count) = channel_read_range
+        .map(|range| (range.start, range.count))
+        .unwrap_or((0, table_values.spw_freqs_hz.len()));
+    let row_block_first = row_chunk.first().map(|row| row.row_index);
+    let row_block_last = row_chunk.last().map(|row| row.row_index);
+    VisibilityGeometryCacheKey {
+        pass_compatibility: "pass_independent_geometry",
+        pass_kind: pass_kind.as_str(),
+        field_digest: selected_field_digest(row_chunk),
+        spw_id: table_values.spw_id,
+        channel_start,
+        channel_count,
+        stokes_key: config
+            .correlation
+            .as_deref()
+            .unwrap_or("I")
+            .to_ascii_uppercase(),
+        spectral_mode: canonical_spectral_mode_name(config.spectral_mode),
+        spectral_frame_key: format!(
+            "start={}:width={}:count={}",
+            optional_cube_axis_value_key(&config.cube_axis.start),
+            optional_cube_axis_value_key(&config.cube_axis.width),
+            config
+                .channel_count
+                .unwrap_or(table_values.spw_freqs_hz.len()),
+        ),
+        interpolation: canonical_cube_interpolation_name(config.cube_axis.interpolation),
+        gridder_key: visibility_geometry_cache_gridder_key(config),
+        weighting_key: format!(
+            "{}:perchan={}:uvtaper={:?}",
+            canonical_weighting_name(config.weighting),
+            config.per_channel_weight_density,
+            config.uv_taper,
+        ),
+        phase_center_field_id: selection.phase_center.field_id,
+        phase_center_ra_bits: selection.phase_center.angles_rad[0].to_bits(),
+        phase_center_dec_bits: selection.phase_center.angles_rad[1].to_bits(),
+        mosaic_field_digest: selected_field_digest(row_chunk),
+        flag_state_digest: selected_flag_state_digest(selection, row_chunk),
+        row_block_first,
+        row_block_last,
+        row_block_rows: row_chunk.len(),
+        row_block_digest: selected_row_block_digest(row_chunk),
+        backend_representation: visibility_geometry_cache_backend_representation(config),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 fn read_columnar_prepared_source(
@@ -16073,6 +16436,8 @@ fn read_columnar_prepared_source(
     reprojection_mode: UvwReprojectionMode,
     channel_read_range: Option<SelectedChannelReadRange>,
     geometry_columns: &PreparedGeometryColumnCache,
+    geometry_cache: Option<&mut VisibilityGeometryCache>,
+    geometry_cache_key: Option<VisibilityGeometryCacheKey>,
 ) -> Result<ColumnarPreparedSource, String> {
     let row_indices = row_chunk
         .iter()
@@ -16117,18 +16482,38 @@ fn read_columnar_prepared_source(
     let fill_report = ms
         .fill_visibility_buffer(&request, &mut visibility)
         .map_err(|error| format!("fill columnar visibility buffer: {error}"))?;
-    let geometry_rows = build_prepared_geometry_rows(
-        ms,
-        row_chunk,
-        &selection.phase_center,
-        geometry_columns,
-        derived_engine,
-        reprojection_mode,
-    )?;
+    let (geometry_rows, geometry_cache_lookup) =
+        if let (Some(cache), Some(key)) = (geometry_cache, geometry_cache_key) {
+            let (rows, lookup) = cache.get_or_insert_with(key, || {
+                build_prepared_geometry_rows(
+                    ms,
+                    row_chunk,
+                    &selection.phase_center,
+                    geometry_columns,
+                    derived_engine,
+                    reprojection_mode,
+                )
+                .map(Arc::from)
+            })?;
+            (rows, Some(lookup))
+        } else {
+            (
+                Arc::from(build_prepared_geometry_rows(
+                    ms,
+                    row_chunk,
+                    &selection.phase_center,
+                    geometry_columns,
+                    derived_engine,
+                    reprojection_mode,
+                )?),
+                None,
+            )
+        };
     Ok(ColumnarPreparedSource {
         visibility,
         geometry_rows,
         fill_report,
+        geometry_cache_lookup,
     })
 }
 
@@ -23152,6 +23537,8 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
             uvw_reprojection_mode_for_selection(config, selection),
             channel_read_range,
             &geometry_columns,
+            None,
+            None,
         )?;
         let read_timings = fill_report_read_timings(&columnar_source.fill_report);
         let read_elapsed = stage_started_at.elapsed();
@@ -23290,6 +23677,13 @@ fn read_shared_columnar_cube_slab_source(
     channel_read_range: Option<SelectedChannelReadRange>,
     row_block_rows: usize,
     prepare_started_at: Instant,
+    pass_kind: spectral_slab::ImagingPassKind,
+    slab_id: usize,
+    plane_start: usize,
+    plane_end: usize,
+    worker_count: usize,
+    backend: &'static str,
+    geometry_cache: &mut VisibilityGeometryCache,
 ) -> Result<SharedColumnarCubeSlabSource, String> {
     let started = Instant::now();
     let geometry_columns_started = Instant::now();
@@ -23314,6 +23708,14 @@ fn read_shared_columnar_cube_slab_source(
 
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
         let block_started = Instant::now();
+        let cache_key = visibility_geometry_cache_key_for_rows(
+            config,
+            selection,
+            table_values,
+            row_chunk,
+            channel_read_range,
+            pass_kind,
+        );
         let columnar_source = read_columnar_prepared_source(
             ms,
             data_column_kind,
@@ -23325,7 +23727,30 @@ fn read_shared_columnar_cube_slab_source(
             uvw_reprojection_mode_for_selection(config, selection),
             channel_read_range,
             &geometry_columns,
+            Some(geometry_cache),
+            Some(cache_key),
         )?;
+        if let Some(lookup) = columnar_source.geometry_cache_lookup {
+            eprintln!(
+                "{}",
+                spectral_slab::SpectralObservabilityEvent {
+                    mode: canonical_spectral_mode_name(config.spectral_mode),
+                    pass_kind,
+                    stage: lookup.event_stage(),
+                    slab_id: Some(slab_id),
+                    plane_start,
+                    plane_end,
+                    row_block_rows: Some(row_chunk.len()),
+                    bytes_read: None,
+                    bytes_written: lookup.stored.then_some(lookup.estimated_bytes),
+                    worker_count: Some(worker_count),
+                    backend,
+                    elapsed_ms: Some(0),
+                    estimated_resident_bytes: Some(lookup.estimated_bytes),
+                }
+                .log_line()
+            );
+        }
         let read_timings = fill_report_read_timings(&columnar_source.fill_report);
         let read_elapsed = block_started.elapsed();
         stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
@@ -23521,6 +23946,8 @@ fn prepare_cube_without_trace_in_source_row_blocks(
             uvw_reprojection_mode_for_selection(config, selection),
             channel_read_range,
             &geometry_columns,
+            None,
+            None,
         )?;
         let read_timings = fill_report_read_timings(&columnar_source.fill_report);
         let read_elapsed = stage_started_at.elapsed();
@@ -39201,6 +39628,8 @@ mod tests {
             uvw_reprojection_mode_for_selection(&config, &selection),
             Some(SelectedChannelReadRange { start: 1, count: 2 }),
             &geometry_columns,
+            None,
+            None,
         )
         .unwrap();
         let view = source.source_view().unwrap();
@@ -39218,6 +39647,81 @@ mod tests {
             panic!("expected Float32 WEIGHT_SPECTRUM");
         };
         assert_eq!(weight_spectrum, &[2.0, 20.0, 3.0, 30.0]);
+
+        let cache_key = visibility_geometry_cache_key_for_rows(
+            &config,
+            &selection,
+            &table_values,
+            &selection.selected_rows,
+            Some(SelectedChannelReadRange { start: 1, count: 2 }),
+            spectral_slab::ImagingPassKind::InitialDirty,
+        );
+        let mut geometry_cache = VisibilityGeometryCache::new(true, 1024 * 1024);
+        let cached_first = read_columnar_prepared_source(
+            &ms,
+            VisibilityDataColumn::Data,
+            &selection,
+            &table_values,
+            &ddid_info,
+            &selection.selected_rows,
+            None,
+            uvw_reprojection_mode_for_selection(&config, &selection),
+            Some(SelectedChannelReadRange { start: 1, count: 2 }),
+            &geometry_columns,
+            Some(&mut geometry_cache),
+            Some(cache_key.clone()),
+        )
+        .unwrap();
+        let cached_second = read_columnar_prepared_source(
+            &ms,
+            VisibilityDataColumn::Data,
+            &selection,
+            &table_values,
+            &ddid_info,
+            &selection.selected_rows,
+            None,
+            uvw_reprojection_mode_for_selection(&config, &selection),
+            Some(SelectedChannelReadRange { start: 1, count: 2 }),
+            &geometry_columns,
+            Some(&mut geometry_cache),
+            Some(cache_key),
+        )
+        .unwrap();
+        assert_eq!(
+            cached_first.geometry_cache_lookup,
+            Some(VisibilityGeometryCacheLookup {
+                hit: false,
+                stored: true,
+                estimated_bytes: estimated_geometry_rows_bytes(&cached_first.geometry_rows),
+            })
+        );
+        assert_eq!(
+            cached_second.geometry_cache_lookup,
+            Some(VisibilityGeometryCacheLookup {
+                hit: true,
+                stored: true,
+                estimated_bytes: estimated_geometry_rows_bytes(&cached_second.geometry_rows),
+            })
+        );
+        assert!(Arc::ptr_eq(
+            &cached_first.geometry_rows,
+            &cached_second.geometry_rows
+        ));
+        assert_eq!(
+            source.geometry_rows[0].trace(),
+            cached_second.geometry_rows[0].trace()
+        );
+        let cached_view = cached_second.source_view().unwrap();
+        let Some(ColumnarFloatSamplesRef::Float32(cached_weight_spectrum)) =
+            cached_view.weight_spectrum
+        else {
+            panic!("expected cached Float32 WEIGHT_SPECTRUM");
+        };
+        assert_eq!(cached_weight_spectrum, weight_spectrum);
+        let cache_stats = geometry_cache.stats();
+        assert_eq!(1, cache_stats.fills);
+        assert_eq!(1, cache_stats.hits);
+        assert_eq!(1, cache_stats.shares);
     }
 
     #[test]
