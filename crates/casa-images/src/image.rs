@@ -1759,6 +1759,55 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Writes a rectangular slice into a named mask.
+    ///
+    /// If the mask does not exist yet, it is created with all pixels initialized
+    /// to false before writing the supplied slice.
+    pub fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(&self.shape, data.shape(), start)?;
+        let table_ref = match &self.path {
+            Some(path) => mask_table_reference(path, name),
+            None => name.to_string(),
+        };
+        let record = make_paged_mask_record(&table_ref, &self.shape);
+        let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
+        };
+        masks.upsert(name, Value::Record(record));
+        self.table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+
+        if let Some(path) = &self.path {
+            let mask_path = resolve_mask_table_path(path, &table_ref);
+            if !mask_path.exists() {
+                let mut mask =
+                    PagedArray::<bool>::create(TiledShape::new(self.shape.clone()), &mask_path)
+                        .map_err(ImageError::from)?;
+                mask.put_slice(data, start)?;
+                mask.flush().map_err(ImageError::from)?;
+            } else {
+                let mut mask = PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?;
+                mask.put_slice(data, start)?;
+                mask.flush().map_err(ImageError::from)?;
+            }
+        } else {
+            let mask = self
+                .temp_masks
+                .entry(name.to_string())
+                .or_insert_with(|| ArrayD::from_elem(IxDyn(&self.shape), false));
+            assign_mask_slice(mask, data, start)?;
+        }
+        self.persistent_masks.borrow_mut().remove(name);
+        Ok(())
+    }
+
     /// Removes a named mask and clears the default mask if it pointed at it.
     pub fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
         let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
@@ -2586,6 +2635,53 @@ fn slice_mask_array(
     Ok(view.to_owned())
 }
 
+fn validate_mask_slice_write(
+    full_shape: &[usize],
+    data_shape: &[usize],
+    start: &[usize],
+) -> Result<(), ImageError> {
+    if start.len() != full_shape.len() || data_shape.len() != full_shape.len() {
+        return Err(ImageError::ShapeMismatch {
+            expected: full_shape.to_vec(),
+            got: data_shape.to_vec(),
+        });
+    }
+    for axis in 0..full_shape.len() {
+        let Some(end) = start[axis].checked_add(data_shape[axis]) else {
+            return Err(ImageError::ShapeMismatch {
+                expected: full_shape.to_vec(),
+                got: start.to_vec(),
+            });
+        };
+        if end > full_shape[axis] {
+            return Err(ImageError::ShapeMismatch {
+                expected: full_shape.to_vec(),
+                got: start.to_vec(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn assign_mask_slice(
+    mask: &mut ArrayD<bool>,
+    data: &ArrayD<bool>,
+    start: &[usize],
+) -> Result<(), ImageError> {
+    validate_mask_slice_write(mask.shape(), data.shape(), start)?;
+    let slice_info: Vec<SliceInfoElem> = start
+        .iter()
+        .zip(data.shape().iter())
+        .map(|(&s, &n)| SliceInfoElem::Slice {
+            start: s as isize,
+            end: Some((s + n) as isize),
+            step: 1,
+        })
+        .collect();
+    mask.slice_mut(slice_info.as_slice()).assign(data);
+    Ok(())
+}
+
 fn to_array_value<T: ImagePixel>(array: &ArrayD<T>) -> ArrayValue {
     if TypeId::of::<T>() == TypeId::of::<f32>() {
         let array = unsafe_cast_ref::<T, f32>(array);
@@ -3339,6 +3435,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn paged_image_mask_slice_write_creates_persistent_mask_without_full_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_slice_write.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape(
+            vec![4, 4, 1, 3],
+            vec![4, 4, 1, 1],
+            make_coords(),
+            &path,
+        )
+        .unwrap();
+        let plane_mask = ArrayD::from_shape_fn(IxDyn(&[2, 2, 1, 1]), |idx| idx[0] == idx[1]);
+        image
+            .put_mask_slice("mask0", &plane_mask, &[1, 1, 0, 2])
+            .unwrap();
+        image.set_default_mask("mask0").unwrap();
+        image.save().unwrap();
+
+        let reopened = PagedImage::<f32>::open_with_cache(&path, 256).unwrap();
+        assert_eq!(reopened.default_mask_name().as_deref(), Some("mask0"));
+        let written = reopened
+            .get_mask_slice(&[1, 1, 0, 2], &[2, 2, 1, 1], &[1, 1, 1, 1])
+            .unwrap()
+            .unwrap();
+        assert_eq!(written, plane_mask);
+        let untouched = reopened
+            .get_mask_slice(&[0, 0, 0, 0], &[4, 4, 1, 1], &[1, 1, 1, 1])
+            .unwrap()
+            .unwrap();
+        assert!(untouched.iter().all(|value| !*value));
     }
 
     #[test]

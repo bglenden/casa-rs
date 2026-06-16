@@ -364,6 +364,14 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
         "minor_cycle_length": minor_cycle_length,
         "wterm": "none",
     }
+    if gridder == "mosaic":
+        imaging.update(
+            {
+                "pblimit": 0.2,
+                "write_pb": True,
+                "pbcor": True,
+            }
+        )
     hogbom_iteration_mode = workload_hogbom_iteration_mode(
         mode_id, deconvolver=deconvolver, is_clean=is_clean
     )
@@ -384,7 +392,11 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "run_label": "warm",
             "storage_label": dataset["storage_label"],
         },
-        "comparison": {"products": comparison_products_for_mode(is_clean, is_mtmfs)},
+        "comparison": {
+            "products": comparison_products_for_mode(
+                is_clean, is_mtmfs, gridder=gridder
+            )
+        },
     }
 
 
@@ -421,12 +433,16 @@ def workload_cell_arcsec(instrument: str) -> float:
     return 0.08 if instrument == "alma" else 0.35
 
 
-def comparison_products_for_mode(is_clean: bool, is_mtmfs: bool) -> list[str]:
+def comparison_products_for_mode(
+    is_clean: bool, is_mtmfs: bool, *, gridder: str = "standard"
+) -> list[str]:
     if is_mtmfs:
         return [".image.tt0", ".residual.tt0", ".psf.tt0"]
     products = [".image", ".residual", ".psf", ".sumwt"]
     if is_clean:
         products.append(".model")
+    if gridder == "mosaic":
+        products.extend([".weight", ".pb", ".image.pbcor"])
     return products
 
 

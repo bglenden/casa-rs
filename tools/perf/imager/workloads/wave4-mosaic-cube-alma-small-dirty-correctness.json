@@ -1,0 +1,59 @@
+{
+  "id": "wave4-mosaic-cube-alma-small-dirty-correctness",
+  "mode_id": "mosaic-cube-bounded",
+  "description": "Wave 4 W4-12 PB-aware mosaic dirty cube correctness workload using the small ALMA mosaic row.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-small",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "cube",
+    "gridder": "mosaic",
+    "interpolation": "nearest",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 8,
+    "start": "0",
+    "width": "1",
+    "imsize": 512,
+    "cell_arcsec": 0.08,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": true,
+    "deconvolver": "hogbom",
+    "nterms": 1,
+    "scales": "",
+    "niter": 0,
+    "minor_cycle_length": 2,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "w4-12-dirty-correctness",
+    "storage_label": "well-below-memory",
+    "ms_staging": "direct",
+    "stream_log": true,
+    "env": {
+      "CASA_RS_IMAGING_PROGRESS": "1"
+    }
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".psf",
+      ".sumwt",
+      ".weight",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}

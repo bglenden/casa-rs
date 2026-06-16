@@ -2338,6 +2338,16 @@ fn run_single_image_from_config_with_gridder_override(
             total_start,
         );
     }
+    if can_run_mosaic_cube_slab_from_bounded_stream(config, force_standard_gridder, ms_paths.len())
+    {
+        return run_mosaic_cube_slab_from_bounded_stream_open_ms(
+            &ms,
+            config,
+            data_column,
+            open_measurement_set,
+            total_start,
+        );
+    }
     if can_run_mosaic_cube_one_channel_from_bounded_stream(
         config,
         force_standard_gridder,
@@ -2553,6 +2563,42 @@ fn can_run_mosaic_cube_one_channel_from_bounded_stream(
         && config.use_mask != CleanMaskMode::AutoMultiThreshold
         && config.uv_taper.is_none()
         && matches!(config.w_term_mode, WTermMode::None)
+        && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
+        && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
+}
+
+fn can_run_mosaic_cube_slab_from_bounded_stream(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && !force_standard_gridder
+        && !config.force_standard_gridder
+        && matches!(config.spectral_mode, SpectralMode::Cube)
+        && config.channel_count.is_some_and(|count| count > 1)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
+        && config.uv_taper.is_none()
+        && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
+        && matches!(config.w_term_mode, WTermMode::None)
+        && matches!(config.cube_axis.interpolation, CubeInterpolation::Nearest)
+        && matches!(
+            config.cube_axis.start,
+            None | Some(CubeAxisValue::Channel(_))
+        )
+        && matches!(
+            config.cube_axis.width,
+            None | Some(CubeAxisValue::Channel(_))
+        )
+        && (needs_single_field_primary_beam_products(config)
+            || config.field_ids.as_ref().is_some_and(|ids| ids.len() > 1)
+            || config.phasecenter_field.is_some()
+            || config.phasecenter.is_some())
         && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
         && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
 }
@@ -3425,14 +3471,25 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms(
     )
 }
 
-fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
+struct MosaicSinglePlaneStreamProducts {
+    result: ImagingResult,
+    clean_mask: Option<Array2<bool>>,
+    mosaic_weight: Option<Array2<f32>>,
+    cube_metadata: SinglePlaneCubeCoordinateMetadata,
+    phase_center: PhaseCenter,
+    prepared_freq_ref: FrequencyRef,
+    prepare_stage_timings: PreparePlaneInputStageTimings,
+    prepare_plane_time: Duration,
+    run_imaging_time: Duration,
+}
+
+fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     ms: &MeasurementSet,
     read_config: &CliConfig,
     output_config: &CliConfig,
     data_column: VisibilityDataColumn,
-    open_measurement_set: Duration,
     total_start: Instant,
-) -> Result<RunSummary, String> {
+) -> Result<MosaicSinglePlaneStreamProducts, String> {
     let geometry = ImageGeometry {
         image_shape: [read_config.imsize, read_config.imsize],
         cell_size_rad: [
@@ -3713,19 +3770,54 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     accumulate_timings.log(prepare_started_at.elapsed());
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
+    let mosaic_weight = result.diagnostics.mosaic_weight_image.clone();
+    Ok(MosaicSinglePlaneStreamProducts {
+        result,
+        clean_mask,
+        mosaic_weight,
+        cube_metadata,
+        phase_center,
+        prepared_freq_ref,
+        prepare_stage_timings,
+        prepare_plane_time,
+        run_imaging_time,
+    })
+}
+
+fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
+    ms: &MeasurementSet,
+    read_config: &CliConfig,
+    output_config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let products = run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
+        ms,
+        read_config,
+        output_config,
+        data_column,
+        total_start,
+    )?;
+    let MosaicSinglePlaneStreamProducts {
+        result,
+        clean_mask,
+        mosaic_weight,
+        cube_metadata,
+        phase_center,
+        prepared_freq_ref,
+        prepare_stage_timings,
+        prepare_plane_time,
+        run_imaging_time,
+    } = products;
     let effective_clean_mask = clean_mask.clone().map(EffectiveCleanMask::Plane);
     let run_result =
         if output_config.spectral_mode.is_cube_like() && output_config.channel_count == Some(1) {
-            let mosaic_weight = result
-                .diagnostics
-                .mosaic_weight_image
-                .as_ref()
-                .map(expand_plane_for_write);
             let cube =
                 single_plane_result_to_one_channel_cube(result, clean_mask.clone(), &cube_metadata);
             RunProducts::Cube(CubeRunProducts {
                 result: cube,
-                mosaic_weight,
+                mosaic_weight: mosaic_weight.as_ref().map(expand_plane_for_write),
                 coordinate_freq_ref: cube_metadata.coordinate_freq_ref,
                 spectral_delta_hz: cube_metadata.spectral_delta_hz,
                 rest_frequency_hz: cube_metadata.rest_frequency_hz,
@@ -3784,6 +3876,189 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
             extract_phase_center: Duration::ZERO,
             run_imaging: run_imaging_time,
             build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
+}
+
+fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let nplanes = config
+        .channel_count
+        .ok_or_else(|| "mosaic cube slab runner requires explicit channel_count".to_string())?;
+    let channel_start = effective_cube_channel_start(config)?;
+    let active_planes = env_usize("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
+        .min(nplanes.max(1));
+    let slab_manifest = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
+    eprintln!(
+        "mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_single_plane_stream nplanes={} active_planes={} slab_count={} worker_count=1 source_reuse=per_plane product_state=product_backed_write_through",
+        nplanes,
+        active_planes,
+        slab_manifest.len(),
+    );
+
+    let metadata_started = Instant::now();
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(ms, config, &ddid_info)?;
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let derived_engine =
+        MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?;
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let metadata = collect_cube_slab_run_metadata(
+        config,
+        channel_start,
+        &slab_manifest,
+        &selection,
+        &table_values,
+        &derived_engine,
+    )?;
+    let metadata_elapsed = metadata_started.elapsed();
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: metadata.phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: metadata.freq_ref,
+        direction_ref: metadata.phase_center.reference,
+        plane_stokes: metadata.plane_stokes,
+        channel_frequencies_hz: &metadata.channel_frequencies_hz,
+        spectral_delta_hz: metadata.spectral_delta_hz,
+        requested_rest_frequency_hz: config
+            .cube_axis
+            .rest_frequency_hz
+            .or(metadata.rest_frequency_hz),
+    });
+
+    let product_started = Instant::now();
+    let mut product_writers = MosaicCubeSlabProductWriters::create(
+        config,
+        &coords,
+        metadata.plane_stokes,
+        &metadata.channel_frequencies_hz,
+        0,
+    )?;
+    let mut write_products_time = product_started.elapsed();
+    let mut prepare_plane_input = metadata_elapsed;
+    let mut get_ms_values_into_processing_buffer = Duration::ZERO;
+    let mut prepare_processing_buffer = Duration::ZERO;
+    let mut run_imaging_time = Duration::ZERO;
+    let mut stage_timings = ImagingStageTimings::default();
+    let mut warnings = Vec::new();
+    let mut gridded_samples = 0usize;
+    let mut major_cycles = 0usize;
+    let mut minor_iterations = 0usize;
+    let mut channel_summaries = Vec::with_capacity(nplanes);
+
+    for slab in slab_manifest {
+        eprintln!(
+            "mosaic_cube_slab_start slab_id={} plane_start={} plane_end={}",
+            slab.slab_id, slab.plane_start, slab.plane_end
+        );
+        for plane_index in slab.plane_start..slab.plane_end {
+            let plane_config =
+                slab_config_for_cube_planes(config, channel_start, plane_index, plane_index + 1)?;
+            let plane_started = Instant::now();
+            let products = run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
+                ms,
+                &plane_config,
+                &plane_config,
+                data_column,
+                total_start,
+            )?;
+            let diagnostics = products.result.diagnostics.clone();
+            for warning in &diagnostics.warnings {
+                warnings.push(format!("channel {plane_index}: {warning}"));
+            }
+            gridded_samples = gridded_samples.saturating_add(diagnostics.gridded_samples);
+            major_cycles = major_cycles.saturating_add(diagnostics.major_cycles);
+            minor_iterations = minor_iterations.saturating_add(diagnostics.minor_iterations);
+            add_imaging_stage_timings(&mut stage_timings, diagnostics.stage_timings);
+            channel_summaries.push(ChannelRunSummary {
+                channel_index: plane_index,
+                major_cycles: diagnostics.major_cycles,
+                minor_iterations: diagnostics.minor_iterations,
+                clean_stop_reason: diagnostics.clean_stop_reason,
+                initial_residual_peak_jy_per_beam: diagnostics.initial_residual_peak_jy_per_beam,
+                final_residual_peak_jy_per_beam: diagnostics.final_residual_peak_jy_per_beam,
+                final_cycle_threshold_jy_per_beam: diagnostics.final_cycle_threshold_jy_per_beam,
+                minor_cycle_traces: diagnostics.minor_cycle_traces.clone(),
+                beam_fit_debug: diagnostics.beam_fit_debug.clone(),
+            });
+            prepare_plane_input += products.prepare_plane_time;
+            get_ms_values_into_processing_buffer += products
+                .prepare_stage_timings
+                .get_ms_values_into_processing_buffer;
+            prepare_processing_buffer += products.prepare_stage_timings.prepare_processing_buffer;
+            run_imaging_time += products.run_imaging_time;
+            let write_started = Instant::now();
+            product_writers.write_plane(plane_index, products)?;
+            write_products_time += write_started.elapsed();
+            eprintln!(
+                "mosaic_cube_slab_plane plane={} elapsed_ms={:.3}",
+                plane_index,
+                duration_ms(plane_started.elapsed()),
+            );
+        }
+    }
+    let finish_started = Instant::now();
+    product_writers.finish(config)?;
+    write_products_time += finish_started.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+    let _ = selected_freq_ref;
+    Ok(RunSummary {
+        warnings,
+        gridded_samples,
+        major_cycles,
+        minor_iterations,
+        clean_stop_reason: None,
+        minor_cycle_traces: Vec::new(),
+        channel_summaries,
+        stage_timings,
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input,
+            get_ms_values_into_processing_buffer,
+            prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system: metadata_elapsed,
             write_products: write_products_time,
             total: total_start.elapsed(),
         },
@@ -10306,6 +10581,16 @@ impl CubeSlabProductWriters {
         Ok(())
     }
 
+    fn write_support_mask_plane(
+        &mut self,
+        plane_index: usize,
+        support_mask: &ArrayD<bool>,
+    ) -> Result<(), String> {
+        let start = [0, 0, 0, plane_index];
+        write_product_mask_slice(&mut self.residual, support_mask, &start, "residual")?;
+        write_product_mask_slice(&mut self.image, support_mask, &start, "image")
+    }
+
     fn finish(mut self, config: &CliConfig) -> Result<(), String> {
         let psf_beams = beam_set_from_channel_beams(&self.beams, RestoringBeamMode::PerPlane)?;
         let image_beams =
@@ -10443,6 +10728,149 @@ impl MultiPlaneProductWriter<DirtyCubeImagingResult> for CubeSlabProductWriters 
         result: &DirtyCubeImagingResult,
     ) -> Result<(), String> {
         self.write_dirty_slab(plane_start, result)
+    }
+}
+
+struct MosaicCubeSlabProductWriters {
+    cube: CubeSlabProductWriters,
+    weight: PagedImage<f32>,
+    pb: Option<PagedImage<f32>>,
+    image_pbcor: Option<PagedImage<f32>>,
+    pb_limit: f32,
+}
+
+impl MosaicCubeSlabProductWriters {
+    fn create(
+        config: &CliConfig,
+        coords: &CoordinateSystem,
+        plane_stokes: PlaneStokes,
+        channel_frequencies_hz: &[f64],
+        cache_budget_bytes: usize,
+    ) -> Result<Self, String> {
+        let cube = CubeSlabProductWriters::create(
+            config,
+            coords,
+            plane_stokes,
+            channel_frequencies_hz,
+            cache_budget_bytes,
+        )?;
+        let base = config.imagename.to_string_lossy().to_string();
+        let nplanes = channel_frequencies_hz.len();
+        let image_shape = vec![config.imsize, config.imsize, 1, nplanes];
+        let image_tile_shape = cube_product_tile_shape(config.imsize, config.imsize);
+        let cache_budget_bytes =
+            cube_slab_product_image_cache_bytes(cache_budget_bytes, config.imsize, config.imsize);
+        let reffreq_hz = channel_reffreq_hz(channel_frequencies_hz);
+        let plane_stokes = plane_stokes.as_str();
+        let weight = create_slab_product_image(SlabProductImageCreate {
+            path: PathBuf::from(format!("{base}.weight")),
+            shape: image_shape.clone(),
+            tile_shape: image_tile_shape.clone(),
+            coords,
+            units: "",
+            role: "weight",
+            plane_stokes,
+            channel_frequencies_hz,
+            reffreq_hz,
+            cache_budget_bytes,
+        })?;
+        let pb = if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+            Some(create_slab_product_image(SlabProductImageCreate {
+                path: PathBuf::from(format!("{base}.pb")),
+                shape: image_shape.clone(),
+                tile_shape: image_tile_shape.clone(),
+                coords,
+                units: "",
+                role: "pb",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+                cache_budget_bytes,
+            })?)
+        } else {
+            remove_existing_product(&PathBuf::from(format!("{base}.pb")))?;
+            None
+        };
+        let image_pbcor = if config.pbcor {
+            Some(create_slab_product_image(SlabProductImageCreate {
+                path: PathBuf::from(format!("{base}.image.pbcor")),
+                shape: image_shape,
+                tile_shape: image_tile_shape,
+                coords,
+                units: "Jy/beam",
+                role: "image.pbcor",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+                cache_budget_bytes,
+            })?)
+        } else {
+            remove_existing_product(&PathBuf::from(format!("{base}.image.pbcor")))?;
+            None
+        };
+        Ok(Self {
+            cube,
+            weight,
+            pb,
+            image_pbcor,
+            pb_limit: config.mosaic_pb_limit,
+        })
+    }
+
+    fn write_plane(
+        &mut self,
+        plane_index: usize,
+        products: MosaicSinglePlaneStreamProducts,
+    ) -> Result<(), String> {
+        let MosaicSinglePlaneStreamProducts {
+            result,
+            clean_mask,
+            mosaic_weight,
+            cube_metadata,
+            ..
+        } = products;
+        let weight = mosaic_weight
+            .as_ref()
+            .ok_or_else(|| "mosaic cube slab plane produced no mosaic weight image".to_string())?;
+        let cube = single_plane_result_to_one_channel_cube(result, clean_mask, &cube_metadata);
+        self.cube.write_slab(plane_index, &cube)?;
+        let start = [0, 0, 0, plane_index];
+        let weight_product = expand_plane_for_write(weight);
+        self.weight
+            .put_slice_view(weight_product.view().into_dyn(), &start)
+            .map_err(|error| format!("write mosaic cube weight plane {plane_index}: {error}"))?;
+        let pb_product = mosaic_pb_product_from_weight_product(&weight_product);
+        let support_mask = pb_support_mask_product(&pb_product, self.pb_limit);
+        self.cube
+            .write_support_mask_plane(plane_index, &support_mask)?;
+        if let Some(pb) = self.pb.as_mut() {
+            let limited_pb_product = pb_limited_product(&pb_product, self.pb_limit);
+            pb.put_slice_view(limited_pb_product.view().into_dyn(), &start)
+                .map_err(|error| format!("write mosaic cube pb plane {plane_index}: {error}"))?;
+            write_product_mask_slice(pb, &support_mask, &start, "pb")?;
+        }
+        if let Some(image_pbcor) = self.image_pbcor.as_mut() {
+            let pbcor_product = pb_correct_image_product(&cube.image, &pb_product, self.pb_limit);
+            image_pbcor
+                .put_slice_view(pbcor_product.view().into_dyn(), &start)
+                .map_err(|error| {
+                    format!("write mosaic cube image.pbcor plane {plane_index}: {error}")
+                })?;
+            write_product_mask_slice(image_pbcor, &support_mask, &start, "image.pbcor")?;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self, config: &CliConfig) -> Result<(), String> {
+        self.cube.finish(config)?;
+        set_tiled_product_info_and_save(&mut self.weight, ImageBeamSet::default(), "weight")?;
+        if let Some(pb) = self.pb.as_mut() {
+            set_tiled_product_info_and_save(pb, ImageBeamSet::default(), "pb")?;
+        }
+        if let Some(pbcor) = self.image_pbcor.as_mut() {
+            set_tiled_product_info_and_save(pbcor, ImageBeamSet::default(), "image.pbcor")?;
+        }
+        Ok(())
     }
 }
 
@@ -10584,6 +11012,20 @@ fn set_tiled_product_info_and_save(
         .save()
         .map_err(|error| format!("save image {role}: {error}"))?;
     Ok(())
+}
+
+fn write_product_mask_slice(
+    image: &mut PagedImage<f32>,
+    mask: &ArrayD<bool>,
+    start: &[usize],
+    role: &str,
+) -> Result<(), String> {
+    image
+        .put_mask_slice("mask0", mask, start)
+        .map_err(|error| format!("write mask {role}: {error}"))?;
+    image
+        .set_default_mask("mask0")
+        .map_err(|error| format!("set default mask {role}: {error}"))
 }
 
 fn alias_tiled_product_payload(
@@ -48833,6 +49275,375 @@ deconvolver=mtmfs
         for suffix in ["psf", "residual", "model", "image", "sumwt"] {
             let path = format!("{}.{}", image_prefix.display(), suffix);
             assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+    }
+
+    #[test]
+    fn mosaic_cube_dirty_multi_channel_writes_pb_aware_products() {
+        let _forced_spectral_slab = {
+            let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+            EnvGuard::unset("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
+        };
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_mosaic_cube.ms");
+        let image_prefix = tmp.path().join("tiny_mosaic_cube_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9, 1.401e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_channels(
+            &mut ms,
+            0,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.6, 0.0),
+                Complex32::new(0.6, 0.0),
+            ],
+        );
+        add_main_row_with_field_channels(
+            &mut ms,
+            1,
+            [-25.0, 20.0, 0.0],
+            &[
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.5, 0.0),
+                Complex32::new(0.5, 0.0),
+            ],
+        );
+        add_main_row_with_field_channels(
+            &mut ms,
+            1,
+            [10.0, 35.0, 0.0],
+            &[
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.4, 0.0),
+                Complex32::new(0.4, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let config = CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0, 1]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: Some(0),
+            channel_count: Some(2),
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Cube,
+            cube_axis: CubeAxisConfig {
+                specmode: CubeSpecMode::Cube,
+                interpolation: CubeInterpolation::Nearest,
+                start: Some(CubeAxisValue::Channel(0)),
+                width: Some(CubeAxisValue::Channel(1)),
+                ..CubeAxisConfig::default()
+            },
+            weighting: WeightingMode::Uniform,
+            per_channel_weight_density: true,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Clark,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            nmajor: None,
+            fullsummary: false,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: true,
+            write_pb: true,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
+            w_project_planes: None,
+            dirty_only: true,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
+            write_preview_pngs: false,
+        };
+
+        let summary = run_from_config(&config).unwrap();
+        assert!(summary.gridded_samples > 0);
+        assert_eq!(summary.channel_summaries.len(), 2);
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "sumwt",
+            "weight",
+            "pb",
+            "image.pbcor",
+        ] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.shape(), &[32, 32, 1, 2]);
+        assert_eq!(image.default_mask_name().as_deref(), Some("mask0"));
+        assert_eq!(
+            image
+                .get_mask_slice(&[0, 0, 0, 0], &[32, 32, 1, 1], &[1, 1, 1, 1])
+                .unwrap()
+                .unwrap()
+                .shape(),
+            &[32, 32, 1, 1]
+        );
+        let weight = PagedImage::<f32>::open(format!("{}.weight", image_prefix.display())).unwrap();
+        assert_eq!(weight.shape(), &[32, 32, 1, 2]);
+        assert_eq!(weight.default_mask_name(), None);
+        for suffix in ["residual", "pb", "image.pbcor"] {
+            let product =
+                PagedImage::<f32>::open(format!("{}.{}", image_prefix.display(), suffix)).unwrap();
+            assert_eq!(
+                product.default_mask_name().as_deref(),
+                Some("mask0"),
+                "{suffix} should carry PB support mask"
+            );
+        }
+
+        let slab2_prefix = tmp.path().join("tiny_mosaic_cube_slab2_image");
+        let mut slab2_config = config.clone();
+        slab2_config.imagename = slab2_prefix.clone();
+        {
+            let _forced_slab2 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "2");
+            let slab2_summary = run_from_config(&slab2_config).unwrap();
+            assert_eq!(slab2_summary.channel_summaries.len(), 2);
+        }
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "sumwt",
+            "weight",
+            "pb",
+            "image.pbcor",
+        ] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", slab2_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+    }
+
+    #[test]
+    fn mosaic_cube_clean_multi_channel_writes_model_and_pb_aware_products() {
+        let _forced_spectral_slab = {
+            let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+            EnvGuard::unset("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
+        };
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("tiny_mosaic_cube_clean.ms");
+        let image_prefix = tmp.path().join("tiny_mosaic_cube_clean_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9, 1.401e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_channels(
+            &mut ms,
+            0,
+            [30.0, -15.0, 0.0],
+            &[
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.6, 0.0),
+                Complex32::new(0.6, 0.0),
+            ],
+        );
+        add_main_row_with_field_channels(
+            &mut ms,
+            1,
+            [-25.0, 20.0, 0.0],
+            &[
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.8, 0.0),
+                Complex32::new(0.5, 0.0),
+                Complex32::new(0.5, 0.0),
+            ],
+        );
+        add_main_row_with_field_channels(
+            &mut ms,
+            1,
+            [10.0, 35.0, 0.0],
+            &[
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.7, 0.0),
+                Complex32::new(0.4, 0.0),
+                Complex32::new(0.4, 0.0),
+            ],
+        );
+        ms.save().unwrap();
+
+        let config = CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix.clone(),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0, 1]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: Some(0),
+            channel_count: Some(2),
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Cube,
+            cube_axis: CubeAxisConfig {
+                specmode: CubeSpecMode::Cube,
+                interpolation: CubeInterpolation::Nearest,
+                start: Some(CubeAxisValue::Channel(0)),
+                width: Some(CubeAxisValue::Channel(1)),
+                ..CubeAxisConfig::default()
+            },
+            weighting: WeightingMode::Uniform,
+            per_channel_weight_density: true,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Clark,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 2,
+            nmajor: None,
+            fullsummary: false,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: true,
+            write_pb: true,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
+            w_project_planes: None,
+            dirty_only: false,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
+            standard_mfs_memory_target_mb: None,
+            standard_mfs_prepare_buffer_mb: None,
+            imaging_memory_target_mb: None,
+            imaging_prepare_buffer_mb: None,
+            imaging_row_block_rows: None,
+            imaging_prepare_workers: None,
+            write_preview_pngs: false,
+        };
+
+        let summary = run_from_config(&config).unwrap();
+        assert!(summary.gridded_samples > 0);
+        assert_eq!(summary.channel_summaries.len(), 2);
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "model",
+            "sumwt",
+            "weight",
+            "pb",
+            "image.pbcor",
+        ] {
+            let path = format!("{}.{}", image_prefix.display(), suffix);
+            assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+        let model = PagedImage::<f32>::open(format!("{}.model", image_prefix.display())).unwrap();
+        assert_eq!(model.shape(), &[32, 32, 1, 2]);
+        let image = PagedImage::<f32>::open(format!("{}.image", image_prefix.display())).unwrap();
+        assert_eq!(image.default_mask_name().as_deref(), Some("mask0"));
+
+        let slab2_prefix = tmp.path().join("tiny_mosaic_cube_clean_slab2_image");
+        let mut slab2_config = config.clone();
+        slab2_config.imagename = slab2_prefix.clone();
+        {
+            let _forced_slab2 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "2");
+            let slab2_summary = run_from_config(&slab2_config).unwrap();
+            assert_eq!(slab2_summary.channel_summaries.len(), 2);
+        }
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "model",
+            "sumwt",
+            "weight",
+            "pb",
+            "image.pbcor",
+        ] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", slab2_prefix.display(), suffix),
+                1.0e-5,
+            );
         }
     }
 

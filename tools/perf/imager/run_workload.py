@@ -2535,13 +2535,21 @@ def structured_difference_classification(
         ),
         "low_order_r2_quadratic": classify_low_order_r2(low_order_r2),
     }
-    structure = worst_classification(structure_components.values())
-    overall = overall_structured_difference_label(amplitude, structure)
+    numerical_floor_override = (
+        normalized_diff_rms is not None and normalized_diff_rms < 1.0e-6
+    )
+    if numerical_floor_override and amplitude == "good":
+        structure = "good"
+        overall = "good"
+    else:
+        structure = worst_classification(structure_components.values())
+        overall = overall_structured_difference_label(amplitude, structure)
     return {
         "overall": overall,
         "amplitude": amplitude,
         "structure": structure,
         "structure_components": structure_components,
+        "structure_suppressed_by_numerical_floor": numerical_floor_override,
         "thresholds": structured_difference_thresholds(),
     }
 
@@ -2609,6 +2617,7 @@ def structured_difference_thresholds():
     return {
         "normalized_diff_rms": {
             "good": "< 1e-4",
+            "numerical_floor": "< 1e-6 suppresses structure-only escalation",
             "investigate": "1e-4 .. 1e-3",
             "bad": "> 1e-3",
         },

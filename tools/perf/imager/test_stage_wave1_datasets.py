@@ -96,6 +96,20 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertEqual(0, mosaic["imaging"]["phasecenter_field"])
         self.assertEqual(32, mosaic["imaging"]["channel_count"])
         self.assertEqual(0.08, mosaic["imaging"]["cell_arcsec"])
+        self.assertTrue(mosaic["imaging"]["write_pb"])
+        self.assertTrue(mosaic["imaging"]["pbcor"])
+        self.assertEqual(
+            [
+                ".image",
+                ".residual",
+                ".psf",
+                ".sumwt",
+                ".weight",
+                ".pb",
+                ".image.pbcor",
+            ],
+            mosaic["comparison"]["products"],
+        )
 
     def test_mtmfs_workload_uses_mtmfs_deconvolver_and_taylor_products(self) -> None:
         spec = stage.select_datasets(

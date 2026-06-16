@@ -1243,6 +1243,32 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         )
         self.assertIn("good", metrics["review"]["legend"])
 
+    def test_product_comparison_does_not_escalate_numerical_floor_structure(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        y, x = np.indices((64, 64))
+        casa = np.ones((64, 64), dtype=np.float64)
+        rust = casa + 1.0e-7 * (x / 63.0) + 5.0e-8 * (y / 63.0)
+        diff = rust - casa
+        metrics = namespace["structured_difference_metrics"](
+            ".image",
+            rust,
+            casa,
+            diff,
+            {"status": "estimated_from_psf", "beam_block_side_pixels": 4},
+        )
+
+        self.assertLess(metrics["normalized_diff_rms"], 1.0e-6)
+        self.assertEqual("good", metrics["classification"]["amplitude"])
+        self.assertEqual("good", metrics["classification"]["structure"])
+        self.assertEqual("good", metrics["classification"]["overall"])
+        self.assertTrue(
+            metrics["classification"]["structure_suppressed_by_numerical_floor"]
+        )
+        self.assertEqual("good", metrics["review"]["label"])
+
     def test_product_comparison_handles_line_like_display_planes(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
