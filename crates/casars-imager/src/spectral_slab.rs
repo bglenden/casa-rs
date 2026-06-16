@@ -754,7 +754,10 @@ pub(crate) struct VisibilityResidentLayout {
 }
 
 impl VisibilityResidentLayout {
-    pub(crate) fn standard_cube_columnar(corr_count: usize, weight_element_bytes: usize) -> Self {
+    pub(crate) fn standard_spectral_cube_columnar(
+        corr_count: usize,
+        weight_element_bytes: usize,
+    ) -> Self {
         Self {
             uvw_bytes: 3usize.saturating_mul(std::mem::size_of::<f64>()),
             weight_bytes: corr_count.saturating_mul(weight_element_bytes),
@@ -2973,7 +2976,9 @@ mod tests {
             antenna_element_bytes: 4,
             time_element_bytes: Some(8),
             pointing_id_element_bytes: None,
-            resident_layout: VisibilityResidentLayout::standard_cube_columnar(corr_count, 4),
+            resident_layout: VisibilityResidentLayout::standard_spectral_cube_columnar(
+                corr_count, 4,
+            ),
             prepared_sample_bytes: 64,
             full_source_cacheable,
             slab_shapes,

@@ -32,11 +32,11 @@ GLENDENNING result paths for each row below.
 
 | Matrix row | Tier / shape | Serial or single-worker s | Multi-worker CPU/auto s | Metal/default s | CASA s | Key speedup | Correctness | Target status | Evidence |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| Standard cube dirty | medium, 512 ch, 2048 | 312.241 | 111.665 | n/a | 1918.001 | 2.80x auto vs serial; 17.18x vs CASA | good | met | `20260616T154241Z-wave4-standard-cube-line-medium-4b817340` |
+| Standard cube dirty | medium, 512 ch, 2048 | 316.815 | 154.741 | n/a | 1918.001 | 2.05x auto vs forced single-worker; 12.39x vs CASA | good | met | `20260616T173624Z-wave4-standard-cube-line-medium-905e11e5` |
 | Standard cube clean Hogbom | medium, 64 ch, 1024 | n/a | n/a | 17.100 | 220.834 | 12.91x vs CASA | investigate | blocked | `20260616T055224Z-wave4-standard-cube-line-medium-casa-phase-probe-479fa5f6` |
 | Standard cube clean Clark | medium, 64 ch, 1024 | n/a | n/a | 30.678 | 348.586 | 11.36x vs CASA | good | blocked | `20260616T060517Z-wave4-standard-cube-line-medium-clean-clark-5c804f6b` |
 | Standard cube clean multiscale | medium, 64 ch, 1024 | n/a | n/a | 26.697 | 231.006 | 8.65x vs CASA | investigate | blocked | `20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306` |
-| Cubedata dirty | medium, 512 ch, 2048 | 298.058 | 233.989 | n/a | 1887.410 | 1.27x auto vs serial; 8.07x vs CASA | good | blocked: auto-vs-serial target missed | `20260616T155024Z-wave4-standard-cubedata-line-medium-445d25b0` |
+| Cubedata dirty | medium, 512 ch, 2048 | 349.241 | 146.788 | n/a | 1887.410 | 2.38x auto vs forced single-worker; 12.86x vs CASA | good | met | `20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335` |
 | Cubedata clean Hogbom | medium, 512 ch, 1024 | n/a | n/a | 255.725 | n/a | blocked: no comparable medium CASA/serial/multi row | good on small CASA comparison | blocked | `20260616T144357Z-wave4-standard-cubedata-line-medium-clean-hogbom-decc2963`; correctness `20260616T142710Z-wave4-standard-cubedata-line-small-clean-hogbom-correctness-67779b86` |
 | Cubedata clean Clark | small, 24 ch, 512 | n/a | n/a | 2.040 | 14.492 | 7.10x vs CASA | good | blocked | `20260616T142758Z-wave4-standard-cubedata-line-small-clean-clark-correctness-2712545a` |
 | Cubedata clean multiscale | small, 24 ch, 512 | n/a | n/a | 3.054 | 9.362 | 3.07x vs CASA | good | blocked | `20260616T143211Z-wave4-standard-cubedata-line-small-clean-multiscale-correctness-05d32735` |
@@ -45,30 +45,55 @@ GLENDENNING result paths for each row below.
 | Mosaic cube clean Clark | small, 8 ch, 512 | n/a | 6.112 | 7.086 | 5.926 | Metal is 0.86x vs CPU; default is 0.84x vs CASA | good | blocked | `20260616T132458Z-wave4-mosaic-cube-alma-small-clean-correctness-7be34f88` |
 | Mosaic cube clean multiscale | small, 8 ch, 512 | n/a | n/a | 6.101 | 4.046 | 0.66x vs CASA | investigate; `.image` RMS is 1.7e-6 of CASA support RMS | blocked | `20260616T143414Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-5ac88e74` |
 
-Current review conclusion: standard cube dirty and W4-19 mosaic dirty have met
-their matrix targets. Standard cube dirty now has a direct medium serial-vs-auto
-row, so the 24 GB large row remains large-scale context rather than the speedup
-comparator. Cubedata dirty correctness is good, including the `.sumwt`
-non-spatial product reclassification, but the auto-vs-serial speedup is only
-1.27x against the 2.0x target. W4-21 mosaic clean performance has reached the
-goal's short-circuit condition: serious evidence exists, but the required
-targets are still not met. W4-20 cubedata clean correctness is covered on small
-all-channel rows, and Hogbom now has a representative medium Metal/default
-performance row; cubedata clean remains blocked because serial/multi evidence,
-medium Clark/multiscale evidence, and comparable medium CASA timing are still
-missing.
+Current review conclusion: standard cube dirty, cubedata dirty, and W4-19 mosaic
+dirty have met their matrix targets. The dirty standard cube and cubedata rows
+now use the same standard spectral cube slab infrastructure, with forced
+single-worker rows produced by `standard_mfs_grid_threads=1` and auto rows using
+10 plane workers. The 24 GB large row remains large-scale context rather than
+the medium speedup comparator. Cubedata dirty correctness is good, including the
+`.sumwt` non-spatial product reclassification, and its refreshed auto-vs-forced
+single-worker speedup is 2.38x against the 2.0x target. W4-21 mosaic clean
+performance has reached the goal's short-circuit condition: serious evidence
+exists, but the required targets are still not met. W4-20 cubedata clean
+correctness is covered on small all-channel rows, and Hogbom now has a
+representative medium Metal/default performance row; cubedata clean remains
+blocked because serial/multi evidence, medium Clark/multiscale evidence, and
+comparable medium CASA timing are still missing.
+
+## Standard Cube / Cubedata Refactor Evidence
+
+This refactor removes the internal split between standard cube and `cubedata`
+dirty execution. The public modes remain distinct, but their shared path is now
+the standard spectral cube slab runner plus an explicit spectral-axis policy.
+The table below uses the medium 512-channel, 2048-pixel workload and a 24 GB
+decimal memory cap. Current rows were run after the refactor on 2026-06-16; the
+fresh auto rows were captured with host load average around 5.3, so they are
+accepted as conservative current evidence rather than best-case timing.
+
+| Mode | Pre-refactor forced single-worker s | Pre-refactor auto s | Current forced single-worker s | Current auto s | Current auto speedup | Current CASA speedup | Current auto evidence |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Standard cube dirty | 312.241 | 111.665 | 316.815 | 154.741 | 2.05x | 12.39x | `20260616T173624Z-wave4-standard-cube-line-medium-905e11e5` |
+| Cubedata dirty | 298.058 | 233.989 | 349.241 | 146.788 | 2.38x | 12.86x | `20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335` |
+
+The important refactor outcome is that `cubedata` no longer misses the worker
+utilization class: in the current conservative rows it is slightly faster than
+the contemporaneous standard cube auto row, and the older pre-refactor 233.989 s
+blocked cubedata auto result is superseded. A faster post-refactor cubedata auto
+row also exists at 116.080 s
+(`20260616T165430Z-wave4-standard-cubedata-line-medium-d18dc8d2`), but the
+checked-in acceleration manifest uses the fresher conservative row above.
 
 ## Performance Evidence
 
 | Mode row | Dataset tier | Shape | casa-rs s | CASA s | Ratio | Schedule / backend | Slabs / active / workers | Modeled I/O GB | Source GB | Product GB | Peak RSS GB | Correctness status | Result |
 | --- | --- | --- | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| Standard cube dirty, medium serial #311 | 32 GB VLA medium | 512 ch, 2048 | 312.241 | n/a | n/a | slab-first / CPU slab | 11 / 47 / 1 | 47.252 | 30.072 | 17.180 | 8.235 | serial baseline; CASA skipped by design | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-serial/20260616T153712Z-wave4-standard-cube-line-medium-9e01c97a.json` |
-| Standard cube dirty, medium auto #311 | 32 GB VLA medium | 512 ch, 2048 | 111.665 | 1918.001 | 17.18x vs CASA; 2.80x vs serial | slab-first / CPU slab | 6 / 89 / 10 | 46.511 | 29.332 | 17.180 | 11.096 | correctness from comparable medium CASA row; `.sumwt` non-spatial false positive reclassified good | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-auto/20260616T154241Z-wave4-standard-cube-line-medium-4b817340.json` |
+| Standard cube dirty, medium forced single-worker #311 | 32 GB VLA medium | 512 ch, 2048 | 316.815 | n/a | n/a | slab-first / CPU slab | 11 / 47 / 1 | 47.252 | 30.072 | 17.180 | 8.197 | forced single-worker baseline with `standard_mfs_grid_threads=1`; CASA skipped by design | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-forced1-current/20260616T172347Z-wave4-standard-cube-line-medium-682ac42a.json` |
+| Standard cube dirty, medium auto #311 | 32 GB VLA medium | 512 ch, 2048 | 154.741 | 1918.001 | 12.39x vs CASA; 2.05x vs forced single-worker | slab-first / CPU slab | 6 / 89 / 10 | 46.511 | 29.332 | 17.180 | 11.160 | correctness from comparable medium CASA row; `.sumwt` non-spatial false positive reclassified good | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-auto-current2/20260616T173624Z-wave4-standard-cube-line-medium-905e11e5.json` |
 | Standard cube dirty, previous best large baseline | 107 GB ALMA large | 1024 ch, 4096 | 572.315 | n/a | n/a | slab-first / CPU slab | 3 / 347 / 10 | 153.532 | 16.093 | 137.439 | 17.250 | large CASA skipped; used as prior large backend/product baseline | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-large-recovery-large-dirty-unshifted-ifft/runs/20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03.json` |
 | Standard cube dirty, regressed 30 GB plan | 107 GB ALMA large | 1024 ch, 4096 | 923.208 | n/a | n/a | slab-first / CPU slab | 2 / 514 / 10 | 153.490 | 16.051 | 137.439 | 18.498 | superseded; too aggressive laptop memory target and worse backend timing | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-large-dirty-fast-single-sample-large/runs/20260615T042423Z-wave1-alma-mosaic-large-standard-cube-line-1727f925.json` |
 | Standard cube dirty, current 24 GB large | 107 GB ALMA large | 1024 ch, 4096 | 524.143 | n/a | n/a | slab-first / CPU slab | 9 / 120 / 10 | 153.781 | 16.030 | 137.439 | 14.170 | large CASA skipped; best large dirty row; modeled source is 16.342 GB and backend still dominates | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-standard-cube-large-24gb/20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480.json` |
-| Cubedata dirty, medium serial #311 | 32 GB VLA medium | 512 ch, 2048 | 298.058 | n/a | n/a | slab-first / CPU slab | 11 / 47 / 1 | 47.252 | 30.072 | 17.180 | 7.946 | serial baseline; CASA skipped by design | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-serial/20260616T154508Z-wave4-standard-cubedata-line-medium-eb7053f7.json` |
-| Cubedata dirty, medium auto #311 | 32 GB VLA medium | 512 ch, 2048 | 233.989 | 1887.410 | 8.07x vs CASA; 1.27x vs serial | slab-first / CPU slab | 6 / 89 / 10 | 46.511 | 29.332 | 17.180 | 10.294 | correctness from comparable medium CASA row; `.sumwt` non-spatial false positive reclassified good; misses 2.0x auto target | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-auto/20260616T155024Z-wave4-standard-cubedata-line-medium-445d25b0.json` |
+| Cubedata dirty, medium forced single-worker #311 | 32 GB VLA medium | 512 ch, 2048 | 349.241 | n/a | n/a | slab-first / CPU slab | 11 / 47 / 1 | 47.252 | 30.072 | 17.180 | 7.973 | forced single-worker baseline with `standard_mfs_grid_threads=1`; CASA skipped by design | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-forced1-current/20260616T172921Z-wave4-standard-cubedata-line-medium-b38c7e90.json` |
+| Cubedata dirty, medium auto #311 | 32 GB VLA medium | 512 ch, 2048 | 146.788 | 1887.410 | 12.86x vs CASA; 2.38x vs forced single-worker | slab-first / CPU slab | 6 / 89 / 10 | 46.511 | 29.332 | 17.180 | 10.496 | correctness from comparable medium CASA row; `.sumwt` non-spatial false positive reclassified good; auto-vs-forced target met | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-auto-current2/20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335.json` |
 | Cubedata dirty, large bounded | 107 GB ALMA large | 256 ch, 4096 | 105.825 | n/a | n/a | slab-first / serial CPU plane backend | 7 / 40 / 10 | 38.643 | 4.283 | 34.360 | 13.515 | large CASA skipped; bounded large-dataset planner and I/O row | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T070401Z-wave4-standard-cubedata-line-large-bounded-bdb7948d.json` |
 | Cubedata clean Hogbom, medium Metal/default | 32 GB VLA medium | 512 ch, 1024, niter=2 | 255.725 | n/a | n/a | slab-first / grouped Wave 3 Metal | 13 / 40 / 10 | 38.958 | 28.764 | 8.590 | recorded in JSON | small all-channel CASA comparison good; medium run skipped CASA | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium/20260616T144357Z-wave4-standard-cubedata-line-medium-clean-hogbom-decc2963.json` |
 | Mosaic cube dirty, previous large turnaround | 107 GB ALMA large | 4 ch, 1024, 7 fields | 80.933 | n/a | n/a | slab-first / mosaic single-plane stream | 4 / 1 / 1 | partial | 0.400 | product-backed | 11.177 | superseded by W4-19 multi-plane evidence | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T053705Z-wave4-mosaic-cube-alma-large-dirty-turnaround-db1671a1.json` |
@@ -105,9 +130,9 @@ instead of a continuum/spectral rule.
 
 | Row | Target GB | Planned active GB | Peak RSS GB | Visibility/source-side buffers | Plane/product-side buffers | Plane-state read GB | Plane-state write GB | Notes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Standard cube medium dirty auto #311 | 24.000 | 24.000 | 11.096 | row-block stream, no full visibility cache; 29.332 GB modeled source reads | 17.180 GB modeled product write | 0 | product-backed | Direct medium auto-vs-serial comparator; 6 slabs, 89 active planes, 10 workers. |
+| Standard cube medium dirty auto #311 | 24.000 | 24.000 | 11.160 | 2.758 GB live prepared visibility/source-side buffer, no full visibility cache; 29.332 GB modeled source reads | 17.180 GB modeled product write | 0 | product-backed | Current medium auto-vs-forced-single-worker comparator; 6 slabs, 89 active planes, 10 workers. |
 | Standard cube large dirty, 24 GB cap | 24.000 | 24.000 | 14.170 | 7.858 GB source stream buffer, no full visibility cache | 14.205 GB product scratch, 137.439 GB modeled product writes | 0.000 | 137.439 | Best large dirty row: 524.143 s total, 37.337 s source read, 481.638 s backend, 58.435 s product write. |
-| Cubedata medium dirty auto #311 | 24.000 | 24.000 | 10.294 | row-block stream, no full visibility cache; 29.332 GB modeled source reads | 17.180 GB modeled product write | 0.000 | 17.180 | Correctness good, but 10-worker auto gives only 1.27x over serial on this row. |
+| Cubedata medium dirty auto #311 | 24.000 | 24.000 | 10.496 | 2.763 GB live prepared visibility/source-side buffer, no full visibility cache; 29.332 GB modeled source reads | 17.180 GB modeled product write | 0.000 | 17.180 | Correctness good; current 10-worker auto gives 2.38x over forced single-worker and supersedes the pre-refactor blocked row. |
 | Cubedata large bounded | 17.180 | 17.180 | 13.515 | 3.775 GB source stream buffer, no full visibility cache | 11.474 GB product scratch, 34.360 GB modeled product writes | 0.000 | 34.360 | New W4-14 large row; 7 product-backed store groups, 13.341 s store time. |
 | Mosaic medium-output bounded | 17.180 | 1.268 | 11.639 | 1.133 GB source stream buffer | product-backed write-through | 0 | product-backed | Current executor limitation: `mosaic_single_plane_stream`, one active plane, per-plane source reuse. |
 | Mosaic large turnaround | 17.180 | 1.167 | 11.177 | 1.133 GB source stream buffer | product-backed write-through | 0 | product-backed | Bounded large-MS turnaround row; not a parallel mosaic optimization claim. |
@@ -135,9 +160,9 @@ instead of a continuum/spectral rule.
   `mosaic_multi_plane_stream`, `active_planes > 1`, and `worker_count > 1` for
   representative dirty rows; clean rows use the same slab-plane dispatch but
   still miss the performance targets.
-- Treat TB-scale as final confirmation only. The next large dirty owner is the
-  optional source-major/batched backend spike; a TB row before that would mostly
-  reconfirm the current backend lower bound.
+- Treat TB-scale as final confirmation only. A future source-major or batched
+  backend may still be useful for the remaining large-dirty lower bound, but
+  Wave 4 does not need another TB row before that architectural work exists.
 
 ## Rejected Or Parked Attempts
 
@@ -160,11 +185,16 @@ Rejected as default or reverted:
 - Blocked-transpose inverse FFT around the scalar `rustfft` path.
 - Unmerged whole-plane product groups.
 - Temporary f32 routed dirty grids.
-- Indexed spectral assignment lookup.
+- Per-plane precomputed spectral assignment lookup. The retained refactor still
+  uses compact row bindings and grid-assignment indices to avoid per-row
+  `HashMap` lookup and `Arc` cloning in the shared cube/cubedata path.
 
-Required Wave 4 follow-up:
+Closeout decision for #311:
 
-- #311 Source-major and batched backend spike for large dirty cube performance.
-  The 24 GB large row fixes the previous memory-target regression, but the
-  remaining large dirty problem is still per-plane feed/grid/FFT backend cost,
-  not planner source-read scheduling or product tile shape.
+- #311 is closed by the shared standard spectral cube dirty execution refactor
+  and refreshed medium evidence. Cubedata dirty now shares the standard cube
+  worker/planner path, reaches 2.38x over forced single-worker, and is 12.86x
+  faster than CASA on the medium row. A future source-major or batched backend
+  remains a plausible architecture direction for the large-dirty lower bound,
+  but Brian accepted the current standard/cubedata agreement as sufficient for
+  this ticket.

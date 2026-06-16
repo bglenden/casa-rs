@@ -14,28 +14,21 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SinglePlaneSpectralPlan {
     Mfs,
-    CubeOneChannel,
-    CubedataOneChannel,
-    CubeMultiChannel,
-    CubedataMultiChannel,
+    CubeLikeOneChannel,
+    CubeLikeMultiChannel,
 }
 
 impl SinglePlaneSpectralPlan {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Mfs => "mfs",
-            Self::CubeOneChannel => "cube-one-channel",
-            Self::CubedataOneChannel => "cubedata-one-channel",
-            Self::CubeMultiChannel => "cube-multi-channel",
-            Self::CubedataMultiChannel => "cubedata-multi-channel",
+            Self::CubeLikeOneChannel => "cube-like-one-channel",
+            Self::CubeLikeMultiChannel => "cube-like-multi-channel",
         }
     }
 
     pub(crate) fn is_one_output_channel(self) -> bool {
-        matches!(
-            self,
-            Self::Mfs | Self::CubeOneChannel | Self::CubedataOneChannel
-        )
+        matches!(self, Self::Mfs | Self::CubeLikeOneChannel)
     }
 }
 
@@ -221,12 +214,12 @@ fn output_channel_count(config: &CliConfig) -> usize {
 fn spectral_plan(mode: SpectralMode, output_channel_count: usize) -> SinglePlaneSpectralPlan {
     match mode {
         SpectralMode::Mfs => SinglePlaneSpectralPlan::Mfs,
-        SpectralMode::Cube if output_channel_count == 1 => SinglePlaneSpectralPlan::CubeOneChannel,
-        SpectralMode::Cube => SinglePlaneSpectralPlan::CubeMultiChannel,
-        SpectralMode::Cubedata if output_channel_count == 1 => {
-            SinglePlaneSpectralPlan::CubedataOneChannel
+        SpectralMode::Cube | SpectralMode::Cubedata if output_channel_count == 1 => {
+            SinglePlaneSpectralPlan::CubeLikeOneChannel
         }
-        SpectralMode::Cubedata => SinglePlaneSpectralPlan::CubedataMultiChannel,
+        SpectralMode::Cube | SpectralMode::Cubedata => {
+            SinglePlaneSpectralPlan::CubeLikeMultiChannel
+        }
     }
 }
 
@@ -368,11 +361,9 @@ fn cpu_multi_worker_eligibility(
         };
         if workers > 1 {
             if mosaic_mfs_eligible {
-                if matches!(config.spectral_mode, SpectralMode::Cube)
-                    && config.channel_count == Some(1)
-                {
+                if config.spectral_mode.is_cube_like() && config.channel_count == Some(1) {
                     BackendEligibility::eligible(format!(
-                        "mosaic-cube-one-channel-parallel-prepare-workers-{workers}-single-grid-owner"
+                        "mosaic-cube-like-one-channel-parallel-prepare-workers-{workers}-single-grid-owner"
                     ))
                 } else if config.standard_mfs_acceleration
                     == StandardMfsAccelerationPolicy::MultiCpu
@@ -387,9 +378,9 @@ fn cpu_multi_worker_eligibility(
                 }
             } else if matches!(config.w_term_mode, WTermMode::WProject) {
                 BackendEligibility::eligible(format!("wproject-streaming-workers-{workers}"))
-            } else if matches!(config.spectral_mode, SpectralMode::Cube) {
+            } else if config.spectral_mode.is_cube_like() {
                 BackendEligibility::eligible(format!(
-                    "standard-cube-one-channel-parallel-prepare-workers-{workers}"
+                    "standard-cube-like-one-channel-parallel-prepare-workers-{workers}"
                 ))
             } else {
                 BackendEligibility::eligible(format!("standard-mfs-fixed-tile-workers-{workers}"))
@@ -432,8 +423,8 @@ fn gpu_metal_eligibility(
             BackendEligibility::eligible("mosaic-screen-projector-metal-single-grid-owner")
         } else if matches!(config.w_term_mode, WTermMode::WProject) {
             BackendEligibility::eligible("wproject-metal-kernel")
-        } else if matches!(config.spectral_mode, SpectralMode::Cube) {
-            BackendEligibility::eligible("standard-cube-one-channel-grouped-metal")
+        } else if config.spectral_mode.is_cube_like() {
+            BackendEligibility::eligible("standard-cube-like-one-channel-grouped-metal")
         } else if config.deconvolver == Deconvolver::Mtmfs {
             BackendEligibility::eligible("mtmfs-metal-sample-cache")
         } else {
@@ -445,22 +436,17 @@ fn gpu_metal_eligibility(
 }
 
 fn shared_strategy_gap_reason(config: &CliConfig) -> String {
-    if !matches!(config.spectral_mode, SpectralMode::Mfs | SpectralMode::Cube) {
-        return "shared-strategy-not-yet-adapted-to-spectral-mode".to_string();
-    }
-    if matches!(config.spectral_mode, SpectralMode::Cube) && config.channel_count != Some(1) {
+    if config.spectral_mode.is_cube_like() && config.channel_count != Some(1) {
         return "not-one-output-channel".to_string();
     }
-    if matches!(config.spectral_mode, SpectralMode::Cube)
-        && !matches!(config.w_term_mode, WTermMode::None)
-    {
-        return "cube-wterm-requires-cube-path".to_string();
+    if config.spectral_mode.is_cube_like() && !matches!(config.w_term_mode, WTermMode::None) {
+        return "cube-like-wterm-requires-cube-path".to_string();
     }
-    if matches!(config.spectral_mode, SpectralMode::Cube)
+    if config.spectral_mode.is_cube_like()
         && config.cube_axis.interpolation != CubeInterpolation::Nearest
         && !(config.dirty_only || config.niter == 0)
     {
-        return "cleaned-linear-cube-requires-cube-path".to_string();
+        return "cleaned-linear-cube-like-requires-cube-path".to_string();
     }
     if config.use_pointing || matches!(config.w_term_mode, WTermMode::Direct) {
         return "shared-strategy-not-yet-adapted-to-projection-family".to_string();
@@ -572,7 +558,7 @@ mod tests {
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
-        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeOneChannel);
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeLikeOneChannel);
         assert!(plan.spectral.is_one_output_channel());
         assert!(plan.cpu_multi_worker.eligible);
         assert_eq!(
@@ -582,10 +568,10 @@ mod tests {
         assert!(
             plan.cpu_multi_worker
                 .reason
-                .starts_with("standard-cube-one-channel")
+                .starts_with("standard-cube-like-one-channel")
         );
         assert!(
-            plan.gpu_metal.reason == "standard-cube-one-channel-grouped-metal"
+            plan.gpu_metal.reason == "standard-cube-like-one-channel-grouped-metal"
                 || plan.gpu_metal.reason == "metal-device-unavailable"
         );
     }
@@ -606,11 +592,11 @@ mod tests {
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
-        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeOneChannel);
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeLikeOneChannel);
         assert!(!plan.cpu_multi_worker.eligible);
         assert_eq!(
             plan.cpu_multi_worker.reason,
-            "cleaned-linear-cube-requires-cube-path"
+            "cleaned-linear-cube-like-requires-cube-path"
         );
     }
 
@@ -628,22 +614,26 @@ mod tests {
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
-        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubedataOneChannel);
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeLikeOneChannel);
         assert!(plan.spectral.is_one_output_channel());
         assert!(plan.cpu_multi_worker.eligible);
         assert!(
             plan.cpu_multi_worker
                 .reason
-                .starts_with("standard-mfs-fixed-tile-workers")
+                .starts_with("standard-cube-like-one-channel")
         );
         assert_eq!(
             products(&plan),
             vec![".image", ".residual", ".model", ".psf", ".sumwt"]
         );
+        assert!(
+            plan.gpu_metal.reason == "standard-cube-like-one-channel-grouped-metal"
+                || plan.gpu_metal.reason == "metal-device-unavailable"
+        );
     }
 
     #[test]
-    fn cubedata_multi_channel_rejects_shared_single_plane_backends() {
+    fn cubedata_multi_channel_reports_cube_like_multi_channel_plan() {
         let config = parse([
             "--specmode",
             "cubedata",
@@ -654,7 +644,7 @@ mod tests {
         ]);
         let plan = build_single_plane_execution_plan(&config, false, 1);
 
-        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubedataMultiChannel);
+        assert_eq!(plan.spectral, SinglePlaneSpectralPlan::CubeLikeMultiChannel);
         assert!(!plan.spectral.is_one_output_channel());
         assert!(!plan.cpu_multi_worker.eligible);
         assert_eq!(plan.cpu_multi_worker.reason, "not-one-output-channel");

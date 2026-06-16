@@ -46,7 +46,7 @@ Closeout decision:
 - Do not spend more W4-14 time on slab-first versus source-first for large dirty unless source reads become dominant. The current source-read bucket is 37.337 s out of 524.143 s, about 7% of wall time.
 - Keep whole-plane product tiles and the zero-copy direct write path. Product write is now 58.435 s for 137.439 GB, with direct full-plane writes and no readback, zero-fill, or C-order conversion.
 - Treat the remaining large dirty cost as a per-plane backend problem. Median plane time is 4.782 s and median core time is 4.172 s; the median FFT pair is 2.977 s, larger than replay, grid update, and normalization/correction combined.
-- The next distinct architectural bet remains source-major or batched plane execution, tracked as optional Wave 4 follow-up #311: one pass over shared source blocks should feed multiple plane grids, with shared geometry/tap work and batched FFT/backend execution where possible. Continuing isolated scalar plane workers is unlikely to recover the next factor.
+- The next distinct architectural bet remains source-major or batched plane execution: one pass over shared source blocks should feed multiple plane grids, with shared geometry/tap work and batched FFT/backend execution where possible. Continuing isolated scalar plane workers is unlikely to recover the next factor. #311 is no longer the owner for that future work; it was closed by the standard cube/cubedata shared dirty execution refactor and refreshed medium evidence accepted on 2026-06-16.
 
 ## Attempts
 
@@ -450,7 +450,7 @@ Evidence:
 
 Decision: keep the instrumentation. It confirms that whole-plane product writes are no longer the primary medium bottleneck: product write is only 8.494 s total for 17.180 GB in this diagnostic, while backend/replay dominates. The next real optimization must change the source-to-plane feed or gridding dataflow rather than the product tile shape.
 
-### Indexed spectral assignment lookup
+### Per-plane precomputed spectral assignment lookup
 
 Status: rejected before completing the medium run
 
@@ -472,6 +472,10 @@ Evidence:
 - By contrast, the previous direct replay diagnostic had many early slab-0 planes around 0.67-1.1 s.
 
 Decision: revert. The index increased resident plan work and did not improve the measured planned-sample build bucket. The assignment lookup is not the dominant replay cost in this path; the next attempt should target repeated per-plane row scanning, sample construction, tap planning, or a source-major/slab-major fanout that avoids rebuilding nearly identical per-row geometry for every plane.
+
+This rejected attempt is distinct from the later standard cube/cubedata refactor,
+which retained compact row bindings and grid-assignment indices only to remove
+per-row `HashMap` lookup and `Arc` cloning from the shared slab source path.
 
 ### Fast single-contribution direct dirty replay
 
