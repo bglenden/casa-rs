@@ -79,6 +79,85 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual(220368.238, stages["make_psf"])
         self.assertEqual(305834.961, stages["calcres_major_cycle"])
         self.assertEqual(530361.545, stages["total"])
+        self.assertNotIn("total_ms", stages)
+        self.assertNotIn("make_psf_ms", stages)
+
+    def test_parse_casa_phase_probe_includes_w4_attribution_fields(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """CASA PySynthesisImager stage medians (milliseconds):
+  stage medians (ms):
+    parameter_setup=0.277
+    initialize_imagers=55.000
+    select_data=12.500
+    define_image=7.250
+    normalizer_info=1.000
+    cf_cache_setup=0.000
+    set_weighting=8.500
+    set_weighting_core=8.250
+    make_psf=220368.238
+    calcres_major_cycle=305834.961
+    minor_cycle=42.000
+    clean_major_cycle=99.000
+    restore_images=38.185
+    total=530361.545
+  instrumentation notes:
+    cube tuneSelectData and nSubCubeFitInMemory live inside CASA C++ cube major-cycle calls.
+"""
+        )
+
+        stages = parsed["stage_medians_ms"]["casa"]
+
+        self.assertEqual(12.5, stages["select_data"])
+        self.assertEqual(7.25, stages["define_image"])
+        self.assertEqual(8.25, stages["set_weighting_core"])
+        self.assertEqual(99.0, stages["clean_major_cycle"])
+
+    def test_casa_stage_breakdown_maps_w4_attribution_categories(self) -> None:
+        parsed = {
+            "stage_medians_ms": {
+                "rust": {},
+                "casa": {
+                    "select_data": 12.5,
+                    "define_image": 7.25,
+                    "normalizer_info": 1.0,
+                    "cf_cache_setup": 0.0,
+                    "set_weighting": 8.5,
+                    "set_weighting_core": 8.25,
+                    "make_psf": 220.0,
+                    "calcres_major_cycle": 305.0,
+                    "minor_cycle": 42.0,
+                    "clean_major_cycle": 99.0,
+                    "restore_images": 38.0,
+                    "total": 750.0,
+                },
+            }
+        }
+        plan = {
+            "mode": {
+                "bench_mode": "clean",
+                "niter": 10,
+            }
+        }
+
+        run_workload.attach_stage_breakdown(plan, parsed)
+
+        categories = parsed["stage_breakdown"]["casa"]["categories"]
+        self.assertEqual(
+            20.75,
+            categories["ms_selection_and_image_definition"]["total_ms"],
+        )
+        self.assertEqual(
+            624.0,
+            categories["cube_major_cycle_algorithm_envelope"]["total_ms"],
+        )
+        self.assertIn(
+            "nSubCubeFitInMemory",
+            categories["cube_major_cycle_algorithm_envelope"]["description"],
+        )
+        self.assertEqual(
+            442.0,
+            categories["image_store_writeback_and_restore"]["total_ms"],
+        )
 
     def test_empty_results_include_reasons_for_both_sides(self) -> None:
         results = run_workload.empty_results(

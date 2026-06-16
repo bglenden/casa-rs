@@ -88,6 +88,31 @@ RUST_STAGE_FIELDS = {
     "restore",
     "total",
 }
+CASA_STAGE_FIELDS = {
+    "parameter_setup",
+    "construct_imager",
+    "initialize_imagers",
+    "select_data",
+    "define_image",
+    "normalizer_info",
+    "cf_cache_setup",
+    "initialize_normalizers",
+    "set_weighting",
+    "set_weighting_core",
+    "initialize_deconvolvers",
+    "estimate_memory",
+    "initialize_iteration_control",
+    "make_psf",
+    "make_pb",
+    "calcres_major_cycle",
+    "update_mask",
+    "has_converged",
+    "minor_cycle",
+    "clean_major_cycle",
+    "restore_images",
+    "delete_tools",
+    "total",
+}
 
 
 class HarnessError(Exception):
@@ -1542,12 +1567,38 @@ def build_casa_stage_breakdown(stages: dict[str, float]) -> dict[str, Any]:
                 "initialize_iteration_control",
                 "estimate_memory",
             ],
-            "CASA PySynthesisImager setup, construction, and initialization.",
+            "CASA PySynthesisImager setup, construction, initialization, and memory estimation.",
+        ),
+        "ms_selection_and_image_definition": stage_category(
+            stages,
+            [
+                "select_data",
+                "define_image",
+                "normalizer_info",
+                "cf_cache_setup",
+            ],
+            (
+                "Narrow CASA helper timings for synthesisimager.selectdata, "
+                "defineimage, normalizerinfo, and CF-cache setup during initializeImagers."
+            ),
         ),
         "weighting_density_setup": stage_category(
             stages,
-            ["set_weighting"],
-            "CASA weighting setup.",
+            ["set_weighting", "set_weighting_core"],
+            (
+                "CASA weighting setup; set_weighting_core is the direct "
+                "synthesisimager.setweighting call when the phase probe is enabled."
+            ),
+        ),
+        "cube_major_cycle_algorithm_envelope": stage_category(
+            stages,
+            ["make_psf", "calcres_major_cycle", "clean_major_cycle"],
+            (
+                "CASA cube major-cycle envelope. For cube imaging this brackets "
+                "CubeMajorCycleAlgorithm work including C++ tuneSelectData, "
+                "nSubCubeFitInMemory, gridding/degridding, normalization, and "
+                "subimage writeback that are not exposed as separate Python timers."
+            ),
         ),
         "psf_and_primary_beam": stage_category(
             stages,
@@ -1562,7 +1613,19 @@ def build_casa_stage_breakdown(stages: dict[str, float]) -> dict[str, Any]:
         "deconvolution_minor_cycle": stage_category(
             stages,
             ["minor_cycle", "update_mask", "has_converged"],
-            "CASA minor-cycle, mask update, and convergence checks.",
+            (
+                "CASA minor-cycle, mask update, and convergence checks. For cube "
+                "imaging minor_cycle brackets CubeMinorCycleAlgorithm."
+            ),
+        ),
+        "image_store_writeback_and_restore": stage_category(
+            stages,
+            ["clean_major_cycle", "calcres_major_cycle", "restore_images"],
+            (
+                "CASA image-store writeback envelope: cube subimage writes occur "
+                "inside major-cycle C++ calls, while final restored-image writes "
+                "are included in restore_images."
+            ),
         ),
         "restore_and_cleanup": stage_category(
             stages,
@@ -1754,6 +1817,11 @@ def parse_stage_section(text: str, heading: str) -> dict[str, float]:
     for line in lines:
         for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
             if heading == "Rust stage medians" and name not in RUST_STAGE_FIELDS:
+                continue
+            if (
+                heading == "CASA PySynthesisImager stage medians"
+                and name not in CASA_STAGE_FIELDS
+            ):
                 continue
             if name != "run":
                 stages[name] = float(value)
