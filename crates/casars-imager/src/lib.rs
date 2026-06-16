@@ -7046,6 +7046,15 @@ fn run_standard_cube_slab_from_open_ms(
             }
             .log_line()
         );
+        eprintln!(
+            "cube_plane_state_store_summary kind=product_backed_write_through slab_id={} plane_start={} plane_end={} planes={} bytes_read=0 bytes_written={} elapsed_ms={:.3} cleanup_policy=drop_after_write product_write_state=written components=psf,residual,image,sumwt",
+            slab.slab_id,
+            slab.plane_start,
+            slab.plane_end,
+            slab.plane_end.saturating_sub(slab.plane_start),
+            slab_outcome.product_bytes,
+            duration_ms(slab_outcome.product_write_elapsed),
+        );
         memory_logger.log(
             config,
             &memory_plan,

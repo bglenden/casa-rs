@@ -427,7 +427,9 @@ pub(crate) struct SpectralPlaneDescriptorKey {
 pub(crate) trait PlaneStateStore {
     fn load(&mut self, key: SpectralPlaneDescriptorKey) -> Option<SpectralPlaneState>;
     fn store(&mut self, state: SpectralPlaneState);
+    fn cleanup(&mut self, key: SpectralPlaneDescriptorKey) -> Option<SpectralPlaneState>;
     fn trace(&self) -> &[PlaneStateStoreTrace];
+    fn io_stats(&self) -> PlaneStateStoreIoStats;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,15 +440,32 @@ pub(crate) struct PlaneStateStoreTrace {
     pub(crate) dirty_components: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PlaneStateStoreIoStats {
+    pub(crate) load_count: usize,
+    pub(crate) store_count: usize,
+    pub(crate) cleanup_count: usize,
+    pub(crate) bytes_read: usize,
+    pub(crate) bytes_written: usize,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct InMemoryPlaneStateStore {
     states: BTreeMap<SpectralPlaneDescriptorKey, SpectralPlaneState>,
     trace: Vec<PlaneStateStoreTrace>,
+    io_stats: PlaneStateStoreIoStats,
 }
 
 impl PlaneStateStore for InMemoryPlaneStateStore {
     fn load(&mut self, key: SpectralPlaneDescriptorKey) -> Option<SpectralPlaneState> {
         let state = self.states.get(&key).cloned();
+        self.io_stats.load_count = self.io_stats.load_count.saturating_add(1);
+        self.io_stats.bytes_read = self.io_stats.bytes_read.saturating_add(
+            state
+                .as_ref()
+                .map(estimated_state_record_bytes)
+                .unwrap_or(0),
+        );
         self.trace.push(PlaneStateStoreTrace {
             op: "load",
             output_index: key.output_index,
@@ -460,6 +479,11 @@ impl PlaneStateStore for InMemoryPlaneStateStore {
     }
 
     fn store(&mut self, state: SpectralPlaneState) {
+        self.io_stats.store_count = self.io_stats.store_count.saturating_add(1);
+        self.io_stats.bytes_written = self
+            .io_stats
+            .bytes_written
+            .saturating_add(estimated_state_record_bytes(&state));
         self.trace.push(PlaneStateStoreTrace {
             op: "store",
             output_index: state.descriptor.output_index,
@@ -469,9 +493,141 @@ impl PlaneStateStore for InMemoryPlaneStateStore {
         self.states.insert(state.descriptor, state);
     }
 
+    fn cleanup(&mut self, key: SpectralPlaneDescriptorKey) -> Option<SpectralPlaneState> {
+        let state = self.states.remove(&key);
+        self.io_stats.cleanup_count = self.io_stats.cleanup_count.saturating_add(1);
+        self.trace.push(PlaneStateStoreTrace {
+            op: "cleanup",
+            output_index: key.output_index,
+            components: state
+                .as_ref()
+                .map(|state| state.requirements.component_list())
+                .unwrap_or_default(),
+            dirty_components: state.as_ref().map(dirty_component_list).unwrap_or_default(),
+        });
+        state
+    }
+
     fn trace(&self) -> &[PlaneStateStoreTrace] {
         &self.trace
     }
+
+    fn io_stats(&self) -> PlaneStateStoreIoStats {
+        self.io_stats
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ProductBackedPlaneStateStore {
+    image_pixels: usize,
+    write_through_components: BTreeSet<PlaneComponent>,
+    states: BTreeMap<SpectralPlaneDescriptorKey, SpectralPlaneState>,
+    trace: Vec<PlaneStateStoreTrace>,
+    io_stats: PlaneStateStoreIoStats,
+}
+
+impl ProductBackedPlaneStateStore {
+    pub(crate) fn new(
+        image_pixels: usize,
+        write_through_components: impl IntoIterator<Item = PlaneComponent>,
+    ) -> Self {
+        Self {
+            image_pixels,
+            write_through_components: write_through_components.into_iter().collect(),
+            states: BTreeMap::new(),
+            trace: Vec::new(),
+            io_stats: PlaneStateStoreIoStats::default(),
+        }
+    }
+
+    fn product_bytes_for_state(&self, state: &SpectralPlaneState) -> usize {
+        self.write_through_components
+            .iter()
+            .filter(|component| state.requirements.required.contains(component))
+            .map(|component| {
+                state
+                    .requirements
+                    .estimated_component_bytes(*component, self.image_pixels)
+            })
+            .sum()
+    }
+}
+
+impl PlaneStateStore for ProductBackedPlaneStateStore {
+    fn load(&mut self, key: SpectralPlaneDescriptorKey) -> Option<SpectralPlaneState> {
+        let state = self.states.get(&key).cloned();
+        self.io_stats.load_count = self.io_stats.load_count.saturating_add(1);
+        self.io_stats.bytes_read = self.io_stats.bytes_read.saturating_add(
+            state
+                .as_ref()
+                .map(|state| {
+                    estimated_state_record_bytes(state)
+                        .saturating_add(self.product_bytes_for_state(state))
+                })
+                .unwrap_or(0),
+        );
+        self.trace.push(PlaneStateStoreTrace {
+            op: "product_load",
+            output_index: key.output_index,
+            components: state
+                .as_ref()
+                .map(|state| state.requirements.component_list())
+                .unwrap_or_default(),
+            dirty_components: state.as_ref().map(dirty_component_list).unwrap_or_default(),
+        });
+        state
+    }
+
+    fn store(&mut self, state: SpectralPlaneState) {
+        self.io_stats.store_count = self.io_stats.store_count.saturating_add(1);
+        self.io_stats.bytes_written = self.io_stats.bytes_written.saturating_add(
+            estimated_state_record_bytes(&state)
+                .saturating_add(self.product_bytes_for_state(&state)),
+        );
+        self.trace.push(PlaneStateStoreTrace {
+            op: "product_store",
+            output_index: state.descriptor.output_index,
+            components: state.requirements.component_list(),
+            dirty_components: dirty_component_list(&state),
+        });
+        self.states.insert(state.descriptor, state);
+    }
+
+    fn cleanup(&mut self, key: SpectralPlaneDescriptorKey) -> Option<SpectralPlaneState> {
+        let state = self.states.remove(&key);
+        self.io_stats.cleanup_count = self.io_stats.cleanup_count.saturating_add(1);
+        self.trace.push(PlaneStateStoreTrace {
+            op: "product_cleanup",
+            output_index: key.output_index,
+            components: state
+                .as_ref()
+                .map(|state| state.requirements.component_list())
+                .unwrap_or_default(),
+            dirty_components: state.as_ref().map(dirty_component_list).unwrap_or_default(),
+        });
+        state
+    }
+
+    fn trace(&self) -> &[PlaneStateStoreTrace] {
+        &self.trace
+    }
+
+    fn io_stats(&self) -> PlaneStateStoreIoStats {
+        self.io_stats
+    }
+}
+
+fn estimated_state_record_bytes(state: &SpectralPlaneState) -> usize {
+    std::mem::size_of::<SpectralPlaneDescriptorKey>()
+        .saturating_add(state.requirements.component_list().len())
+        .saturating_add(dirty_component_list(state).len())
+        .saturating_add(state.coordinate_metadata.len())
+        .saturating_add(state.beam_metadata.len())
+        .saturating_add(state.mask_metadata.len())
+        .saturating_add(state.primary_beam_metadata.len())
+        .saturating_add(state.pbcor_metadata.len())
+        .saturating_add(std::mem::size_of::<bool>())
+        .saturating_add(state.product_write_state.len())
 }
 
 fn dirty_component_list(state: &SpectralPlaneState) -> String {
@@ -2545,11 +2701,72 @@ mod tests {
         store.store(state.clone());
         assert_eq!(
             store.load(SpectralPlaneDescriptorKey { output_index: 3 }),
-            Some(state)
+            Some(state.clone())
         );
         assert_eq!(store.trace()[0].op, "store");
         assert_eq!(store.trace()[1].op, "load");
         assert!(store.trace()[0].dirty_components.contains("residual"));
+        assert_eq!(store.io_stats().store_count, 1);
+        assert_eq!(store.io_stats().load_count, 1);
+        assert!(store.io_stats().bytes_written > 0);
+        assert!(store.io_stats().bytes_read > 0);
+        assert_eq!(
+            store.cleanup(SpectralPlaneDescriptorKey { output_index: 3 }),
+            Some(state)
+        );
+        assert_eq!(store.trace()[2].op, "cleanup");
+        assert_eq!(store.io_stats().cleanup_count, 1);
+    }
+
+    #[test]
+    fn product_backed_plane_state_store_preserves_metadata_and_reports_spill_io() {
+        let mut store = ProductBackedPlaneStateStore::new(
+            1024,
+            [
+                PlaneComponent::Psf,
+                PlaneComponent::Residual,
+                PlaneComponent::Image,
+                PlaneComponent::Sumwt,
+            ],
+        );
+        let mut dirty_mask = PlaneStateDirtyMask::default();
+        dirty_mask.mark(PlaneComponent::Psf);
+        dirty_mask.mark(PlaneComponent::Residual);
+        let state = SpectralPlaneState {
+            descriptor: SpectralPlaneDescriptorKey { output_index: 7 },
+            requirements: PlaneStateRequirements::dirty_standard(),
+            dirty_mask,
+            coordinate_metadata: "direction+spectral coords".into(),
+            beam_metadata: "beam major minor pa".into(),
+            mask_metadata: "mask none".into(),
+            primary_beam_metadata: "pb none".into(),
+            pbcor_metadata: "pbcor none".into(),
+            sumwt_present: true,
+            product_write_state: "write-through complete".into(),
+        };
+
+        store.store(state.clone());
+        assert_eq!(store.trace()[0].op, "product_store");
+        assert_eq!(store.trace()[0].output_index, 7);
+        assert!(store.trace()[0].components.contains("psf"));
+        assert!(store.trace()[0].dirty_components.contains("residual"));
+        assert!(store.io_stats().bytes_written >= 1024 * std::mem::size_of::<f32>() * 3);
+
+        let loaded = store
+            .load(SpectralPlaneDescriptorKey { output_index: 7 })
+            .expect("product-backed store should reload state metadata");
+        assert_eq!(loaded, state);
+        assert_eq!(store.trace()[1].op, "product_load");
+        assert!(store.io_stats().bytes_read > 0);
+
+        let cleaned = store.cleanup(SpectralPlaneDescriptorKey { output_index: 7 });
+        assert_eq!(cleaned, Some(state));
+        assert_eq!(store.trace()[2].op, "product_cleanup");
+        assert_eq!(store.io_stats().cleanup_count, 1);
+        assert_eq!(
+            store.load(SpectralPlaneDescriptorKey { output_index: 7 }),
+            None
+        );
     }
 
     #[test]
