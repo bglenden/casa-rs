@@ -8149,14 +8149,14 @@ impl TiledFileIO {
             || shape[0] != self.cube_shape[0]
             || shape[1] != self.cube_shape[1]
             || shape[2] != self.cube_shape[2]
-            || !shape[0].is_multiple_of(self.tile_shape[0])
-            || !shape[1].is_multiple_of(self.tile_shape[1])
+            || shape[0] % self.tile_shape[0] != 0
+            || shape[1] % self.tile_shape[1] != 0
         {
             return Ok(false);
         }
         for d in 0..ndim {
             if start[d].saturating_add(shape[d]) > self.cube_shape[d]
-                || !start[d].is_multiple_of(self.tile_shape[d])
+                || start[d] % self.tile_shape[d] != 0
             {
                 return Ok(false);
             }
@@ -8286,14 +8286,14 @@ impl TiledFileIO {
             || shape[0] != self.cube_shape[0]
             || shape[1] != self.cube_shape[1]
             || shape[2] != self.cube_shape[2]
-            || !shape[0].is_multiple_of(self.tile_shape[0])
-            || !shape[1].is_multiple_of(self.tile_shape[1])
+            || shape[0] % self.tile_shape[0] != 0
+            || shape[1] % self.tile_shape[1] != 0
         {
             return Ok(false);
         }
         for d in 0..ndim {
             if start[d].saturating_add(shape[d]) > self.cube_shape[d]
-                || !start[d].is_multiple_of(self.tile_shape[d])
+                || start[d] % self.tile_shape[d] != 0
             {
                 return Ok(false);
             }
@@ -8332,7 +8332,7 @@ impl TiledFileIO {
 
         let total_bytes = tile_count.saturating_mul(self.tile_bytes);
         let direct_source_is_file_order = tile_x == shape[0] && tile_y == shape[1];
-        if !(direct_source_is_file_order && !self.needs_swap) {
+        if !direct_source_is_file_order || self.needs_swap {
             if self.direct_write_buffer.len() != total_bytes {
                 self.direct_write_buffer.resize(total_bytes, 0);
             }

@@ -2083,6 +2083,7 @@ fn integer_sqrt(value: usize) -> usize {
     root
 }
 
+#[allow(clippy::too_many_arguments)]
 fn modeled_runtime_cost_bytes(
     modeled_total_io_bytes: usize,
     per_plane_state_bytes: usize,

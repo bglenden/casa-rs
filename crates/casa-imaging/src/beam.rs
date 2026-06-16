@@ -152,6 +152,22 @@ pub(crate) fn estimate_psf_sidelobe_level(
     };
 
     let gaussian_psf = make_casa_gaussian_psf_image(psf.raw_dim(), cell_size_rad, beam, false);
+    estimate_psf_sidelobe_level_with_beam(psf, &gaussian_psf)
+}
+
+pub(crate) fn estimate_psf_sidelobe_level_for_beam(
+    psf: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    beam: Option<BeamFit>,
+) -> f32 {
+    let Some(beam) = beam else {
+        return 0.0;
+    };
+    let gaussian_psf = make_casa_gaussian_psf_image(psf.raw_dim(), cell_size_rad, beam, false);
+    estimate_psf_sidelobe_level_with_beam(psf, &gaussian_psf)
+}
+
+fn estimate_psf_sidelobe_level_with_beam(psf: &Array2<f32>, gaussian_psf: &Array2<f32>) -> f32 {
     let mut all_min = 0.0f32;
     let mut all_max = 0.0f32;
     for ((x, y), value) in psf.indexed_iter() {

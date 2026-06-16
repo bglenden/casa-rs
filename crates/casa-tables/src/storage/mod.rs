@@ -3674,6 +3674,7 @@ fn collect_ism_scalar_columns(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_ism_required_scalar_columns(
     data_path: &Path,
     dm_blob: &[u8],

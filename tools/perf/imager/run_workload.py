@@ -735,6 +735,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "spectral_slab_memory": [],
         "spectral_slab_plans": [],
         "cube_per_plane_backend": [],
+        "cube_resident_clean_control": [],
+        "cube_resident_clean_executor": [],
         "cube_source_row_blocks": [],
         "cube_product_summaries": [],
         "executor_limitations": [],
@@ -769,6 +771,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["spectral_slab_plans"].append(parsed)
         elif name == "cube_per_plane_backend_summary":
             buckets["cube_per_plane_backend"].append(parsed)
+        elif name == "cube_resident_clean_control":
+            buckets["cube_resident_clean_control"].append(parsed)
+        elif name == "cube_resident_clean_executor_summary":
+            buckets["cube_resident_clean_executor"].append(parsed)
         elif name == "cube_source_row_blocks":
             buckets["cube_source_row_blocks"].append(parsed)
         elif name in {
@@ -833,6 +839,8 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
     cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
+    cube_resident_control = last_fields(buckets.get("cube_resident_clean_control", []))
+    cube_resident_executor = last_fields(buckets.get("cube_resident_clean_executor", []))
     cube_source_rows = last_fields(buckets.get("cube_source_row_blocks", []))
     cube_product_summaries = [
         entry.get("fields", {})
@@ -872,6 +880,37 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         ),
         "cube_per_plane_metal_eligible": cube_per_plane_backend.get("metal_eligible"),
         "cube_per_plane_fallback_reasons": cube_per_plane_backend.get("fallback_reasons"),
+        "cube_resident_clean_planes": cube_resident_control.get("planes"),
+        "cube_resident_clean_cycle_threshold": cube_resident_control.get(
+            "cycle_threshold"
+        ),
+        "cube_resident_clean_planes_at_or_below_threshold": cube_resident_control.get(
+            "planes_at_or_below_threshold"
+        ),
+        "cube_resident_clean_residency": cube_resident_control.get("residency"),
+        "cube_resident_clean_completed": cube_resident_executor.get("completed"),
+        "cube_resident_clean_skipped_minor_cycle_planes": cube_resident_executor.get(
+            "skipped_minor_cycle_planes"
+        ),
+        "cube_resident_clean_cleaned_planes": cube_resident_executor.get(
+            "cleaned_planes"
+        ),
+        "cube_resident_clean_elapsed_ms": cube_resident_executor.get("elapsed_ms"),
+        "cube_resident_clean_control_source_read_ms": cube_resident_executor.get(
+            "control_source_read_ms"
+        ),
+        "cube_resident_clean_publish_source_read_ms": cube_resident_executor.get(
+            "publish_source_read_ms"
+        ),
+        "cube_resident_clean_control_prepare_ms": cube_resident_executor.get(
+            "control_prepare_ms"
+        ),
+        "cube_resident_clean_publish_prepare_ms": cube_resident_executor.get(
+            "publish_prepare_ms"
+        ),
+        "cube_resident_clean_product_write_ms": cube_resident_executor.get(
+            "product_write_ms"
+        ),
         "row_block_rows": memory.get("row_block_rows"),
         "selected_channels": memory.get("selected_channels"),
         "active_rows": memory.get("rows_total"),

@@ -9,11 +9,12 @@ use num_complex::{Complex32, Complex64};
 use rustfft::{Fft, FftPlanner};
 
 type FftKey = (usize, bool);
+type FftPlan32 = Arc<dyn Fft<f32>>;
+type FftPlan64 = Arc<dyn Fft<f64>>;
+type FftCache<T> = LazyLock<Mutex<HashMap<FftKey, T>>>;
 
-static FFT32_CACHE: LazyLock<Mutex<HashMap<FftKey, Arc<dyn Fft<f32>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static FFT64_CACHE: LazyLock<Mutex<HashMap<FftKey, Arc<dyn Fft<f64>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static FFT32_CACHE: FftCache<FftPlan32> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static FFT64_CACHE: FftCache<FftPlan64> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(crate) fn fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut transformed = input.clone();

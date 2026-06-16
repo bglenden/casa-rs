@@ -43,20 +43,23 @@ use casa_imaging::{
     StandardMfsMetalGroupedInputCachePrefill, StandardMfsModelPredictor,
     StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBlockSource,
     StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsRoutableSample, StandardMfsRoutedSample,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
-    WeightingMode, WeightingRoutePlan, estimate_psf_sidelobe_from_psf,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsPreparedCleanPlane,
+    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
+    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
+    WTermMode, WeightDensityMode, WeightingMode, WeightingRoutePlan,
+    estimate_psf_sidelobe_from_psf, finish_standard_mfs_prepared_clean_plane_with_execution_config,
+    prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
     primary_beam_voltage_pattern, restore_standard_mfs_model, run_imaging,
     run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
     run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config,
-    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
-    run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
-    trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
+    run_standard_mfs_weighted_streaming_with_execution_config,
+    skip_standard_mfs_prepared_clean_plane_with_cycle_threshold,
+    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
+    trace_w_project_plan,
 };
 use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneStreamPass, SinglePlaneVisibilityBlock};
 use casa_ms::MeasurementSet;
@@ -4951,7 +4954,6 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             && (standard_mfs_fixed_tile_backend_enabled_for_frontend()
                 || standard_cube_one_channel_streaming)
             && env_standard_mfs_grid_threads().is_some_and(|threads| threads > 1)
-            && standard_mfs_planned_run_blocks_enabled()
             && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_ROUTED_WEIGHTING").is_none();
     let distinct_density_source = standard_mfs_uses_distinct_density_source(config);
     let cache_routed_replays = if cube_one_channel_briggs_preweighted_streaming {
@@ -5411,7 +5413,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 &mut replay_routed_runs,
                 prebuilt_metal_grouped_input_cache.take(),
             )
-        } else if standard_mfs_planned_run_blocks_enabled() {
+        } else {
             let mut replay_weighted_samples =
                 |consumer: &mut dyn FnMut(
                     &StandardMfsPlannedWeightedSampleRunBlock,
@@ -5465,64 +5467,6 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         .map_err(ImagingError::InvalidRequest)
                 };
             run_standard_mfs_planned_sample_run_block_streaming_with_execution_config(
-                request,
-                execution_config,
-                &mut replay_weighted_samples,
-            )
-        } else {
-            let mut replay_weighted_samples =
-                |consumer: &mut dyn FnMut(
-                    &[StandardMfsPlannedWeightedSample],
-                ) -> Result<(), ImagingError>|
-                 -> Result<(), ImagingError> {
-                    let replay_pass = if replay_invocation == 0 {
-                        "initial_sample_replay"
-                    } else {
-                        "residual_sample_replay"
-                    };
-                    let replay_ordinal = replay_invocation;
-                    replay_invocation += 1;
-                    let mut replay_stats =
-                        StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
-                    let mut stream_error = None::<ImagingError>;
-                    let stream_result = stream_standard_mfs_planned_sample_essentials_blocks(
-                        ms,
-                        config,
-                        data_column,
-                        &selection,
-                        &table_values,
-                        &active_selected_rows,
-                        derived_engine.as_ref(),
-                        Arc::clone(&channel_axes),
-                        channel_read_range,
-                        &geometry_columns,
-                        strategy.row_block_rows,
-                        prepare_started_at,
-                        &mut prepare_stage_timings,
-                        &mut accumulate_timings,
-                        &mut replay_stats,
-                        &weighting_plan,
-                        &planned_sample_builder,
-                        |samples| {
-                            if let Err(error) = consumer(samples) {
-                                stream_error = Some(error);
-                                return Err(ImagingError::InvalidRequest(
-                                    "sample streaming standard MFS weighted consumer failed"
-                                        .to_string(),
-                                ));
-                            }
-                            Ok(())
-                        },
-                    );
-                    replay_stats.log();
-                    if let Some(error) = stream_error {
-                        return Err(error);
-                    }
-                    stream_result
-                        .map(|_| ())
-                        .map_err(ImagingError::InvalidRequest)
-                };
-            run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
                 request,
                 execution_config,
                 &mut replay_weighted_samples,
@@ -6405,6 +6349,272 @@ fn run_standard_cube_slab_from_open_ms(
     );
     let mut aggregate = CubeSlabAggregateDiagnostics::new(nplanes);
 
+    if clean.niter > 0 {
+        if active_selected_rows.is_empty() {
+            return Err(
+                "resident cube clean executor resolved no active rows; blank-plane handling is not implemented"
+                    .to_string(),
+            );
+        }
+        let resident_started_at = Instant::now();
+        let mut source_read_elapsed = Duration::ZERO;
+        let mut prepare_elapsed = Duration::ZERO;
+        let mut clean_control_elapsed = Duration::ZERO;
+        let mut modeled_read_bytes = 0usize;
+        let mut logical_visibility_bytes = 0usize;
+        let mut prepared_planes = 0usize;
+        let mut cube_initial_peak = 0.0f32;
+        let mut cube_psf_sidelobe = 0.0f32;
+        let mut cube_cycle_threshold = clean.threshold_jy_per_beam;
+        let mut planes_at_or_below_threshold = 0usize;
+        let mut pending_candidate_planes = Vec::<ResidentCleanCubePlaneState>::new();
+        let mut max_pending_candidate_planes = 0usize;
+        let mut product_publisher = OrderedCubeProductPublisher::<CubeImagingResult>::new(
+            0,
+            memory_plan.product_batch_planes,
+        );
+        let product_stats_before = product_writers.write_stats();
+        let product_io_stats_before = product_writers.tiled_io_stats();
+        let mut resident_stage_timings = ImagingStageTimings::default();
+        let mut product_bytes = 0usize;
+        let mut product_write_elapsed = Duration::ZERO;
+        let mut plane_execution_stats = IndependentStreamingExecutorStats::default();
+        let mut skipped_minor_cycle_planes = 0usize;
+        let mut cleaned_planes = 0usize;
+
+        for slab in &slab_manifest {
+            let slab_config = slab_config_for_cube_planes(
+                config,
+                channel_start,
+                slab.plane_start,
+                slab.plane_end,
+            )?;
+            if !direct_clean_cube_shared_source_eligible(&slab_config, clean) {
+                return Err(format!(
+                    "resident cube clean requires the shared direct clean executor for slab {} planes {}..{}",
+                    slab.slab_id, slab.plane_start, slab.plane_end
+                ));
+            }
+            let channel_read_range = selected_channel_read_range_for_cube_source_row_blocks(
+                &slab_config,
+                &table_values,
+                &selection,
+                Some(&derived_engine),
+            )?;
+            let direct_spectral_plan = Arc::new(build_standard_cube_row_spectral_reusable_plan(
+                &slab_config,
+                &selection,
+                &ddid_info,
+                &spectral_window,
+                &polarization,
+                &active_selected_rows,
+                Some(&derived_engine),
+            )?);
+            let prepare_started_at = Instant::now();
+            let shared_source = Arc::new(read_shared_columnar_cube_slab_source(
+                ms,
+                &slab_config,
+                data_column,
+                &selection,
+                &table_values,
+                &ddid_info,
+                &active_selected_rows,
+                &derived_engine,
+                channel_read_range,
+                memory_plan.row_block_rows,
+                prepare_started_at,
+            )?);
+            source_read_elapsed += shared_source.elapsed;
+            modeled_read_bytes = modeled_read_bytes.saturating_add(
+                usize::try_from(shared_source.modeled_physical_read_bytes).unwrap_or(usize::MAX),
+            );
+            logical_visibility_bytes = logical_visibility_bytes.saturating_add(
+                usize::try_from(shared_source.logical_output_bytes).unwrap_or(usize::MAX),
+            );
+            let slab_channel_frequencies_hz =
+                &metadata.channel_frequencies_hz[slab.plane_start..slab.plane_end];
+            let (slab_planes, _, slab_prepare_elapsed) =
+                prepare_independent_shared_cube_slab_resident_clean_planes(
+                    config,
+                    geometry,
+                    clean,
+                    slab.plane_start,
+                    slab.plane_end,
+                    channel_start,
+                    slab_channel_frequencies_hz,
+                    channel_read_range.map_or(0, |range| range.start),
+                    Arc::clone(&direct_spectral_plan),
+                    &table_values.corr_types,
+                    plane_execution_config,
+                    memory_plan.worker_count,
+                    Arc::clone(&shared_source),
+                )?;
+            prepare_elapsed += slab_prepare_elapsed;
+            let clean_control_started_at = Instant::now();
+            prepared_planes = prepared_planes.saturating_add(slab_planes.len());
+            pending_candidate_planes.extend(slab_planes);
+            for state in &pending_candidate_planes {
+                let stats = state.prepared.clean_control_stats();
+                cube_initial_peak = cube_initial_peak.max(stats.initial_residual_peak_jy_per_beam);
+                cube_psf_sidelobe = cube_psf_sidelobe.max(stats.max_psf_sidelobe_level);
+            }
+            cube_cycle_threshold =
+                frontend_cycle_threshold(cube_initial_peak, cube_psf_sidelobe, clean);
+            let mut ready_to_skip = Vec::<ResidentCleanCubePlaneState>::new();
+            let mut still_pending = Vec::<ResidentCleanCubePlaneState>::new();
+            for state in pending_candidate_planes.drain(..) {
+                let stats = state.prepared.clean_control_stats();
+                if stats.initial_residual_peak_jy_per_beam <= cube_cycle_threshold {
+                    planes_at_or_below_threshold = planes_at_or_below_threshold.saturating_add(1);
+                    ready_to_skip.push(state);
+                } else {
+                    still_pending.push(state);
+                }
+            }
+            pending_candidate_planes = still_pending;
+            max_pending_candidate_planes =
+                max_pending_candidate_planes.max(pending_candidate_planes.len());
+            clean_control_elapsed += clean_control_started_at.elapsed();
+            let slab_execution_stats = process_resident_clean_plane_states(
+                ready_to_skip,
+                memory_plan.worker_count,
+                plane_execution_config,
+                cube_cycle_threshold,
+                true,
+                &mut product_publisher,
+                &mut product_writers,
+                &mut aggregate,
+                &mut resident_stage_timings,
+                &mut skipped_minor_cycle_planes,
+                &mut cleaned_planes,
+            )?;
+            add_independent_streaming_executor_stats(
+                &mut plane_execution_stats,
+                slab_execution_stats,
+            );
+            release_allocator_pressure();
+        }
+        if prepared_planes != nplanes {
+            return Err(format!(
+                "resident cube clean prepared {prepared_planes} planes, expected {nplanes}"
+            ));
+        }
+        let final_execution_stats = process_resident_clean_plane_states(
+            pending_candidate_planes,
+            memory_plan.worker_count,
+            plane_execution_config,
+            cube_cycle_threshold,
+            false,
+            &mut product_publisher,
+            &mut product_writers,
+            &mut aggregate,
+            &mut resident_stage_timings,
+            &mut skipped_minor_cycle_planes,
+            &mut cleaned_planes,
+        )?;
+        add_independent_streaming_executor_stats(&mut plane_execution_stats, final_execution_stats);
+        eprintln!(
+            "cube_resident_clean_control planes={} initial_peak={:.9e} max_psf_sidelobe={:.9e} cycle_threshold={:.9e} planes_at_or_below_threshold={} max_pending_candidate_planes={} source_read_ms={:.3} prepare_ms={:.3} reduce_ms={:.3} modeled_physical_read_bytes={} logical_visibility_bytes={} residency=bounded_pending_candidates",
+            prepared_planes,
+            cube_initial_peak,
+            cube_psf_sidelobe,
+            cube_cycle_threshold,
+            planes_at_or_below_threshold,
+            max_pending_candidate_planes,
+            duration_ms(source_read_elapsed),
+            duration_ms(prepare_elapsed),
+            duration_ms(clean_control_elapsed),
+            modeled_read_bytes,
+            logical_visibility_bytes,
+        );
+        add_imaging_stage_timings(&mut aggregate.stage_timings, resident_stage_timings);
+        let publish_stats = product_publisher.finish(&mut product_writers, &mut aggregate)?;
+        product_write_elapsed += publish_stats.write_elapsed;
+        product_bytes += publish_stats.bytes;
+        let product_stats = product_writers
+            .write_stats()
+            .delta_since(product_stats_before);
+        let product_io_stats = product_writers
+            .tiled_io_stats()
+            .delta_since(product_io_stats_before);
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "cube_resident_clean_executor_summary planes={} worker_count={} completed={} skipped_minor_cycle_planes={} cleaned_planes={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} control_source_read_ms={:.3} publish_source_read_ms={:.3} control_prepare_ms={:.3} publish_prepare_ms={:.3} clean_control_ms={:.3} product_write_ms={:.3} control_modeled_physical_read_bytes={} publish_modeled_physical_read_bytes={} control_logical_visibility_bytes={} publish_logical_visibility_bytes={} product_bytes={} writer_groups={} writer_planes={} tiled_direct_write_bytes={} tiled_flat_flush_write_bytes={}",
+                nplanes,
+                memory_plan.worker_count,
+                plane_execution_stats.completed,
+                skipped_minor_cycle_planes,
+                cleaned_planes,
+                duration_ms(plane_execution_stats.elapsed),
+                duration_ms(plane_execution_stats.worker_elapsed_sum),
+                duration_ms(plane_execution_stats.worker_elapsed_max),
+                duration_ms(source_read_elapsed),
+                0.0,
+                duration_ms(prepare_elapsed),
+                0.0,
+                duration_ms(clean_control_elapsed),
+                duration_ms(product_write_elapsed),
+                modeled_read_bytes,
+                0,
+                logical_visibility_bytes,
+                0,
+                product_bytes,
+                product_stats.groups,
+                product_stats.planes,
+                product_io_stats.direct_tile_write_bytes,
+                product_io_stats.flat_flush_write_bytes,
+            );
+        }
+        prepare_plane_input_time += source_read_elapsed;
+        run_imaging_time += prepare_elapsed + plane_execution_stats.elapsed + clean_control_elapsed;
+        let stage_start = Instant::now();
+        product_writers.finish(config)?;
+        let write_products_time =
+            product_write_time + product_write_elapsed + stage_start.elapsed();
+        maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+        let finalization_started_at = Instant::now();
+        aggregate.normalize_skipped_clean_cycle_thresholds(cube_cycle_threshold);
+        let channel_summaries = aggregate.channel_summaries()?;
+        let finalization_elapsed = finalization_started_at.elapsed();
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "frontend stage=cube_resident_clean/channel_summaries channels={} stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+                channel_summaries.len(),
+                finalization_elapsed.as_secs_f64(),
+                total_start.elapsed().as_secs_f64(),
+            );
+        }
+        let frontend_total = total_start.elapsed();
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "frontend stage=cube_resident_clean/run_summary_ready stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+                resident_started_at.elapsed().as_secs_f64(),
+                frontend_total.as_secs_f64(),
+            );
+        }
+        return Ok(RunSummary {
+            warnings: aggregate.warnings,
+            gridded_samples: aggregate.gridded_samples,
+            major_cycles: aggregate.major_cycles,
+            minor_iterations: aggregate.minor_iterations,
+            clean_stop_reason: aggregate.clean_stop_reason,
+            minor_cycle_traces: Vec::new(),
+            channel_summaries,
+            stage_timings: aggregate.stage_timings,
+            frontend_timings: FrontendStageTimings {
+                open_measurement_set,
+                prepare_plane_input: prepare_plane_input_time,
+                get_ms_values_into_processing_buffer: prepare_plane_input_time,
+                prepare_processing_buffer: Duration::ZERO,
+                extract_phase_center: Duration::ZERO,
+                run_imaging: run_imaging_time,
+                build_coordinate_system,
+                write_products: write_products_time,
+                total: frontend_total,
+            },
+        });
+    }
+
     for slab in slab_manifest {
         let slab_resident_bytes = match memory_plan.plane_state_residency {
             spectral_slab::PlaneStateResidency::FullActiveGroup => memory_plan
@@ -6470,26 +6680,24 @@ fn run_standard_cube_slab_from_open_ms(
             let direct_contiguous_channel_map = channel_read_range.is_some_and(|range| {
                 range.count == slab.plane_end.saturating_sub(slab.plane_start)
             });
-            let direct_spectral_plan =
-                if direct_dirty_cube_shared_source_eligible(
+            let direct_spectral_plan = if direct_dirty_cube_shared_source_eligible(
+                &slab_config,
+                clean,
+                slab.plane_end.saturating_sub(slab.plane_start),
+                direct_contiguous_channel_map,
+            ) {
+                Some(build_standard_cube_row_spectral_reusable_plan(
                     &slab_config,
-                    clean,
-                    slab.plane_end.saturating_sub(slab.plane_start),
-                    direct_contiguous_channel_map,
-                ) || direct_clean_cube_shared_source_eligible(&slab_config, clean)
-                {
-                    Some(build_standard_cube_row_spectral_reusable_plan(
-                        &slab_config,
-                        &selection,
-                        &ddid_info,
-                        &spectral_window,
-                        &polarization,
-                        &active_selected_rows,
-                        Some(&derived_engine),
-                    )?)
-                } else {
-                    None
-                };
+                    &selection,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    &active_selected_rows,
+                    Some(&derived_engine),
+                )?)
+            } else {
+                None
+            };
             let shared_source = read_shared_columnar_cube_slab_source(
                 ms,
                 &slab_config,
@@ -8006,6 +8214,19 @@ impl CubeSlabAggregateDiagnostics {
         Ok(())
     }
 
+    fn normalize_skipped_clean_cycle_thresholds(&mut self, cube_cycle_threshold_jy_per_beam: f32) {
+        for diagnostic in self.channel_diagnostics.iter_mut().flatten() {
+            if diagnostic.minor_iterations == 0
+                && matches!(
+                    diagnostic.clean_stop_reason,
+                    Some(CleanStopReason::CycleThresholdReached)
+                )
+            {
+                diagnostic.final_cycle_threshold_jy_per_beam = cube_cycle_threshold_jy_per_beam;
+            }
+        }
+    }
+
     fn channel_summaries(&self) -> Result<Vec<ChannelRunSummary>, String> {
         self.channel_diagnostics
             .iter()
@@ -8085,10 +8306,29 @@ struct DirectDirtyCubePlaneReplayTimings {
     assignments_empty: usize,
     samples_rejected: usize,
     fast_samples: usize,
-    fallback_samples: usize,
     planned_samples: usize,
+    planned_runs: usize,
+    max_run_samples: usize,
     build_planned: Duration,
     consume: Duration,
+}
+
+fn direct_cube_replay_timing_detail(replay: DirectDirtyCubePlaneReplayTimings) -> String {
+    format!(
+        "blocks={} rows_seen={} rows_flagged={} assignments_missing={} assignments_empty={} samples_rejected={} fast_samples={} planned_samples={} planned_runs={} max_run_samples={} build_planned_ms={:.3} consume_ms={:.3}",
+        replay.blocks,
+        replay.rows_seen,
+        replay.rows_flagged,
+        replay.assignments_missing,
+        replay.assignments_empty,
+        replay.samples_rejected,
+        replay.fast_samples,
+        replay.planned_samples,
+        replay.planned_runs,
+        replay.max_run_samples,
+        duration_ms(replay.build_planned),
+        duration_ms(replay.consume),
+    )
 }
 
 impl DirectDirtyCubePlaneReplayTimings {
@@ -8104,8 +8344,9 @@ impl DirectDirtyCubePlaneReplayTimings {
             .saturating_add(other.assignments_empty);
         self.samples_rejected = self.samples_rejected.saturating_add(other.samples_rejected);
         self.fast_samples = self.fast_samples.saturating_add(other.fast_samples);
-        self.fallback_samples = self.fallback_samples.saturating_add(other.fallback_samples);
         self.planned_samples = self.planned_samples.saturating_add(other.planned_samples);
+        self.planned_runs = self.planned_runs.saturating_add(other.planned_runs);
+        self.max_run_samples = self.max_run_samples.max(other.max_run_samples);
         self.build_planned += other.build_planned;
         self.consume += other.consume;
     }
@@ -8423,6 +8664,163 @@ fn direct_paired_cube_output_sample_from_buffer(
     }))
 }
 
+enum DirectCubePlaneSampleBuild {
+    Accepted(StandardMfsWeightedSample),
+    RowFlagged,
+    AssignmentMissing,
+    AssignmentEmpty,
+    Rejected,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_cube_plane_weighted_sample_from_shared_source(
+    block: &ColumnarPreparedSource,
+    row_slot: usize,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
+    polarization: DirectCubePlanePolarization,
+) -> Result<DirectCubePlaneSampleBuild, String> {
+    let buffer = &block.visibility;
+    if buffer
+        .flag_row
+        .as_ref()
+        .and_then(|values| values.get(row_slot))
+        .copied()
+        .unwrap_or(false)
+    {
+        return Ok(DirectCubePlaneSampleBuild::RowFlagged);
+    }
+    let data = buffer
+        .data
+        .as_ref()
+        .ok_or_else(|| "direct cube source is missing DATA".to_string())?;
+    let flags = buffer
+        .flags
+        .as_ref()
+        .ok_or_else(|| "direct cube source is missing FLAG".to_string())?;
+    let geometry_row = block
+        .geometry_rows
+        .get(row_slot)
+        .ok_or_else(|| format!("direct cube source has no geometry row for row slot {row_slot}"))?;
+    if !geometry_row.is_cross {
+        return Ok(DirectCubePlaneSampleBuild::Rejected);
+    }
+    let transform = geometry_row.transform;
+    let selected_row = &geometry_row.selected_row;
+    let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+        "internal error: missing row time for direct cube spectral plan".to_string()
+    })?;
+    let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+    let row_spectral_contributions = spectral_plan.spectral(&cache_key).ok_or_else(|| {
+        format!(
+            "direct cube spectral plan missing row time/field entry ({}, {})",
+            row_time_mjd_sec, selected_row.field_id
+        )
+    })?;
+    let Some(assignment) =
+        spectral_plan.assignment_for_output(&row_spectral_contributions, output_channel)
+    else {
+        return Ok(DirectCubePlaneSampleBuild::AssignmentMissing);
+    };
+    if assignment.contributions.is_empty()
+        || !(assignment.frequency_hz.is_finite() && assignment.frequency_hz > 0.0)
+    {
+        return Ok(DirectCubePlaneSampleBuild::AssignmentEmpty);
+    }
+
+    let (visibility, natural_weight, sumwt_factor) = match polarization {
+        DirectCubePlanePolarization::Explicit {
+            corr_index,
+            sumwt_factor,
+        } => {
+            if corr_index >= buffer.corr_count {
+                return Err(format!(
+                    "direct cube explicit correlation {corr_index} exceeds buffer correlation count {}",
+                    buffer.corr_count
+                ));
+            }
+            let Some(sample) = direct_explicit_cube_output_sample_from_buffer(
+                buffer,
+                data,
+                flags,
+                row_slot,
+                corr_index,
+                &spectral_plan.source_channel_indices,
+                transform.phase_shift_m,
+                assignment.frequency_hz,
+                assignment.contributions,
+                assignment.nearest_weight,
+            )?
+            else {
+                return Ok(DirectCubePlaneSampleBuild::Rejected);
+            };
+            (
+                sample.visibility,
+                sample.weight,
+                sample.sumwt_factor * sumwt_factor,
+            )
+        }
+        DirectCubePlanePolarization::CollapsedPair {
+            first_corr_index,
+            second_corr_index,
+            transform: pair_transform,
+            sumwt_factor,
+        } => {
+            if first_corr_index >= buffer.corr_count || second_corr_index >= buffer.corr_count {
+                return Err(format!(
+                    "direct cube collapsed correlations [{first_corr_index}, {second_corr_index}] exceed buffer correlation count {}",
+                    buffer.corr_count
+                ));
+            }
+            let Some(sample) = direct_paired_cube_output_sample_from_buffer(
+                buffer,
+                data,
+                flags,
+                row_slot,
+                (first_corr_index, second_corr_index),
+                &spectral_plan.source_channel_indices,
+                transform.phase_shift_m,
+                assignment.frequency_hz,
+                assignment.contributions,
+                assignment.nearest_weight,
+            )?
+            else {
+                return Ok(DirectCubePlaneSampleBuild::Rejected);
+            };
+            let visibility = collapse_paired_visibility(
+                sample.first_visibility,
+                sample.second_visibility,
+                pair_transform,
+            );
+            if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                return Ok(DirectCubePlaneSampleBuild::Rejected);
+            }
+            let combined_weight = 0.5 * (sample.first_weight + sample.second_weight);
+            (visibility, combined_weight, sumwt_factor)
+        }
+    };
+    if !(natural_weight.is_finite()
+        && natural_weight > 0.0
+        && sumwt_factor.is_finite()
+        && sumwt_factor > 0.0)
+    {
+        return Ok(DirectCubePlaneSampleBuild::Rejected);
+    }
+
+    let lambda_scale = assignment.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+    Ok(DirectCubePlaneSampleBuild::Accepted(
+        StandardMfsWeightedSample {
+            u_lambda: transform.uvw_m[0] * lambda_scale,
+            v_lambda: transform.uvw_m[1] * lambda_scale,
+            w_lambda: transform.uvw_m[2] * lambda_scale,
+            weight: natural_weight,
+            sumwt_factor,
+            gridable: true,
+            visibility,
+        },
+    ))
+}
+
 fn direct_dirty_cube_shared_source_eligible(
     config: &CliConfig,
     clean: CleanConfig,
@@ -8439,6 +8837,7 @@ fn direct_dirty_cube_shared_source_eligible(
         && slab_plane_count > 0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn direct_dirty_cube_plane_push_planned_samples(
     shared_source: &SharedColumnarCubeSlabSource,
     output_channel: usize,
@@ -8456,131 +8855,33 @@ fn direct_dirty_cube_plane_push_planned_samples(
             ..Default::default()
         };
         planned.clear();
-        let buffer = &block.visibility;
-        let data = buffer
-            .data
-            .as_ref()
-            .ok_or_else(|| "direct dirty cube source is missing DATA".to_string())?;
-        let flags = buffer
-            .flags
-            .as_ref()
-            .ok_or_else(|| "direct dirty cube source is missing FLAG".to_string())?;
-        planned.reserve(buffer.row_count());
-        for row_slot in 0..buffer.row_count() {
+        planned.reserve(block.visibility.row_count());
+        for row_slot in 0..block.visibility.row_count() {
             block_timings.rows_seen += 1;
-            if buffer
-                .flag_row
-                .as_ref()
-                .and_then(|values| values.get(row_slot))
-                .copied()
-                .unwrap_or(false)
-            {
-                block_timings.rows_flagged += 1;
-                continue;
-            }
-            let geometry_row = block.geometry_rows.get(row_slot).ok_or_else(|| {
-                format!("direct dirty cube source has no geometry row for row slot {row_slot}")
-            })?;
-            let transform = geometry_row.transform;
-            let selected_row = &geometry_row.selected_row;
-            let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
-                "internal error: missing row time for direct dirty cube spectral plan".to_string()
-            })?;
-            let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-            let row_spectral_contributions =
-                spectral_plan.spectral(&cache_key).ok_or_else(|| {
-                    format!(
-                        "direct dirty cube spectral plan missing row time/field entry ({}, {})",
-                        row_time_mjd_sec, selected_row.field_id
-                    )
-                })?;
-            let Some(assignment) =
-                spectral_plan.assignment_for_output(&row_spectral_contributions, output_channel)
-            else {
-                block_timings.assignments_missing += 1;
-                continue;
-            };
-            if assignment.contributions.is_empty()
-                || !(assignment.frequency_hz.is_finite() && assignment.frequency_hz > 0.0)
-            {
-                block_timings.assignments_empty += 1;
-                continue;
-            }
-            let (visibility, natural_weight, sumwt_factor) = match polarization {
-                DirectCubePlanePolarization::Explicit {
-                    corr_index,
-                    sumwt_factor,
-                } => {
-                    let Some(sample) = direct_explicit_cube_output_sample_from_buffer(
-                        buffer,
-                        data,
-                        flags,
-                        row_slot,
-                        corr_index,
-                        &spectral_plan.source_channel_indices,
-                        transform.phase_shift_m,
-                        assignment.frequency_hz,
-                        assignment.contributions,
-                        assignment.nearest_weight,
-                    )?
-                    else {
-                        block_timings.samples_rejected += 1;
-                        continue;
-                    };
-                    (
-                        sample.visibility,
-                        sample.weight,
-                        sample.sumwt_factor * sumwt_factor,
-                    )
+            let sample = match direct_cube_plane_weighted_sample_from_shared_source(
+                block,
+                row_slot,
+                output_channel,
+                spectral_plan,
+                polarization,
+            )? {
+                DirectCubePlaneSampleBuild::Accepted(sample) => sample,
+                DirectCubePlaneSampleBuild::RowFlagged => {
+                    block_timings.rows_flagged += 1;
+                    continue;
                 }
-                DirectCubePlanePolarization::CollapsedPair {
-                    first_corr_index,
-                    second_corr_index,
-                    transform: pair_transform,
-                    sumwt_factor,
-                } => {
-                    let Some(sample) = direct_paired_cube_output_sample_from_buffer(
-                        buffer,
-                        data,
-                        flags,
-                        row_slot,
-                        (first_corr_index, second_corr_index),
-                        &spectral_plan.source_channel_indices,
-                        transform.phase_shift_m,
-                        assignment.frequency_hz,
-                        assignment.contributions,
-                        assignment.nearest_weight,
-                    )?
-                    else {
-                        block_timings.samples_rejected += 1;
-                        continue;
-                    };
-                    let visibility = collapse_paired_visibility(
-                        sample.first_visibility,
-                        sample.second_visibility,
-                        pair_transform,
-                    );
-                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
-                        block_timings.samples_rejected += 1;
-                        continue;
-                    }
-                    let combined_weight = 0.5 * (sample.first_weight + sample.second_weight);
-                    (visibility, combined_weight, sumwt_factor)
+                DirectCubePlaneSampleBuild::AssignmentMissing => {
+                    block_timings.assignments_missing += 1;
+                    continue;
                 }
-            };
-            if !(natural_weight.is_finite() && natural_weight > 0.0) {
-                block_timings.samples_rejected += 1;
-                continue;
-            }
-            let lambda_scale = assignment.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-            let sample = StandardMfsWeightedSample {
-                u_lambda: transform.uvw_m[0] * lambda_scale,
-                v_lambda: transform.uvw_m[1] * lambda_scale,
-                w_lambda: transform.uvw_m[2] * lambda_scale,
-                weight: natural_weight,
-                sumwt_factor,
-                gridable: geometry_row.is_cross,
-                visibility,
+                DirectCubePlaneSampleBuild::AssignmentEmpty => {
+                    block_timings.assignments_empty += 1;
+                    continue;
+                }
+                DirectCubePlaneSampleBuild::Rejected => {
+                    block_timings.samples_rejected += 1;
+                    continue;
+                }
             };
             if let Some(planned_sample) = planned_sample_builder
                 .plan_sample(sample)
@@ -8588,18 +8889,132 @@ fn direct_dirty_cube_plane_push_planned_samples(
             {
                 planned.push(planned_sample);
                 block_timings.planned_samples += 1;
-                block_timings.fallback_samples += 1;
+                block_timings.fast_samples += 1;
             } else {
                 block_timings.samples_rejected += 1;
             }
         }
         block_timings.build_planned += build_started.elapsed();
         if !planned.is_empty() {
+            block_timings.planned_runs += 1;
+            block_timings.max_run_samples = block_timings.max_run_samples.max(planned.len());
             let consume_started = Instant::now();
             consumer(planned).map_err(|error| error.to_string())?;
             block_timings.consume += consume_started.elapsed();
         }
         timings.add(block_timings);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_cube_plane_accumulate_density(
+    shared_source: &SharedColumnarCubeSlabSource,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
+    polarization: DirectCubePlanePolarization,
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+) -> Result<usize, String> {
+    let mut accepted = 0usize;
+    for block in &shared_source.blocks {
+        for row_slot in 0..block.visibility.row_count() {
+            let DirectCubePlaneSampleBuild::Accepted(sample) =
+                direct_cube_plane_weighted_sample_from_shared_source(
+                    block,
+                    row_slot,
+                    output_channel,
+                    spectral_plan,
+                    polarization,
+                )?
+            else {
+                continue;
+            };
+            weighting_plan.accumulate_density_sample(
+                sample.u_lambda,
+                sample.v_lambda,
+                sample.weight,
+            );
+            accepted = accepted.saturating_add(1);
+        }
+    }
+    Ok(accepted)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn direct_cube_plane_replay_planned_run_blocks(
+    shared_source: &SharedColumnarCubeSlabSource,
+    output_channel: usize,
+    spectral_plan: &CubeRowSpectralReusablePlan,
+    polarization: DirectCubePlanePolarization,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    run_block: &mut StandardMfsPlannedWeightedSampleRunBlock,
+    replay_timings: &mut DirectDirtyCubePlaneReplayTimings,
+    consumer: &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+) -> Result<(), String> {
+    for block in &shared_source.blocks {
+        let build_started = Instant::now();
+        let mut block_timings = DirectDirtyCubePlaneReplayTimings {
+            blocks: 1,
+            ..Default::default()
+        };
+        run_block.clear();
+        let run_start = run_block.begin_run();
+        for row_slot in 0..block.visibility.row_count() {
+            block_timings.rows_seen += 1;
+            let mut sample = match direct_cube_plane_weighted_sample_from_shared_source(
+                block,
+                row_slot,
+                output_channel,
+                spectral_plan,
+                polarization,
+            )? {
+                DirectCubePlaneSampleBuild::Accepted(sample) => sample,
+                DirectCubePlaneSampleBuild::RowFlagged => {
+                    block_timings.rows_flagged += 1;
+                    continue;
+                }
+                DirectCubePlaneSampleBuild::AssignmentMissing => {
+                    block_timings.assignments_missing += 1;
+                    continue;
+                }
+                DirectCubePlaneSampleBuild::AssignmentEmpty => {
+                    block_timings.assignments_empty += 1;
+                    continue;
+                }
+                DirectCubePlaneSampleBuild::Rejected => {
+                    block_timings.samples_rejected += 1;
+                    continue;
+                }
+            };
+            sample.weight = weighting_plan
+                .weight_sample(sample.u_lambda, sample.v_lambda, sample.weight)
+                .map_err(|error| error.to_string())?;
+            if !(sample.weight.is_finite() && sample.weight > 0.0) {
+                block_timings.samples_rejected += 1;
+                continue;
+            }
+            if let Some(planned_sample) = planned_sample_builder
+                .plan_sample(sample)
+                .map_err(|error| error.to_string())?
+            {
+                run_block.push_sample(planned_sample);
+                block_timings.planned_samples += 1;
+                block_timings.fast_samples += 1;
+            } else {
+                block_timings.samples_rejected += 1;
+            }
+        }
+        run_block.finish_run(run_start);
+        block_timings.build_planned += build_started.elapsed();
+        if !run_block.is_empty() {
+            block_timings.planned_runs += 1;
+            block_timings.max_run_samples = block_timings.max_run_samples.max(run_block.len());
+            let consume_started = Instant::now();
+            consumer(run_block).map_err(|error| error.to_string())?;
+            block_timings.consume += consume_started.elapsed();
+        }
+        replay_timings.add(block_timings);
     }
     Ok(())
 }
@@ -8684,261 +9099,8 @@ fn run_direct_dirty_cube_plane_from_shared_source(
     Ok(result)
 }
 
-struct DirectCubeRoutedRow {
-    row: StandardMfsRoutedVisibilityRow,
-    density_weight: f32,
-}
-
 #[allow(clippy::too_many_arguments)]
-fn direct_cube_routed_row_from_shared_source(
-    block: &ColumnarPreparedSource,
-    row_slot: usize,
-    output_channel: usize,
-    spectral_plan: &CubeRowSpectralReusablePlan,
-    polarization: DirectCubePlanePolarization,
-    corr_count: usize,
-) -> Result<Option<DirectCubeRoutedRow>, String> {
-    let buffer = &block.visibility;
-    let data = buffer
-        .data
-        .as_ref()
-        .ok_or_else(|| "direct clean cube source is missing DATA".to_string())?;
-    let flags = buffer
-        .flags
-        .as_ref()
-        .ok_or_else(|| "direct clean cube source is missing FLAG".to_string())?;
-    let geometry_row = block.geometry_rows.get(row_slot).ok_or_else(|| {
-        format!("direct clean cube source has no geometry row for row slot {row_slot}")
-    })?;
-    if !geometry_row.is_cross {
-        return Ok(None);
-    }
-    let selected_row = &geometry_row.selected_row;
-    let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
-        "internal error: missing row time for direct clean cube spectral plan".to_string()
-    })?;
-    let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
-    let row_spectral_contributions = spectral_plan.spectral(&cache_key).ok_or_else(|| {
-        format!(
-            "direct clean cube spectral plan missing row time/field entry ({}, {})",
-            row_time_mjd_sec, selected_row.field_id
-        )
-    })?;
-    let Some(assignment) =
-        spectral_plan.assignment_for_output(&row_spectral_contributions, output_channel)
-    else {
-        return Ok(None);
-    };
-    if assignment.contributions.is_empty()
-        || !(assignment.frequency_hz.is_finite() && assignment.frequency_hz > 0.0)
-    {
-        return Ok(None);
-    }
-
-    let transform = geometry_row.transform;
-    let mut row_data = Array2::<Complex32>::zeros((corr_count, 1));
-    let mut row_flag = Array2::<bool>::from_elem((corr_count, 1), true);
-    let mut row_weight = vec![0.0f32; corr_count];
-    let (visibility_polarization, density_weight) = match polarization {
-        DirectCubePlanePolarization::Explicit {
-            corr_index,
-            sumwt_factor,
-        } => {
-            let Some(sample) = direct_explicit_cube_output_sample_from_buffer(
-                buffer,
-                data,
-                flags,
-                row_slot,
-                corr_index,
-                &spectral_plan.source_channel_indices,
-                transform.phase_shift_m,
-                assignment.frequency_hz,
-                assignment.contributions,
-                assignment.nearest_weight,
-            )?
-            else {
-                return Ok(None);
-            };
-            if corr_index >= corr_count {
-                return Err(format!(
-                    "direct clean cube explicit correlation {corr_index} exceeds correlation count {corr_count}"
-                ));
-            }
-            row_data[(corr_index, 0)] = sample.visibility;
-            row_flag[(corr_index, 0)] = false;
-            row_weight[corr_index] = sample.weight;
-            let sample_sumwt_factor = sample.sumwt_factor * sumwt_factor;
-            (
-                StandardMfsVisibilityPolarization::Explicit {
-                    corr_index,
-                    sumwt_factor: sample_sumwt_factor,
-                },
-                sample.weight,
-            )
-        }
-        DirectCubePlanePolarization::CollapsedPair {
-            first_corr_index,
-            second_corr_index,
-            transform: pair_transform,
-            sumwt_factor,
-        } => {
-            let Some(sample) = direct_paired_cube_output_sample_from_buffer(
-                buffer,
-                data,
-                flags,
-                row_slot,
-                (first_corr_index, second_corr_index),
-                &spectral_plan.source_channel_indices,
-                transform.phase_shift_m,
-                assignment.frequency_hz,
-                assignment.contributions,
-                assignment.nearest_weight,
-            )?
-            else {
-                return Ok(None);
-            };
-            if first_corr_index >= corr_count || second_corr_index >= corr_count {
-                return Err(format!(
-                    "direct clean cube collapsed correlations [{first_corr_index}, {second_corr_index}] exceed correlation count {corr_count}"
-                ));
-            }
-            row_data[(first_corr_index, 0)] = sample.first_visibility;
-            row_data[(second_corr_index, 0)] = sample.second_visibility;
-            row_flag[(first_corr_index, 0)] = false;
-            row_flag[(second_corr_index, 0)] = false;
-            row_weight[first_corr_index] = sample.first_weight;
-            row_weight[second_corr_index] = sample.second_weight;
-            let combined_weight = 0.5 * (sample.first_weight + sample.second_weight);
-            (
-                StandardMfsVisibilityPolarization::CollapsedPair {
-                    first_corr_index,
-                    second_corr_index,
-                    transform: standard_mfs_pair_collapse_transform(pair_transform),
-                    sumwt_factor,
-                },
-                combined_weight,
-            )
-        }
-    };
-    if !(density_weight.is_finite() && density_weight > 0.0) {
-        return Ok(None);
-    }
-
-    let lambda_scale = assignment.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-    Ok(Some(DirectCubeRoutedRow {
-        row: StandardMfsRoutedVisibilityRow {
-            uvw_m: transform.uvw_m,
-            spw_id: selected_row.spw_id,
-            channel_origin: 0,
-            source_channel_indices: Arc::from([0usize]),
-            channel_lambda_scales: Arc::from([lambda_scale]),
-            data: row_data,
-            flag: row_flag,
-            weight: Arc::from(row_weight.into_boxed_slice()),
-            weight_spectrum: None,
-            gridable: geometry_row.is_cross,
-            polarization: visibility_polarization,
-        },
-        density_weight,
-    }))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn direct_cube_plane_accumulate_density(
-    shared_source: &SharedColumnarCubeSlabSource,
-    output_channel: usize,
-    spectral_plan: &CubeRowSpectralReusablePlan,
-    polarization: DirectCubePlanePolarization,
-    corr_count: usize,
-    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
-) -> Result<usize, String> {
-    let mut accepted = 0usize;
-    for block in &shared_source.blocks {
-        for row_slot in 0..block.visibility.row_count() {
-            let Some(routed) = direct_cube_routed_row_from_shared_source(
-                block,
-                row_slot,
-                output_channel,
-                spectral_plan,
-                polarization,
-                corr_count,
-            )?
-            else {
-                continue;
-            };
-            let lambda_scale = routed.row.channel_lambda_scales[0];
-            weighting_plan.accumulate_density_sample(
-                routed.row.uvw_m[0] * lambda_scale,
-                routed.row.uvw_m[1] * lambda_scale,
-                routed.density_weight,
-            );
-            accepted = accepted.saturating_add(1);
-        }
-    }
-    Ok(accepted)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn direct_cube_plane_replay_routed_runs(
-    shared_source: &SharedColumnarCubeSlabSource,
-    output_channel: usize,
-    spectral_plan: &CubeRowSpectralReusablePlan,
-    polarization: DirectCubePlanePolarization,
-    corr_count: usize,
-    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
-    replay_timings: &mut DirectDirtyCubePlaneReplayTimings,
-    consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
-) -> Result<(), String> {
-    let mut next_input_seq = 0u64;
-    for block in &shared_source.blocks {
-        let build_started = Instant::now();
-        let mut block_timings = DirectDirtyCubePlaneReplayTimings {
-            blocks: 1,
-            ..Default::default()
-        };
-        for row_slot in 0..block.visibility.row_count() {
-            block_timings.rows_seen += 1;
-            let Some(routed) = direct_cube_routed_row_from_shared_source(
-                block,
-                row_slot,
-                output_channel,
-                spectral_plan,
-                polarization,
-                corr_count,
-            )?
-            else {
-                block_timings.samples_rejected += 1;
-                continue;
-            };
-            let lambda_scale = routed.row.channel_lambda_scales[0];
-            let Some(center) = planned_sample_builder.route_tap_center(
-                routed.row.uvw_m[0] * lambda_scale,
-                routed.row.uvw_m[1] * lambda_scale,
-            ) else {
-                block_timings.samples_rejected += 1;
-                continue;
-            };
-            let run = StandardMfsRoutedVisibilityRun {
-                row: Arc::new(routed.row),
-                source_slot_range: 0..1,
-                tap_centers: Arc::from([center]),
-                first_input_seq: next_input_seq,
-            };
-            next_input_seq = next_input_seq.saturating_add(1);
-            block_timings.planned_samples += 1;
-            block_timings.fast_samples += 1;
-            let consume_started = Instant::now();
-            consumer(&run).map_err(|error| error.to_string())?;
-            block_timings.consume += consume_started.elapsed();
-        }
-        block_timings.build_planned += build_started.elapsed();
-        replay_timings.add(block_timings);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_direct_clean_cube_plane_from_shared_source(
+fn prepare_direct_clean_cube_plane_from_shared_source(
     geometry: ImageGeometry,
     clean: CleanConfig,
     plane_stokes: PlaneStokes,
@@ -8953,9 +9115,14 @@ fn run_direct_clean_cube_plane_from_shared_source(
     channel_frequency_hz: f64,
     spectral_plan: &CubeRowSpectralReusablePlan,
     corr_types: &[i32],
-) -> Result<CubeImagingResult, String> {
+) -> Result<
+    (
+        StandardMfsPreparedCleanPlane,
+        DirectDirtyCubePlaneReplayTimings,
+    ),
+    String,
+> {
     let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
-    let corr_count = corr_types.len();
     let mut weighting_plan = StandardMfsStreamingWeightingPlan::new_with_density_mode(
         geometry,
         weighting,
@@ -8963,69 +9130,132 @@ fn run_direct_clean_cube_plane_from_shared_source(
         weight_density_mode,
     )
     .map_err(|error| error.to_string())?;
-    let density_samples = if weighting_plan.needs_density_pass() {
-        direct_cube_plane_accumulate_density(
+    if weighting_plan.needs_density_pass() {
+        let _ = direct_cube_plane_accumulate_density(
             shared_source,
             output_channel,
             spectral_plan,
             polarization,
-            corr_count,
             &mut weighting_plan,
-        )?
-    } else {
-        0
-    };
+        )?;
+    }
     weighting_plan.finish_density_pass();
 
     let planned_sample_builder =
         StandardMfsPlannedSampleBuilder::new(geometry).map_err(|error| error.to_string())?;
     let mut replay_timings = DirectDirtyCubePlaneReplayTimings::default();
-    let mut replay =
-        |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
-            direct_cube_plane_replay_routed_runs(
-                shared_source,
-                output_channel,
-                spectral_plan,
-                polarization,
-                corr_count,
-                &planned_sample_builder,
-                &mut replay_timings,
-                consumer,
-            )
-            .map_err(ImagingError::InvalidRequest)
-        };
-    let plane_result =
-        run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache(
-            ImagingRequest {
-                geometry,
-                visibility_batches: Vec::new(),
-                gridder_mode: GridderMode::Standard,
-                plane_stokes,
-                weighting,
-                reffreq_hz: channel_frequency_hz,
-                selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
-                deconvolver,
-                multiscale_scales,
-                small_scale_bias,
-                clean,
-                clean_mask: None,
-                initial_model: None,
-                w_term_mode: WTermMode::None,
-                w_project_planes: None,
-                compatibility: CompatibilityMode::CasaStandardMfs,
-            },
-            execution_config,
+    let mut planned_run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
+    let mut replay = |consumer: &mut dyn FnMut(
+        &StandardMfsPlannedWeightedSampleRunBlock,
+    ) -> Result<(), ImagingError>| {
+        direct_cube_plane_replay_planned_run_blocks(
+            shared_source,
+            output_channel,
+            spectral_plan,
+            polarization,
             &weighting_plan,
-            &mut replay,
-            None,
+            &planned_sample_builder,
+            &mut planned_run_block,
+            &mut replay_timings,
+            consumer,
         )
-        .map_err(|error| error.to_string())?;
-    if standard_mfs_profile_detail_enabled() {
-        eprintln!(
-            "cube_shared_direct_clean_weighting output_channel={} density_samples={}",
-            output_channel, density_samples
-        );
+        .map_err(ImagingError::InvalidRequest)
+    };
+    let prepared = prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config(
+        ImagingRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes,
+            weighting,
+            reffreq_hz: channel_frequency_hz,
+            selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+            deconvolver,
+            multiscale_scales,
+            small_scale_bias,
+            clean,
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        },
+        execution_config,
+        &mut replay,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((prepared, replay_timings))
+}
+
+fn finish_direct_clean_cube_plane_from_resident_state(
+    state: ResidentCleanCubePlaneState,
+    execution_config: StandardMfsExecutionConfig,
+    cube_cycle_threshold_jy_per_beam: f32,
+) -> Result<(CubeImagingResult, DirectDirtyCubePlaneReplayTimings), String> {
+    let mut weighting_plan = StandardMfsStreamingWeightingPlan::new_with_density_mode(
+        state.geometry,
+        state.weighting,
+        [state.channel_frequency_hz, state.channel_frequency_hz],
+        state.weight_density_mode,
+    )
+    .map_err(|error| error.to_string())?;
+    if weighting_plan.needs_density_pass() {
+        let _ = direct_cube_plane_accumulate_density(
+            &state.shared_source,
+            state.output_channel,
+            &state.spectral_plan,
+            state.polarization,
+            &mut weighting_plan,
+        )?;
     }
+    weighting_plan.finish_density_pass();
+    let planned_sample_builder =
+        StandardMfsPlannedSampleBuilder::new(state.geometry).map_err(|error| error.to_string())?;
+    let mut replay_timings = state.direct_replay_timings;
+    let mut planned_run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
+    let mut replay = |consumer: &mut dyn FnMut(
+        &StandardMfsPlannedWeightedSampleRunBlock,
+    ) -> Result<(), ImagingError>| {
+        direct_cube_plane_replay_planned_run_blocks(
+            &state.shared_source,
+            state.output_channel,
+            &state.spectral_plan,
+            state.polarization,
+            &weighting_plan,
+            &planned_sample_builder,
+            &mut planned_run_block,
+            &mut replay_timings,
+            consumer,
+        )
+        .map_err(ImagingError::InvalidRequest)
+    };
+    let plane_result = finish_standard_mfs_prepared_clean_plane_with_execution_config(
+        state.prepared,
+        execution_config,
+        Some(cube_cycle_threshold_jy_per_beam),
+        &mut replay,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((
+        single_plane_imaging_result_to_cube_result(state.channel_frequency_hz, plane_result),
+        replay_timings,
+    ))
+}
+
+fn skip_direct_clean_cube_plane_from_resident_state(
+    state: ResidentCleanCubePlaneState,
+    cube_cycle_threshold_jy_per_beam: f32,
+) -> Result<CubeImagingResult, String> {
+    let ResidentCleanCubePlaneState {
+        channel_frequency_hz,
+        prepared,
+        ..
+    } = state;
+    let plane_result = skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
+        prepared,
+        cube_cycle_threshold_jy_per_beam,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(single_plane_imaging_result_to_cube_result(
         channel_frequency_hz,
         plane_result,
@@ -9045,11 +9275,138 @@ struct DirectCleanCubePlaneTaskPayload {
     channel_frequency_hz: f64,
 }
 
-struct SharedCleanCubePlaneRunResult {
-    cube_result: CubeImagingResult,
-    run_imaging_elapsed: Duration,
+struct ResidentCleanCubePlaneState {
+    plane_index: usize,
+    output_channel: usize,
+    channel_frequency_hz: f64,
+    geometry: ImageGeometry,
+    weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+    polarization: DirectCubePlanePolarization,
+    spectral_plan: Arc<CubeRowSpectralReusablePlan>,
+    shared_source: Arc<SharedColumnarCubeSlabSource>,
+    prepared: StandardMfsPreparedCleanPlane,
+    direct_replay_timings: DirectDirtyCubePlaneReplayTimings,
+    prepare_elapsed: Duration,
     visibility_batches: usize,
-    visibility_samples: usize,
+}
+
+struct ResidentCleanCubePlaneFinishResult {
+    cube_result: CubeImagingResult,
+    skipped_minor_cycle: bool,
+}
+
+fn add_independent_streaming_executor_stats(
+    total: &mut IndependentStreamingExecutorStats,
+    delta: IndependentStreamingExecutorStats,
+) {
+    total.elapsed += delta.elapsed;
+    total.result_wait_elapsed += delta.result_wait_elapsed;
+    total.consume_elapsed += delta.consume_elapsed;
+    total.worker_elapsed_sum += delta.worker_elapsed_sum;
+    total.worker_elapsed_max = total.worker_elapsed_max.max(delta.worker_elapsed_max);
+    total.completed = total.completed.saturating_add(delta.completed);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_resident_clean_plane_states(
+    states: Vec<ResidentCleanCubePlaneState>,
+    worker_count: usize,
+    execution_config: StandardMfsExecutionConfig,
+    cube_cycle_threshold_jy_per_beam: f32,
+    force_skip: bool,
+    product_publisher: &mut OrderedCubeProductPublisher<CubeImagingResult>,
+    product_writers: &mut CubeSlabProductWriters,
+    aggregate: &mut CubeSlabAggregateDiagnostics,
+    resident_stage_timings: &mut ImagingStageTimings,
+    skipped_minor_cycle_planes: &mut usize,
+    cleaned_planes: &mut usize,
+) -> Result<IndependentStreamingExecutorStats, String> {
+    if states.is_empty() {
+        return Ok(IndependentStreamingExecutorStats::default());
+    }
+    let tasks = states
+        .into_iter()
+        .map(|state| PlaneTask {
+            plane_index: state.plane_index,
+            payload: state,
+        })
+        .collect::<Vec<_>>();
+    let run_plane = |state: ResidentCleanCubePlaneState| {
+        let worker_started = Instant::now();
+        let plane_index = state.plane_index;
+        let prepare_elapsed = state.prepare_elapsed;
+        let visibility_batches = state.visibility_batches;
+        let stats = state.prepared.clean_control_stats();
+        let skip_minor_cycle = force_skip
+            || stats.initial_residual_peak_jy_per_beam <= cube_cycle_threshold_jy_per_beam;
+        let (cube_result, direct_replay_timings) = if skip_minor_cycle {
+            (
+                skip_direct_clean_cube_plane_from_resident_state(
+                    state,
+                    cube_cycle_threshold_jy_per_beam,
+                )?,
+                DirectDirtyCubePlaneReplayTimings::default(),
+            )
+        } else {
+            finish_direct_clean_cube_plane_from_resident_state(
+                state,
+                execution_config,
+                cube_cycle_threshold_jy_per_beam,
+            )?
+        };
+        let stage_timings = cube_result.diagnostics.stage_timings;
+        let plane_diagnostics = cube_result
+            .diagnostics
+            .channel_diagnostics
+            .first()
+            .ok_or_else(|| {
+                format!("resident cube clean plane {plane_index} returned no diagnostics")
+            })?;
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "cube_resident_clean_finish_plane plane={} blocks={} skipped_minor_cycle={} gridded_samples={} initial_peak={:.9e} final_peak={:.9e} cycle_threshold={:.9e} stop_reason={:?} prepare_ms={:.3} finish_ms={:.3} replay=[{}]",
+                plane_index,
+                visibility_batches,
+                skip_minor_cycle,
+                plane_diagnostics.gridded_samples,
+                plane_diagnostics.initial_residual_peak_jy_per_beam,
+                plane_diagnostics.final_residual_peak_jy_per_beam,
+                plane_diagnostics.final_cycle_threshold_jy_per_beam,
+                plane_diagnostics.clean_stop_reason,
+                duration_ms(prepare_elapsed),
+                duration_ms(worker_started.elapsed()),
+                direct_cube_replay_timing_detail(direct_replay_timings),
+            );
+        }
+        Ok((
+            ResidentCleanCubePlaneFinishResult {
+                cube_result,
+                skipped_minor_cycle: skip_minor_cycle,
+            },
+            stage_timings,
+        ))
+    };
+    run_owned_independent_imaging_planes_with_consumer(
+        tasks,
+        worker_count,
+        run_plane,
+        |plane_result| {
+            add_imaging_stage_timings(resident_stage_timings, plane_result.stage_timings);
+            if plane_result.result.skipped_minor_cycle {
+                *skipped_minor_cycle_planes = skipped_minor_cycle_planes.saturating_add(1);
+            } else {
+                *cleaned_planes = cleaned_planes.saturating_add(1);
+            }
+            product_publisher.accept(
+                plane_result.plane_index,
+                plane_result.result.cube_result,
+                product_writers,
+                aggregate,
+            )?;
+            Ok(())
+        },
+    )
 }
 
 fn direct_clean_cube_shared_source_eligible(config: &CliConfig, clean: CleanConfig) -> bool {
@@ -9058,6 +9415,152 @@ fn direct_clean_cube_shared_source_eligible(config: &CliConfig, clean: CleanConf
         && matches!(config.w_term_mode, WTermMode::None)
         && config.w_project_planes.is_none()
         && config.uv_taper.is_none()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_independent_shared_cube_slab_resident_clean_planes(
+    config: &CliConfig,
+    geometry: ImageGeometry,
+    clean: CleanConfig,
+    slab_plane_start: usize,
+    slab_plane_end: usize,
+    base_channel_start: usize,
+    slab_channel_frequencies_hz: &[f64],
+    source_channel_start: usize,
+    direct_spectral_plan: Arc<CubeRowSpectralReusablePlan>,
+    corr_types: &[i32],
+    base_plane_execution_config: StandardMfsExecutionConfig,
+    worker_count: usize,
+    shared_source: Arc<SharedColumnarCubeSlabSource>,
+) -> Result<
+    (
+        Vec<ResidentCleanCubePlaneState>,
+        ImagingStageTimings,
+        Duration,
+    ),
+    String,
+> {
+    let mut slab_config =
+        slab_config_for_cube_planes(config, base_channel_start, slab_plane_start, slab_plane_end)?;
+    if slab_config.imaging_prepare_workers.is_none() && worker_count > 1 {
+        slab_config.imaging_prepare_workers = Some(worker_count);
+    }
+    let slab_plane_count = slab_plane_end.saturating_sub(slab_plane_start);
+    if slab_channel_frequencies_hz.len() != slab_plane_count {
+        return Err(format!(
+            "resident cube clean expected {slab_plane_count} channel frequencies, found {}",
+            slab_channel_frequencies_hz.len()
+        ));
+    }
+    let plane_stokes = slab_config
+        .correlation
+        .as_deref()
+        .map(parse_plane_stokes)
+        .transpose()?
+        .unwrap_or(PlaneStokes::I);
+    let tasks = slab_channel_frequencies_hz
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(plane_offset, channel_frequency_hz)| {
+            let plane_index = slab_plane_start + plane_offset;
+            PlaneTask {
+                plane_index,
+                payload: DirectCleanCubePlaneTaskPayload {
+                    plane_index,
+                    output_channel: plane_offset,
+                    channel_frequency_hz,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "cube_resident_clean_prepare_slab_start slab_plane_start={} slab_plane_end={} blocks={} source_channel_start={} worker_count={}",
+            slab_plane_start,
+            slab_plane_end,
+            shared_source.blocks.len(),
+            source_channel_start,
+            worker_count,
+        );
+    }
+    let run_plane = |payload: DirectCleanCubePlaneTaskPayload| {
+        let worker_started = Instant::now();
+        let (prepared, direct_replay_timings) = prepare_direct_clean_cube_plane_from_shared_source(
+            geometry,
+            clean,
+            plane_stokes,
+            slab_config.weighting,
+            standard_mfs_streaming_weight_density_mode(&slab_config),
+            slab_config.deconvolver,
+            slab_config.multiscale_scales.clone(),
+            slab_config.small_scale_bias,
+            base_plane_execution_config,
+            &shared_source,
+            payload.output_channel,
+            payload.channel_frequency_hz,
+            &direct_spectral_plan,
+            corr_types,
+        )?;
+        let stats = prepared.clean_control_stats();
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "cube_resident_clean_prepare_plane plane={} blocks={} initial_peak={:.9e} max_psf_sidelobe={:.9e} local_cycle_threshold={:.9e} prepare_ms={:.3} replay=[{}]",
+                payload.plane_index,
+                shared_source.blocks.len(),
+                stats.initial_residual_peak_jy_per_beam,
+                stats.max_psf_sidelobe_level,
+                frontend_cycle_threshold(
+                    stats.initial_residual_peak_jy_per_beam,
+                    stats.max_psf_sidelobe_level,
+                    clean
+                ),
+                duration_ms(worker_started.elapsed()),
+                direct_cube_replay_timing_detail(direct_replay_timings),
+            );
+        }
+        let state = ResidentCleanCubePlaneState {
+            plane_index: payload.plane_index,
+            output_channel: payload.output_channel,
+            channel_frequency_hz: payload.channel_frequency_hz,
+            geometry,
+            weighting: slab_config.weighting,
+            weight_density_mode: standard_mfs_streaming_weight_density_mode(&slab_config),
+            polarization: direct_cube_plane_polarization(plane_stokes, corr_types)?,
+            spectral_plan: Arc::clone(&direct_spectral_plan),
+            shared_source: Arc::clone(&shared_source),
+            prepared,
+            direct_replay_timings,
+            prepare_elapsed: worker_started.elapsed(),
+            visibility_batches: shared_source.blocks.len(),
+        };
+        Ok((state, ImagingStageTimings::default()))
+    };
+    let mut prepared = Vec::<ResidentCleanCubePlaneState>::with_capacity(tasks.len());
+    let mut stage_timings = ImagingStageTimings::default();
+    let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
+        tasks,
+        worker_count,
+        run_plane,
+        |plane_result| {
+            add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
+            prepared.push(plane_result.result);
+            Ok(())
+        },
+    )?;
+    prepared.sort_by_key(|state| state.plane_index);
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "cube_resident_clean_prepare_slab_done slab_plane_start={} slab_plane_end={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3}",
+            slab_plane_start,
+            slab_plane_end,
+            plane_execution_stats.completed,
+            duration_ms(plane_execution_stats.elapsed),
+            duration_ms(plane_execution_stats.worker_elapsed_sum),
+            duration_ms(plane_execution_stats.worker_elapsed_max),
+        );
+    }
+    Ok((prepared, stage_timings, plane_execution_stats.elapsed))
 }
 
 fn single_plane_imaging_result_to_cube_result(
@@ -9312,19 +9815,14 @@ fn run_independent_shared_cube_slab_planes(
                 );
                 let replay = cube_result.direct_replay_timings;
                 eprintln!(
-                    "cube_shared_direct_plane_replay plane={} blocks={} rows_seen={} rows_flagged={} assignments_missing={} assignments_empty={} samples_rejected={} fast_samples={} fallback_samples={} planned_samples={} build_planned_ms={:.3} consume_ms={:.3}",
+                    "cube_shared_direct_plane_replay plane={} {}",
                     payload.plane_index,
-                    replay.blocks,
-                    replay.rows_seen,
-                    replay.rows_flagged,
-                    replay.assignments_missing,
-                    replay.assignments_empty,
-                    replay.samples_rejected,
-                    replay.fast_samples,
-                    replay.fallback_samples,
-                    replay.planned_samples,
-                    duration_ms(replay.build_planned),
-                    duration_ms(replay.consume),
+                    direct_cube_replay_timing_detail(replay),
+                );
+                eprintln!(
+                    "cube_shared_direct_plane_stage_detail plane={} {}",
+                    payload.plane_index,
+                    imaging_stage_timing_detail(stage_timings),
                 );
             }
             Ok((
@@ -9374,238 +9872,16 @@ fn run_independent_shared_cube_slab_planes(
                         duration_ms(plane_result.stage_timings.residual_image_correction),
                         duration_ms(plane_result.stage_timings.residual_normalize),
                     );
-                }
-                product_publisher.accept(
-                    plane_result.plane_index,
-                    plane_result.result.cube_result,
-                    product_writers,
-                    aggregate,
-                )?;
-                Ok(())
-            },
-        )?;
-        let publish_stats = product_publisher.finish(product_writers, aggregate)?;
-        product_write_elapsed += publish_stats.write_elapsed;
-        product_bytes += publish_stats.bytes;
-        let product_stats = product_writers
-            .write_stats()
-            .delta_since(product_stats_before);
-        let product_io_stats = product_writers
-            .tiled_io_stats()
-            .delta_since(product_io_stats_before);
-        if standard_mfs_profile_detail_enabled() {
-            eprintln!(
-                "cube_shared_direct_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_direct_write_calls={} tiled_direct_write_tiles={} tiled_direct_write_bytes={} tiled_direct_pack_ns={} tiled_direct_swap_ns={} tiled_direct_write_ns={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=streaming_plane_results",
-                slab_plane_start,
-                slab_plane_end,
-                worker_count,
-                product_batch_planes,
-                plane_execution_stats.completed,
-                duration_ms(plane_execution_stats.elapsed),
-                duration_ms(plane_execution_stats.worker_elapsed_sum),
-                duration_ms(plane_execution_stats.worker_elapsed_max),
-                duration_ms(plane_execution_stats.result_wait_elapsed),
-                duration_ms(plane_execution_stats.consume_elapsed),
-                duration_ms(product_write_elapsed),
-                duration_ms(product_stats.role_elapsed()),
-                duration_ms(product_stats.psf_elapsed),
-                duration_ms(product_stats.residual_elapsed),
-                duration_ms(product_stats.model_elapsed),
-                duration_ms(product_stats.image_elapsed),
-                duration_ms(product_stats.sumwt_elapsed),
-                product_bytes,
-                publish_stats.groups,
-                publish_stats.planes,
-                product_stats.groups,
-                product_stats.planes,
-                product_stats.estimated_bytes,
-                product_io_stats.put_slice_c_order_calls,
-                product_io_stats.put_slice_fortran_calls,
-                product_io_stats.put_slice_tile_visits,
-                product_io_stats.put_slice_copied_elements,
-                product_io_stats.lru_hits,
-                product_io_stats.lru_misses,
-                product_io_stats.lru_zero_fill_tiles,
-                product_io_stats.lru_read_tiles,
-                product_io_stats.lru_read_bytes,
-                product_io_stats.lru_dirty_evictions,
-                product_io_stats.lru_flush_calls,
-                product_io_stats.lru_flush_write_tiles,
-                product_io_stats.lru_flush_write_bytes,
-                product_io_stats.lru_batch_flushes,
-                product_io_stats.lru_batch_flush_tiles,
-                product_io_stats.lru_batch_flush_bytes,
-                product_io_stats.direct_tile_write_calls,
-                product_io_stats.direct_tile_write_tiles,
-                product_io_stats.direct_tile_write_bytes,
-                product_io_stats.direct_tile_pack_ns,
-                product_io_stats.direct_tile_swap_ns,
-                product_io_stats.direct_tile_write_ns,
-                product_io_stats.flat_allocations,
-                product_io_stats.flat_allocated_bytes,
-                product_io_stats.flat_zero_fill_bytes,
-                product_io_stats.flat_bulk_read_bytes,
-                product_io_stats.flat_flush_calls,
-                product_io_stats.flat_flush_write_tiles,
-                product_io_stats.flat_flush_write_bytes,
-            );
-        }
-        return Ok(CubeSlabRunOutcome {
-            run_elapsed: plane_execution_stats.elapsed,
-            slab_prepare_elapsed: Duration::ZERO,
-            plane_run_elapsed: plane_execution_stats.elapsed,
-            product_write_elapsed,
-            product_bytes,
-            stage_timings,
-        });
-    }
-    let direct_clean_shared_source_eligible =
-        direct_clean_cube_shared_source_eligible(&slab_config, clean);
-    if standard_mfs_profile_detail_enabled() {
-        eprintln!(
-            "cube_shared_direct_clean_eligibility eligible={} slab_plane_count={} niter={} weighting={:?} w_term={:?} wprojplanes={:?} uv_taper={} deconvolver={:?}",
-            direct_clean_shared_source_eligible,
-            slab_plane_count,
-            clean.niter,
-            slab_config.weighting,
-            slab_config.w_term_mode,
-            slab_config.w_project_planes,
-            slab_config.uv_taper.is_some(),
-            slab_config.deconvolver,
-        );
-    }
-    if direct_clean_shared_source_eligible {
-        if slab_channel_frequencies_hz.len() != slab_plane_count {
-            return Err(format!(
-                "direct clean cube slab expected {slab_plane_count} channel frequencies, found {}",
-                slab_channel_frequencies_hz.len()
-            ));
-        }
-        let spectral_plan = direct_spectral_plan.ok_or_else(|| {
-            "direct clean cube slab requires a reusable spectral routing plan".to_string()
-        })?;
-        if standard_mfs_profile_detail_enabled() {
-            eprintln!(
-                "cube_shared_direct_clean_source slab_plane_start={} slab_plane_end={} blocks={} source_channel_start={} materialization=row_runs spectral_plan_entries={} visibility_grid_assignments={}",
-                slab_plane_start,
-                slab_plane_end,
-                shared_source.blocks.len(),
-                source_channel_start,
-                spectral_plan.spectral_entries(),
-                spectral_plan.use_visibility_grid_assignments,
-            );
-        }
-        let tasks = slab_channel_frequencies_hz
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(plane_offset, channel_frequency_hz)| {
-                let plane_index = slab_plane_start + plane_offset;
-                PlaneTask {
-                    plane_index,
-                    payload: DirectCleanCubePlaneTaskPayload {
-                        plane_index,
-                        output_channel: plane_offset,
-                        channel_frequency_hz,
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
-        let run_plane = |payload: DirectCleanCubePlaneTaskPayload| {
-            let worker_started = Instant::now();
-            let cube_result = run_direct_clean_cube_plane_from_shared_source(
-                geometry,
-                clean,
-                slab_config
-                    .correlation
-                    .as_deref()
-                    .map(parse_plane_stokes)
-                    .transpose()?
-                    .unwrap_or(PlaneStokes::I),
-                slab_config.weighting,
-                standard_mfs_streaming_weight_density_mode(&slab_config),
-                slab_config.deconvolver,
-                slab_config.multiscale_scales.clone(),
-                slab_config.small_scale_bias,
-                plane_execution_config,
-                &shared_source,
-                payload.output_channel,
-                payload.channel_frequency_hz,
-                spectral_plan,
-                corr_types,
-            )?;
-            let stage_timings = cube_result.diagnostics.stage_timings;
-            let plane_diagnostics = cube_result
-                .diagnostics
-                .channel_diagnostics
-                .first()
-                .ok_or_else(|| {
-                    format!(
-                        "direct clean shared cube plane {} returned no channel diagnostics",
-                        payload.plane_index
-                    )
-                })?;
-            if standard_mfs_profile_detail_enabled() {
-                eprintln!(
-                    "cube_shared_direct_clean_plane_worker plane={} blocks={} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} major_cycles={} actual_minor_iterations={} initial_peak={:.9e} final_peak={:.9e} stop_reason={:?} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_psf_grid_ms={:.3} core_residual_grid_ms={:.3} core_major_refresh_ms={:.3} core_restore_ms={:.3}",
-                    payload.plane_index,
-                    shared_source.blocks.len(),
-                    plane_diagnostics.gridded_samples,
-                    plane_diagnostics.skipped_samples,
-                    plane_diagnostics.normalization_sumwt,
-                    plane_diagnostics.reported_sumwt,
-                    plane_diagnostics.major_cycles,
-                    plane_diagnostics.minor_iterations,
-                    plane_diagnostics.initial_residual_peak_jy_per_beam,
-                    plane_diagnostics.final_residual_peak_jy_per_beam,
-                    plane_diagnostics.clean_stop_reason,
-                    duration_ms(worker_started.elapsed()),
-                    duration_ms(worker_started.elapsed()),
-                    duration_ms(stage_timings.total),
-                    duration_ms(stage_timings.psf_grid),
-                    duration_ms(stage_timings.residual_degrid_grid),
-                    duration_ms(stage_timings.major_cycle_refresh),
-                    duration_ms(stage_timings.restore),
-                );
-            }
-            Ok((
-                SharedCleanCubePlaneRunResult {
-                    visibility_batches: shared_source.blocks.len(),
-                    visibility_samples: plane_diagnostics.gridded_samples,
-                    run_imaging_elapsed: worker_started.elapsed(),
-                    cube_result,
-                },
-                stage_timings,
-            ))
-        };
-        let mut product_publisher = OrderedCubeProductPublisher::<CubeImagingResult>::new(
-            slab_plane_start,
-            product_batch_planes,
-        );
-        let product_stats_before = product_writers.write_stats();
-        let product_io_stats_before = product_writers.tiled_io_stats();
-        let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
-            tasks,
-            worker_count,
-            run_plane,
-            |plane_result| {
-                add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
-                if standard_mfs_profile_detail_enabled() {
+                    let replay = plane_result.result.cube_result.direct_replay_timings;
                     eprintln!(
-                        "cube_shared_direct_clean_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} blocks={} samples={} core_total_ms={:.3} core_psf_grid_ms={:.3} core_residual_grid_ms={:.3} core_major_refresh_ms={:.3} core_restore_ms={:.3} residency=streaming_plane_results",
+                        "cube_shared_direct_plane_result_replay plane={} {}",
                         plane_result.plane_index,
-                        plane_result.batch_index,
-                        plane_result.batch_task_count,
-                        plane_result.worker_slot,
-                        duration_ms(plane_result.worker_elapsed),
-                        duration_ms(plane_result.result.run_imaging_elapsed),
-                        plane_result.result.visibility_batches,
-                        plane_result.result.visibility_samples,
-                        duration_ms(plane_result.stage_timings.total),
-                        duration_ms(plane_result.stage_timings.psf_grid),
-                        duration_ms(plane_result.stage_timings.residual_degrid_grid),
-                        duration_ms(plane_result.stage_timings.major_cycle_refresh),
-                        duration_ms(plane_result.stage_timings.restore),
+                        direct_cube_replay_timing_detail(replay),
+                    );
+                    eprintln!(
+                        "cube_shared_direct_plane_result_stage_detail plane={} {}",
+                        plane_result.plane_index,
+                        imaging_stage_timing_detail(plane_result.stage_timings),
                     );
                 }
                 product_publisher.accept(
@@ -9628,7 +9904,7 @@ fn run_independent_shared_cube_slab_planes(
             .delta_since(product_io_stats_before);
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
-                "cube_shared_direct_clean_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_direct_write_calls={} tiled_direct_write_tiles={} tiled_direct_write_bytes={} tiled_direct_pack_ns={} tiled_direct_swap_ns={} tiled_direct_write_ns={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=streaming_plane_results",
+                "cube_shared_direct_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_direct_write_calls={} tiled_direct_write_tiles={} tiled_direct_write_bytes={} tiled_direct_pack_ns={} tiled_direct_swap_ns={} tiled_direct_write_ns={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=streaming_plane_results",
                 slab_plane_start,
                 slab_plane_end,
                 worker_count,
@@ -10422,7 +10698,7 @@ fn cube_slab_executor_scratch_shape(
         } else {
             0
         },
-        per_worker_row_block_limit_bytes: if clean_is_dirty(config) { 0 } else { 0 },
+        per_worker_row_block_limit_bytes: 0,
         per_product_batch_plane_bytes: one_plane_product_batch_bytes,
         per_product_pending_plane_bytes: one_plane_run_result_bytes,
     }
@@ -13187,9 +13463,15 @@ fn apply_standard_mfs_runtime_plan_locked(
         } else {
             "not_applicable"
         };
+    let hogbom_metal_backend =
+        if config.deconvolver == Deconvolver::Hogbom && (auto_metal || metal_policy) {
+            "metal-minor-cycle"
+        } else {
+            "not_applicable"
+        };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} hogbom_metal_backend={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         eligible,
         auto_multi_cpu,
@@ -13209,6 +13491,7 @@ fn apply_standard_mfs_runtime_plan_locked(
         initial_dirty_backend_source.label(),
         metal_cache.as_deref().unwrap_or("planner"),
         metal_cache_source.label(),
+        hogbom_metal_backend,
         mtmfs_metal_backend,
         mtmfs_metal_input_cache,
     );
@@ -13257,6 +13540,9 @@ fn standard_mfs_auto_metal_enabled(
         return !config.dirty_only && config.niter > 0;
     }
     if config.deconvolver == Deconvolver::Mtmfs {
+        return !config.dirty_only && config.niter > 0;
+    }
+    if config.deconvolver == Deconvolver::Hogbom {
         return !config.dirty_only && config.niter > 0;
     }
     if mosaic_mfs_eligible {
@@ -15607,6 +15893,38 @@ fn estimated_routed_visibility_run_cache_bytes(runs: &[StandardMfsRoutedVisibili
 
 fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
+}
+
+fn imaging_stage_timing_detail(timings: ImagingStageTimings) -> String {
+    format!(
+        "controller_overhead_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_alloc_ms={:.3} planned_sample_replay_ms={:.3} grid_update_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_image_correction_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_alloc_ms={:.3} residual_degrid_grid_ms={:.3} residual_fft_ms={:.3} residual_image_correction_ms={:.3} residual_normalize_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} minor_cycle_ms={:.3} minor_cycle_solve_ms={:.3} major_cycle_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} multiscale_scale_refresh_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3} total_ms={:.3}",
+        duration_ms(timings.controller_overhead),
+        duration_ms(timings.weighting),
+        duration_ms(timings.executor_build),
+        duration_ms(timings.psf_grid_alloc),
+        duration_ms(timings.planned_sample_replay),
+        duration_ms(timings.grid_update),
+        duration_ms(timings.psf_grid),
+        duration_ms(timings.psf_fft),
+        duration_ms(timings.psf_image_correction),
+        duration_ms(timings.psf_normalize),
+        duration_ms(timings.model_fft),
+        duration_ms(timings.residual_grid_alloc),
+        duration_ms(timings.residual_degrid_grid),
+        duration_ms(timings.residual_fft),
+        duration_ms(timings.residual_image_correction),
+        duration_ms(timings.residual_normalize),
+        duration_ms(timings.clean_cycle_setup),
+        duration_ms(timings.deconvolver_setup),
+        duration_ms(timings.minor_cycle),
+        duration_ms(timings.minor_cycle_solve),
+        duration_ms(timings.major_cycle_refresh),
+        duration_ms(timings.residual_refresh_overhead),
+        duration_ms(timings.multiscale_scale_refresh),
+        duration_ms(timings.beam_fit),
+        duration_ms(timings.restore),
+        duration_ms(timings.total),
+    )
 }
 
 #[allow(dead_code)]
@@ -22212,120 +22530,6 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn stream_standard_mfs_planned_sample_essentials_blocks<F>(
-    ms: &MeasurementSet,
-    config: &CliConfig,
-    data_column_kind: VisibilityDataColumn,
-    selection: &SelectedRowsContext,
-    table_values: &PreparedSelectionTableValues,
-    active_selected_rows: &[SelectedMainRow],
-    derived_engine: Option<&MsCalEngine>,
-    channel_axes: Arc<MsImagingChannelAxisCatalog>,
-    channel_read_range: Option<SelectedChannelReadRange>,
-    geometry_columns: &PreparedGeometryColumnCache,
-    row_block_rows: usize,
-    prepare_started_at: Instant,
-    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
-    accumulate_timings: &mut AccumulateRowTimings,
-    pass_stats: &mut StandardMfsStreamingPassStats,
-    weighting_plan: &StandardMfsStreamingWeightingPlan,
-    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
-    mut consume: F,
-) -> Result<usize, String>
-where
-    F: FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
-{
-    let mut streamed_samples = 0usize;
-    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
-        config,
-        table_values,
-        selection.phase_center.clone(),
-        false,
-    )?;
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let stage_started_at = Instant::now();
-        let (block, read_timings) = read_ms_imaging_essentials_block(
-            ms,
-            data_column_kind,
-            Arc::clone(&channel_axes),
-            geometry_columns,
-            row_chunk,
-            channel_read_range,
-        )?;
-        let get_ms_values_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
-        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
-            data_column: read_timings.data_column,
-            flag_column: read_timings.flag_column,
-            weight_column: read_timings.weight_column,
-            weight_spectrum: read_timings.weight_spectrum,
-            geometry_rows: read_timings.uvw_column,
-        });
-
-        let stage_started_at = Instant::now();
-        let before_accumulate = *accumulate_timings;
-        let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
-        let mut block_candidate_samples = 0usize;
-        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
-        for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
-            accumulate_timings.rows_seen += 1;
-            if row.spw_id != selected_row.spw_id {
-                return Err(format!(
-                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
-                    selected_row.row_index, selected_row.spw_id, row.spw_id
-                ));
-            }
-            let counts = prepared.stream_standard_mfs_planned_essentials_row_samples(
-                selected_row,
-                row,
-                derived_engine,
-                weighting_plan,
-                planned_sample_builder,
-                &mut |sample| {
-                    planned_samples.push(sample);
-                    Ok(())
-                },
-            )?;
-            let _ = row_slot;
-            block_candidate_samples += counts.candidate_samples;
-            block_detail.add(counts.detail);
-        }
-        let consumer_started_at = Instant::now();
-        consume(&planned_samples).map_err(|error| error.to_string())?;
-        pass_stats.add_consumer(consumer_started_at.elapsed());
-        let prepare_processing_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
-        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
-        let planned_tap_visits = planned_samples
-            .iter()
-            .map(|sample| usize::from(sample.tap_count))
-            .sum();
-        pass_stats.add_planned_sample_counts(
-            block_candidate_samples,
-            planned_samples.len(),
-            planned_tap_visits,
-        );
-        pass_stats.add_planned_sample_detail(block_detail);
-        pass_stats.record_density_block(
-            planned_samples.len(),
-            get_ms_values_elapsed,
-            prepare_processing_elapsed,
-        );
-        streamed_samples += planned_samples.len();
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/ms_essentials_sample_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
-                accumulate_timings.rows_seen,
-                active_selected_rows.len(),
-                streamed_samples,
-                prepare_started_at.elapsed().as_secs_f64(),
-            );
-        }
-    }
-    Ok(streamed_samples)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn stream_standard_mfs_planned_sample_essentials_run_blocks<F>(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -24834,17 +25038,6 @@ fn standard_mfs_prepare_threads_for_request(
         .unwrap_or(1);
     let available = std::thread::available_parallelism().map_or(1, |value| value.get());
     requested.max(1).min(available).min(row_count)
-}
-
-fn standard_mfs_planned_run_blocks_enabled() -> bool {
-    env::var("CASA_RS_STANDARD_MFS_PLANNED_RUN_BLOCKS")
-        .map(|value| {
-            !matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "0" | "false" | "no" | "off"
-            )
-        })
-        .unwrap_or(true)
 }
 
 fn standard_mfs_streaming_batch_size() -> usize {
@@ -35165,15 +35358,6 @@ fn frontend_cycle_threshold(
     (peak_residual_jy_per_beam * psf_fraction).max(clean.threshold_jy_per_beam)
 }
 
-#[cfg(test)]
-fn frontend_cube_channel_clean_config(mut clean: CleanConfig, cycle_threshold: f32) -> CleanConfig {
-    clean.threshold_jy_per_beam = clean.threshold_jy_per_beam.max(cycle_threshold);
-    clean.cyclefactor = f32::MIN_POSITIVE;
-    clean.min_psf_fraction = 0.0;
-    clean.max_psf_fraction = 0.0;
-    clean
-}
-
 fn frontend_peak_abs_masked(cube: &Array4<f32>, clean_mask: Option<&Array2<bool>>) -> f32 {
     let mut peak = 0.0f32;
     let plane = cube.slice(s![.., .., 0, 0]);
@@ -39093,8 +39277,8 @@ mod tests {
     fn cube_slab_auto_plane_workers_use_available_parallelism_for_multi_plane_output() {
         let available = std::thread::available_parallelism().map_or(1, |value| value.get());
 
-        assert_eq!(cube_slab_auto_plane_workers(512), available.min(512).max(1));
-        assert_eq!(cube_slab_auto_plane_workers(2), available.min(2).max(1));
+        assert_eq!(cube_slab_auto_plane_workers(512), available.clamp(1, 512));
+        assert_eq!(cube_slab_auto_plane_workers(2), available.clamp(1, 2));
         assert!(cube_slab_auto_plane_workers(1) <= 4);
         assert!(cube_slab_auto_plane_workers(1) >= 1);
     }
@@ -39417,8 +39601,27 @@ mod tests {
                     .and_then(|value| value.parse::<usize>().ok())
                     .is_some_and(|threads| threads > 1)
             );
-            assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
-            assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+            #[cfg(target_os = "macos")]
+            {
+                if casa_imaging::standard_mfs_metal_device_available() {
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                } else {
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+            }
         }
     }
 
@@ -39839,8 +40042,27 @@ mod tests {
                 env::var("CASA_RS_STANDARD_MFS_DENSITY_THREADS").as_deref(),
                 Ok(expected_threads.as_str())
             );
-            assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
-            assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+            #[cfg(target_os = "macos")]
+            {
+                if casa_imaging::standard_mfs_metal_device_available() {
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                    assert_eq!(
+                        env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
+                        Ok("metal-row-run-grouped")
+                    );
+                } else {
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                    assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND").is_none());
+                assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
+            }
         }
     }
 
@@ -43616,30 +43838,6 @@ mod tests {
         assert_eq!(antipodal[1], 0.0);
         assert_eq!(fractional_bandwidth_from_range([90.0, 110.0]), 0.2);
         assert_eq!(fractional_bandwidth_from_range([0.0, 110.0]), 0.0);
-    }
-
-    #[test]
-    fn frontend_cube_fixed_cycle_threshold_uses_casa_controller_threshold() {
-        let clean = CleanConfig {
-            niter: 32,
-            major_cycle_limit: None,
-            gain: 0.1,
-            threshold_jy_per_beam: 0.005,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            minor_cycle_length: 32,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.05,
-            max_psf_fraction: 0.8,
-            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
-        };
-
-        let channel_clean = frontend_cube_channel_clean_config(clean, 0.24860433);
-
-        assert_eq!(channel_clean.threshold_jy_per_beam, 0.24860433);
-        assert_eq!(channel_clean.cyclefactor, f32::MIN_POSITIVE);
-        assert_eq!(channel_clean.min_psf_fraction, 0.0);
-        assert_eq!(channel_clean.max_psf_fraction, 0.0);
     }
 
     #[test]
@@ -48284,42 +48482,42 @@ deconvolver=mtmfs
             &mut ms,
             [30.0, -15.0, 0.0],
             &[
-                Complex32::new(1.0, 0.0),
-                Complex32::new(0.6, 0.0),
-                Complex32::new(0.9, 0.0),
-                Complex32::new(0.5, 0.0),
-                Complex32::new(1.0, 0.0),
-                Complex32::new(0.6, 0.0),
-                Complex32::new(0.9, 0.0),
-                Complex32::new(0.5, 0.0),
+                Complex32::new(10.0, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(0.002, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(10.0, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(0.002, 0.0),
+                Complex32::new(0.001, 0.0),
             ],
         );
         add_main_row_channels(
             &mut ms,
             [-25.0, 20.0, 0.0],
             &[
-                Complex32::new(1.0, 0.0),
-                Complex32::new(0.3, 0.0),
-                Complex32::new(0.7, 0.0),
-                Complex32::new(0.2, 0.0),
-                Complex32::new(1.0, 0.0),
-                Complex32::new(0.3, 0.0),
-                Complex32::new(0.7, 0.0),
-                Complex32::new(0.2, 0.0),
+                Complex32::new(10.0, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(0.002, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(10.0, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(0.002, 0.0),
+                Complex32::new(0.001, 0.0),
             ],
         );
         add_main_row_channels(
             &mut ms,
             [10.0, 35.0, 0.0],
             &[
-                Complex32::new(1.0, 0.0),
-                Complex32::new(0.8, 0.0),
-                Complex32::new(0.4, 0.0),
-                Complex32::new(0.9, 0.0),
-                Complex32::new(1.0, 0.0),
-                Complex32::new(0.8, 0.0),
-                Complex32::new(0.4, 0.0),
-                Complex32::new(0.9, 0.0),
+                Complex32::new(10.0, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(0.002, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(10.0, 0.0),
+                Complex32::new(0.001, 0.0),
+                Complex32::new(0.002, 0.0),
+                Complex32::new(0.001, 0.0),
             ],
         );
         ms.save().unwrap();
@@ -48472,14 +48670,30 @@ deconvolver=mtmfs
             let _forced_slab1 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "1");
             let clean_slab1_summary = run_from_config(&clean_slab1_config).unwrap();
             assert!(clean_slab1_summary.minor_iterations > 0);
-            assert!(
-                clean_slab1_summary
-                    .channel_summaries
-                    .iter()
-                    .all(|summary| summary.minor_iterations > 0),
-                "multi-slab clean should clean each output plane independently"
-            );
             assert_eq!(clean_slab1_summary.channel_summaries.len(), 4);
+            let cube_cycle_threshold =
+                clean_slab1_summary.channel_summaries[0].final_cycle_threshold_jy_per_beam;
+            assert!(
+                clean_slab1_summary.channel_summaries.iter().all(|summary| {
+                    (summary.final_cycle_threshold_jy_per_beam - cube_cycle_threshold).abs()
+                        <= 1.0e-5
+                }),
+                "forced one-plane slabs should still share one CASA-style cube cycle threshold"
+            );
+            assert!(
+                clean_slab1_summary.channel_summaries.iter().any(|summary| {
+                    summary.initial_residual_peak_jy_per_beam <= cube_cycle_threshold
+                        && summary.minor_iterations == 0
+                }),
+                "cube-level cycle threshold should stop low-peak planes without per-plane cleanup"
+            );
+            assert!(
+                clean_slab1_summary.channel_summaries.iter().any(|summary| {
+                    summary.initial_residual_peak_jy_per_beam > cube_cycle_threshold
+                        && summary.minor_iterations > clean_slab1_config.niter
+                }),
+                "CASA Hogbom inclusive mode should remain active for planes that receive budget"
+            );
         }
         for suffix in ["psf", "residual", "model", "image", "sumwt"] {
             let path = format!("{}.{}", clean_slab1_prefix.display(), suffix);

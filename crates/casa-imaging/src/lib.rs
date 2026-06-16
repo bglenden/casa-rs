@@ -51,7 +51,10 @@ use libm::{erfc, j1};
 use ndarray::{Array2, Array4, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 
-use beam::{BeamFitOutcome, estimate_psf_sidelobe_level, fit_beam_from_psf, restore_model};
+use beam::{
+    BeamFitOutcome, estimate_psf_sidelobe_level, estimate_psf_sidelobe_level_for_beam,
+    fit_beam_from_psf, restore_model,
+};
 #[cfg(all(target_os = "macos", not(coverage)))]
 use execution::{
     MtmfsMetalInputCache, StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill,
@@ -116,6 +119,50 @@ enum StandardMfsBackendSelection {
     Metal,
     MetalRowRun,
     MetalRowRunGrouped,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct HogbomMetalPeakCandidate {
+    abs_value: f32,
+    value: f32,
+    flat_index: u32,
+    valid: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct HogbomMetalReduceParams {
+    candidate_count: u32,
+    nx: u32,
+    ny: u32,
+    threads_per_group: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct HogbomMetalCycleParams {
+    cell_count: u32,
+    nx: u32,
+    ny: u32,
+    has_mask: u32,
+    peak_threads_per_group: u32,
+    component_budget: u32,
+    gain: f32,
+    threshold_jy_per_beam: f32,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    _pad0: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct HogbomMetalCycleState {
+    peak: HogbomMetalPeakCandidate,
+    component: f32,
+    updates: u32,
+    stopped: u32,
+    stop_reason: u32,
 }
 
 pub(crate) use trace::{ResidualRefreshTraceInternal, ResidualSampleTraceInternal};
@@ -1022,11 +1069,21 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         };
         (psf_state, residual)
     };
-    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
         &psf_state.psf,
         request.geometry.cell_size_rad,
         request.clean.psf_cutoff,
     );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let max_psf_sidelobe_level =
+        estimate_psf_sidelobe_level_for_beam(&psf_state.psf, request.geometry.cell_size_rad, beam);
     let clean_mask_pixels = request
         .clean_mask
         .as_ref()
@@ -1057,19 +1114,6 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
     residual = clean_state.residual;
 
-    let beam_fit_started = Instant::now();
-    let BeamFitOutcome {
-        beam,
-        warnings: beam_warnings,
-        attempts: beam_fit_attempts,
-        cutoff_used: beam_fit_cutoff_used,
-        debug: beam_fit_debug,
-    } = fit_beam_from_psf(
-        &psf_state.psf,
-        request.geometry.cell_size_rad,
-        request.clean.psf_cutoff,
-    );
-    stage_timings.beam_fit += beam_fit_started.elapsed();
     let restore_started = Instant::now();
     let restored_image = if request.clean.niter == 0 && !has_initial_model {
         residual.clone()
@@ -1275,11 +1319,21 @@ where
             (psf_state, residual, 0.0)
         }
     };
-    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
         &psf_state.psf,
         request.geometry.cell_size_rad,
         request.clean.psf_cutoff,
     );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let max_psf_sidelobe_level =
+        estimate_psf_sidelobe_level_for_beam(&psf_state.psf, request.geometry.cell_size_rad, beam);
     let clean_mask_pixels = request
         .clean_mask
         .as_ref()
@@ -1333,6 +1387,7 @@ where
         residual,
         max_psf_sidelobe_level,
         initial_peak,
+        None,
         &mut warnings,
     )?;
     let controller_elapsed = controller_started.elapsed();
@@ -1342,19 +1397,6 @@ where
     stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
     residual = clean_state.residual;
 
-    let beam_fit_started = Instant::now();
-    let BeamFitOutcome {
-        beam,
-        warnings: beam_warnings,
-        attempts: beam_fit_attempts,
-        cutoff_used: beam_fit_cutoff_used,
-        debug: beam_fit_debug,
-    } = fit_beam_from_psf(
-        &psf_state.psf,
-        request.geometry.cell_size_rad,
-        request.clean.psf_cutoff,
-    );
-    stage_timings.beam_fit += beam_fit_started.elapsed();
     let restore_started = Instant::now();
     let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
     stage_timings.restore += restore_started.elapsed();
@@ -1759,6 +1801,7 @@ where
             accumulated_residual,
             max_psf_sidelobe_level,
             initial_peak,
+            None,
             &mut warnings,
         )?
     } else {
@@ -2639,6 +2682,488 @@ where
     )
 }
 
+/// Scalar CLEAN-control values computed while a dirty/PSF plane is resident.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsCleanControlStats {
+    /// Peak absolute residual before minor-cycle CLEAN iterations.
+    pub initial_residual_peak_jy_per_beam: f32,
+    /// CASA-style maximum PSF sidelobe contribution for this plane.
+    pub max_psf_sidelobe_level: f32,
+    /// Number of usable mask pixels, or the full plane area when unmasked.
+    pub clean_mask_pixels: usize,
+}
+
+/// Resident standard-gridder single-plane state prepared for a later CLEAN pass.
+///
+/// Cube-like frontends use this to build dirty/PSF plane state, reduce
+/// cube-level CLEAN controls across planes, and then run minor cycles without
+/// rereading the MeasurementSet or recomputing the initial dirty/PSF products.
+pub struct StandardMfsPreparedCleanPlane {
+    request: ImagingRequest,
+    psf_state: PsfState,
+    residual: Array2<f32>,
+    model: Array2<f32>,
+    model_has_flux: bool,
+    max_abs_w_lambda: f64,
+    beam: Option<BeamFit>,
+    warnings: Vec<String>,
+    beam_fit_attempts: usize,
+    beam_fit_cutoff_used: Option<f32>,
+    beam_fit_debug: Option<BeamFitDebugSummary>,
+    stats: StandardMfsCleanControlStats,
+    stage_timings: ImagingStageTimings,
+    total_started: Instant,
+}
+
+impl StandardMfsPreparedCleanPlane {
+    /// Return the plane-local scalar values needed by a cube controller.
+    pub fn clean_control_stats(&self) -> StandardMfsCleanControlStats {
+        self.stats
+    }
+}
+
+/// Run only the dirty/PSF construction phase for a replayable planned-run plane.
+pub fn prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config<F>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    replay_planned_runs: F,
+) -> Result<StandardMfsPreparedCleanPlane, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunBlockSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsPlannedSampleBlockSource for RunBlockSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_planned_sample_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(&mut |run_block| consumer(run_block.samples()))
+        }
+
+        fn replay_planned_sample_run_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunBlockSource {
+        replay: replay_planned_runs,
+    };
+    prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_config(
+        request,
+        execution_config,
+        &mut source,
+    )
+}
+
+/// Run only the dirty/PSF construction phase for a replayable planned-sample plane.
+pub fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+) -> Result<StandardMfsPreparedCleanPlane, ImagingError> {
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "prepared standard MFS clean requires gridder='standard'".to_string(),
+        ));
+    }
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return Err(ImagingError::Unsupported(
+            "prepared standard MFS clean does not support W-term gridding".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "prepared standard MFS clean does not support deconvolver='mtmfs'".to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let model = request
+        .initial_model
+        .take()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
+    let mut stage_timings = ImagingStageTimings::default();
+    let mut replay_plan =
+        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
+
+    let (psf_state, residual, max_abs_w_lambda) = if !has_initial_model {
+        replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?
+    } else {
+        let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
+        let residual = replay_plan.compute_residual(
+            request.geometry,
+            &model,
+            &psf_state,
+            &mut stage_timings,
+        )?;
+        (psf_state, residual, 0.0)
+    };
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let max_psf_sidelobe_level =
+        estimate_psf_sidelobe_level_for_beam(&psf_state.psf, request.geometry.cell_size_rad, beam);
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+
+    Ok(StandardMfsPreparedCleanPlane {
+        request,
+        psf_state,
+        residual,
+        model,
+        model_has_flux: has_initial_model,
+        max_abs_w_lambda,
+        beam,
+        warnings: beam_warnings,
+        beam_fit_attempts,
+        beam_fit_cutoff_used,
+        beam_fit_debug,
+        stats: StandardMfsCleanControlStats {
+            initial_residual_peak_jy_per_beam: initial_peak,
+            max_psf_sidelobe_level,
+            clean_mask_pixels,
+        },
+        stage_timings,
+        total_started,
+    })
+}
+
+/// Publish a resident standard-gridder CLEAN plane without running a minor cycle.
+///
+/// Cube frontends use this when the cube-level controller decides that a
+/// prepared plane is already below the shared cycle threshold. The dirty/PSF
+/// state that was already computed is preserved, the component model is left
+/// unchanged, and no CPU or Metal deconvolver work is run.
+pub fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
+    prepared: StandardMfsPreparedCleanPlane,
+    cube_cycle_threshold_jy_per_beam: f32,
+) -> Result<ImagingResult, ImagingError> {
+    let StandardMfsPreparedCleanPlane {
+        request,
+        psf_state,
+        residual,
+        model,
+        model_has_flux,
+        max_abs_w_lambda,
+        beam,
+        mut warnings,
+        beam_fit_attempts,
+        beam_fit_cutoff_used,
+        beam_fit_debug,
+        stats,
+        mut stage_timings,
+        total_started,
+    } = prepared;
+
+    let restore_started = Instant::now();
+    let restored_image = if model_has_flux {
+        let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+        &restored_model + &residual
+    } else {
+        residual.clone()
+    };
+    stage_timings.restore += restore_started.elapsed();
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    let cycle_nsigma_threshold_jy_per_beam =
+        nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
+    let clean_stop_reason = tolerant_clean_stop_reason(
+        stats.initial_residual_peak_jy_per_beam,
+        request.clean.threshold_jy_per_beam,
+        cycle_nsigma_threshold_jy_per_beam,
+    )
+    .or(Some(CleanStopReason::CycleThresholdReached));
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            normalization_sumwt: psf_state.normalization_sumwt,
+            reported_sumwt: psf_state.reported_sumwt,
+            psf_peak_normalization: psf_state.psf_peak,
+            major_cycles: casa_major_cycle_count(0, request.clean.niter),
+            minor_iterations: 0,
+            clean_stop_reason,
+            minor_cycle_traces: Vec::new(),
+            initial_residual_peak_jy_per_beam: stats.initial_residual_peak_jy_per_beam,
+            final_residual_peak_jy_per_beam: stats.initial_residual_peak_jy_per_beam,
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level: stats.max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: cube_cycle_threshold_jy_per_beam,
+            clean_mask_pixels: stats.clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+/// Finish a resident standard-gridder CLEAN plane with an optional cube threshold.
+pub fn finish_standard_mfs_prepared_clean_plane_with_execution_config<F>(
+    prepared: StandardMfsPreparedCleanPlane,
+    mut execution_config: StandardMfsExecutionConfig,
+    cube_cycle_threshold_jy_per_beam: Option<f32>,
+    replay_planned_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunBlockSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsPlannedSampleBlockSource for RunBlockSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_planned_sample_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(&mut |run_block| consumer(run_block.samples()))
+        }
+
+        fn replay_planned_sample_run_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunBlockSource {
+        replay: replay_planned_runs,
+    };
+    finish_standard_mfs_prepared_clean_plane_with_block_source(
+        prepared,
+        execution_config,
+        cube_cycle_threshold_jy_per_beam,
+        &mut source,
+    )
+}
+
+fn finish_standard_mfs_prepared_clean_plane_with_block_source(
+    prepared: StandardMfsPreparedCleanPlane,
+    execution_config: StandardMfsExecutionConfig,
+    cube_cycle_threshold_jy_per_beam: Option<f32>,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+) -> Result<ImagingResult, ImagingError> {
+    let StandardMfsPreparedCleanPlane {
+        request,
+        psf_state,
+        residual,
+        mut model,
+        model_has_flux: _,
+        max_abs_w_lambda,
+        beam,
+        mut warnings,
+        beam_fit_attempts,
+        beam_fit_cutoff_used,
+        beam_fit_debug,
+        stats,
+        mut stage_timings,
+        total_started,
+    } = prepared;
+
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut replay_plan =
+        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+        let refresh_started = Instant::now();
+        let residual =
+            replay_plan.compute_residual(request.geometry, model, &psf_state, stage_timings)?;
+        let refresh_elapsed = refresh_started.elapsed();
+        let accounted = before.accounted_delta(stage_timings);
+        stage_timings.major_cycle_refresh += refresh_elapsed;
+        stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+        Ok(residual)
+    };
+
+    let controller_started = Instant::now();
+    let clean_state = run_cotton_schwab_controller_with_refresh(
+        &request,
+        &psf_state,
+        &mut stage_timings,
+        &mut refresh_residual,
+        &mut model,
+        residual,
+        stats.max_psf_sidelobe_level,
+        stats.initial_residual_peak_jy_per_beam,
+        cube_cycle_threshold_jy_per_beam,
+        &mut warnings,
+    )?;
+    let controller_elapsed = controller_started.elapsed();
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
+    let residual = clean_state.residual;
+
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            normalization_sumwt: psf_state.normalization_sumwt,
+            reported_sumwt: psf_state.reported_sumwt,
+            psf_peak_normalization: psf_state.psf_peak,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: stats.initial_residual_peak_jy_per_beam,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level: stats.max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels: stats.clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
 /// Run standard-MFS CLEAN from directly replayable routed visibility runs and
 /// an optional prebuilt Metal grouped input cache.
 pub fn run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache<
@@ -2770,6 +3295,7 @@ pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_con
         residual,
         max_psf_sidelobe_level,
         initial_peak,
+        None,
         &mut warnings,
     )?;
     let controller_elapsed = controller_started.elapsed();
@@ -3109,6 +3635,7 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
         residual,
         max_psf_sidelobe_level,
         initial_peak,
+        None,
         &mut warnings,
     )?;
     let controller_elapsed = controller_started.elapsed();
@@ -11390,6 +11917,7 @@ fn run_cotton_schwab_controller(
         residual,
         max_psf_sidelobe_level,
         initial_peak,
+        None,
         warnings,
     )
 }
@@ -11404,6 +11932,7 @@ fn run_cotton_schwab_controller_with_refresh(
     residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
+    cycle_threshold_override_jy_per_beam: Option<f32>,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     match request.deconvolver {
@@ -11416,6 +11945,7 @@ fn run_cotton_schwab_controller_with_refresh(
             residual,
             max_psf_sidelobe_level,
             initial_peak,
+            cycle_threshold_override_jy_per_beam,
             warnings,
         ),
         Deconvolver::Clark => run_clark_cotton_schwab(
@@ -11427,6 +11957,7 @@ fn run_cotton_schwab_controller_with_refresh(
             residual,
             max_psf_sidelobe_level,
             initial_peak,
+            cycle_threshold_override_jy_per_beam,
             warnings,
         ),
         Deconvolver::Multiscale => run_multiscale_cotton_schwab(
@@ -11438,6 +11969,7 @@ fn run_cotton_schwab_controller_with_refresh(
             residual,
             max_psf_sidelobe_level,
             initial_peak,
+            cycle_threshold_override_jy_per_beam,
             warnings,
         ),
         Deconvolver::Mtmfs => Err(ImagingError::Unsupported(
@@ -11543,7 +12075,7 @@ fn run_mosaic_image_domain_controller(
                     final_cycle_threshold_jy_per_beam,
                     cycle_nsigma_threshold_jy_per_beam,
                     stage_timings,
-                ),
+                )?,
                 MinorCycleProbe::default(),
             ),
             Deconvolver::Clark => {
@@ -11712,6 +12244,7 @@ fn run_hogbom_cotton_schwab(
     mut residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
+    cycle_threshold_override_jy_per_beam: Option<f32>,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     let mut minor_iterations = 0usize;
@@ -11757,7 +12290,9 @@ fn run_hogbom_cotton_schwab(
         let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
         let start_reported_iteration = reported_minor_iterations;
         let cycle_threshold_jy_per_beam =
-            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+            cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
+                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+            });
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_hogbom_minor_cycle(
             request,
@@ -11768,7 +12303,7 @@ fn run_hogbom_cotton_schwab(
             cycle_threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
             stage_timings,
-        );
+        )?;
         minor_cycle_traces.push(make_minor_cycle_trace(
             minor_cycle_traces.len(),
             start_reported_iteration,
@@ -11854,16 +12389,61 @@ fn run_hogbom_minor_cycle(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    if standard_mfs_hogbom_metal_minor_cycle_enabled()? {
+        return run_hogbom_minor_cycle_metal(
+            request,
+            psf_state,
+            model,
+            residual,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            stage_timings,
+        );
+    }
+    Ok(run_hogbom_minor_cycle_cpu(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        stage_timings,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hogbom_minor_cycle_cpu(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
 ) -> HogbomMinorCycleOutcome {
     let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
     let mut stop_reason = None;
     let minor_started = Instant::now();
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    let mut peak_search_elapsed = Duration::ZERO;
+    let mut subtract_elapsed = Duration::ZERO;
+    let mut peak_searches = 0usize;
+    let mut subtract_updates = 0usize;
+    let image_pixels = residual.len();
     while cycle_component_updates < cycle_component_budget {
-        let Some(((peak_x, peak_y), peak_value)) =
-            hclean_peak_location_masked(residual, request.clean_mask.as_ref())
-        else {
+        let peak_started = collect_profile.then(Instant::now);
+        let peak = hclean_peak_location_masked(residual, request.clean_mask.as_ref());
+        if let Some(started) = peak_started {
+            peak_search_elapsed += started.elapsed();
+            peak_searches = peak_searches.saturating_add(1);
+        }
+        let Some(((peak_x, peak_y), peak_value)) = peak else {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -11883,11 +12463,50 @@ fn run_hogbom_minor_cycle(
             cycle_component_updates, peak_x, peak_y, peak_value, component
         ));
         model[(peak_x, peak_y)] += component;
+        let subtract_started = collect_profile.then(Instant::now);
         subtract_shifted_psf(residual, &psf_state.psf, (peak_x, peak_y), component);
+        if let Some(started) = subtract_started {
+            subtract_elapsed += started.elapsed();
+            subtract_updates = subtract_updates.saturating_add(1);
+        }
         cycle_component_updates += 1;
         updated_model = true;
+        if collect_profile && cycle_component_updates % 100 == 0 {
+            eprintln!(
+                "standard_mfs_hogbom_minor_cycle_progress updates={} budget={} image_pixels={} peak_searches={} subtract_updates={} peak_scan_estimated_bytes={} peak_search_ms={:.3} subtract_ms={:.3} elapsed_ms={:.3}",
+                cycle_component_updates,
+                cycle_component_budget,
+                image_pixels,
+                peak_searches,
+                subtract_updates,
+                peak_searches
+                    .saturating_mul(image_pixels)
+                    .saturating_mul(std::mem::size_of::<f32>()),
+                profile::millis(peak_search_elapsed),
+                profile::millis(subtract_elapsed),
+                profile::millis(minor_started.elapsed()),
+            );
+        }
     }
     let minor_elapsed = minor_started.elapsed();
+    if collect_profile {
+        eprintln!(
+            "standard_mfs_hogbom_minor_cycle_summary backend=cpu updates={} reported_budget={} component_budget={} stop_reason={:?} image_pixels={} peak_searches={} subtract_updates={} peak_scan_estimated_bytes={} peak_search_ms={:.3} subtract_ms={:.3} total_ms={:.3}",
+            cycle_component_updates,
+            cycle_reported_niter,
+            cycle_component_budget,
+            stop_reason,
+            image_pixels,
+            peak_searches,
+            subtract_updates,
+            peak_searches
+                .saturating_mul(image_pixels)
+                .saturating_mul(std::mem::size_of::<f32>()),
+            profile::millis(peak_search_elapsed),
+            profile::millis(subtract_elapsed),
+            profile::millis(minor_elapsed),
+        );
+    }
     stage_timings.minor_cycle += minor_elapsed;
     stage_timings.minor_cycle_solve += minor_elapsed;
     HogbomMinorCycleOutcome {
@@ -11899,6 +12518,1086 @@ fn run_hogbom_minor_cycle(
         final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
     }
 }
+
+fn standard_mfs_hogbom_metal_minor_cycle_enabled() -> Result<bool, ImagingError> {
+    let backend = standard_mfs_backend_selection_from_env()?;
+    if matches!(
+        backend,
+        StandardMfsBackendSelection::Metal
+            | StandardMfsBackendSelection::MetalRowRun
+            | StandardMfsBackendSelection::MetalRowRunGrouped
+    ) {
+        return Ok(true);
+    }
+    if standard_mfs_residual_backend_selection_from_env()?.is_some() {
+        return Ok(true);
+    }
+    if standard_mfs_initial_dirty_backend_selection_from_env()?.is_some() {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hogbom_flatten_array2_x_major(values: &Array2<f32>) -> Vec<f32> {
+    let (nx, ny) = values.dim();
+    let mut flattened = Vec::with_capacity(nx.saturating_mul(ny));
+    for x in 0..nx {
+        for y in 0..ny {
+            flattened.push(values[(x, y)]);
+        }
+    }
+    flattened
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(any(not(target_os = "macos"), coverage))]
+fn run_hogbom_minor_cycle_metal(
+    _request: &ImagingRequest,
+    _psf_state: &PsfState,
+    _model: &mut Array2<f32>,
+    _residual: &mut Array2<f32>,
+    _cycle_reported_niter: usize,
+    _cycle_threshold_jy_per_beam: f32,
+    _nsigma_threshold_jy_per_beam: f32,
+    _stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    Err(ImagingError::Unsupported(
+        "Hogbom minor-cycle backend 'metal' requires macOS Metal".to_string(),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_hogbom_minor_cycle_metal(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    use std::{mem, slice};
+
+    use objc2_metal::{MTLBuffer, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions};
+
+    let (nx, ny) = residual.dim();
+    if nx == 0 || ny == 0 {
+        return Ok(HogbomMinorCycleOutcome {
+            updated_model: false,
+            actual_updates: 0,
+            reported_updates: 0,
+            stop_reason: Some(CleanStopReason::NoCleanablePixels),
+            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+        });
+    }
+    if psf_state.psf.dim() != (nx, ny) {
+        return Err(ImagingError::InvalidRequest(
+            "Hogbom Metal minor cycle requires residual and PSF shapes to match".to_string(),
+        ));
+    }
+    if let Some(mask) = request.clean_mask.as_ref()
+        && mask.dim() != (nx, ny)
+    {
+        return Err(ImagingError::InvalidRequest(
+            "Hogbom Metal minor cycle requires clean-mask and residual shapes to match".to_string(),
+        ));
+    }
+    let cell_count = nx
+        .checked_mul(ny)
+        .ok_or_else(|| ImagingError::InvalidRequest("Hogbom image is too large".to_string()))?;
+    let cell_count_u32 = u32::try_from(cell_count).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal image cell count exceeds u32".to_string())
+    })?;
+    let nx_u32 = u32::try_from(nx).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal image width exceeds u32".to_string())
+    })?;
+    let ny_u32 = u32::try_from(ny).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal image height exceeds u32".to_string())
+    })?;
+
+    let total_started = Instant::now();
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    let setup_started = Instant::now();
+    let cpu_reference_peak = hclean_peak_location_masked(residual, request.clean_mask.as_ref());
+    let (cpu_reference_peak_abs, cpu_reference_peak_x, cpu_reference_peak_y) = cpu_reference_peak
+        .map(|((x, y), value)| (value.abs(), x, y))
+        .unwrap_or((0.0, 0, 0));
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(cell_count);
+    let residual_values = hogbom_flatten_array2_x_major(residual);
+    let psf_values = hogbom_flatten_array2_x_major(&psf_state.psf);
+    let mask_values = request.clean_mask.as_ref().map(|mask| {
+        let (mask_nx, mask_ny) = mask.dim();
+        let mut values = Vec::with_capacity(mask_nx.saturating_mul(mask_ny));
+        for x in 0..mask_nx {
+            for y in 0..mask_ny {
+                values.push(u32::from(mask[(x, y)]));
+            }
+        }
+        values
+    });
+    let setup_elapsed = setup_started.elapsed();
+
+    let device_queue_started = Instant::now();
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Hogbom minor-cycle backend 'metal' could not find a default Metal device".to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Hogbom minor-cycle backend 'metal' could not create a Metal command queue".to_string(),
+        )
+    })?;
+    let device_queue_elapsed = device_queue_started.elapsed();
+    let shader_compile_started = Instant::now();
+    let source = objc2_foundation::NSString::from_str(HOGBOM_MINOR_CYCLE_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "Hogbom minor-cycle backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let shader_compile_elapsed = shader_compile_started.elapsed();
+    let pipeline_started = Instant::now();
+    let peak_pipeline = hogbom_metal_pipeline(&device, &library, "hogbom_peak_reduce_pixels")?;
+    let reduce_pipeline = hogbom_metal_pipeline(&device, &library, "hogbom_reduce_candidates")?;
+    let select_pipeline =
+        hogbom_metal_pipeline(&device, &library, "hogbom_select_peak_from_candidate")?;
+    let subtract_peak_pipeline =
+        hogbom_metal_pipeline(&device, &library, "hogbom_subtract_psf_and_find_next_peak")?;
+    let pipeline_elapsed = pipeline_started.elapsed();
+
+    let storage_options = MTLResourceOptions::StorageModeShared;
+    let buffer_started = Instant::now();
+    let residual_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        residual_values.as_slice(),
+        storage_options,
+        "residual",
+    )?;
+    let model_values = hogbom_flatten_array2_x_major(model);
+    let model_buffer =
+        hogbom_metal_buffer_from_slice(&device, model_values.as_slice(), storage_options, "model")?;
+    let psf_buffer =
+        hogbom_metal_buffer_from_slice(&device, psf_values.as_slice(), storage_options, "psf")?;
+    let mask_storage = mask_values.unwrap_or_else(|| vec![0u32]);
+    let mask_buffer =
+        hogbom_metal_buffer_from_slice(&device, mask_storage.as_slice(), storage_options, "mask")?;
+    let peak_threads_per_group = hogbom_metal_threads_per_group(&peak_pipeline, cell_count);
+    let first_candidate_count = cell_count.div_ceil(peak_threads_per_group);
+    let candidate_bytes = first_candidate_count
+        .max(1)
+        .checked_mul(mem::size_of::<HogbomMetalPeakCandidate>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("Hogbom Metal candidate buffer is too large".to_string())
+        })?;
+    let candidate_a = device
+        .newBufferWithLength_options(candidate_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Hogbom minor-cycle backend 'metal' could not allocate candidate buffer"
+                    .to_string(),
+            )
+        })?;
+    let candidate_b = device
+        .newBufferWithLength_options(candidate_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Hogbom minor-cycle backend 'metal' could not allocate reduction buffer"
+                    .to_string(),
+            )
+        })?;
+    let selected_peak_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        &[HogbomMetalPeakCandidate::default()],
+        storage_options,
+        "selected peak",
+    )?;
+    let buffer_elapsed = buffer_started.elapsed();
+
+    let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
+    let cycle_component_budget_u32 = u32::try_from(cycle_component_budget).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal component budget exceeds u32".to_string())
+    })?;
+    let mut readback_elapsed = Duration::ZERO;
+    let peak_threads_per_group_u32 = u32::try_from(peak_threads_per_group).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal peak threadgroup width exceeds u32".to_string())
+    })?;
+    let cycle_params = HogbomMetalCycleParams {
+        cell_count: cell_count_u32,
+        nx: nx_u32,
+        ny: ny_u32,
+        has_mask: u32::from(request.clean_mask.is_some()),
+        peak_threads_per_group: peak_threads_per_group_u32,
+        component_budget: cycle_component_budget_u32,
+        gain: request.clean.gain,
+        threshold_jy_per_beam: request.clean.threshold_jy_per_beam,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        _pad0: [0; 2],
+    };
+    let cycle_started = Instant::now();
+    let (
+        cycle_state,
+        cycle_timing,
+        peak_dispatches,
+        reduce_dispatches,
+        select_dispatches,
+        subtract_peak_dispatches,
+    ) = hogbom_metal_run_resident_cycle(
+        &queue,
+        &device,
+        &peak_pipeline,
+        &reduce_pipeline,
+        &select_pipeline,
+        &subtract_peak_pipeline,
+        &residual_buffer,
+        &model_buffer,
+        &psf_buffer,
+        &mask_buffer,
+        &candidate_a,
+        &candidate_b,
+        &selected_peak_buffer,
+        storage_options,
+        cycle_params,
+        first_candidate_count,
+    )?;
+    let cycle_elapsed = cycle_started.elapsed();
+    let cycle_component_updates = usize::try_from(cycle_state.updates).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal update count overflowed".to_string())
+    })?;
+    let updated_model = cycle_component_updates > 0;
+    let stop_reason = hogbom_metal_stop_reason(cycle_state.stop_reason);
+    let peak_searches = cycle_component_budget;
+    let subtract_updates = cycle_component_updates;
+    let command_buffers = 1usize;
+    let last_peak_abs = cycle_state.peak.abs_value;
+    let last_peak_value = cycle_state.peak.value;
+    let last_peak_index = cycle_state.peak.flat_index;
+
+    let readback_started = Instant::now();
+    let residual_slice = unsafe {
+        slice::from_raw_parts(
+            residual_buffer.contents().as_ptr().cast::<f32>(),
+            cell_count,
+        )
+    };
+    if let Some(target) = residual.as_slice_memory_order_mut() {
+        target.copy_from_slice(residual_slice);
+    } else {
+        for x in 0..nx {
+            for y in 0..ny {
+                residual[(x, y)] = residual_slice[x * ny + y];
+            }
+        }
+    }
+    let model_slice = unsafe {
+        slice::from_raw_parts(model_buffer.contents().as_ptr().cast::<f32>(), cell_count)
+    };
+    if let Some(target) = model.as_slice_memory_order_mut() {
+        target.copy_from_slice(model_slice);
+    } else {
+        for x in 0..nx {
+            for y in 0..ny {
+                model[(x, y)] = model_slice[x * ny + y];
+            }
+        }
+    }
+    readback_elapsed += readback_started.elapsed();
+
+    let total_elapsed = total_started.elapsed();
+    if collect_profile {
+        eprintln!(
+            "standard_mfs_hogbom_minor_cycle_summary backend=metal_resident_fused_peak updates={} reported_budget={} component_budget={} stop_reason={:?} image_pixels={} has_mask={} mask_pixels={} cpu_reference_peak_abs={:.9e} cpu_reference_peak_x={} cpu_reference_peak_y={} peak_searches={} subtract_updates={} initial_peak_dispatches={} reduce_dispatches={} select_dispatches={} subtract_peak_dispatches={} command_buffers={} first_candidate_count={} candidate_bytes={} last_peak_abs={:.9e} last_peak_value={:.9e} last_peak_index={} setup_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_ms={:.3} cycle_wall_ms={:.3} cycle_gpu_ms={:.3} cycle_host_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            cycle_component_updates,
+            cycle_reported_niter,
+            cycle_component_budget,
+            stop_reason,
+            cell_count,
+            request.clean_mask.is_some(),
+            clean_mask_pixels,
+            cpu_reference_peak_abs,
+            cpu_reference_peak_x,
+            cpu_reference_peak_y,
+            peak_searches,
+            subtract_updates,
+            peak_dispatches,
+            reduce_dispatches,
+            select_dispatches,
+            subtract_peak_dispatches,
+            command_buffers,
+            first_candidate_count,
+            candidate_bytes,
+            last_peak_abs,
+            last_peak_value,
+            last_peak_index,
+            profile::millis(setup_elapsed),
+            profile::millis(device_queue_elapsed),
+            profile::millis(shader_compile_elapsed),
+            profile::millis(pipeline_elapsed),
+            profile::millis(buffer_elapsed),
+            profile::millis(cycle_elapsed),
+            profile::millis(cycle_timing.kernel_elapsed),
+            profile::millis(cycle_elapsed.saturating_sub(cycle_timing.kernel_elapsed)),
+            profile::millis(readback_elapsed),
+            profile::millis(total_elapsed),
+        );
+    }
+    stage_timings.minor_cycle += total_elapsed;
+    stage_timings.minor_cycle_solve += total_elapsed;
+    Ok(HogbomMinorCycleOutcome {
+        updated_model,
+        actual_updates: cycle_component_updates,
+        reported_updates: cycle_component_updates.min(cycle_reported_niter),
+        stop_reason,
+        final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+        final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+const HOGBOM_METAL_THREADS_PER_GROUP: usize = 1024;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+type HogbomMetalBuffer =
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+type HogbomMetalPipeline =
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>>;
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[derive(Debug, Default, Clone, Copy)]
+struct HogbomMetalCommandTiming {
+    kernel_elapsed: Duration,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+impl HogbomMetalCommandTiming {
+    fn from_command_buffer(
+        command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    ) -> Self {
+        use objc2_metal::MTLCommandBuffer;
+
+        let start = command_buffer.kernelStartTime();
+        let end = command_buffer.kernelEndTime();
+        let kernel_elapsed = if end > start {
+            Duration::from_secs_f64(end - start)
+        } else {
+            Duration::ZERO
+        };
+        Self { kernel_elapsed }
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hogbom_metal_pipeline(
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    library: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLLibrary>,
+    entry_point: &str,
+) -> Result<HogbomMetalPipeline, ImagingError> {
+    use objc2_metal::{MTLDevice, MTLLibrary};
+
+    let function_name = objc2_foundation::NSString::from_str(entry_point);
+    let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
+        ImagingError::Unsupported(format!(
+            "Hogbom minor-cycle backend 'metal' shader entry point '{entry_point}' was not found"
+        ))
+    })?;
+    device
+        .newComputePipelineStateWithFunction_error(&function)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "Hogbom minor-cycle backend 'metal' failed to create pipeline '{entry_point}': {error:?}"
+            ))
+        })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hogbom_metal_buffer_from_slice<T>(
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    values: &[T],
+    storage_options: objc2_metal::MTLResourceOptions,
+    label: &str,
+) -> Result<HogbomMetalBuffer, ImagingError> {
+    use std::{mem, ptr};
+
+    use objc2_metal::{MTLBuffer, MTLDevice};
+
+    let byte_len = mem::size_of_val(values);
+    let buffer = device
+        .newBufferWithLength_options(byte_len, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(format!(
+                "Hogbom minor-cycle backend 'metal' could not allocate {label} buffer"
+            ))
+        })?;
+    if byte_len > 0 {
+        unsafe {
+            ptr::copy_nonoverlapping(
+                values.as_ptr().cast::<u8>(),
+                buffer.contents().as_ptr().cast::<u8>(),
+                byte_len,
+            );
+        }
+    }
+    Ok(buffer)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hogbom_metal_params_buffer<T>(
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    params: &T,
+    storage_options: objc2_metal::MTLResourceOptions,
+    label: &str,
+) -> Result<HogbomMetalBuffer, ImagingError> {
+    hogbom_metal_buffer_from_slice(device, std::slice::from_ref(params), storage_options, label)
+}
+
+fn hogbom_metal_stop_reason(code: u32) -> Option<CleanStopReason> {
+    match code {
+        0 => None,
+        1 => Some(CleanStopReason::GlobalThresholdReached),
+        2 => Some(CleanStopReason::NsigmaThresholdReached),
+        3 => Some(CleanStopReason::CycleThresholdReached),
+        6 => Some(CleanStopReason::NoCleanablePixels),
+        _ => None,
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn hogbom_metal_run_resident_cycle(
+    queue: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>,
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    peak_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    reduce_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    select_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    subtract_peak_pipeline: &objc2::runtime::ProtocolObject<
+        dyn objc2_metal::MTLComputePipelineState,
+    >,
+    residual_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    psf_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    mask_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    candidate_a: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    candidate_b: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    selected_peak_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    storage_options: objc2_metal::MTLResourceOptions,
+    params: HogbomMetalCycleParams,
+    first_candidate_count: usize,
+) -> Result<
+    (
+        HogbomMetalCycleState,
+        HogbomMetalCommandTiming,
+        usize,
+        usize,
+        usize,
+        usize,
+    ),
+    ImagingError,
+> {
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLSize,
+    };
+
+    let command_buffer = queue.commandBuffer().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Hogbom minor-cycle backend 'metal' could not create resident command buffer"
+                .to_string(),
+        )
+    })?;
+    let cycle_params_buffer =
+        hogbom_metal_params_buffer(device, &params, storage_options, "resident cycle params")?;
+    let initial_state = HogbomMetalCycleState::default();
+    let state_buffer =
+        hogbom_metal_buffer_from_slice(device, &[initial_state], storage_options, "cycle state")?;
+
+    let peak_threads = usize::try_from(params.cell_count).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal peak thread count overflowed".to_string())
+    })?;
+    let peak_threads_per_group = usize::try_from(params.peak_threads_per_group).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal peak threadgroup width overflowed".to_string())
+    })?;
+    let peak_group_count = peak_threads.div_ceil(peak_threads_per_group);
+
+    let mut reduce_param_buffers = Vec::new();
+    let mut reduce_plan = Vec::new();
+    let mut input_a = true;
+    let mut current_count = first_candidate_count.max(1);
+    while current_count > 1 {
+        let reduce_threads_per_group =
+            hogbom_metal_threads_per_group(reduce_pipeline, current_count);
+        let output_count = current_count.div_ceil(reduce_threads_per_group);
+        let reduce_params = HogbomMetalReduceParams {
+            candidate_count: u32::try_from(current_count).map_err(|_| {
+                ImagingError::InvalidRequest("Hogbom Metal candidate count exceeds u32".to_string())
+            })?,
+            nx: params.nx,
+            ny: params.ny,
+            threads_per_group: u32::try_from(reduce_threads_per_group).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "Hogbom Metal reduce threadgroup width exceeds u32".to_string(),
+                )
+            })?,
+        };
+        let reduce_params_buffer =
+            hogbom_metal_params_buffer(device, &reduce_params, storage_options, "reduce params")?;
+        reduce_param_buffers.push(reduce_params_buffer);
+        reduce_plan.push((input_a, output_count, reduce_threads_per_group));
+        input_a = !input_a;
+        current_count = output_count.max(1);
+    }
+    let final_candidate_from_a = input_a;
+
+    let component_budget = usize::try_from(params.component_budget).map_err(|_| {
+        ImagingError::InvalidRequest("Hogbom Metal component budget overflowed".to_string())
+    })?;
+    let mut peak_dispatches = 0usize;
+    let mut reduce_dispatches = 0usize;
+    let mut select_dispatches = 0usize;
+    let mut subtract_peak_dispatches = 0usize;
+
+    if component_budget > 0 {
+        let peak_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Hogbom minor-cycle backend 'metal' could not create resident peak encoder"
+                    .to_string(),
+            )
+        })?;
+        peak_encoder.setComputePipelineState(peak_pipeline);
+        unsafe {
+            peak_encoder.setBuffer_offset_atIndex(Some(residual_buffer), 0, 0);
+            peak_encoder.setBuffer_offset_atIndex(Some(mask_buffer), 0, 1);
+            peak_encoder.setBuffer_offset_atIndex(Some(candidate_a), 0, 2);
+            peak_encoder.setBuffer_offset_atIndex(Some(&cycle_params_buffer), 0, 3);
+            peak_encoder.setBuffer_offset_atIndex(Some(&state_buffer), 0, 4);
+        }
+        peak_encoder.dispatchThreadgroups_threadsPerThreadgroup(
+            MTLSize {
+                width: peak_group_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: peak_threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        peak_encoder.endEncoding();
+        peak_dispatches = peak_dispatches.saturating_add(1);
+
+        reduce_dispatches = reduce_dispatches.saturating_add(hogbom_metal_encode_reduce_plan(
+            &command_buffer,
+            reduce_pipeline,
+            candidate_a,
+            candidate_b,
+            &reduce_param_buffers,
+            &reduce_plan,
+            &state_buffer,
+        )?);
+
+        let final_candidate_buffer = if final_candidate_from_a {
+            candidate_a
+        } else {
+            candidate_b
+        };
+        hogbom_metal_encode_select_peak(
+            &command_buffer,
+            select_pipeline,
+            final_candidate_buffer,
+            selected_peak_buffer,
+            &state_buffer,
+            model_buffer,
+            &cycle_params_buffer,
+        )?;
+        select_dispatches = select_dispatches.saturating_add(1);
+
+        for component_index in 0..component_budget {
+            let subtract_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "Hogbom minor-cycle backend 'metal' could not create resident subtract/peak encoder"
+                        .to_string(),
+                )
+            })?;
+            subtract_encoder.setComputePipelineState(subtract_peak_pipeline);
+            unsafe {
+                subtract_encoder.setBuffer_offset_atIndex(Some(selected_peak_buffer), 0, 0);
+                subtract_encoder.setBuffer_offset_atIndex(Some(residual_buffer), 0, 1);
+                subtract_encoder.setBuffer_offset_atIndex(Some(psf_buffer), 0, 2);
+                subtract_encoder.setBuffer_offset_atIndex(Some(mask_buffer), 0, 3);
+                subtract_encoder.setBuffer_offset_atIndex(Some(candidate_a), 0, 4);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&cycle_params_buffer), 0, 5);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&state_buffer), 0, 6);
+            }
+            subtract_encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                MTLSize {
+                    width: peak_group_count,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: peak_threads_per_group,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            subtract_encoder.endEncoding();
+            subtract_peak_dispatches = subtract_peak_dispatches.saturating_add(1);
+
+            if component_index + 1 == component_budget {
+                break;
+            }
+            reduce_dispatches = reduce_dispatches.saturating_add(hogbom_metal_encode_reduce_plan(
+                &command_buffer,
+                reduce_pipeline,
+                candidate_a,
+                candidate_b,
+                &reduce_param_buffers,
+                &reduce_plan,
+                &state_buffer,
+            )?);
+            hogbom_metal_encode_select_peak(
+                &command_buffer,
+                select_pipeline,
+                final_candidate_buffer,
+                selected_peak_buffer,
+                &state_buffer,
+                model_buffer,
+                &cycle_params_buffer,
+            )?;
+            select_dispatches = select_dispatches.saturating_add(1);
+        }
+    }
+
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    let timing = HogbomMetalCommandTiming::from_command_buffer(&command_buffer);
+    if command_buffer.status() == MTLCommandBufferStatus::Error {
+        let message = command_buffer
+            .error()
+            .map(|error| format!("{error:?}"))
+            .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+        return Err(ImagingError::Unsupported(format!(
+            "Hogbom minor-cycle backend 'metal' resident command failed: {message}"
+        )));
+    }
+    let final_state = unsafe {
+        *std::slice::from_raw_parts(
+            state_buffer
+                .contents()
+                .as_ptr()
+                .cast::<HogbomMetalCycleState>(),
+            1,
+        )
+        .first()
+        .expect("one Hogbom Metal cycle state")
+    };
+    Ok((
+        final_state,
+        timing,
+        peak_dispatches,
+        reduce_dispatches,
+        select_dispatches,
+        subtract_peak_dispatches,
+    ))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn hogbom_metal_encode_reduce_plan(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    reduce_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    candidate_a: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    candidate_b: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    reduce_param_buffers: &[HogbomMetalBuffer],
+    reduce_plan: &[(bool, usize, usize)],
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<usize, ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let mut dispatches = 0usize;
+    for (reduce_index, (input_a_for_reduce, output_count, reduce_threads_per_group)) in
+        reduce_plan.iter().copied().enumerate()
+    {
+        let reduce_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Hogbom minor-cycle backend 'metal' could not create resident reduce encoder"
+                    .to_string(),
+            )
+        })?;
+        reduce_encoder.setComputePipelineState(reduce_pipeline);
+        let (input_buffer, output_buffer) = if input_a_for_reduce {
+            (candidate_a, candidate_b)
+        } else {
+            (candidate_b, candidate_a)
+        };
+        unsafe {
+            reduce_encoder.setBuffer_offset_atIndex(Some(input_buffer), 0, 0);
+            reduce_encoder.setBuffer_offset_atIndex(Some(output_buffer), 0, 1);
+            reduce_encoder.setBuffer_offset_atIndex(
+                Some(&reduce_param_buffers[reduce_index]),
+                0,
+                2,
+            );
+            reduce_encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 3);
+        }
+        reduce_encoder.dispatchThreadgroups_threadsPerThreadgroup(
+            MTLSize {
+                width: output_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: reduce_threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        reduce_encoder.endEncoding();
+        dispatches = dispatches.saturating_add(1);
+    }
+    Ok(dispatches)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn hogbom_metal_encode_select_peak(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    select_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    final_candidate_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    selected_peak_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    cycle_params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<(), ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let select_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Hogbom minor-cycle backend 'metal' could not create resident peak-select encoder"
+                .to_string(),
+        )
+    })?;
+    select_encoder.setComputePipelineState(select_pipeline);
+    unsafe {
+        select_encoder.setBuffer_offset_atIndex(Some(final_candidate_buffer), 0, 0);
+        select_encoder.setBuffer_offset_atIndex(Some(selected_peak_buffer), 0, 1);
+        select_encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 2);
+        select_encoder.setBuffer_offset_atIndex(Some(model_buffer), 0, 3);
+        select_encoder.setBuffer_offset_atIndex(Some(cycle_params_buffer), 0, 4);
+    }
+    select_encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+    );
+    select_encoder.endEncoding();
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn hogbom_metal_threads_per_group(
+    pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    thread_count: usize,
+) -> usize {
+    use objc2_metal::MTLComputePipelineState;
+
+    let thread_width = pipeline.threadExecutionWidth().max(1);
+    let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+    let capped = HOGBOM_METAL_THREADS_PER_GROUP
+        .min(thread_width.max(1).saturating_mul(32))
+        .min(max_threads)
+        .min(thread_count)
+        .max(1);
+    let mut power_of_two = 1usize;
+    while power_of_two.saturating_mul(2) <= capped {
+        power_of_two = power_of_two.saturating_mul(2);
+    }
+    power_of_two
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+const HOGBOM_MINOR_CYCLE_METAL_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct HogbomPeakCandidate {
+    float abs_value;
+    float value;
+    uint flat_index;
+    uint valid;
+};
+
+struct HogbomReduceParams {
+    uint candidate_count;
+    uint nx;
+    uint ny;
+    uint threads_per_group;
+};
+
+struct HogbomCycleParams {
+    uint cell_count;
+    uint nx;
+    uint ny;
+    uint has_mask;
+    uint peak_threads_per_group;
+    uint component_budget;
+    float gain;
+    float threshold_jy_per_beam;
+    float cycle_threshold_jy_per_beam;
+    float nsigma_threshold_jy_per_beam;
+    uint2 _pad0;
+};
+
+struct HogbomCycleState {
+    HogbomPeakCandidate peak;
+    float component;
+    uint updates;
+    uint stopped;
+    uint stop_reason;
+};
+
+static inline uint hogbom_order_key(uint flat_index, uint ny, uint nx) {
+    const uint x = flat_index / ny;
+    const uint y = flat_index - x * ny;
+    return y * nx + x;
+}
+
+static inline HogbomPeakCandidate hogbom_invalid_candidate() {
+    HogbomPeakCandidate candidate;
+    candidate.abs_value = 0.0f;
+    candidate.value = 0.0f;
+    candidate.flat_index = 0u;
+    candidate.valid = 0u;
+    return candidate;
+}
+
+static inline bool hogbom_candidate_better(
+    HogbomPeakCandidate candidate,
+    HogbomPeakCandidate best,
+    uint ny,
+    uint nx
+) {
+    if (candidate.valid == 0u) {
+        return false;
+    }
+    if (best.valid == 0u) {
+        return true;
+    }
+    if (candidate.abs_value > best.abs_value) {
+        return true;
+    }
+    if (candidate.abs_value == best.abs_value) {
+        return hogbom_order_key(candidate.flat_index, ny, nx) <
+               hogbom_order_key(best.flat_index, ny, nx);
+    }
+    return false;
+}
+
+static inline bool hogbom_threshold_reached_with_tolerance(float peak_abs, float threshold) {
+    if (threshold <= 0.0f) {
+        return peak_abs <= threshold;
+    }
+    const float tolerance = max(0.01f * threshold, 2.0e-8f);
+    return peak_abs <= threshold || fabs(peak_abs - threshold) <= tolerance;
+}
+
+static inline uint hogbom_stop_reason(float peak_abs, constant HogbomCycleParams &params) {
+    const bool threshold_floor_active =
+        params.threshold_jy_per_beam > 0.0f &&
+        (0.01f * params.threshold_jy_per_beam) < 2.0e-8f &&
+        params.cycle_threshold_jy_per_beam <= params.threshold_jy_per_beam;
+    if (peak_abs < params.threshold_jy_per_beam ||
+        (threshold_floor_active &&
+         hogbom_threshold_reached_with_tolerance(peak_abs, params.threshold_jy_per_beam))) {
+        return 1u;
+    }
+    if (params.nsigma_threshold_jy_per_beam > params.threshold_jy_per_beam &&
+        peak_abs < params.nsigma_threshold_jy_per_beam) {
+        return 2u;
+    }
+    if (peak_abs < params.cycle_threshold_jy_per_beam) {
+        return 3u;
+    }
+    return 0u;
+}
+
+kernel void hogbom_peak_reduce_pixels(
+    device const float *residual [[buffer(0)]],
+    device const uint *mask [[buffer(1)]],
+    device HogbomPeakCandidate *candidates [[buffer(2)]],
+    constant HogbomCycleParams &params [[buffer(3)]],
+    device const HogbomCycleState *state [[buffer(4)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup HogbomPeakCandidate local_candidates[1024];
+    HogbomPeakCandidate candidate = hogbom_invalid_candidate();
+    if (state->stopped == 0u &&
+        thread_index < params.cell_count &&
+        (params.has_mask == 0u || mask[thread_index] != 0u)) {
+        const float value = residual[thread_index];
+        candidate.abs_value = fabs(value);
+        candidate.value = value;
+        candidate.flat_index = thread_index;
+        candidate.valid = 1u;
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = params.peak_threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const HogbomPeakCandidate other = local_candidates[local_index + stride];
+            const HogbomPeakCandidate best = local_candidates[local_index];
+            if (hogbom_candidate_better(other, best, params.ny, params.nx)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        candidates[group_index] = local_candidates[0];
+    }
+}
+
+kernel void hogbom_reduce_candidates(
+    device const HogbomPeakCandidate *input [[buffer(0)]],
+    device HogbomPeakCandidate *output [[buffer(1)]],
+    constant HogbomReduceParams &params [[buffer(2)]],
+    device const HogbomCycleState *state [[buffer(3)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup HogbomPeakCandidate local_candidates[1024];
+    HogbomPeakCandidate candidate = hogbom_invalid_candidate();
+    if (state->stopped == 0u && thread_index < params.candidate_count) {
+        candidate = input[thread_index];
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const HogbomPeakCandidate other = local_candidates[local_index + stride];
+            const HogbomPeakCandidate best = local_candidates[local_index];
+            if (hogbom_candidate_better(other, best, params.ny, params.nx)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        output[group_index] = local_candidates[0];
+    }
+}
+
+kernel void hogbom_select_peak_from_candidate(
+    device const HogbomPeakCandidate *peak_candidate [[buffer(0)]],
+    device HogbomPeakCandidate *selected_peak [[buffer(1)]],
+    device HogbomCycleState *state [[buffer(2)]],
+    device float *model [[buffer(3)]],
+    constant HogbomCycleParams &params [[buffer(4)]],
+    uint thread_index [[thread_position_in_grid]]
+) {
+    if (thread_index != 0u || state->stopped != 0u) {
+        return;
+    }
+    const HogbomPeakCandidate peak = peak_candidate[0];
+    selected_peak[0] = peak;
+    state->peak = peak;
+    if (peak.valid == 0u) {
+        state->stopped = 1u;
+        state->stop_reason = 6u;
+        return;
+    }
+    const uint reason = hogbom_stop_reason(peak.abs_value, params);
+    if (reason != 0u) {
+        state->stopped = 1u;
+        state->stop_reason = reason;
+        return;
+    }
+    const float component = params.gain * peak.value;
+    state->component = component;
+    state->updates += 1u;
+    model[peak.flat_index] += component;
+}
+
+kernel void hogbom_subtract_psf_and_find_next_peak(
+    device const HogbomPeakCandidate *selected_peak [[buffer(0)]],
+    device float *residual [[buffer(1)]],
+    device const float *psf [[buffer(2)]],
+    device const uint *mask [[buffer(3)]],
+    device HogbomPeakCandidate *candidates [[buffer(4)]],
+    constant HogbomCycleParams &params [[buffer(5)]],
+    device const HogbomCycleState *state [[buffer(6)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup HogbomPeakCandidate local_candidates[1024];
+    HogbomPeakCandidate candidate = hogbom_invalid_candidate();
+    if (state->stopped == 0u && thread_index < params.cell_count) {
+        const HogbomPeakCandidate peak = selected_peak[0];
+        if (peak.valid != 0u) {
+            const uint x = thread_index / params.ny;
+            const uint y = thread_index - x * params.ny;
+            const uint peak_x = peak.flat_index / params.ny;
+            const uint peak_y = peak.flat_index - peak_x * params.ny;
+            const int kernel_x = int(x) - int(peak_x) + int(params.nx / 2u);
+            const int kernel_y = int(y) - int(peak_y) + int(params.ny / 2u);
+            if (kernel_x >= 0 && kernel_y >= 0 &&
+                kernel_x < int(params.nx) && kernel_y < int(params.ny)) {
+                const uint kernel_index = uint(kernel_x) * params.ny + uint(kernel_y);
+                residual[thread_index] -= state->component * psf[kernel_index];
+            }
+        }
+        if (params.has_mask == 0u || mask[thread_index] != 0u) {
+            const float value = residual[thread_index];
+            candidate.abs_value = fabs(value);
+            candidate.value = value;
+            candidate.flat_index = thread_index;
+            candidate.valid = 1u;
+        }
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = params.peak_threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const HogbomPeakCandidate other = local_candidates[local_index + stride];
+            const HogbomPeakCandidate best = local_candidates[local_index];
+            if (hogbom_candidate_better(other, best, params.ny, params.nx)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        candidates[group_index] = local_candidates[0];
+    }
+}
+"#;
 
 #[allow(clippy::too_many_arguments)]
 fn run_clark_minor_cycle(
@@ -12318,6 +14017,7 @@ fn run_clark_cotton_schwab(
     mut residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
+    cycle_threshold_override_jy_per_beam: Option<f32>,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     let deconvolver_setup_started = Instant::now();
@@ -12370,7 +14070,9 @@ fn run_clark_cotton_schwab(
         let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
-            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+            cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
+                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+            });
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_clark_minor_cycle(
             request,
@@ -12454,6 +14156,7 @@ fn run_multiscale_cotton_schwab(
     mut residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
+    cycle_threshold_override_jy_per_beam: Option<f32>,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     let deconvolver_setup_started = Instant::now();
@@ -12516,7 +14219,9 @@ fn run_multiscale_cotton_schwab(
         let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
-            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+            cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
+                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+            });
         let probe = MinorCycleProbe {
             initial_scale_pixels: Some(scales[cycle_candidate.scale_index]),
             initial_candidate_strength_jy_per_beam: Some(cycle_candidate.strength),
@@ -20604,25 +22309,7 @@ fn peak_location_masked_in_window(
         return None;
     }
 
-    let mut best = None;
-    // Match casacore's `hclean` search order inside the current dirty window:
-    // y-major, retaining the first pixel for exact ties.
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            if mask.is_some_and(|current| !current[(x, y)]) {
-                continue;
-            }
-            let value = image[(x, y)];
-            match best {
-                None => best = Some(((x, y), value)),
-                Some((_, best_value)) if value.abs() > best_value.abs() => {
-                    best = Some(((x, y), value));
-                }
-                _ => {}
-            }
-        }
-    }
-    best
+    peak_location_masked_in_bounds_zero_tolerance(image, mask, x0, y0, x1, y1)
 }
 
 fn hclean_peak_location_masked(
@@ -20638,6 +22325,13 @@ fn peak_location_masked_with_relative_tolerance(
     relative_tolerance: f32,
 ) -> Option<((usize, usize), f32)> {
     let (nx, ny) = image.dim();
+    if relative_tolerance == 0.0 {
+        if nx == 0 || ny == 0 {
+            return None;
+        }
+        return peak_location_masked_in_bounds_zero_tolerance(image, mask, 0, 0, nx - 1, ny - 1);
+    }
+
     let mut best = None;
     // Match casacore's `hclean` search order: y-major, with an optional
     // tolerance to keep near-tied peaks stable against gridding roundoff.
@@ -20659,6 +22353,38 @@ fn peak_location_masked_with_relative_tolerance(
         }
     }
     best
+}
+
+fn peak_location_masked_in_bounds_zero_tolerance(
+    image: &Array2<f32>,
+    mask: Option<&Array2<bool>>,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+) -> Option<((usize, usize), f32)> {
+    let (nx, _) = image.dim();
+    let mut best = None::<((usize, usize), f32, usize)>;
+    for x in x0..=x1 {
+        for y in y0..=y1 {
+            if mask.is_some_and(|current| !current[(x, y)]) {
+                continue;
+            }
+            let value = image[(x, y)];
+            let order_key = y.saturating_mul(nx).saturating_add(x);
+            match best {
+                None => best = Some(((x, y), value, order_key)),
+                Some((_, best_value, best_key))
+                    if value.abs() > best_value.abs()
+                        || (value.abs() == best_value.abs() && order_key < best_key) =>
+                {
+                    best = Some(((x, y), value, order_key));
+                }
+                _ => {}
+            }
+        }
+    }
+    best.map(|(position, value, _)| (position, value))
 }
 
 fn compute_cycle_threshold(
@@ -21045,17 +22771,16 @@ mod tests {
     #[cfg(all(target_os = "macos", not(coverage)))]
     use std::time::Duration;
 
-    #[cfg(all(target_os = "macos", not(coverage)))]
-    use super::compute_dirty_psf_and_residual_standard_metal;
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeModelChannelContribution,
         CubeModelInterpolationBatch, Deconvolver, GridderMode, GroupedVisibilityMetadata,
-        GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImagingRequest,
-        ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes,
-        PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
-        StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
-        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
+        GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImageWindow,
+        ImagingRequest, ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
+        PlaneStokes, PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata,
+        SinglePlaneVisibilityBlock, StandardGridder, StandardMfsBackendSelection,
+        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
+        StandardMfsExecutionConfig, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
+        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
         StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
         WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
@@ -21066,15 +22791,23 @@ mod tests {
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
         mosaic_projector_sampling, parse_standard_mfs_backend_selection,
         parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
+        peak_location_masked_in_window,
+        prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_voltage_pattern_for_offsets, run_hogbom_minor_cycle, run_imaging,
         run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
-        run_standard_mfs_weighted_streaming_with_execution_config, tolerant_clean_stop_reason,
+        run_standard_mfs_weighted_streaming_with_execution_config,
+        skip_standard_mfs_prepared_clean_plane_with_cycle_threshold, tolerant_clean_stop_reason,
         trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
+    };
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    use super::{
+        compute_dirty_psf_and_residual_standard_metal, run_hogbom_minor_cycle_cpu,
+        run_hogbom_minor_cycle_metal, standard_mfs_metal_device_available,
     };
 
     #[test]
@@ -21832,6 +23565,87 @@ mod tests {
 
         assert_eq!(mosaic_projector_sampling(line_probe_geometry), 10);
         assert_eq!(mosaic_projector_sampling(continuum_geometry), 10);
+    }
+
+    #[test]
+    fn prepared_clean_skip_publishes_dirty_plane_without_minor_cycle_backend() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &[(0.0, 0.0, 0.0)],
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (16.0, 16.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.4e9, 1.4e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 100,
+                threshold_jy_per_beam: 0.0,
+                minor_cycle_length: 100,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let weighted_batches = apply_weighting(&request, &gridder).unwrap();
+        let builder = StandardMfsPlannedSampleBuilder::new(geometry).unwrap();
+        let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
+        builder
+            .plan_visibility_batch_into(&weighted_batches[0], &mut planned_samples)
+            .unwrap();
+        let mut run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
+        run_block.push_run_from_slice(&planned_samples);
+        let mut replay_count = 0usize;
+        let prepared =
+            prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config(
+                request,
+                StandardMfsExecutionConfig::default(),
+                |consumer| {
+                    replay_count += 1;
+                    consumer(&run_block)
+                },
+            )
+            .unwrap();
+        assert!(replay_count > 0);
+
+        let result =
+            skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(prepared, f32::MAX)
+                .unwrap();
+
+        assert_eq!(result.diagnostics.minor_iterations, 0);
+        assert_eq!(
+            result.diagnostics.clean_stop_reason,
+            Some(CleanStopReason::CycleThresholdReached)
+        );
+        let max_model = result
+            .model
+            .iter()
+            .fold(0.0f32, |best, value| best.max(value.abs()));
+        assert_eq!(max_model, 0.0);
+        let max_image_residual_delta = result
+            .image
+            .iter()
+            .zip(result.residual.iter())
+            .map(|(image, residual)| (image - residual).abs())
+            .fold(0.0f32, f32::max);
+        assert_eq!(max_image_residual_delta, 0.0);
     }
 
     #[test]
@@ -25305,6 +27119,36 @@ mod tests {
     }
 
     #[test]
+    fn peak_location_masked_window_keeps_y_major_tie_breaking_with_mask() {
+        let image = Array2::from_shape_vec(
+            (4, 4),
+            vec![
+                0.0, 0.0, 0.0, 0.0, //
+                0.0, 5.0, 0.0, 0.0, //
+                0.0, -5.0, 5.0, 0.0, //
+                0.0, 0.0, 0.0, 0.0,
+            ],
+        )
+        .unwrap();
+        let mut mask = Array2::from_elem((4, 4), true);
+        mask[(1, 1)] = false;
+
+        assert_eq!(
+            peak_location_masked_in_window(
+                &image,
+                Some(&mask),
+                ImageWindow {
+                    x0: 1,
+                    y0: 1,
+                    x1: 2,
+                    y1: 2,
+                },
+            ),
+            Some(((2, 1), -5.0))
+        );
+    }
+
+    #[test]
     fn hogbom_minor_cycle_matches_hclean_inclusive_iteration_budget() {
         let request = ImagingRequest {
             geometry: ImageGeometry {
@@ -25383,7 +27227,8 @@ mod tests {
             0.0,
             0.0,
             &mut stage_timings,
-        );
+        )
+        .expect("run Hogbom minor cycle");
 
         assert_eq!(outcome.actual_updates, 2);
         assert_eq!(outcome.reported_updates, 1);
@@ -25469,7 +27314,8 @@ mod tests {
             0.15,
             0.0,
             &mut stage_timings,
-        );
+        )
+        .expect("run Hogbom minor cycle");
 
         let cpp = match cpp_hogbom_clean_minor_cycle_2d(
             psf.as_slice().unwrap(),
@@ -25508,6 +27354,252 @@ mod tests {
                 "model mismatch: rust={rust_value} cpp={cpp_value}"
             );
         }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn hogbom_metal_minor_cycle_matches_cpu_on_simple_plane() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [8, 8],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.6,
+            clean: CleanConfig {
+                niter: 5,
+                gain: 0.25,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                minor_cycle_length: 5,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((8, 8));
+        psf[(4, 4)] = 1.0;
+        psf[(3, 4)] = 0.2;
+        psf[(5, 4)] = 0.18;
+        psf[(4, 3)] = 0.16;
+        psf[(4, 5)] = 0.12;
+        psf[(3, 3)] = 0.04;
+        psf[(5, 5)] = 0.03;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut cpu_model = Array2::<f32>::zeros((8, 8));
+        let mut metal_model = Array2::<f32>::zeros((8, 8));
+        let mut cpu_residual = Array2::<f32>::zeros((8, 8));
+        cpu_residual[(2, 3)] = 1.2;
+        cpu_residual[(5, 6)] = -0.9;
+        cpu_residual[(6, 1)] = 0.7;
+        cpu_residual[(1, 6)] = -0.5;
+        let mut metal_residual = cpu_residual.clone();
+        let mut cpu_timings = ImagingStageTimings::default();
+        let mut metal_timings = ImagingStageTimings::default();
+        let cpu = run_hogbom_minor_cycle_cpu(
+            &request,
+            &psf_state,
+            &mut cpu_model,
+            &mut cpu_residual,
+            5,
+            0.0,
+            0.0,
+            &mut cpu_timings,
+        );
+        let metal = run_hogbom_minor_cycle_metal(
+            &request,
+            &psf_state,
+            &mut metal_model,
+            &mut metal_residual,
+            5,
+            0.0,
+            0.0,
+            &mut metal_timings,
+        )
+        .expect("run Metal Hogbom minor cycle");
+        assert_eq!(metal.actual_updates, cpu.actual_updates);
+        assert_eq!(metal.reported_updates, cpu.reported_updates);
+        assert_eq!(metal.stop_reason, cpu.stop_reason);
+        for (&cpu_value, &metal_value) in cpu_model.iter().zip(metal_model.iter()) {
+            assert!(
+                (cpu_value - metal_value).abs() < 2.0e-6,
+                "model mismatch cpu={cpu_value} metal={metal_value}"
+            );
+        }
+        for (&cpu_value, &metal_value) in cpu_residual.iter().zip(metal_residual.iter()) {
+            assert!(
+                (cpu_value - metal_value).abs() < 2.0e-6,
+                "residual mismatch cpu={cpu_value} metal={metal_value}"
+            );
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn hogbom_metal_minor_cycle_reduces_all_threadgroups() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [32, 32],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.6,
+            clean: CleanConfig {
+                niter: 1,
+                gain: 0.25,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                minor_cycle_length: 1,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((32, 32));
+        psf[(16, 16)] = 1.0;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((32, 32));
+        let mut residual = Array2::<f32>::zeros((32, 32));
+        residual[(0, 0)] = 1.0;
+        residual[(31, 31)] = 20.0;
+        let mut timings = ImagingStageTimings::default();
+        let outcome = run_hogbom_minor_cycle_metal(
+            &request,
+            &psf_state,
+            &mut model,
+            &mut residual,
+            1,
+            10.0,
+            0.0,
+            &mut timings,
+        )
+        .expect("run Metal Hogbom minor cycle");
+        assert_eq!(outcome.actual_updates, 1);
+        assert_eq!(outcome.reported_updates, 1);
+        assert_eq!(outcome.stop_reason, None);
+        assert!((model[(31, 31)] - 5.0).abs() < 1.0e-6);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn hogbom_metal_minor_cycle_keeps_late_reduction_groups() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [512, 512],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.6,
+            clean: CleanConfig {
+                niter: 1,
+                gain: 0.25,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                minor_cycle_length: 1,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((512, 512));
+        psf[(256, 256)] = 1.0;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((512, 512));
+        let mut residual = Array2::<f32>::zeros((512, 512));
+        residual[(10, 10)] = 2.8;
+        residual[(400, 400)] = 160.0;
+        let mut timings = ImagingStageTimings::default();
+        let outcome = run_hogbom_minor_cycle_metal(
+            &request,
+            &psf_state,
+            &mut model,
+            &mut residual,
+            1,
+            10.0,
+            0.0,
+            &mut timings,
+        )
+        .expect("run Metal Hogbom minor cycle");
+        assert_eq!(outcome.actual_updates, 1);
+        assert_eq!(outcome.reported_updates, 1);
+        assert_eq!(outcome.stop_reason, None);
+        assert!((model[(400, 400)] - 40.0).abs() < 1.0e-6);
+        assert_eq!(model[(10, 10)], 0.0);
     }
 
     #[test]
