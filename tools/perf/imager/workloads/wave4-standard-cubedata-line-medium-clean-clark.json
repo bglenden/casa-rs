@@ -1,0 +1,46 @@
+{
+  "id": "wave4-standard-cubedata-line-medium-clean-clark",
+  "mode_id": "standard-cubedata-line-clean-clark-niter2",
+  "description": "Wave 4 W4-20 medium standard-gridder cubedata Clark clean workload for shared slab clean correctness and acceleration coverage.",
+  "dataset": {
+    "key": "wave1-vla-single-medium",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cubedata",
+    "gridder": "standard",
+    "interpolation": "nearest",
+    "field": "0",
+    "phasecenter_field": null,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 512,
+    "start": "0",
+    "width": "1",
+    "imsize": 1024,
+    "cell_arcsec": 0.35,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": false,
+    "deconvolver": "clark",
+    "nterms": 1,
+    "scales": "",
+    "niter": 2,
+    "minor_cycle_length": 2,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "profile_repeats": 1,
+    "phase_probe": "1",
+    "skip_profile": "1",
+    "run_label": "w4-20-cubedata-clark-medium",
+    "storage_label": "medium-row-correctness"
+  },
+  "comparison": {
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+    "max_elements_per_product": 1000000
+  }
+}

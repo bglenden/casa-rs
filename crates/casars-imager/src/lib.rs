@@ -2276,7 +2276,12 @@ fn run_single_image_from_config_with_gridder_override(
     eprintln!("{}", single_plane_plan.log_line());
     let standard_cube_slab_eligible =
         can_run_standard_cube_slab(config, force_standard_gridder, ms_paths.len());
-    let _standard_mfs_runtime_plan = if standard_cube_slab_eligible {
+    let mosaic_cube_slab_eligible = can_run_mosaic_cube_slab_from_bounded_stream(
+        config,
+        force_standard_gridder,
+        ms_paths.len(),
+    );
+    let _standard_mfs_runtime_plan = if standard_cube_slab_eligible || mosaic_cube_slab_eligible {
         None
     } else {
         Some(apply_standard_mfs_runtime_plan(
@@ -2338,8 +2343,7 @@ fn run_single_image_from_config_with_gridder_override(
             total_start,
         );
     }
-    if can_run_mosaic_cube_slab_from_bounded_stream(config, force_standard_gridder, ms_paths.len())
-    {
+    if mosaic_cube_slab_eligible {
         return run_mosaic_cube_slab_from_bounded_stream_open_ms(
             &ms,
             config,
@@ -3784,6 +3788,250 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_mfs_mosaic_single_plane_stream_products_with_selection(
+    ms: &MeasurementSet,
+    read_config: &CliConfig,
+    output_config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    total_start: Instant,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    geometry_columns: &PreparedGeometryColumnCache,
+) -> Result<MosaicSinglePlaneStreamProducts, String> {
+    let geometry = ImageGeometry {
+        image_shape: [read_config.imsize, read_config.imsize],
+        cell_size_rad: [
+            read_config.cell_arcsec * arcsec_to_rad(),
+            read_config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: if read_config.dirty_only {
+            0
+        } else {
+            read_config.niter
+        },
+        major_cycle_limit: read_config.nmajor,
+        gain: read_config.gain,
+        threshold_jy_per_beam: read_config.threshold_jy,
+        nsigma: read_config.nsigma,
+        psf_cutoff: read_config.psf_cutoff,
+        minor_cycle_length: read_config.minor_cycle_length,
+        cyclefactor: read_config.cyclefactor,
+        min_psf_fraction: read_config.min_psf_fraction,
+        max_psf_fraction: read_config.max_psf_fraction,
+        hogbom_iteration_mode: read_config.hogbom_iteration_mode,
+    };
+    let clean_mask = build_clean_mask(
+        read_config.imsize,
+        &read_config.mask_boxes,
+        read_config.mask_image.as_deref(),
+        read_config.use_mask == CleanMaskMode::User,
+    )?;
+
+    let prepare_started_at = Instant::now();
+    let flag_row = selection.flag_row.as_slice();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active MFS mosaic rows".to_string());
+    }
+    let channel_read_range = if read_config.spectral_mode.is_cube_like() {
+        selected_channel_read_range_for_cube_source_row_blocks(
+            read_config,
+            table_values,
+            selection,
+            derived_engine,
+        )?
+    } else {
+        selected_channel_read_range_for_shared_single_plane_acceleration(read_config, table_values)?
+    };
+    let selected_channel_count = if read_config.spectral_mode.is_cube_like() {
+        source_stream_selected_channel_count(table_values, channel_read_range)
+    } else {
+        selected_channel_count_estimate_from_table_values(read_config, table_values)
+    };
+    let strategy = standard_mfs_memory_plan_for_ms(
+        read_config,
+        ms,
+        data_column,
+        selected_channel_count,
+        active_selected_rows.len(),
+        table_values.corr_types.len(),
+    )?;
+    validate_standard_mfs_memory_plan(&strategy)?;
+    let row_block_rows = strategy.row_block_rows.max(1);
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_selected_rows.len(),
+        0,
+        0,
+        "mfs_mosaic_single_plane_stream",
+    );
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/mfs_mosaic_single_plane_stream rows_total={} selected_channels={} row_block_rows={}",
+            active_selected_rows.len(),
+            selected_channel_count,
+            row_block_rows,
+        );
+    }
+
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+
+    let first_rows_len = row_block_rows.min(active_selected_rows.len());
+    let first_plane = prepare_mfs_mosaic_source_row_block_plane(
+        ms,
+        read_config,
+        data_column,
+        false,
+        selection,
+        table_values,
+        ddid_info,
+        spectral_window,
+        polarization,
+        flag_row,
+        &active_selected_rows[..first_rows_len],
+        derived_engine,
+        channel_read_range,
+        geometry_columns,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+    )?;
+    let phase_center = first_plane.phase_center.clone();
+    let prepared_freq_ref = first_plane.freq_ref;
+    let cube_metadata =
+        single_plane_cube_coordinate_metadata(output_config, &first_plane, table_values)?;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: Vec::new(),
+        gridder_mode: first_plane.gridder_mode.clone(),
+        plane_stokes: first_plane.plane_stokes,
+        weighting: read_config.weighting,
+        reffreq_hz: first_plane.reffreq_hz,
+        selected_frequency_range_hz: first_plane.selected_frequency_range_hz,
+        deconvolver: read_config.deconvolver,
+        multiscale_scales: read_config.multiscale_scales.clone(),
+        small_scale_bias: read_config.small_scale_bias,
+        clean,
+        clean_mask: clean_mask.clone(),
+        initial_model: None,
+        w_term_mode: read_config.w_term_mode,
+        w_project_planes: read_config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+    let prepare_plane_time = prepare_started_at.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+
+    let run_started_at = Instant::now();
+    let mut replay_invocation = 0usize;
+    let weight_density_mode = standard_mfs_streaming_weight_density_mode(read_config);
+    let result =
+        run_mosaic_mfs_from_single_plane_stream(request, weight_density_mode, |pass, consumer| {
+            let replay_started = Instant::now();
+            let ordinal = replay_invocation;
+            replay_invocation += 1;
+            let load_visibility_values = pass.needs_visibility_values();
+            let mut block_count = 0usize;
+            let mut sample_count = 0usize;
+            for row_chunk in active_selected_rows.chunks(row_block_rows) {
+                let plane = prepare_mfs_mosaic_source_row_block_plane(
+                    ms,
+                    read_config,
+                    data_column,
+                    load_visibility_values,
+                    selection,
+                    table_values,
+                    ddid_info,
+                    spectral_window,
+                    polarization,
+                    flag_row,
+                    row_chunk,
+                    derived_engine,
+                    channel_read_range,
+                    geometry_columns,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                )
+                .map_err(ImagingError::InvalidRequest)?;
+                let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
+                    return Err(ImagingError::InvalidRequest(
+                        "streaming MFS mosaic row block produced standard gridder metadata"
+                            .to_string(),
+                    ));
+                };
+                for (batch, metadata) in plane
+                    .batches
+                    .into_iter()
+                    .zip(mosaic.grouped_metadata_batches)
+                {
+                    sample_count += batch.len();
+                    consumer(SinglePlaneVisibilityBlock {
+                        visibility: batch,
+                        gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
+                    })?;
+                }
+                block_count += 1;
+                if frontend_progress_enabled() {
+                    eprintln!(
+                        "frontend stage=run_imaging/mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                        ordinal,
+                        pass,
+                        load_visibility_values,
+                        (block_count * row_block_rows).min(active_selected_rows.len()),
+                        active_selected_rows.len(),
+                        block_count,
+                        sample_count,
+                        replay_started.elapsed().as_secs_f64(),
+                    );
+                }
+            }
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
+                    ordinal,
+                    pass,
+                    load_visibility_values,
+                    block_count,
+                    sample_count,
+                    duration_ms(replay_started.elapsed()),
+                );
+            }
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+    let run_imaging_time = run_started_at.elapsed();
+    accumulate_timings.log(prepare_started_at.elapsed());
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let mosaic_weight = result.diagnostics.mosaic_weight_image.clone();
+    Ok(MosaicSinglePlaneStreamProducts {
+        result,
+        clean_mask,
+        mosaic_weight,
+        cube_metadata,
+        phase_center,
+        prepared_freq_ref,
+        prepare_stage_timings,
+        prepare_plane_time,
+        run_imaging_time,
+    })
+}
+
 fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     ms: &MeasurementSet,
     read_config: &CliConfig,
@@ -3893,16 +4141,14 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         .channel_count
         .ok_or_else(|| "mosaic cube slab runner requires explicit channel_count".to_string())?;
     let channel_start = effective_cube_channel_start(config)?;
-    let active_planes = env_usize("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
-        .filter(|value| *value > 0)
-        .unwrap_or(1)
-        .min(nplanes.max(1));
+    let (active_planes, worker_count) = mosaic_cube_slab_plane_worker_shape(config, nplanes);
     let slab_manifest = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
     eprintln!(
-        "mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_single_plane_stream nplanes={} active_planes={} slab_count={} worker_count=1 source_reuse=per_plane product_state=product_backed_write_through",
+        "mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_multi_plane_stream nplanes={} active_planes={} slab_count={} worker_count={} source_reuse=shared_selection_per_plane_source_stream product_state=product_backed_write_through",
         nplanes,
         active_planes,
         slab_manifest.len(),
+        worker_count,
     );
 
     let metadata_started = Instant::now();
@@ -3942,6 +4188,25 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         &spectral_window,
         &polarization,
     )?;
+    let flag_row = selection.flag_row.as_slice();
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active mosaic cube rows".to_string());
+    }
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    let shared_geometry_elapsed = stage_started_at.elapsed();
     let metadata = collect_cube_slab_run_metadata(
         config,
         channel_start,
@@ -3975,7 +4240,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         0,
     )?;
     let mut write_products_time = product_started.elapsed();
-    let mut prepare_plane_input = metadata_elapsed;
+    let mut prepare_plane_input = metadata_elapsed + shared_geometry_elapsed;
     let mut get_ms_values_into_processing_buffer = Duration::ZERO;
     let mut prepare_processing_buffer = Duration::ZERO;
     let mut run_imaging_time = Duration::ZERO;
@@ -3987,21 +4252,71 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     let mut channel_summaries = Vec::with_capacity(nplanes);
 
     for slab in slab_manifest {
+        let slab_started = Instant::now();
         eprintln!(
-            "mosaic_cube_slab_start slab_id={} plane_start={} plane_end={}",
-            slab.slab_id, slab.plane_start, slab.plane_end
+            "mosaic_cube_slab_start slab_id={} plane_start={} plane_end={} worker_count={}",
+            slab.slab_id, slab.plane_start, slab.plane_end, worker_count
         );
-        for plane_index in slab.plane_start..slab.plane_end {
-            let plane_config =
-                slab_config_for_cube_planes(config, channel_start, plane_index, plane_index + 1)?;
+        let mut slab_runtime_config = slab_config_for_cube_planes(
+            config,
+            channel_start,
+            slab.plane_start,
+            slab.plane_start + 1,
+        )?;
+        if slab_runtime_config.imaging_prepare_workers.is_none() && worker_count > 1 {
+            slab_runtime_config.imaging_prepare_workers = Some(1);
+        }
+        if slab_runtime_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
+            slab_runtime_config.standard_mfs_grid_threads = Some("1".to_string());
+        }
+        let _slab_runtime_plan = apply_standard_mfs_runtime_plan(&slab_runtime_config, false, 1);
+        let tasks = (slab.plane_start..slab.plane_end)
+            .map(|plane_index| PlaneTask {
+                plane_index,
+                payload: plane_index,
+            })
+            .collect::<Vec<_>>();
+        let (plane_results, plane_run_elapsed) =
+            run_owned_independent_imaging_planes(tasks, worker_count, |plane_index| {
+                let mut plane_config = slab_config_for_cube_planes(
+                    config,
+                    channel_start,
+                    plane_index,
+                    plane_index + 1,
+                )?;
+                if plane_config.imaging_prepare_workers.is_none() && worker_count > 1 {
+                    plane_config.imaging_prepare_workers = Some(1);
+                }
+                if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
+                    plane_config.standard_mfs_grid_threads = Some("1".to_string());
+                }
+                let products = run_mfs_mosaic_single_plane_stream_products_with_selection(
+                    ms,
+                    &plane_config,
+                    &plane_config,
+                    data_column,
+                    total_start,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    &active_selected_rows,
+                    Some(&derived_engine),
+                    &geometry_columns,
+                )?;
+                let stage_timings = products.result.diagnostics.stage_timings;
+                Ok((products, stage_timings))
+            })?;
+        run_imaging_time += plane_run_elapsed;
+        let mut slab_worker_sum = Duration::ZERO;
+        let mut slab_worker_max = Duration::ZERO;
+        for plane_result in plane_results {
             let plane_started = Instant::now();
-            let products = run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
-                ms,
-                &plane_config,
-                &plane_config,
-                data_column,
-                total_start,
-            )?;
+            let plane_index = plane_result.plane_index;
+            let products = plane_result.result;
+            slab_worker_sum += plane_result.worker_elapsed;
+            slab_worker_max = slab_worker_max.max(plane_result.worker_elapsed);
             let diagnostics = products.result.diagnostics.clone();
             for warning in &diagnostics.warnings {
                 warnings.push(format!("channel {plane_index}: {warning}"));
@@ -4026,16 +4341,31 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 .prepare_stage_timings
                 .get_ms_values_into_processing_buffer;
             prepare_processing_buffer += products.prepare_stage_timings.prepare_processing_buffer;
-            run_imaging_time += products.run_imaging_time;
             let write_started = Instant::now();
             product_writers.write_plane(plane_index, products)?;
             write_products_time += write_started.elapsed();
             eprintln!(
-                "mosaic_cube_slab_plane plane={} elapsed_ms={:.3}",
+                "mosaic_cube_slab_plane plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} publish_elapsed_ms={:.3}",
                 plane_index,
+                plane_result.batch_index,
+                plane_result.batch_task_count,
+                plane_result.worker_slot,
+                duration_ms(plane_result.worker_elapsed),
                 duration_ms(plane_started.elapsed()),
             );
         }
+        eprintln!(
+            "mosaic_cube_slab_executor_summary slab_id={} plane_start={} plane_end={} worker_count={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} product_write_ms={:.3} residency=ordered_plane_results",
+            slab.slab_id,
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            slab.plane_end.saturating_sub(slab.plane_start),
+            duration_ms(slab_started.elapsed()),
+            duration_ms(slab_worker_sum),
+            duration_ms(slab_worker_max),
+            duration_ms(write_products_time),
+        );
     }
     let finish_started = Instant::now();
     product_writers.finish(config)?;
@@ -4063,6 +4393,17 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             total: total_start.elapsed(),
         },
     })
+}
+
+fn mosaic_cube_slab_plane_worker_shape(config: &CliConfig, nplanes: usize) -> (usize, usize) {
+    let nplanes = nplanes.max(1);
+    let worker_capacity = cube_slab_plane_worker_capacity(config, nplanes);
+    let active_planes = env_usize("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
+        .filter(|value| *value > 0)
+        .unwrap_or(worker_capacity)
+        .min(nplanes);
+    let worker_count = worker_capacity.min(active_planes.max(1)).max(1);
+    (active_planes, worker_count)
 }
 
 fn mosaic_stream_request_gridder_mode(gridder_mode: &GridderMode) -> Result<GridderMode, String> {
@@ -7607,7 +7948,6 @@ struct IndependentStreamingExecutorStats {
     completed: usize,
 }
 
-#[cfg(test)]
 fn run_owned_independent_imaging_planes<T, R, F>(
     tasks: Vec<PlaneTask<T>>,
     worker_count: usize,
@@ -41134,6 +41474,52 @@ mod tests {
                 assert!(env::var_os("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").is_none());
             }
         }
+    }
+
+    #[test]
+    fn mosaic_cube_slab_auto_uses_requested_plane_workers() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _forced_active_planes = EnvGuard::unset("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--start"),
+            OsString::from("0"),
+            OsString::from("--channel-count"),
+            OsString::from("16"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--field"),
+            OsString::from("0,1"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--weighting"),
+            OsString::from("uniform"),
+            OsString::from("--perchanweightdensity"),
+            OsString::from("--standard-mfs-grid-threads"),
+            OsString::from("4"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+        ])
+        .expect("parse mosaic cube slab config");
+
+        let (active_planes, worker_count) = mosaic_cube_slab_plane_worker_shape(&config, 16);
+
+        assert_eq!(active_planes, 4);
+        assert_eq!(worker_count, 4);
     }
 
     #[test]

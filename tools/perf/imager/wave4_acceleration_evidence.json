@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "description": "Current local Wave 4 acceleration evidence used to generate the W4-18 review table. Paths are GLENDENNING temporary benchmark artifacts.",
+  "results": [
+    {
+      "row_id": "standard_cube_dirty",
+      "role": "large_baseline",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-large-recovery-large-dirty-unshifted-ifft/runs/20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03.json"
+    },
+    {
+      "row_id": "standard_cube_dirty",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-standard-cube-large-24gb/20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480.json"
+    },
+    {
+      "row_id": "standard_cube_dirty",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-large-dirty-closeout-medium-current/runs/20260615T044356Z-wave1-vla-single-medium-standard-cube-line-f77694da.json"
+    },
+    {
+      "row_id": "standard_cube_clean_hogbom",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T055224Z-wave4-standard-cube-line-medium-casa-phase-probe-479fa5f6.json"
+    },
+    {
+      "row_id": "standard_cube_clean_clark",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T060517Z-wave4-standard-cube-line-medium-clean-clark-5c804f6b.json"
+    },
+    {
+      "row_id": "standard_cube_clean_multiscale",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json"
+    },
+    {
+      "row_id": "cubedata_dirty",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T070401Z-wave4-standard-cubedata-line-large-bounded-bdb7948d.json"
+    },
+    {
+      "row_id": "cubedata_dirty",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-11-cubedata-medium/20260616T043109Z-wave4-standard-cubedata-line-medium-97343406.json"
+    },
+    {
+      "row_id": "cubedata_clean_hogbom",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium/20260616T144357Z-wave4-standard-cubedata-line-medium-clean-hogbom-decc2963.json"
+    },
+    {
+      "row_id": "cubedata_clean_hogbom",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-small/20260616T142710Z-wave4-standard-cubedata-line-small-clean-hogbom-correctness-67779b86.json"
+    },
+    {
+      "row_id": "cubedata_clean_clark",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-small/20260616T142758Z-wave4-standard-cubedata-line-small-clean-clark-correctness-2712545a.json"
+    },
+    {
+      "row_id": "cubedata_clean_multiscale",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-small/20260616T143211Z-wave4-standard-cubedata-line-small-clean-multiscale-correctness-05d32735.json"
+    },
+    {
+      "row_id": "mosaic_cube_dirty",
+      "role": "single_plane_stream_baseline",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-forced1-sharedctx/20260616T131206Z-wave4-mosaic-cube-alma-large-dirty-turnaround-b52e9a4d.json"
+    },
+    {
+      "row_id": "mosaic_cube_dirty",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-sharedctx/20260616T130921Z-wave4-mosaic-cube-alma-large-dirty-turnaround-3f72240e.json"
+    },
+    {
+      "row_id": "mosaic_cube_dirty",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-small-sharedctx/20260616T130715Z-wave4-mosaic-cube-alma-small-dirty-correctness-71aca176.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_hogbom",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean/20260616T143339Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-dbb2bdd3.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-small-clean-sharedctx/20260616T131829Z-wave4-mosaic-cube-alma-small-clean-correctness-cdb61e37.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean-auto-slabruntime/20260616T132458Z-wave4-mosaic-cube-alma-small-clean-correctness-7be34f88.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_multiscale",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean/20260616T143414Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-5ac88e74.json"
+    }
+  ]
+}

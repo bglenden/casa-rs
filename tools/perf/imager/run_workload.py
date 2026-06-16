@@ -1356,6 +1356,26 @@ def build_benchmark_feature_summary(
             "cube_per_plane_fallback_reasons": backend_summary.get(
                 "cube_per_plane_fallback_reasons"
             ),
+            "mosaic_cube_slab_schedule": backend_summary.get(
+                "mosaic_cube_slab_schedule"
+            ),
+            "mosaic_cube_slab_executor_capabilities": backend_summary.get(
+                "mosaic_cube_slab_executor_capabilities"
+            ),
+            "mosaic_cube_slab_nplanes": backend_summary.get("mosaic_cube_slab_nplanes"),
+            "mosaic_cube_slab_active_planes": backend_summary.get(
+                "mosaic_cube_slab_active_planes"
+            ),
+            "mosaic_cube_slab_count": backend_summary.get("mosaic_cube_slab_count"),
+            "mosaic_cube_slab_worker_count": backend_summary.get(
+                "mosaic_cube_slab_worker_count"
+            ),
+            "mosaic_cube_slab_source_reuse": backend_summary.get(
+                "mosaic_cube_slab_source_reuse"
+            ),
+            "mosaic_cube_slab_product_state": backend_summary.get(
+                "mosaic_cube_slab_product_state"
+            ),
             "cpu_multi_worker_reason": backend_summary.get("single_plane_reason", {}).get("cpu_multi_worker")
             if isinstance(backend_summary.get("single_plane_reason"), dict)
             else None,

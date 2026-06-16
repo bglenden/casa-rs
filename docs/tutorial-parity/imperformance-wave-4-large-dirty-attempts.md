@@ -1,33 +1,35 @@
 # ImPerformance Wave 4 Large Dirty Attempts
 
 Truth class: evidence log
-Last reality check: 2026-06-15
+Last reality check: 2026-06-16
 Verification: Wave 4 benchmark JSONs under `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete`
 
 ## Baseline
 
 Current best large dirty spectral cube run:
 
-- Run: `20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03`
-- Runtime: 572.315 s
-- Plan: slab-first, 347 active planes, 3 slabs, 229811 row block rows, 10 workers
-- Modeled I/O: 153.532 GB total, 16.093 GB source read, 137.439 GB product write
-- Measured stages: 34.293 s source read, 533.973 s backend, 172.592 s product write
-- Plane timing: 5.203 s median, 6.423 s p95
-- Peak RSS: 17.250 GB
+- Run: `20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480`
+- Runtime: 524.143 s
+- Plan: slab-first, 120 active planes, 9 slabs, 308525 row block rows, 10 workers
+- Memory target: 24.000 GB decimal, with 7.858 GB visibility/source-side buffers and 14.205 GB slab/product-side scratch
+- Modeled I/O: 153.781 GB total, 16.342 GB source read, 137.439 GB product write
+- Measured stages: 37.337 s source read, 481.638 s backend, 58.435 s product write
+- Plane timing: 4.782 s median, 6.115 s p95
+- Peak RSS: 14.170 GB
 
 ## Closeout Evidence
 
-The current closeout run preserves the medium direction but does not improve the
-large dirty cube. Whole-plane product writes are active and efficient at the
-storage boundary, but the large run is now dominated by the per-plane backend
-path.
+The 24 GB decimal memory-cap run fixes the previous large regression and is now
+the best large dirty cube row. Whole-plane product writes are active and
+efficient at the storage boundary. The run is still dominated by the per-plane
+backend path, especially the scalar FFT pair.
 
-| Workload | Run | Rust s | CASA s | Speedup | Source read s | Backend s | Product write s | Source read GB | Product GB | Modeled I/O GB | Schedule | Slabs | Active planes | Workers | Plane median / p95 s | Peak RSS GB | Product tile counters |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Large best baseline | `20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03` | 572.315 | n/a | n/a | 34.293 | 533.973 | 172.592 | 15.989 | 137.439 | 153.532 | slab-first | 3 | 347 | 10 | 5.204 / 6.424 | 17.250 | older log shape; no direct counters |
-| Large current | `20260615T042423Z-wave1-alma-mosaic-large-standard-cube-line-1727f925` | 923.208 | n/a | n/a | 34.194 | 883.179 | 118.526 | 15.982 | 137.439 | 153.490 | slab-first | 2 | 514 | 10 | 8.808 / 9.718 | 18.498 | 2048 full-plane direct writes, 2048 direct tiles, 1024 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill |
-| Medium current | `20260615T044356Z-wave1-vla-single-medium-standard-cube-line-f77694da` | 165.212 | 1918.001 | 11.609x | 43.234 | 110.209 | 7.164 | 28.492 | 17.180 | 45.919 | slab-first | 2 | 256 | 10 | 2.064 / 3.201 | 18.581 | 1024 full-plane direct writes, 1024 direct tiles, 512 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill |
+| Workload | Run | Rust s | CASA s | Speedup | Source read s | Backend s | Product write s | Source read GB | Product GB | Modeled I/O GB | Schedule | Slabs | Active planes | Workers | Visibility-side GB | Slab/product GB | Plane median / p95 s | Peak RSS GB | Product tile counters |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Large previous best | `20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03` | 572.315 | n/a | n/a | 34.293 | 533.973 | 172.592 | 15.989 | 137.439 | 153.532 | slab-first | 3 | 347 | 10 | 18.233 | 11.771 | 5.203 / 6.423 | 17.250 | older log shape; no direct counters |
+| Large regressed 30 GB plan | `20260615T042423Z-wave1-alma-mosaic-large-standard-cube-line-1727f925` | 923.208 | n/a | n/a | 34.194 | 883.179 | 118.526 | 15.982 | 137.439 | 153.490 | slab-first | 2 | 514 | 10 | 20.165 | 9.839 | 8.808 / 9.716 | 18.498 | 2048 full-plane direct writes, 2048 direct tiles, 1024 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill |
+| Large current 24 GB cap | `20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480` | 524.143 | n/a | n/a | 37.337 | 481.638 | 58.435 | 16.030 | 137.439 | 153.781 | slab-first | 9 | 120 | 10 | 7.858 | 14.205 | 4.782 / 6.115 | 14.170 | 2048 full-plane direct writes, 2048 direct tiles, 1024 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill |
+| Medium current | `20260615T044356Z-wave1-vla-single-medium-standard-cube-line-f77694da` | 165.212 | 1918.001 | 11.609x | 43.234 | 110.209 | 7.164 | 28.492 | 17.180 | 45.919 | slab-first | 2 | 256 | 10 | recorded in JSON | recorded in JSON | 2.064 / 3.201 | 18.581 | 1024 full-plane direct writes, 1024 direct tiles, 512 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill |
 
 Medium correctness from the closeout bundle:
 
@@ -40,10 +42,11 @@ Medium correctness from the closeout bundle:
 
 Closeout decision:
 
-- Stop further tuning in this ticket. More slab/source scheduling is ruled out by the evidence: source reads are about 34 s on the latest large run, less than 4% of wall time.
-- Keep whole-plane product tiles and the zero-copy direct write path. The latest large run reduced product write from 172.592 s to 118.526 s and eliminated readback, zero-fill, and C-order conversion, but total wall regressed because backend execution rose from 533.973 s to 883.179 s.
-- Treat the large regression as a plane feed/backend problem, not evidence against whole-plane product layout. The large current median plane rose to 8.808 s from 5.204 s even though product writes improved.
-- The next distinct architectural bet is source-major or batched plane execution, tracked as optional Wave 4 follow-up #311: one pass over shared source blocks should feed multiple plane grids, with shared geometry/tap work and batched FFT/backend execution where possible. Continuing isolated scalar plane workers is unlikely to recover the missing factor.
+- Keep the 24 GB decimal memory cap as the current laptop-safe large-row target. It lowered peak RSS to 14.170 GB and improved wall time to 524.143 s, better than both the 923.208 s regressed run and the previous 572.315 s best baseline.
+- Do not spend more W4-14 time on slab-first versus source-first for large dirty unless source reads become dominant. The current source-read bucket is 37.337 s out of 524.143 s, about 7% of wall time.
+- Keep whole-plane product tiles and the zero-copy direct write path. Product write is now 58.435 s for 137.439 GB, with direct full-plane writes and no readback, zero-fill, or C-order conversion.
+- Treat the remaining large dirty cost as a per-plane backend problem. Median plane time is 4.782 s and median core time is 4.172 s; the median FFT pair is 2.977 s, larger than replay, grid update, and normalization/correction combined.
+- The next distinct architectural bet remains source-major or batched plane execution, tracked as optional Wave 4 follow-up #311: one pass over shared source blocks should feed multiple plane grids, with shared geometry/tap work and batched FFT/backend execution where possible. Continuing isolated scalar plane workers is unlikely to recover the next factor.
 
 ## Attempts
 
@@ -514,10 +517,52 @@ Evidence:
 
 Decision: keep the fast single-contribution path and its counters because it removes real generic feed-path overhead and improves the current medium diagnostic relative to the previous replay-instrumented run. Reject it as the large dirty performance solution: large total wall time regressed badly because per-plane backend execution ballooned, even though product writes used whole-plane direct tiles with no readback, zero-fill, or C-order conversion. Whole-plane product tiles remain the right product layout; this evidence points to changing the plane feed/grid/FFT execution model rather than backing away from whole-plane writes.
 
+### 24 GB decimal memory cap retest
+
+Status: keep as current large dirty evidence
+
+Hypothesis: the 923.208 s large regression may have come from planning against a
+30.065 GB target on a 32 GiB laptop. A stricter 24 GB decimal cap should reduce
+resident pressure and avoid the high-active-plane plan without losing product
+write efficiency.
+
+Implementation tested:
+
+- `imaging_memory_target_mb=22888`, which is 23,999,807,488 bytes and therefore
+  just under 24 GB decimal.
+- Same large standard cube dirty workload, CASA skipped, profile skipped.
+- Same whole-plane direct product writer and shared read-only slab source path.
+
+Evidence:
+
+- Run: `20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480`
+- Runtime improved to 524.143 s, versus 923.208 s for the regressed 30 GB plan
+  and 572.315 s for the previous best large baseline.
+- Plan changed to 120 active planes, 9 slabs, 308525 row block rows, 10 workers.
+- Planned active memory was 24.000 GB, with 7.858 GB visibility/source-side
+  buffers and 14.205 GB slab/product-side scratch.
+- Peak RSS was 14.170 GB, below the 24 GB decimal target and below both previous
+  large rows.
+- Source read was 37.337 s for 16.030 GB measured source bytes.
+- Backend execution was 481.638 s, still the dominant bucket.
+- Product write was 58.435 s for 137.439 GB, with 2048 full-plane direct writes,
+  1024 Fortran-order full-plane calls, no C-order calls, no LRU reads, and no
+  zero-fill.
+- Plane timing improved to 4.782 s median and 6.115 s p95.
+- Median per-plane core split: 4.172 s core total, 2.977 s FFT pair, 0.160 s
+  sample replay, 0.396 s grid update, 0.280 s PSF grid, 0.280 s residual grid,
+  and 0.233 s combined correction/normalization.
+
+Decision: keep the 24 GB decimal cap as the current laptop-safe large dirty
+target. This alone fixes the large regression and improves over the previous
+best large row. It does not remove the remaining backend lower bound: FFTs and
+per-plane backend work are now the next optimization target.
+
 ## Current Direction
 
 Do not spend more time on slab-first/source-first while source reads remain below 15% of total wall time. The credible levers are:
 
-- Product write: keep whole-plane tiles and the zero-copy direct writer. Do not abandon whole-plane layout; remove serial plane-product handoff costs only if the executor can publish true non-overlapping plane/slab views without copies.
-- Per-plane backend: target the feed/replay/grid-update/FFT path before more product-layout changes. The failed f32 and indexed-assignment runs showed that cheaper FFTs or faster assignment lookup alone do not help if each plane still scans the same rows and rebuilds scalar planned samples independently. The fast single-contribution path is useful on medium but failed to improve large wall time. The next material step likely needs source-major fanout, batched plane kernels, or a batched FFT/backend so one pass over the shared source feeds multiple plane grids without treating each plane as an isolated scalar unit.
+- Memory target: use 24 GB decimal for laptop large-dirty evidence. The 30.065 GB plan is preserved only as a rejected/regressed row.
+- Product write: keep whole-plane tiles and the zero-copy direct writer. Do not abandon whole-plane layout; current product write is 58.435 s for 137.439 GB with no readback or zero-fill.
+- Per-plane backend: target the feed/replay/grid-update/FFT path before more product-layout changes. The failed f32 and indexed-assignment runs showed that cheaper FFTs or faster assignment lookup alone do not help if each plane still scans the same rows and rebuilds scalar planned samples independently. The 24 GB run shows the FFT pair is now the largest median core bucket. The next material step likely needs source-major fanout, batched plane kernels, or a batched FFT/backend so one pass over the shared source feeds multiple plane grids without treating each plane as an isolated scalar unit.
 - Batched execution: group planes only where it reduces source replay, grid layout/allocation cost, FFT setup, or enables true bulk tiled writes. Plane grouping that merely holds many complete plane results is rejected.

@@ -754,6 +754,7 @@ Rust stage medians (milliseconds):
     total=800.000
 single_plane_execution_plan spectral=mfs projection=standard deconvolver=single-term weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=false pb_requirement=none output_products=.image,.residual cpu_multi_worker_eligible=true cpu_multi_worker_reason=standard-mfs-fixed-tile-workers-4 gpu_metal_eligible=false gpu_metal_reason=metal-device-unavailable
 standard_mfs_runtime_plan policy=auto eligible=true auto_multi_cpu=true auto_metal=false metal_device_available=false backend=fixed_tile backend_source=planner grid_threads=4 grid_threads_source=auto tile_anchor=center_quadrants tile_anchor_source=planner residual_backend=cpu residual_backend_source=planner initial_dirty_backend=cpu initial_dirty_backend_source=planner metal_grouped_input_cache=planner metal_grouped_input_cache_source=planner
+mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_multi_plane_stream nplanes=8 active_planes=4 slab_count=2 worker_count=4 source_reuse=shared_selection_per_plane_source_stream product_state=product_backed_write_through
 standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=8192 selected_channels=64 row_block_rows=2048 memory_target_bytes=8589934592 planned_active_bytes=200 source_stream_buffer_bytes=393216 live_row_block_bytes=131072 live_bucket_bytes=65536 visibility_row_channel_bytes=13 visibility_row_fixed_bytes=28 visibility_row_fixed_resident_bytes=120 visibility_row_cache_overhead_bytes=92 modeled_source_read_bytes=123456
 standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iterations=500 peak_rss_bytes=123456
 """
@@ -772,6 +773,14 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
 
         self.assertEqual("completed", bundle["status"])
         self.assertEqual("fixed_tile", bundle["benchmark_features"]["backend"]["resolved_backend"])
+        self.assertEqual(
+            "mosaic_multi_plane_stream",
+            bundle["benchmark_features"]["backend"]["mosaic_cube_slab_executor_capabilities"],
+        )
+        self.assertEqual(
+            4,
+            bundle["benchmark_features"]["backend"]["mosaic_cube_slab_worker_count"],
+        )
         self.assertEqual(8192, bundle["benchmark_features"]["visibility"]["selected_rows"])
         self.assertEqual(
             393216,
@@ -834,7 +843,7 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
     def test_parse_backend_plan_logs_extracts_spectral_slab_events(self) -> None:
         parsed = run_workload.parse_backend_plan_logs(
             """spectral_slab_plan schedule=source_first best_modeled_schedule=source_first executor_capabilities=full_slab_no_output_spill nplanes=8 image_shape=512x512 active_planes=8 slab_count=1 row_block_rows=32768 cache_budget_bytes=1048576 cache_kind=geometry_only visibility_cache_policy=disabled prepared_residency=row_block_stream visibility_cache_bytes=0 visibility_cache_source_channels=0 worker_count=4 backend=cpu_slab memory_target_bytes=536870912 fixed_frontend_bytes=33554432 source_stream_buffer_bytes=16777216 worker_staging_bytes=16777216 per_plane_state_bytes=2102272 component_memory_bytes=residual:1048576,psf:1048576 visibility_staging_bytes_per_plane=0 prepared_visibility_staging_bytes=0 live_prepared_visibility_bytes=888888 live_bucket_bytes=444444 product_scratch_bytes=3145728 product_batch_planes=2 gpu_staging_bytes=0 safety_margin_bytes=0 planned_active_bytes=456789 source_channel_visits=16 max_slab_source_channels=8 full_source_channel_count=16 source_cell_channel_count=64 corr_count=4 visibility_data_element_bytes=8 data_channel_read_granularity=requested_range flag_channel_read_granularity=full_cell weight_spectrum_channel_read_granularity=requested_range visibility_row_channel_bytes=52 visibility_row_fixed_bytes=184 visibility_row_fixed_resident_bytes=928 visibility_row_cache_overhead_bytes=744 visibility_resident_cache_layout=uvw,weight,field,spw,pol,is_cross,channel_origin,spectral_route best_modeled_total_io_bytes=7777 best_modeled_source_read_bytes=700 best_modeled_visibility_cache_io_bytes=0 best_modeled_output_spill_io_bytes=78 best_modeled_product_write_bytes=6999 best_modeled_active_planes=8 best_modeled_slab_count=1 best_modeled_source_channel_visits=16 modeled_total_io_bytes=7777 modeled_source_read_bytes=700 modeled_visibility_cache_fill_bytes=0 modeled_visibility_cache_read_bytes=0 modeled_visibility_cache_io_bytes=0 modeled_output_spill_read_bytes=39 modeled_output_spill_write_bytes=39 modeled_output_spill_io_bytes=78 modeled_product_write_bytes=6999 modeled_no_cache_source_read_bytes=2000 modeled_full_cache_source_read_bytes=700 visibility_cache_saved_read_bytes=1300 candidate_io_costs=source_first:total=7777,source=700,cache=0,spill=78,product=6999,product_groups=4,active_planes=8,slab_count=1,row_block_rows=32768,cache_policy=disabled,residency=row_block_stream,executable=true;hybrid:total=9999,source=1000,cache=3000,spill=0,product=5999,product_groups=4,active_planes=4,slab_count=2,row_block_rows=32768,cache_policy=full_source,residency=row_block_stream,executable=true warnings=none
-mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_single_plane_stream nplanes=8 active_planes=1 slab_count=8 worker_count=1 source_reuse=per_plane product_state=product_backed_write_through
+mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_multi_plane_stream nplanes=8 active_planes=4 slab_count=2 worker_count=4 source_reuse=shared_selection_per_plane_source_stream product_state=product_backed_write_through
 cube_per_plane_backend_summary phase=clean_deconvolution output_planes=8 plane_worker_count=4 per_plane_grid_threads=2 policy=multi-cpu selected_backend=wave3_fixed_tile_cpu fixed_tile_cpu_eligible=true metal_eligible=false metal_device_available=false deconvolver=Hogbom fallback_reasons=metal_device_unavailable
 spectral_slab_event mode=cube pass_kind=initial_dirty stage=source_read slab_id=0 plane_start=0 plane_end=4 row_block_rows=32768 bytes_read=2048 bytes_written=unset worker_count=4 backend=cpu_slab elapsed_ms=12 estimated_resident_bytes=123456
 spectral_slab_memory mode=cube stage=after_slab_prepare slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1000000 peak_rss_bytes=1200000 delta_from_baseline_bytes=400000 delta_from_previous_bytes=300000 estimated_resident_bytes=123456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=prepared
@@ -856,14 +865,17 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         self.assertEqual("source_first", parsed["summary"]["spectral_schedule"])
         self.assertEqual("slab_first", parsed["summary"]["mosaic_cube_slab_schedule"])
         self.assertEqual(
-            "mosaic_single_plane_stream",
+            "mosaic_multi_plane_stream",
             parsed["summary"]["mosaic_cube_slab_executor_capabilities"],
         )
         self.assertEqual(8, parsed["summary"]["mosaic_cube_slab_nplanes"])
-        self.assertEqual(1, parsed["summary"]["mosaic_cube_slab_active_planes"])
-        self.assertEqual(8, parsed["summary"]["mosaic_cube_slab_count"])
-        self.assertEqual(1, parsed["summary"]["mosaic_cube_slab_worker_count"])
-        self.assertEqual("per_plane", parsed["summary"]["mosaic_cube_slab_source_reuse"])
+        self.assertEqual(4, parsed["summary"]["mosaic_cube_slab_active_planes"])
+        self.assertEqual(2, parsed["summary"]["mosaic_cube_slab_count"])
+        self.assertEqual(4, parsed["summary"]["mosaic_cube_slab_worker_count"])
+        self.assertEqual(
+            "shared_selection_per_plane_source_stream",
+            parsed["summary"]["mosaic_cube_slab_source_reuse"],
+        )
         self.assertEqual(
             "product_backed_write_through",
             parsed["summary"]["mosaic_cube_slab_product_state"],

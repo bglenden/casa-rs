@@ -668,7 +668,7 @@ with tempfile.TemporaryDirectory() as td:
             savemodel="none",
             psfcutoff=psfcutoff,
         )
-        if specmode == "cube":
+        if specmode in ("cube", "cubedata"):
             casa_start = int(cube_start) if cube_start else chan_start
             casa_width = int(cube_width) if cube_width else 1
             kwargs.update(
