@@ -1,7 +1,7 @@
 {
   "id": "wave4-standard-cubedata-line-medium-clean-hogbom",
-  "mode_id": "standard-cubedata-line-clean-hogbom-casa-niter2",
-  "description": "Wave 4 W4-20 medium standard-gridder cubedata Hogbom clean workload for shared slab clean correctness and acceleration coverage.",
+  "mode_id": "standard-cubedata-line-clean-hogbom-casa-deep10000",
+  "description": "Wave 4 W4-20 medium standard-gridder cubedata Hogbom deep clean workload for shared slab clean correctness and acceleration coverage.",
   "dataset": {
     "key": "wave1-vla-single-medium",
     "root_env": "CASA_RS_IMPERF_DATA_ROOT",
@@ -28,8 +28,12 @@
     "hogbom_iteration_mode": "casa",
     "nterms": 1,
     "scales": "",
-    "niter": 2,
-    "minor_cycle_length": 2,
+    "niter": 10000,
+    "threshold_jy": 0.0,
+    "nsigma": 0.0,
+    "minor_cycle_length": 10000,
+    "min_psf_fraction": 0.0,
+    "max_psf_fraction": 0.0,
     "wterm": "none"
   },
   "run": {
@@ -38,7 +42,7 @@
     "phase_probe": "1",
     "skip_profile": "1",
     "run_label": "w4-20-cubedata-hogbom-medium",
-    "storage_label": "medium-row-correctness"
+    "storage_label": "medium-row-deep-clean"
   },
   "comparison": {
     "products": [".image", ".residual", ".psf", ".sumwt", ".model"],

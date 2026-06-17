@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import datetime as dt
 import json
 import os
@@ -773,12 +774,16 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "cube_per_plane_backend": [],
         "cube_resident_clean_control": [],
         "cube_resident_clean_executor": [],
+        "cube_resident_clean_finish_planes": [],
+        "cube_resident_clean_stage": [],
         "cube_source_row_blocks": [],
         "cube_product_summaries": [],
         "cube_plane_state_store": [],
         "visibility_geometry_cache": [],
         "executor_limitations": [],
         "worker_diagnostics": [],
+        "hogbom_minor_cycle_diagnostics": [],
+        "clean_residual_refresh_diagnostics": [],
         "metal_diagnostics": [],
     }
     for raw_line in text.splitlines():
@@ -815,6 +820,13 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["cube_resident_clean_control"].append(parsed)
         elif name == "cube_resident_clean_executor_summary":
             buckets["cube_resident_clean_executor"].append(parsed)
+        elif name == "cube_resident_clean_finish_plane":
+            buckets["cube_resident_clean_finish_planes"].append(parsed)
+        elif name in {
+            "cube_resident_clean_stage_summary",
+            "cube_resident_clean_finish_plane_stage_detail",
+        }:
+            buckets["cube_resident_clean_stage"].append(parsed)
         elif name == "cube_source_row_blocks":
             buckets["cube_source_row_blocks"].append(parsed)
         elif name == "cube_plane_state_store_summary":
@@ -828,6 +840,15 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["cube_product_summaries"].append(parsed)
         elif name.endswith("_executor_limitation"):
             buckets["executor_limitations"].append(parsed)
+        elif name == "standard_mfs_hogbom_minor_cycle_summary":
+            buckets["hogbom_minor_cycle_diagnostics"].append(parsed)
+            if parsed.get("fields", {}).get("backend") != "cpu":
+                buckets["metal_diagnostics"].append(parsed)
+        elif name == "standard_mfs_clean_residual_refresh_summary":
+            buckets["clean_residual_refresh_diagnostics"].append(parsed)
+            residual_backend = parsed.get("fields", {}).get("residual_backend")
+            if isinstance(residual_backend, str) and "metal" in residual_backend:
+                buckets["metal_diagnostics"].append(parsed)
         elif "worker" in name or "prepare_parallel" in name:
             buckets["worker_diagnostics"].append(parsed)
         elif "metal" in name:
@@ -886,6 +907,30 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
     cube_resident_control = last_fields(buckets.get("cube_resident_clean_control", []))
     cube_resident_executor = last_fields(buckets.get("cube_resident_clean_executor", []))
+    cube_resident_stage = last_fields(
+        [
+            entry
+            for entry in buckets.get("cube_resident_clean_stage", [])
+            if entry.get("name") == "cube_resident_clean_stage_summary"
+        ]
+    )
+    cube_resident_finish_planes = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(
+            buckets.get("cube_resident_clean_finish_planes", [])
+        )
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    cube_resident_finished_cleaned_planes = [
+        entry
+        for entry in cube_resident_finish_planes
+        if entry.get("skipped_minor_cycle") is False
+    ]
+    cube_resident_finished_skipped_planes = [
+        entry
+        for entry in cube_resident_finish_planes
+        if entry.get("skipped_minor_cycle") is True
+    ]
     cube_source_rows = last_fields(buckets.get("cube_source_row_blocks", []))
     cube_product_summaries = [
         entry.get("fields", {})
@@ -909,6 +954,33 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         visibility_geometry_cache[-1] if visibility_geometry_cache else {}
     )
     executor_limitation = last_fields(buckets.get("executor_limitations", []))
+    metal_entries = unique_entries_by_raw(buckets.get("metal_diagnostics", []))
+    clean_residual_refresh = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(
+            buckets.get("clean_residual_refresh_diagnostics", [])
+        )
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    metal_residual_refresh = fields_for_names(
+        metal_entries,
+        {
+            "standard_mfs_metal_residual_refresh",
+            "standard_mfs_metal_row_run_residual_refresh",
+            "standard_mfs_metal_row_run_grouped_residual_refresh",
+        },
+    )
+    metal_residual_refresh_detail = fields_for_names(
+        metal_entries,
+        {
+            "standard_mfs_metal_residual_refresh_detail",
+            "standard_mfs_metal_row_run_residual_refresh_detail",
+            "standard_mfs_metal_row_run_grouped_residual_refresh_detail",
+        },
+    )
+    metal_grouped_append_detail = fields_for_names(
+        metal_entries, {"standard_mfs_metal_row_run_grouped_append_detail"}
+    )
     spectral_memory = [
         entry.get("fields", {})
         for entry in buckets.get("spectral_slab_memory", [])
@@ -971,6 +1043,63 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         ),
         "cube_resident_clean_product_write_ms": cube_resident_executor.get(
             "product_write_ms"
+        ),
+        "cube_resident_clean_result_wait_ms": cube_resident_stage.get("result_wait_ms"),
+        "cube_resident_clean_consume_ms": cube_resident_stage.get("consume_ms"),
+        "cube_resident_clean_core_total_ms": cube_resident_stage.get("total_ms"),
+        "cube_resident_clean_minor_cycle_ms": cube_resident_stage.get("minor_cycle_ms"),
+        "cube_resident_clean_minor_cycle_solve_ms": cube_resident_stage.get(
+            "minor_cycle_solve_ms"
+        ),
+        "cube_resident_clean_major_cycle_refresh_ms": cube_resident_stage.get(
+            "major_cycle_refresh_ms"
+        ),
+        "cube_resident_clean_residual_refresh_overhead_ms": cube_resident_stage.get(
+            "residual_refresh_overhead_ms"
+        ),
+        "cube_resident_clean_restore_ms": cube_resident_stage.get("restore_ms"),
+        "cube_resident_clean_controller_overhead_ms": cube_resident_stage.get(
+            "controller_overhead_ms"
+        ),
+        "cube_resident_clean_finish_plane_count": len(cube_resident_finish_planes),
+        "cube_resident_clean_finish_cleaned_plane_count": len(
+            cube_resident_finished_cleaned_planes
+        ),
+        "cube_resident_clean_finish_skipped_plane_count": len(
+            cube_resident_finished_skipped_planes
+        ),
+        "cube_resident_clean_actual_updates": sum_int_or_float_field(
+            cube_resident_finish_planes, "actual_updates"
+        ),
+        "cube_resident_clean_reported_updates": sum_int_or_float_field(
+            cube_resident_finish_planes, "reported_updates"
+        ),
+        "cube_resident_clean_trace_minor_cycles": sum_int_or_float_field(
+            cube_resident_finish_planes, "minor_cycle_count"
+        ),
+        "cube_resident_clean_minor_iterations_from_planes": sum_int_or_float_field(
+            cube_resident_finish_planes, "minor_iterations"
+        ),
+        "cube_resident_clean_max_actual_updates_per_plane": max_int_field(
+            cube_resident_finish_planes, "actual_updates"
+        ),
+        "cube_resident_clean_model_nonzero_pixels": sum_int_or_float_field(
+            cube_resident_finish_planes, "model_nonzero_pixels"
+        ),
+        "cube_resident_clean_model_nonzero_planes": count_positive_field(
+            cube_resident_finish_planes, "model_nonzero_pixels"
+        ),
+        "cube_resident_clean_skipped_model_nonzero_planes": count_positive_field(
+            cube_resident_finished_skipped_planes, "model_nonzero_pixels"
+        ),
+        "cube_resident_clean_model_sum_abs_jy": sum_int_or_float_field(
+            cube_resident_finish_planes, "model_sum_abs_jy"
+        ),
+        "cube_resident_clean_model_peak_abs_jy": max_int_or_float_field(
+            cube_resident_finish_planes, "model_peak_abs_jy"
+        ),
+        "cube_resident_clean_stop_reason_counts": compact_value_counts(
+            cube_resident_finish_planes, "stop_reason"
         ),
         "mosaic_cube_slab_schedule": mosaic_cube_slab_plan.get("schedule"),
         "mosaic_cube_slab_executor_capabilities": mosaic_cube_slab_plan.get(
@@ -1100,6 +1229,153 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "visibility_geometry_cache_elapsed_ms": last_visibility_geometry_cache.get(
             "elapsed_ms"
         ),
+        "metal_diagnostic_count": len(metal_entries),
+        "clean_residual_refresh_calls": len(clean_residual_refresh),
+        "clean_residual_refresh_backend": last_field_value(
+            clean_residual_refresh, "residual_backend"
+        ),
+        "clean_residual_refresh_ms": sum_int_or_float_field(
+            clean_residual_refresh, "refresh_ms"
+        ),
+        "clean_residual_refresh_accounted_ms": sum_int_or_float_field(
+            clean_residual_refresh, "accounted_ms"
+        ),
+        "clean_residual_refresh_overhead_ms": sum_int_or_float_field(
+            clean_residual_refresh, "overhead_ms"
+        ),
+        "clean_residual_refresh_model_fft_ms": sum_int_or_float_field(
+            clean_residual_refresh, "model_fft_ms"
+        ),
+        "clean_residual_refresh_residual_degrid_grid_ms": sum_int_or_float_field(
+            clean_residual_refresh, "residual_degrid_grid_ms"
+        ),
+        "clean_residual_refresh_residual_fft_ms": sum_int_or_float_field(
+            clean_residual_refresh, "residual_fft_ms"
+        ),
+        "clean_residual_refresh_residual_normalize_ms": sum_int_or_float_field(
+            clean_residual_refresh, "residual_normalize_ms"
+        ),
+        "metal_residual_refresh_calls": len(metal_residual_refresh),
+        "metal_residual_refresh_prepare_plus_dispatch_ms": sum_int_or_float_field(
+            metal_residual_refresh, "prepare_plus_dispatch_ms"
+        ),
+        "metal_residual_refresh_dispatch_wait_ms": sum_int_or_float_field(
+            metal_residual_refresh, "dispatch_wait_ms"
+        ),
+        "metal_residual_refresh_dispatch_gpu_ms": sum_int_or_float_field(
+            metal_residual_refresh, "dispatch_gpu_ms"
+        ),
+        "metal_residual_refresh_dispatch_kernel_ms": sum_int_or_float_field(
+            metal_residual_refresh, "dispatch_kernel_ms"
+        ),
+        "metal_residual_refresh_readback_ms": sum_int_or_float_field(
+            metal_residual_refresh, "readback_ms"
+        ),
+        "metal_residual_refresh_chunks": sum_int_or_float_field(
+            metal_residual_refresh, "chunks"
+        ),
+        "metal_residual_refresh_runs": sum_int_or_float_field(
+            metal_residual_refresh, "runs"
+        ),
+        "metal_residual_refresh_logical_lanes": sum_int_or_float_field(
+            metal_residual_refresh, "logical_lanes"
+        ),
+        "metal_residual_refresh_group_descs": sum_int_or_float_field(
+            metal_residual_refresh, "group_descs"
+        ),
+        "metal_residual_refresh_lane_refs": sum_int_or_float_field(
+            metal_residual_refresh, "lane_refs"
+        ),
+        "metal_residual_refresh_input_cache_hits": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_hit"
+        ),
+        "metal_residual_refresh_input_cache_fills": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_fill"
+        ),
+        "metal_residual_refresh_input_cache_chunks": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_chunks"
+        ),
+        "metal_residual_refresh_input_cache_host_bytes": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_host_bytes"
+        ),
+        "metal_residual_refresh_model_pack_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "model_pack_ms"
+        ),
+        "metal_residual_refresh_model_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "model_buffer_ms"
+        ),
+        "metal_residual_refresh_density_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "density_buffer_ms"
+        ),
+        "metal_residual_refresh_grid_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "grid_buffer_ms"
+        ),
+        "metal_residual_refresh_replay_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "replay_ms"
+        ),
+        "metal_residual_refresh_append_total_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "append_total_ms"
+        ),
+        "metal_residual_refresh_dispatch_input_buffers_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_input_buffers_ms"
+        ),
+        "metal_residual_refresh_dispatch_params_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_params_buffer_ms"
+        ),
+        "metal_residual_refresh_dispatch_encode_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_encode_ms"
+        ),
+        "metal_residual_refresh_detail_dispatch_wait_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_wait_ms"
+        ),
+        "metal_residual_refresh_detail_dispatch_gpu_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_gpu_ms"
+        ),
+        "metal_residual_refresh_detail_dispatch_kernel_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_kernel_ms"
+        ),
+        "metal_residual_refresh_detail_readback_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "readback_ms"
+        ),
+        "metal_residual_refresh_staged_bytes": sum_int_or_float_field(
+            metal_residual_refresh_detail, "staged_bytes"
+        ),
+        "metal_residual_refresh_candidate_tap_visits": sum_int_or_float_field(
+            metal_residual_refresh_detail, "candidate_tap_visits"
+        ),
+        "metal_residual_refresh_candidate_model_reads": sum_int_or_float_field(
+            metal_residual_refresh_detail, "candidate_model_reads"
+        ),
+        "metal_residual_refresh_exact_candidate_grid_atomic_adds": sum_int_or_float_field(
+            metal_residual_refresh_detail, "exact_candidate_grid_atomic_adds"
+        ),
+        "metal_residual_refresh_grouped_candidate_grid_atomic_adds": sum_int_or_float_field(
+            metal_residual_refresh_detail, "grouped_candidate_grid_atomic_adds"
+        ),
+        "metal_residual_refresh_grouped_candidate_scan_tests": sum_int_or_float_field(
+            metal_residual_refresh_detail, "grouped_candidate_scan_tests"
+        ),
+        "metal_residual_refresh_unsupported_runs": sum_int_or_float_field(
+            metal_residual_refresh_detail, "unsupported_runs"
+        ),
+        "metal_grouped_append_setup_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "setup_ms"
+        ),
+        "metal_grouped_append_lane_push_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "lane_push_ms"
+        ),
+        "metal_grouped_append_data_flag_copy_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "data_flag_copy_ms"
+        ),
+        "metal_grouped_append_run_desc_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "run_desc_ms"
+        ),
+        "metal_grouped_append_group_assign_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "group_assign_ms"
+        ),
+        "metal_grouped_append_group_finalize_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "group_finalize_ms"
+        ),
         "executor_limitation_materialization": executor_limitation.get(
             "materialization"
         ),
@@ -1228,8 +1504,30 @@ def unique_entries_by_raw(entries: list[dict[str, Any]]) -> list[dict[str, Any]]
     return unique
 
 
+def fields_for_names(
+    entries: list[dict[str, Any]], names: set[str]
+) -> list[dict[str, Any]]:
+    return [
+        entry.get("fields", {})
+        for entry in entries
+        if entry.get("name") in names and isinstance(entry.get("fields", {}), dict)
+    ]
+
+
 def max_int_field(entries: list[dict[str, Any]], field: str) -> int | None:
     values = [entry.get(field) for entry in entries if isinstance(entry.get(field), int)]
+    return max(values) if values else None
+
+
+def max_int_or_float_field(
+    entries: list[dict[str, Any]], field: str
+) -> int | float | None:
+    values = [
+        entry.get(field)
+        for entry in entries
+        if isinstance(entry.get(field), int | float)
+        and not isinstance(entry.get(field), bool)
+    ]
     return max(values) if values else None
 
 
@@ -1240,6 +1538,34 @@ def sum_int_or_float_field(entries: list[dict[str, Any]], field: str) -> int | f
         if isinstance(entry.get(field), int | float)
     ]
     return sum(values) if values else None
+
+
+def count_positive_field(entries: list[dict[str, Any]], field: str) -> int:
+    return sum(
+        1
+        for entry in entries
+        if isinstance(entry.get(field), int | float)
+        and not isinstance(entry.get(field), bool)
+        and entry[field] > 0
+    )
+
+
+def compact_value_counts(entries: list[dict[str, Any]], field: str) -> str | None:
+    counts = Counter(
+        str(entry[field])
+        for entry in entries
+        if field in entry and entry[field] is not None
+    )
+    if not counts:
+        return None
+    return ",".join(f"{key}:{counts[key]}" for key in sorted(counts))
+
+
+def last_field_value(entries: list[dict[str, Any]], field: str) -> Any:
+    for entry in reversed(entries):
+        if field in entry:
+            return entry[field]
+    return None
 
 
 def max_entry_by_int_field(entries: list[dict[str, Any]], field: str) -> dict[str, Any]:

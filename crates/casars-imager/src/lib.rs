@@ -2730,11 +2730,23 @@ fn plan_cube_per_plane_execution(
     if cfg!(target_os = "macos") && !metal_device_available {
         fallback_reasons.push("metal_device_unavailable");
     }
+    let rejects_single_channel_cube_clean_metal_refresh = matches!(
+        config.standard_mfs_acceleration,
+        StandardMfsAccelerationPolicy::Auto | StandardMfsAccelerationPolicy::Metal
+    ) && metal_eligible;
+    if rejects_single_channel_cube_clean_metal_refresh {
+        fallback_reasons.push("single_channel_cube_clean_metal_refresh_replay_dominated");
+    }
     let owned_single_plane_identity_path = cube_clean_uses_owned_single_plane_identity_path(config);
     let selected_backend = match config.standard_mfs_acceleration {
         StandardMfsAccelerationPolicy::Cpu => PerPlaneExecutionBackend::SerialCpu,
-        StandardMfsAccelerationPolicy::Auto | StandardMfsAccelerationPolicy::Metal
-            if metal_eligible =>
+        StandardMfsAccelerationPolicy::Metal
+            if metal_eligible && !rejects_single_channel_cube_clean_metal_refresh =>
+        {
+            PerPlaneExecutionBackend::Wave3MetalGrouped
+        }
+        StandardMfsAccelerationPolicy::Auto
+            if metal_eligible && !rejects_single_channel_cube_clean_metal_refresh =>
         {
             PerPlaneExecutionBackend::Wave3MetalGrouped
         }
@@ -7167,6 +7179,14 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             .delta_since(product_io_stats_before);
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
+                "cube_resident_clean_stage_summary result_wait_ms={:.3} consume_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} {}",
+                duration_ms(plane_execution_stats.result_wait_elapsed),
+                duration_ms(plane_execution_stats.consume_elapsed),
+                duration_ms(plane_execution_stats.worker_elapsed_sum),
+                duration_ms(plane_execution_stats.worker_elapsed_max),
+                imaging_stage_timing_detail(resident_stage_timings),
+            );
+            eprintln!(
                 "cube_resident_clean_executor_summary planes={} worker_count={} completed={} skipped_minor_cycle_planes={} cleaned_planes={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} control_source_read_ms={:.3} publish_source_read_ms={:.3} control_prepare_ms={:.3} publish_prepare_ms={:.3} clean_control_ms={:.3} product_write_ms={:.3} control_modeled_physical_read_bytes={} publish_modeled_physical_read_bytes={} control_logical_visibility_bytes={} publish_logical_visibility_bytes={} product_bytes={} writer_groups={} writer_planes={} tiled_direct_write_bytes={} tiled_flat_flush_write_bytes={}",
                 nplanes,
                 memory_plan.worker_count,
@@ -9937,6 +9957,7 @@ fn finish_direct_clean_cube_plane_from_resident_state(
     execution_config: StandardMfsExecutionConfig,
     cube_cycle_threshold_jy_per_beam: f32,
 ) -> Result<(CubeImagingResult, DirectDirtyCubePlaneReplayTimings), String> {
+    let channel_frequency_hz = state.channel_frequency_hz;
     let mut weighting_plan = StandardMfsStreamingWeightingPlan::new_with_density_mode(
         state.geometry,
         state.weighting,
@@ -9959,7 +9980,7 @@ fn finish_direct_clean_cube_plane_from_resident_state(
     let mut replay_timings = state.direct_replay_timings;
     let mut planned_run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
     let collect_replay_detail = direct_cube_replay_detail_enabled();
-    let mut replay = |consumer: &mut dyn FnMut(
+    let mut planned_replay = |consumer: &mut dyn FnMut(
         &StandardMfsPlannedWeightedSampleRunBlock,
     ) -> Result<(), ImagingError>| {
         direct_cube_plane_replay_planned_run_blocks(
@@ -9980,11 +10001,11 @@ fn finish_direct_clean_cube_plane_from_resident_state(
         state.prepared,
         execution_config,
         Some(cube_cycle_threshold_jy_per_beam),
-        &mut replay,
+        &mut planned_replay,
     )
     .map_err(|error| error.to_string())?;
     Ok((
-        single_plane_imaging_result_to_cube_result(state.channel_frequency_hz, plane_result),
+        single_plane_imaging_result_to_cube_result(channel_frequency_hz, plane_result),
         replay_timings,
     ))
 }
@@ -10110,20 +10131,65 @@ fn process_resident_clean_plane_states(
             .ok_or_else(|| {
                 format!("resident cube clean plane {plane_index} returned no diagnostics")
             })?;
+        let actual_updates = plane_diagnostics
+            .minor_cycle_traces
+            .iter()
+            .map(|trace| trace.actual_updates)
+            .sum::<usize>();
+        let reported_updates = plane_diagnostics
+            .minor_cycle_traces
+            .iter()
+            .map(|trace| trace.reported_updates)
+            .sum::<usize>();
+        let last_trace_peak = plane_diagnostics
+            .minor_cycle_traces
+            .last()
+            .map_or(plane_diagnostics.final_residual_peak_jy_per_beam, |trace| {
+                trace.end_peak_residual_jy_per_beam
+            });
+        let model_nonzero_pixels = cube_result
+            .model
+            .iter()
+            .filter(|value| **value != 0.0)
+            .count();
+        let model_sum_abs_jy = cube_result
+            .model
+            .iter()
+            .map(|value| value.abs() as f64)
+            .sum::<f64>();
+        let model_peak_abs_jy = cube_result
+            .model
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0f32, f32::max);
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
-                "cube_resident_clean_finish_plane plane={} blocks={} skipped_minor_cycle={} gridded_samples={} initial_peak={:.9e} final_peak={:.9e} cycle_threshold={:.9e} stop_reason={:?} prepare_ms={:.3} finish_ms={:.3} replay=[{}]",
+                "cube_resident_clean_finish_plane plane={} blocks={} skipped_minor_cycle={} gridded_samples={} initial_peak={:.9e} final_peak={:.9e} trace_final_peak={:.9e} cycle_threshold={:.9e} stop_reason={:?} minor_iterations={} minor_cycle_count={} actual_updates={} reported_updates={} model_nonzero_pixels={} model_sum_abs_jy={:.9e} model_peak_abs_jy={:.9e} prepare_ms={:.3} finish_ms={:.3} replay=[{}]",
                 plane_index,
                 visibility_batches,
                 skip_minor_cycle,
                 plane_diagnostics.gridded_samples,
                 plane_diagnostics.initial_residual_peak_jy_per_beam,
                 plane_diagnostics.final_residual_peak_jy_per_beam,
+                last_trace_peak,
                 plane_diagnostics.final_cycle_threshold_jy_per_beam,
                 plane_diagnostics.clean_stop_reason,
+                plane_diagnostics.minor_iterations,
+                plane_diagnostics.minor_cycle_traces.len(),
+                actual_updates,
+                reported_updates,
+                model_nonzero_pixels,
+                model_sum_abs_jy,
+                model_peak_abs_jy,
                 duration_ms(prepare_elapsed),
                 duration_ms(worker_started.elapsed()),
                 direct_cube_replay_timing_detail(direct_replay_timings),
+            );
+            eprintln!(
+                "cube_resident_clean_finish_plane_stage_detail plane={} skipped_minor_cycle={} {}",
+                plane_index,
+                skip_minor_cycle,
+                imaging_stage_timing_detail(stage_timings),
             );
         }
         Ok((
@@ -12206,6 +12272,27 @@ fn add_imaging_stage_timings(total: &mut ImagingStageTimings, part: ImagingStage
     total.deconvolver_setup += part.deconvolver_setup;
     total.minor_cycle += part.minor_cycle;
     total.minor_cycle_solve += part.minor_cycle_solve;
+    total.deconvolver_peak_search += part.deconvolver_peak_search;
+    total.deconvolver_active_set_build += part.deconvolver_active_set_build;
+    total.deconvolver_model_update += part.deconvolver_model_update;
+    total.deconvolver_psf_subtract += part.deconvolver_psf_subtract;
+    total.deconvolver_residual_replay += part.deconvolver_residual_replay;
+    total.deconvolver_fft_convolve += part.deconvolver_fft_convolve;
+    total.deconvolver_peak_searches = total
+        .deconvolver_peak_searches
+        .saturating_add(part.deconvolver_peak_searches);
+    total.deconvolver_model_updates = total
+        .deconvolver_model_updates
+        .saturating_add(part.deconvolver_model_updates);
+    total.deconvolver_subtract_updates = total
+        .deconvolver_subtract_updates
+        .saturating_add(part.deconvolver_subtract_updates);
+    total.deconvolver_pixels_searched = total
+        .deconvolver_pixels_searched
+        .saturating_add(part.deconvolver_pixels_searched);
+    total.deconvolver_pixels_touched = total
+        .deconvolver_pixels_touched
+        .saturating_add(part.deconvolver_pixels_touched);
     total.major_cycle_refresh += part.major_cycle_refresh;
     total.residual_refresh_overhead += part.residual_refresh_overhead;
     total.multiscale_scale_refresh += part.multiscale_scale_refresh;
@@ -13371,6 +13458,27 @@ fn add_stage_timings(target: &mut ImagingStageTimings, extra: ImagingStageTiming
     target.deconvolver_setup += extra.deconvolver_setup;
     target.minor_cycle += extra.minor_cycle;
     target.minor_cycle_solve += extra.minor_cycle_solve;
+    target.deconvolver_peak_search += extra.deconvolver_peak_search;
+    target.deconvolver_active_set_build += extra.deconvolver_active_set_build;
+    target.deconvolver_model_update += extra.deconvolver_model_update;
+    target.deconvolver_psf_subtract += extra.deconvolver_psf_subtract;
+    target.deconvolver_residual_replay += extra.deconvolver_residual_replay;
+    target.deconvolver_fft_convolve += extra.deconvolver_fft_convolve;
+    target.deconvolver_peak_searches = target
+        .deconvolver_peak_searches
+        .saturating_add(extra.deconvolver_peak_searches);
+    target.deconvolver_model_updates = target
+        .deconvolver_model_updates
+        .saturating_add(extra.deconvolver_model_updates);
+    target.deconvolver_subtract_updates = target
+        .deconvolver_subtract_updates
+        .saturating_add(extra.deconvolver_subtract_updates);
+    target.deconvolver_pixels_searched = target
+        .deconvolver_pixels_searched
+        .saturating_add(extra.deconvolver_pixels_searched);
+    target.deconvolver_pixels_touched = target
+        .deconvolver_pixels_touched
+        .saturating_add(extra.deconvolver_pixels_touched);
     target.major_cycle_refresh += extra.major_cycle_refresh;
     target.residual_refresh_overhead += extra.residual_refresh_overhead;
     target.multiscale_scale_refresh += extra.multiscale_scale_refresh;
@@ -16959,7 +17067,7 @@ fn duration_ms(duration: Duration) -> f64 {
 
 fn imaging_stage_timing_detail(timings: ImagingStageTimings) -> String {
     format!(
-        "controller_overhead_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_alloc_ms={:.3} planned_sample_replay_ms={:.3} grid_update_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_image_correction_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_alloc_ms={:.3} residual_degrid_grid_ms={:.3} residual_fft_ms={:.3} residual_image_correction_ms={:.3} residual_normalize_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} minor_cycle_ms={:.3} minor_cycle_solve_ms={:.3} major_cycle_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} multiscale_scale_refresh_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3} total_ms={:.3}",
+        "controller_overhead_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_alloc_ms={:.3} planned_sample_replay_ms={:.3} grid_update_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_image_correction_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_alloc_ms={:.3} residual_degrid_grid_ms={:.3} residual_fft_ms={:.3} residual_image_correction_ms={:.3} residual_normalize_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} minor_cycle_ms={:.3} minor_cycle_solve_ms={:.3} deconvolver_peak_search_ms={:.3} deconvolver_active_set_build_ms={:.3} deconvolver_model_update_ms={:.3} deconvolver_psf_subtract_ms={:.3} deconvolver_residual_replay_ms={:.3} deconvolver_fft_convolve_ms={:.3} deconvolver_peak_searches={} deconvolver_model_updates={} deconvolver_subtract_updates={} deconvolver_pixels_searched={} deconvolver_pixels_touched={} major_cycle_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} multiscale_scale_refresh_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3} total_ms={:.3}",
         duration_ms(timings.controller_overhead),
         duration_ms(timings.weighting),
         duration_ms(timings.executor_build),
@@ -16980,6 +17088,17 @@ fn imaging_stage_timing_detail(timings: ImagingStageTimings) -> String {
         duration_ms(timings.deconvolver_setup),
         duration_ms(timings.minor_cycle),
         duration_ms(timings.minor_cycle_solve),
+        duration_ms(timings.deconvolver_peak_search),
+        duration_ms(timings.deconvolver_active_set_build),
+        duration_ms(timings.deconvolver_model_update),
+        duration_ms(timings.deconvolver_psf_subtract),
+        duration_ms(timings.deconvolver_residual_replay),
+        duration_ms(timings.deconvolver_fft_convolve),
+        timings.deconvolver_peak_searches,
+        timings.deconvolver_model_updates,
+        timings.deconvolver_subtract_updates,
+        timings.deconvolver_pixels_searched,
+        timings.deconvolver_pixels_touched,
         duration_ms(timings.major_cycle_refresh),
         duration_ms(timings.residual_refresh_overhead),
         duration_ms(timings.multiscale_scale_refresh),
@@ -41345,13 +41464,16 @@ mod tests {
         let plan = plan_cube_per_plane_execution(&config, output_planes, hardware_threads);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
-        let expected_backend =
-            if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
-                PerPlaneExecutionBackend::Wave3MetalGrouped
-            } else {
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-            };
-        assert_eq!(plan.selected_backend, expected_backend);
+        assert_eq!(
+            plan.selected_backend,
+            PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+        );
+        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
+            assert!(
+                plan.fallback_reasons
+                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
+            );
+        }
         assert!(plan.fixed_tile_cpu_eligible);
         assert_eq!(plan.per_plane_grid_threads, 1);
     }
@@ -41391,7 +41513,11 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
+                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+            );
+            assert!(
+                plan.fallback_reasons
+                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
             );
         } else {
             assert!(!plan.metal_eligible);
@@ -41448,7 +41574,11 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
+                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+            );
+            assert!(
+                plan.fallback_reasons
+                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
             );
         } else {
             assert!(!plan.metal_eligible);
@@ -41499,7 +41629,11 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
+                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+            );
+            assert!(
+                plan.fallback_reasons
+                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
             );
         } else {
             assert!(!plan.metal_eligible);
@@ -41561,7 +41695,7 @@ mod tests {
     }
 
     #[test]
-    fn cube_per_plane_runtime_plan_selects_grouped_metal_backend_when_available() {
+    fn cube_per_plane_runtime_plan_rejects_grouped_metal_for_single_channel_cube_clean() {
         let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
         let output_planes = hardware_threads.saturating_mul(2).max(2);
         let config = CliConfig::parse([
@@ -41596,11 +41730,16 @@ mod tests {
         if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
             assert_eq!(
                 eligibility.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
+                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+            );
+            assert!(
+                eligibility
+                    .fallback_reasons
+                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
             );
             assert_eq!(
                 plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::Metal
+                StandardMfsAccelerationPolicy::MultiCpu
             );
         } else {
             assert_eq!(

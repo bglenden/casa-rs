@@ -1746,8 +1746,10 @@ pub struct MinorCycleTrace {
     pub actual_updates: usize,
     /// Peak absolute residual at the start of the block.
     pub start_peak_residual_jy_per_beam: f32,
-    /// Peak absolute residual immediately after the block, before any exact
-    /// major-cycle residual refresh.
+    /// Peak absolute residual immediately after the block. Deconvolvers that
+    /// maintain an approximate residual report that value before the exact
+    /// major-cycle refresh; CASA-style Clark reports after the boundary refresh
+    /// because its minor cycle only updates active pixels and the delta model.
     pub end_peak_residual_jy_per_beam: f32,
     /// CASA-style `cyclethreshold` supplied to this block.
     pub cycle_threshold_jy_per_beam: f32,
@@ -1921,6 +1923,32 @@ pub struct ImagingStageTimings {
     pub minor_cycle: Duration,
     /// Time spent inside the solver-specific minor-cycle loop.
     pub minor_cycle_solve: Duration,
+    /// Time spent searching for CLEAN components inside solver-specific minor
+    /// cycles.
+    pub deconvolver_peak_search: Duration,
+    /// Time spent collecting or rebuilding deconvolver-specific active sets.
+    pub deconvolver_active_set_build: Duration,
+    /// Time spent adding chosen components to model images.
+    pub deconvolver_model_update: Duration,
+    /// Time spent subtracting chosen components from residual-like solver
+    /// state.
+    pub deconvolver_psf_subtract: Duration,
+    /// Time spent replaying accumulated components into refreshed residual
+    /// state.
+    pub deconvolver_residual_replay: Duration,
+    /// Time spent in deconvolver-local convolution work.
+    pub deconvolver_fft_convolve: Duration,
+    /// Number of component-search operations performed inside deconvolvers.
+    pub deconvolver_peak_searches: u64,
+    /// Number of component/model updates performed inside deconvolvers.
+    pub deconvolver_model_updates: u64,
+    /// Number of residual-like subtraction updates performed inside
+    /// deconvolvers.
+    pub deconvolver_subtract_updates: u64,
+    /// Estimated scalar image pixels examined by deconvolver peak searches.
+    pub deconvolver_pixels_searched: u64,
+    /// Estimated scalar image pixels touched by deconvolver component updates.
+    pub deconvolver_pixels_touched: u64,
     /// Time spent recomputing the image residual during major-cycle refreshes.
     ///
     /// This is the aggregate wall time for each residual refresh and therefore
@@ -1964,6 +1992,17 @@ impl Default for ImagingStageTimings {
             deconvolver_setup: Duration::ZERO,
             minor_cycle: Duration::ZERO,
             minor_cycle_solve: Duration::ZERO,
+            deconvolver_peak_search: Duration::ZERO,
+            deconvolver_active_set_build: Duration::ZERO,
+            deconvolver_model_update: Duration::ZERO,
+            deconvolver_psf_subtract: Duration::ZERO,
+            deconvolver_residual_replay: Duration::ZERO,
+            deconvolver_fft_convolve: Duration::ZERO,
+            deconvolver_peak_searches: 0,
+            deconvolver_model_updates: 0,
+            deconvolver_subtract_updates: 0,
+            deconvolver_pixels_searched: 0,
+            deconvolver_pixels_touched: 0,
             major_cycle_refresh: Duration::ZERO,
             residual_refresh_overhead: Duration::ZERO,
             multiscale_scale_refresh: Duration::ZERO,

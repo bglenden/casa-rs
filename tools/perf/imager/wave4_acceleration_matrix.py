@@ -595,12 +595,12 @@ def metal_status(result: dict[str, Any] | None) -> str | None:
         return "selected"
     if mosaic_metal_backend_selected(backend):
         return "selected"
-    eligible = backend.get("cube_per_plane_metal_eligible")
-    if eligible is True:
-        return "eligible-not-selected"
     reasons = backend.get("cube_per_plane_fallback_reasons")
     if isinstance(reasons, str) and reasons not in {"none", ""}:
         return f"rejected:{reasons}"
+    eligible = backend.get("cube_per_plane_metal_eligible")
+    if eligible is True:
+        return "eligible-not-selected"
     if backend.get("metal_device") is False:
         return "rejected:metal_device_unavailable"
     return None

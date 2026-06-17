@@ -59,8 +59,18 @@
     },
     {
       "row_id": "cubedata_clean_hogbom",
+      "role": "serial_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-serial/20260616T183621Z-wave4-standard-cubedata-line-medium-clean-hogbom-cab8bb3d.json"
+    },
+    {
+      "row_id": "cubedata_clean_hogbom",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-multicpu/20260616T184136Z-wave4-standard-cubedata-line-medium-clean-hogbom-f1026436.json"
+    },
+    {
+      "row_id": "cubedata_clean_hogbom",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium/20260616T144357Z-wave4-standard-cubedata-line-medium-clean-hogbom-decc2963.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-hogbom-auto-general-reject/20260616T195931Z-wave4-standard-cubedata-line-medium-clean-hogbom-946a5263.json"
     },
     {
       "row_id": "cubedata_clean_hogbom",
@@ -69,13 +79,23 @@
     },
     {
       "row_id": "cubedata_clean_clark",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-clark-multicpu/20260616T191237Z-wave4-standard-cubedata-line-medium-clean-clark-815af171.json"
+    },
+    {
+      "row_id": "cubedata_clean_clark",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-small/20260616T142758Z-wave4-standard-cubedata-line-small-clean-clark-correctness-2712545a.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-clark-auto-reject-metal/20260616T195339Z-wave4-standard-cubedata-line-medium-clean-clark-c261a5ae.json"
+    },
+    {
+      "row_id": "cubedata_clean_multiscale",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-multiscale-multicpu/20260616T191443Z-wave4-standard-cubedata-line-medium-clean-multiscale-452c6155.json"
     },
     {
       "row_id": "cubedata_clean_multiscale",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-small/20260616T143211Z-wave4-standard-cubedata-line-small-clean-multiscale-correctness-05d32735.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-multiscale-auto-reject-metal/20260616T195624Z-wave4-standard-cubedata-line-medium-clean-multiscale-1464ab93.json"
     },
     {
       "row_id": "mosaic_cube_dirty",

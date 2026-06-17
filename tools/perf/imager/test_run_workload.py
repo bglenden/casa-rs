@@ -851,6 +851,13 @@ spectral_slab_event mode=cube pass_kind=initial_dirty stage=source_read slab_id=
 spectral_slab_memory mode=cube stage=after_slab_prepare slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1000000 peak_rss_bytes=1200000 delta_from_baseline_bytes=400000 delta_from_previous_bytes=300000 estimated_resident_bytes=123456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=prepared
 spectral_slab_memory mode=cube stage=after_slab_run slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1500000 peak_rss_bytes=1700000 delta_from_baseline_bytes=900000 delta_from_previous_bytes=500000 estimated_resident_bytes=223456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=run_cube
 cube_shared_direct_plane_executor_summary slab_plane_start=0 slab_plane_end=4 worker_count=4 product_batch_planes=2 completed=4 elapsed_ms=100.000 worker_sum_ms=300.000 worker_max_ms=90.000 result_wait_ms=10.000 consume_ms=20.000 product_write_ms=30.000 product_role_ms=29.000 product_psf_ms=10.000 product_residual_ms=11.000 product_model_ms=0.000 product_image_ms=0.000 product_sumwt_ms=1.000 product_bytes=1024 product_groups=2 product_group_planes=4 writer_groups=2 writer_planes=4 writer_estimated_bytes=1024 tiled_c_order_calls=4 tiled_fortran_calls=2 tiled_tile_visits=128 tiled_copied_elements=2048 tiled_lru_hits=1 tiled_lru_misses=2 tiled_lru_zero_fill_tiles=64 tiled_lru_read_tiles=0 tiled_lru_read_bytes=0 tiled_lru_dirty_evictions=0 tiled_lru_flush_calls=0 tiled_lru_flush_write_tiles=0 tiled_lru_flush_write_bytes=0 tiled_lru_batch_flushes=2 tiled_lru_batch_flush_tiles=64 tiled_lru_batch_flush_bytes=4096 tiled_direct_write_calls=2 tiled_direct_write_tiles=128 tiled_direct_write_bytes=8192 tiled_direct_pack_ns=1200 tiled_direct_swap_ns=0 tiled_direct_write_ns=3400 tiled_flat_allocations=0 tiled_flat_allocated_bytes=0 tiled_flat_zero_fill_bytes=0 tiled_flat_bulk_read_bytes=0 tiled_flat_flush_calls=0 tiled_flat_flush_write_tiles=0 tiled_flat_flush_write_bytes=0 residency=streaming_plane_results
+cube_resident_clean_stage_summary result_wait_ms=10.000 consume_ms=20.000 worker_sum_ms=700.000 worker_max_ms=200.000 controller_overhead_ms=30.000 weighting_ms=0.000 executor_build_ms=0.000 psf_grid_alloc_ms=0.000 planned_sample_replay_ms=0.000 grid_update_ms=0.000 psf_grid_ms=0.000 psf_fft_ms=0.000 psf_image_correction_ms=0.000 psf_normalize_ms=0.000 model_fft_ms=0.000 residual_grid_alloc_ms=0.000 residual_degrid_grid_ms=0.000 residual_fft_ms=0.000 residual_image_correction_ms=0.000 residual_normalize_ms=0.000 clean_cycle_setup_ms=0.000 deconvolver_setup_ms=0.000 minor_cycle_ms=40.000 minor_cycle_solve_ms=500.000 major_cycle_refresh_ms=50.000 residual_refresh_overhead_ms=5.000 multiscale_scale_refresh_ms=0.000 beam_fit_ms=0.000 restore_ms=60.000 total_ms=680.000
+cube_resident_clean_finish_plane plane=0 blocks=10 skipped_minor_cycle=false gridded_samples=100 initial_peak=1.000000000e+00 final_peak=2.000000000e-01 trace_final_peak=3.000000000e-01 cycle_threshold=5.000000000e-01 stop_reason=Some(CycleThresholdReached) minor_iterations=7 minor_cycle_count=2 actual_updates=7 reported_updates=8 model_nonzero_pixels=3 model_sum_abs_jy=4.500000000e+00 model_peak_abs_jy=2.500000000e+00 prepare_ms=1.000 finish_ms=2.000 replay=[]
+cube_resident_clean_finish_plane plane=1 blocks=10 skipped_minor_cycle=true gridded_samples=100 initial_peak=4.000000000e-01 final_peak=4.000000000e-01 trace_final_peak=4.000000000e-01 cycle_threshold=5.000000000e-01 stop_reason=Some(GlobalThresholdReached) minor_iterations=0 minor_cycle_count=0 actual_updates=0 reported_updates=0 model_nonzero_pixels=0 model_sum_abs_jy=0.000000000e+00 model_peak_abs_jy=0.000000000e+00 prepare_ms=1.000 finish_ms=2.000 replay=[]
+standard_mfs_clean_residual_refresh_summary deconvolver=Clark residual_backend=metal-row-run-grouped refresh_ms=13.000 accounted_ms=11.500 overhead_ms=1.500 model_fft_ms=2.000 residual_degrid_grid_ms=6.000 residual_fft_ms=2.500 residual_normalize_ms=1.000 fixed_tile_use_planned_run_blocks=true metal_grouped_input_cache=true materialized_sample_plan_max_samples=default
+standard_mfs_metal_row_run_grouped_residual_refresh chunks=2 chunk_lane_capacity=1048576 group_tile_edge=32 runs=3 logical_lanes=4 group_descs=5 lane_refs=6 input_cache_hit=true input_cache_fill=false input_cache_chunks=7 input_cache_host_bytes=8192 prepare_plus_dispatch_ms=12.500 dispatch_wait_ms=8.000 dispatch_gpu_ms=3.000 dispatch_kernel_ms=2.000 readback_ms=1.500
+standard_mfs_metal_row_run_grouped_residual_refresh_detail model_pack_ms=0.100 model_buffer_ms=0.200 density_buffer_ms=0.300 grid_buffer_ms=0.400 replay_ms=0.500 append_total_ms=0.600 dispatch_input_buffers_ms=0.700 dispatch_params_buffer_ms=0.800 dispatch_encode_ms=0.900 dispatch_wait_ms=8.000 dispatch_gpu_ms=3.000 dispatch_kernel_ms=2.000 readback_ms=1.500 staged_bytes=4096 candidate_tap_visits=10 candidate_model_reads=20 exact_candidate_grid_atomic_adds=30 grouped_candidate_grid_atomic_adds=40 grouped_candidate_scan_tests=50 unsupported_runs=0 input_cache_hit=true input_cache_fill=false input_cache_chunks=7 input_cache_host_bytes=8192
+standard_mfs_metal_row_run_grouped_append_detail setup_ms=0.010 lane_push_ms=0.020 data_flag_copy_ms=0.030 run_desc_ms=0.040 group_assign_ms=0.050 group_finalize_ms=0.060
 cube_plane_state_store_summary kind=product_backed_write_through slab_id=0 plane_start=0 plane_end=4 planes=4 bytes_read=0 bytes_written=1024 elapsed_ms=30.000 cleanup_policy=drop_after_write product_write_state=written components=psf,residual,image,sumwt
 visibility_geometry_cache_summary enabled=true budget_bytes=1048576 resident_bytes=2048 entries=1 fills=1 hits=3 misses=1 shares=3 bypasses=0 rejected_model_dependent=0 elapsed_ms=42.000
 cube_slab_executor_limitation materialization=full_prepared_slab planner_row_block_rows=687 inner_prepare_row_block_rows=executor_default reason=small_planner_row_blocks_are_only_valid_for_streaming_consumers
@@ -874,6 +881,62 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         self.assertEqual(4, parsed["summary"]["mosaic_cube_slab_active_planes"])
         self.assertEqual(2, parsed["summary"]["mosaic_cube_slab_count"])
         self.assertEqual(4, parsed["summary"]["mosaic_cube_slab_worker_count"])
+        self.assertEqual(
+            500.0, parsed["summary"]["cube_resident_clean_minor_cycle_solve_ms"]
+        )
+        self.assertEqual(
+            50.0, parsed["summary"]["cube_resident_clean_major_cycle_refresh_ms"]
+        )
+        self.assertEqual(680.0, parsed["summary"]["cube_resident_clean_core_total_ms"])
+        self.assertEqual(2, parsed["summary"]["cube_resident_clean_finish_plane_count"])
+        self.assertEqual(
+            1, parsed["summary"]["cube_resident_clean_finish_cleaned_plane_count"]
+        )
+        self.assertEqual(
+            1, parsed["summary"]["cube_resident_clean_finish_skipped_plane_count"]
+        )
+        self.assertEqual(7, parsed["summary"]["cube_resident_clean_actual_updates"])
+        self.assertEqual(8, parsed["summary"]["cube_resident_clean_reported_updates"])
+        self.assertEqual(2, parsed["summary"]["cube_resident_clean_trace_minor_cycles"])
+        self.assertEqual(
+            7, parsed["summary"]["cube_resident_clean_minor_iterations_from_planes"]
+        )
+        self.assertEqual(
+            7, parsed["summary"]["cube_resident_clean_max_actual_updates_per_plane"]
+        )
+        self.assertEqual(3, parsed["summary"]["cube_resident_clean_model_nonzero_pixels"])
+        self.assertEqual(1, parsed["summary"]["cube_resident_clean_model_nonzero_planes"])
+        self.assertEqual(
+            0, parsed["summary"]["cube_resident_clean_skipped_model_nonzero_planes"]
+        )
+        self.assertEqual(4.5, parsed["summary"]["cube_resident_clean_model_sum_abs_jy"])
+        self.assertEqual(2.5, parsed["summary"]["cube_resident_clean_model_peak_abs_jy"])
+        self.assertEqual(
+            "Some(CycleThresholdReached):1,Some(GlobalThresholdReached):1",
+            parsed["summary"]["cube_resident_clean_stop_reason_counts"],
+        )
+        self.assertEqual(4, parsed["summary"]["metal_diagnostic_count"])
+        self.assertEqual(1, parsed["summary"]["clean_residual_refresh_calls"])
+        self.assertEqual(
+            "metal-row-run-grouped",
+            parsed["summary"]["clean_residual_refresh_backend"],
+        )
+        self.assertEqual(13.0, parsed["summary"]["clean_residual_refresh_ms"])
+        self.assertEqual(11.5, parsed["summary"]["clean_residual_refresh_accounted_ms"])
+        self.assertEqual(
+            6.0,
+            parsed["summary"]["clean_residual_refresh_residual_degrid_grid_ms"],
+        )
+        self.assertEqual(1, parsed["summary"]["metal_residual_refresh_calls"])
+        self.assertEqual(
+            12.5, parsed["summary"]["metal_residual_refresh_prepare_plus_dispatch_ms"]
+        )
+        self.assertEqual(8.0, parsed["summary"]["metal_residual_refresh_dispatch_wait_ms"])
+        self.assertEqual(3.0, parsed["summary"]["metal_residual_refresh_dispatch_gpu_ms"])
+        self.assertEqual(4096, parsed["summary"]["metal_residual_refresh_staged_bytes"])
+        self.assertEqual(1, parsed["summary"]["metal_residual_refresh_input_cache_hits"])
+        self.assertEqual(0, parsed["summary"]["metal_residual_refresh_input_cache_fills"])
+        self.assertEqual(0.05, parsed["summary"]["metal_grouped_append_group_assign_ms"])
         self.assertEqual(
             "shared_selection_per_plane_source_stream",
             parsed["summary"]["mosaic_cube_slab_source_reuse"],
