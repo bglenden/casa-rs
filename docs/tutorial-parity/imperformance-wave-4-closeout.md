@@ -34,7 +34,7 @@ GLENDENNING result paths for each row below.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
 | Standard cube dirty | medium, 512 ch, 2048 | 316.815 | 154.741 | n/a | 1918.001 | 2.05x auto vs forced single-worker; 12.39x vs CASA | good | met | `20260616T173624Z-wave4-standard-cube-line-medium-905e11e5` |
 | Standard cube clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | 282.458 | 137.109 | 811.307 | 2.06x Metal vs CPU; 5.92x vs CASA | blocked: restore edge artifact fixed, remaining model/residual component-order divergence | blocked | `20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a` plus unchanged CASA row `20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24` |
-| Standard cube clean Clark | medium, 64 ch, 1024, niter=10000 | 160.122 | 40.773 | 45.732 | n/a | 3.93x multi-worker vs serial; Metal is 0.89x vs CPU | missing comparable deep CASA correctness | blocked | `20260617T013356Z-wave4-standard-cube-line-medium-clean-clark-86cd9f03` |
+| Standard cube clean Clark | medium, 64 ch, 1024, niter=10000 | 160.122 | 40.773 | 43.442 | 395.142 | 3.93x multi-worker vs serial; Metal is 0.94x vs CPU; 9.09x vs CASA | bad: casa-rs over-cleans vs CASA | blocked | `20260617T134520Z-wave4-standard-cube-line-medium-clean-clark-73a5e6d0` |
 | Standard cube clean multiscale | medium, 64 ch, 1024, niter=10000 | n/a | 784.810 | n/a | n/a | blocked: no comparable Metal/serial/CASA row | missing comparable deep CASA correctness | blocked | `20260617T013555Z-wave4-standard-cube-line-medium-clean-multiscale-585d9f40` |
 | Cubedata dirty | medium, 512 ch, 2048 | 349.241 | 146.788 | n/a | 1887.410 | 2.38x auto vs forced single-worker; 12.86x vs CASA | good | met | `20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335` |
 | Cubedata clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | n/a | 314.402 | n/a | blocked: no comparable medium CASA/serial/multi row | missing comparable deep CASA correctness | blocked | `20260617T011951Z-wave4-standard-cubedata-line-medium-clean-hogbom-e6a16c03` |
@@ -56,8 +56,11 @@ single-worker speedup is 2.38x against the 2.0x target.
 
 Clean closeout remains blocked. The matrix now requires clean correctness
 evidence to match the selected clean iteration depth, so the earlier shallow
-`niter=2` CASA rows no longer satisfy the deep `niter=10000` Clark, multiscale,
-or cubedata clean rows. Hogbom has a comparable deep CASA row and now uses the
+`niter=2` CASA rows no longer satisfy the deep `niter=10000` multiscale or
+cubedata clean rows. Clark now has a comparable deep CASA row, but it is
+blocked by a distinct clean-control mismatch: casa-rs drives every plane to the
+iteration limit and over-cleans the ring into the model. Hogbom has a
+comparable deep CASA row and now uses the
 actual Metal Hogbom minor-cycle backend by default. The CASA-style
 restored-model FFT convolution fix removes the visible `.image` edge artifact
 in the deep standard cube row: whole-cube `.image` RMS drops from `0.115015` to
@@ -120,8 +123,23 @@ medium and large mosaic rows intentionally skip CASA:
 | --- | --- | ---: | ---: | ---: | --- | --- | ---: | --- | --- |
 | Hogbom, CASA-compatible iteration/control | 512 ch, 2048, niter=100 | 273.021 | 3106.996 | 11.38x | grouped Wave 3 Metal | 13 / 40 / 8 | 69.395 | accepted in W4-08 with model/image/residual/PSF panels; cleaned 186 planes and skipped 326 planes under cube-level controls | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-08-pending-skip/runs/20260616T025901Z-wave1-vla-single-medium-standard-cube-line-clean-hogbom-casa-final-1bc4f17b.json` |
 | Hogbom, deep closeout row | 64 ch, 1024, niter=10000 | 137.109 | 811.307 | 5.92x | grouped Wave 3 Metal with Metal Hogbom minor cycle; CASA-style FFT restoration | 2 / 34 / 10 | recorded in JSON | blocked: restored `.image` edge artifact fixed; remaining `.model`/`.residual` differences are late component-order divergence after deep clean; CPU deep row is also bad against the same CASA products | Rust-only post-fix: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-metal-minor-cycle-casa/20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24.json` |
-| Clark | 64 ch, 1024, niter=2 | 30.678 | 348.586 | 11.36x | grouped Wave 3 Metal | 2 / 34 / 10 | 4.925 | overall good; `.model` numeric difference tiny but classifier unknown due near-zero normalization | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T060517Z-wave4-standard-cube-line-medium-clean-clark-5c804f6b.json` |
+| Clark, deep closeout row | 64 ch, 1024, niter=10000 | 43.442 | 395.142 | 9.09x | grouped Wave 3 Metal; CASA-style FFT restoration | 2 / 34 / 10 | recorded in JSON | bad: casa-rs over-cleans relative to CASA; `.psf` and `.sumwt` good, `.image`, `.model`, and `.residual` bad | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-clark-medium64-casa-deep/20260617T134520Z-wave4-standard-cube-line-medium-clean-clark-73a5e6d0.json` |
 | Multiscale | 64 ch, 1024, niter=2 | 26.697 | 231.006 | 8.65x | grouped Wave 3 Metal | 2 / 34 / 10 | 4.925 | `.model`, `.residual`, `.psf`, `.sumwt` good; `.image` investigate with normalized RMS 3.11e-6 and accepted visual residual | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json` |
+
+Deep Clark diagnostics:
+
+- casa-rs `43.442 s`, CASA `395.142 s`; default-vs-CASA speedup is `9.09x`,
+  which misses the 10x target.
+- Product comparison is bad for `.image`, `.model`, and `.residual`; `.psf`
+  and `.sumwt` are good.
+- casa-rs model occupancy is `522391` pixels above `1e-7`; CASA model
+  occupancy is `94845`.
+- casa-rs model sum-abs is `873793.3 Jy`; CASA model sum-abs is
+  `323323.0 Jy`.
+- casa-rs residual RMS is `0.986`; CASA residual RMS is `3.990`.
+- casa-rs reports `cycle_threshold=0` and `IterationLimitReached` for all
+  planes, so the likely blocker is Clark clean-control/cycle-threshold
+  semantics rather than gridding, PSF construction, restoration, or sumwt.
 
 Post-fix restore diagnostics for the deep Hogbom row:
 
