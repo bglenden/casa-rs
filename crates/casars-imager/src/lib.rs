@@ -2804,14 +2804,6 @@ fn cube_per_plane_runtime_config(
         }
         PerPlaneExecutionBackend::Wave3MetalGrouped => StandardMfsAccelerationPolicy::Metal,
     };
-    if eligibility.selected_backend == PerPlaneExecutionBackend::Wave3MetalGrouped
-        && config.deconvolver == Deconvolver::Hogbom
-    {
-        plane_config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
-        plane_config.standard_mfs_residual_backend = Some("metal-row-run-grouped".to_string());
-        plane_config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
-        plane_config.standard_mfs_metal_grouped_input_cache = Some(true);
-    }
     plane_config
 }
 
@@ -41747,20 +41739,11 @@ mod tests {
             assert!(eligibility.fallback_reasons.is_empty());
             assert_eq!(
                 plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::MultiCpu
+                StandardMfsAccelerationPolicy::Metal
             );
-            assert_eq!(
-                plane_config.standard_mfs_residual_backend.as_deref(),
-                Some("metal-row-run-grouped")
-            );
-            assert_eq!(
-                plane_config.standard_mfs_initial_dirty_backend.as_deref(),
-                Some("metal-row-run-grouped")
-            );
-            assert_eq!(
-                plane_config.standard_mfs_metal_grouped_input_cache,
-                Some(true)
-            );
+            assert_eq!(plane_config.standard_mfs_residual_backend, None);
+            assert_eq!(plane_config.standard_mfs_initial_dirty_backend, None);
+            assert_eq!(plane_config.standard_mfs_metal_grouped_input_cache, None);
         } else {
             assert_eq!(
                 eligibility.selected_backend,

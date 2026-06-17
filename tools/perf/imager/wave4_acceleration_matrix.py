@@ -313,7 +313,7 @@ def build_closeout_row(
     casa = first_comparable_result_with_casa(evidence, performance_result)
     casa_seconds = casa_seconds_from_result(casa)
     baseline_seconds = rust_seconds(baseline)
-    correctness_result = best_correctness_result(evidence)
+    correctness_result = best_correctness_result(evidence, performance_result)
     correctness = correctness_status(correctness_result)
     speedup_auto_vs_serial = speedup_between_for_reference(serial, multi, performance_result)
     speedup_metal_vs_multi = speedup_between_for_reference(multi, metal, performance_result)
@@ -723,10 +723,12 @@ def non_spatial_amplitude_is_good(product: Any) -> bool:
 
 
 def best_correctness_result(
-    evidence: dict[str, dict[str, Any]]
+    evidence: dict[str, dict[str, Any]], reference: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     ranked: list[tuple[int, dict[str, Any]]] = []
     for result in evidence.values():
+        if reference is not None and not comparable_correctness_evidence(result, reference):
+            continue
         status = correctness_status(result)
         rank = correctness_rank(status)
         if rank is not None:
@@ -735,6 +737,16 @@ def best_correctness_result(
         return None
     ranked.sort(key=lambda item: item[0])
     return ranked[0][1]
+
+
+def comparable_correctness_evidence(result: dict[str, Any], reference: dict[str, Any]) -> bool:
+    result_niter = clean_iteration_count(result)
+    reference_niter = clean_iteration_count(reference)
+    if result_niter != reference_niter:
+        return False
+    if reference_niter and reference_niter > 0:
+        return image_shape(result) == image_shape(reference)
+    return True
 
 
 def correctness_rank(status: str | None) -> int | None:
