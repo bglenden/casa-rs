@@ -508,7 +508,11 @@ def first_comparable_result_with_casa(
 
 
 def comparable_shape(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return dataset_tier(left) == dataset_tier(right) and image_shape(left) == image_shape(right)
+    return (
+        dataset_tier(left) == dataset_tier(right)
+        and image_shape(left) == image_shape(right)
+        and clean_iteration_count(left) == clean_iteration_count(right)
+    )
 
 
 def rust_seconds(result: dict[str, Any] | None) -> float | None:
@@ -572,6 +576,15 @@ def image_shape(result: dict[str, Any] | None) -> str | None:
     if imsize:
         return str(imsize)
     return None
+
+
+def clean_iteration_count(result: dict[str, Any] | None) -> int | None:
+    if not result:
+        return None
+    mode = result.get("mode")
+    if not isinstance(mode, dict):
+        return None
+    return int_or_none(mode.get("niter"))
 
 
 def worker_count(result: dict[str, Any] | None) -> int | None:

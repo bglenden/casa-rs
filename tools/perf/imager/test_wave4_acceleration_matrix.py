@@ -161,6 +161,37 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
         self.assertIsNone(row["speedup_metal_vs_multi_worker_cpu"])
         self.assertEqual("512 ch, 1024", row["shape"])
 
+    def test_speedups_require_comparable_iteration_count(self) -> None:
+        matrix = wave4_acceleration_matrix.load_matrix(
+            wave4_acceleration_matrix.MATRIX_PATH
+        )
+        shallow_casa = fake_result(
+            "standard_cube_clean_clark",
+            "casa_cpp",
+            rust_seconds=30.0,
+            casa_seconds=300.0,
+            backend="wave3_metal_grouped",
+            workers=8,
+        )
+        shallow_casa["mode"]["niter"] = 2
+        deep_default = fake_result(
+            "standard_cube_clean_clark",
+            "metal_default",
+            rust_seconds=45.0,
+            casa_seconds=None,
+            backend="wave3_metal_grouped",
+            workers=8,
+        )
+        deep_default["mode"]["niter"] = 10000
+
+        rows = wave4_acceleration_matrix.build_closeout_table(
+            matrix, [shallow_casa, deep_default]
+        )
+        row = next(row for row in rows if row["row_id"] == "standard_cube_clean_clark")
+
+        self.assertIsNone(row["casa_s"])
+        self.assertIsNone(row["speedup_default_vs_casa"])
+
     def test_cli_writes_markdown_table_from_result_json(self) -> None:
         matrix = wave4_acceleration_matrix.load_matrix(
             wave4_acceleration_matrix.MATRIX_PATH
