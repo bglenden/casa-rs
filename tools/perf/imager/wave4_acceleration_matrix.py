@@ -305,18 +305,18 @@ def build_closeout_row(
     default = metal or evidence.get("auto_default") or multi
     casa = first_result_with_casa(evidence)
     baseline = evidence.get("large_baseline") or evidence.get("single_plane_stream_baseline")
-    serial_seconds = rust_seconds(serial)
-    multi_seconds = rust_seconds(multi)
-    metal_seconds = rust_seconds(metal)
     default_seconds = rust_seconds(default)
     performance_result = default or multi or serial or baseline
+    serial_seconds = comparable_rust_seconds(serial, performance_result)
+    multi_seconds = comparable_rust_seconds(multi, performance_result)
+    metal_seconds = comparable_rust_seconds(metal, performance_result)
     casa = first_comparable_result_with_casa(evidence, performance_result)
     casa_seconds = casa_seconds_from_result(casa)
     baseline_seconds = rust_seconds(baseline)
     correctness_result = best_correctness_result(evidence)
     correctness = correctness_status(correctness_result)
-    speedup_auto_vs_serial = speedup_between(serial, multi)
-    speedup_metal_vs_multi = speedup_between(multi, metal)
+    speedup_auto_vs_serial = speedup_between_for_reference(serial, multi, performance_result)
+    speedup_metal_vs_multi = speedup_between_for_reference(multi, metal, performance_result)
     speedup_default_vs_casa = speedup(casa_seconds, default_seconds)
     speedup_default_vs_baseline = speedup_between(baseline, default)
     row = {
@@ -325,6 +325,7 @@ def build_closeout_row(
         "deconvolver": matrix_row["deconvolver"],
         "dataset_tier": dataset_tier(performance_result),
         "shape": image_shape(performance_result),
+        "niter": clean_iteration_count(performance_result),
         "serial_single_worker_s": serial_seconds,
         "multi_worker_cpu_auto_s": multi_seconds,
         "metal_default_s": metal_seconds,
@@ -521,6 +522,16 @@ def rust_seconds(result: dict[str, Any] | None) -> float | None:
     return nested_float(result, ["results", "rust", "timings_seconds", "median"])
 
 
+def comparable_rust_seconds(
+    result: dict[str, Any] | None, reference: dict[str, Any] | None
+) -> float | None:
+    if result is None:
+        return None
+    if reference is not None and not comparable_shape(result, reference):
+        return None
+    return rust_seconds(result)
+
+
 def casa_seconds_from_result(result: dict[str, Any] | None) -> float | None:
     if not result:
         return None
@@ -539,6 +550,22 @@ def speedup_between(
     if before is None or after is None or not comparable_shape(before, after):
         return None
     return speedup(rust_seconds(before), rust_seconds(after))
+
+
+def speedup_between_for_reference(
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+    reference: dict[str, Any] | None,
+) -> float | None:
+    if (
+        before is None
+        or after is None
+        or reference is None
+        or not comparable_shape(before, reference)
+        or not comparable_shape(after, reference)
+    ):
+        return None
+    return speedup_between(before, after)
 
 
 def dataset_tier(result: dict[str, Any] | None) -> str | None:
@@ -787,6 +814,7 @@ def render_markdown_table(rows: list[dict[str, Any]]) -> str:
         "deconvolver",
         "dataset_tier",
         "shape",
+        "niter",
         "serial_single_worker_s",
         "multi_worker_cpu_auto_s",
         "metal_default_s",

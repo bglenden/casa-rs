@@ -36,6 +36,7 @@
     "deconvolver",
     "dataset_tier",
     "shape",
+    "niter",
     "serial_single_worker_s",
     "multi_worker_cpu_auto_s",
     "metal_default_s",
