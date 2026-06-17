@@ -24074,22 +24074,44 @@ fn peak_location_masked_in_bounds_zero_tolerance(
 ) -> Option<((usize, usize), f32)> {
     let (nx, _) = image.dim();
     let mut best = None::<((usize, usize), f32, usize)>;
-    for x in x0..=x1 {
-        for y in y0..=y1 {
-            if mask.is_some_and(|current| !current[(x, y)]) {
-                continue;
-            }
-            let value = image[(x, y)];
-            let order_key = y.saturating_mul(nx).saturating_add(x);
-            match best {
-                None => best = Some(((x, y), value, order_key)),
-                Some((_, best_value, best_key))
-                    if value.abs() > best_value.abs()
-                        || (value.abs() == best_value.abs() && order_key < best_key) =>
-                {
-                    best = Some(((x, y), value, order_key));
+    match mask {
+        Some(mask) => {
+            for x in x0..=x1 {
+                for y in y0..=y1 {
+                    if !mask[(x, y)] {
+                        continue;
+                    }
+                    let value = image[(x, y)];
+                    let order_key = y.saturating_mul(nx).saturating_add(x);
+                    match best {
+                        None => best = Some(((x, y), value, order_key)),
+                        Some((_, best_value, best_key))
+                            if value.abs() > best_value.abs()
+                                || (value.abs() == best_value.abs() && order_key < best_key) =>
+                        {
+                            best = Some(((x, y), value, order_key));
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
+            }
+        }
+        None => {
+            for x in x0..=x1 {
+                for y in y0..=y1 {
+                    let value = image[(x, y)];
+                    let order_key = y.saturating_mul(nx).saturating_add(x);
+                    match best {
+                        None => best = Some(((x, y), value, order_key)),
+                        Some((_, best_value, best_key))
+                            if value.abs() > best_value.abs()
+                                || (value.abs() == best_value.abs() && order_key < best_key) =>
+                        {
+                            best = Some(((x, y), value, order_key));
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -24391,16 +24413,49 @@ fn subtract_shifted_kernel_in_window(
     if x0 > x1 || y0 > y1 {
         return;
     }
-    for x in x0..=x1 {
-        for y in y0..=y1 {
-            let kernel_x = x as isize - peak_index.0 as isize + kernel_center.0 as isize;
-            let kernel_y = y as isize - peak_index.1 as isize + kernel_center.1 as isize;
-            if !(0..kernel.shape()[0] as isize).contains(&kernel_x)
-                || !(0..kernel.shape()[1] as isize).contains(&kernel_y)
-            {
-                continue;
+
+    let kernel_x_min_image = peak_index.0 as isize - kernel_center.0 as isize;
+    let kernel_y_min_image = peak_index.1 as isize - kernel_center.1 as isize;
+    let kernel_x_max_image = kernel_x_min_image + kernel.shape()[0] as isize - 1;
+    let kernel_y_max_image = kernel_y_min_image + kernel.shape()[1] as isize - 1;
+    if kernel_x_max_image < 0
+        || kernel_y_max_image < 0
+        || kernel_x_min_image > nx as isize - 1
+        || kernel_y_min_image > ny as isize - 1
+    {
+        return;
+    }
+    let x0 = x0.max(kernel_x_min_image.max(0) as usize);
+    let y0 = y0.max(kernel_y_min_image.max(0) as usize);
+    let x1 = x1.min(kernel_x_max_image.min(nx as isize - 1) as usize);
+    let y1 = y1.min(kernel_y_max_image.min(ny as isize - 1) as usize);
+    if x0 > x1 || y0 > y1 {
+        return;
+    }
+
+    if let (Some(image_values), Some(kernel_values)) = (
+        image.as_slice_memory_order_mut(),
+        kernel.as_slice_memory_order(),
+    ) {
+        let kernel_ny = kernel.shape()[1];
+        for x in x0..=x1 {
+            let image_row_offset = x * ny;
+            let kernel_x = (x as isize - kernel_x_min_image) as usize;
+            let kernel_row_offset = kernel_x * kernel_ny;
+            for y in y0..=y1 {
+                let kernel_y = (y as isize - kernel_y_min_image) as usize;
+                image_values[image_row_offset + y] -=
+                    scale_factor * kernel_values[kernel_row_offset + kernel_y];
             }
-            image[(x, y)] -= scale_factor * kernel[(kernel_x as usize, kernel_y as usize)];
+        }
+        return;
+    }
+
+    for x in x0..=x1 {
+        let kernel_x = (x as isize - kernel_x_min_image) as usize;
+        for y in y0..=y1 {
+            let kernel_y = (y as isize - kernel_y_min_image) as usize;
+            image[(x, y)] -= scale_factor * kernel[(kernel_x, kernel_y)];
         }
     }
 }
