@@ -1,0 +1,48 @@
+{
+  "id": "wave4-standard-cube-line-medium-clean-clark-control-probe",
+  "mode_id": "standard-cube-line-clean-clark-control-probe",
+  "description": "Wave 4 Clark cube clean-control diagnostic using the medium dataset with 8 channels and deep clean controls.",
+  "dataset": {
+    "key": "wave1-vla-single-medium",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cube",
+    "gridder": "standard",
+    "interpolation": "nearest",
+    "field": "0",
+    "phasecenter_field": null,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 8,
+    "imsize": 1024,
+    "cell_arcsec": 0.35,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": true,
+    "deconvolver": "clark",
+    "nterms": 1,
+    "scales": "",
+    "niter": 10000,
+    "threshold_jy": 0.0,
+    "nsigma": 0.0,
+    "standard_mfs_grid_threads": "1",
+    "minor_cycle_length": 10000,
+    "min_psf_fraction": 0.0,
+    "max_psf_fraction": 0.0,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "profile_repeats": 1,
+    "phase_probe": "1",
+    "skip_profile": "1",
+    "run_label": "w4-15-clark-control-probe",
+    "storage_label": "medium-row-clark-control-probe"
+  },
+  "comparison": {
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model"]
+  }
+}

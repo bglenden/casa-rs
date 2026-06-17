@@ -754,6 +754,7 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
             missing_reason="CASA tclean timing section was not reported",
         ),
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
+        "casa_clean_control_diagnostics": parse_casa_clean_control_diagnostics(text),
         "product_paths": parse_product_paths(text),
     }
 
@@ -2196,6 +2197,19 @@ def parse_stage_section(text: str, heading: str) -> dict[str, float]:
             if name != "run":
                 stages[name] = float(value)
     return stages
+
+
+def parse_casa_clean_control_diagnostics(text: str) -> list[Any]:
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        prefix = "clean_control_diagnostics_json="
+        if line.startswith(prefix):
+            try:
+                value = json.loads(line[len(prefix) :])
+            except json.JSONDecodeError:
+                return []
+            return value if isinstance(value, list) else []
+    return []
 
 
 def section_lines(text: str, heading_prefix: str) -> list[str]:

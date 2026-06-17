@@ -112,6 +112,20 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual(8.25, stages["set_weighting_core"])
         self.assertEqual(99.0, stages["clean_major_cycle"])
 
+    def test_parse_casa_phase_probe_clean_control_diagnostics(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """CASA PySynthesisImager stage medians (milliseconds):
+  stage medians (ms):
+    total=123.000
+  clean_control_diagnostics_json=[{"minor_cycle": 1, "iterdone": 17, "summaryminor": {"total_iterations": 17.0}}]
+"""
+        )
+
+        diagnostics = parsed["casa_clean_control_diagnostics"]
+
+        self.assertEqual(1, diagnostics[0]["minor_cycle"])
+        self.assertEqual(17.0, diagnostics[0]["summaryminor"]["total_iterations"])
+
     def test_casa_stage_breakdown_maps_w4_attribution_categories(self) -> None:
         parsed = {
             "stage_medians_ms": {

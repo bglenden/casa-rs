@@ -58,9 +58,11 @@ Clean closeout remains blocked. The matrix now requires clean correctness
 evidence to match the selected clean iteration depth, so the earlier shallow
 `niter=2` CASA rows no longer satisfy the deep `niter=10000` multiscale or
 cubedata clean rows. Clark now has a comparable deep CASA row, but it is
-blocked by a distinct clean-control mismatch: casa-rs drives every plane to the
-iteration limit and over-cleans the ring into the model. Hogbom has a
-comparable deep CASA row and now uses the
+blocked by deep minor-cycle parity: the cube row over-cleans the ring into the
+model, and same-iteration single-channel diagnostics show the remaining
+divergence is inside the shared Clark active-set/PSF-subtraction update rather
+than dirty gridding, PSF construction, restoration, sumwt, or cube-level
+controller reduction. Hogbom has a comparable deep CASA row and now uses the
 actual Metal Hogbom minor-cycle backend by default. The CASA-style
 restored-model FFT convolution fix removes the visible `.image` edge artifact
 in the deep standard cube row: whole-cube `.image` RMS drops from `0.115015` to
@@ -132,14 +134,47 @@ Deep Clark diagnostics:
   which misses the 10x target.
 - Product comparison is bad for `.image`, `.model`, and `.residual`; `.psf`
   and `.sumwt` are good.
-- casa-rs model occupancy is `522391` pixels above `1e-7`; CASA model
+- In the original 64-channel cube row, casa-rs model occupancy is `522391`
+  pixels above `1e-7`; CASA model
   occupancy is `94845`.
 - casa-rs model sum-abs is `873793.3 Jy`; CASA model sum-abs is
   `323323.0 Jy`.
 - casa-rs residual RMS is `0.986`; CASA residual RMS is `3.990`.
-- casa-rs reports `cycle_threshold=0` and `IterationLimitReached` for all
-  planes, so the likely blocker is Clark clean-control/cycle-threshold
-  semantics rather than gridding, PSF construction, restoration, or sumwt.
+- The original cube row reported `cycle_threshold=0` and
+  `IterationLimitReached` for all planes, but follow-up diagnostics found two
+  separate issues:
+  - The Clark controller now refreshes residuals and continues after an
+    internal `CycleThresholdReached` stop when a subcycle updated the model,
+    matching the Hogbom/multiscale controller pattern.
+  - Forced same-count single-channel MFS diagnostics still diverge badly, so
+    the remaining blocker is shared Clark minor-cycle active residual update
+    parity rather than only cube clean-control semantics.
+- Control-probe cube row before the controller fix:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-active-fix-casa/20260617T143127Z-wave4-standard-cube-line-medium-clean-clark-control-probe-4bd6eeda.json`.
+  CASA cleaned 11755 components across 8 planes, while casa-rs cleaned 12696
+  and produced structured `.image`, `.model`, and `.residual` differences.
+- Single-channel MFS first-cycle diagnostic with natural weighting:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-single-channel-mfs-trace-natural/residual-divergence-summary.json`.
+  The first 50 Clark components agree with CASA to float precision, including
+  the initial peak `532.455566 Jy`, confirming the dirty image, PSF, weighting,
+  absolute-peak selection, and early component selection are aligned.
+- Single-channel MFS deep-cycle diagnostic after the controller refresh fix:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-single-channel-deep-cycle-after-refresh/residual-divergence-summary.json`.
+  casa-rs and CASA both reach `iterdone=2000`, but casa-rs still differs in
+  `.image`, `.model`, and `.residual`, proving controller refresh was necessary
+  but not sufficient.
+- Single-channel MFS forced first-cycle depth diagnostic:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-single-channel-cycle1479/residual-divergence-summary.json`.
+  Both implementations stop at `1479` components, yet `.image` RMS is
+  `6.3069`, `.residual` RMS is `7.3869`, and `.model` correlation is `0.3450`.
+  This isolates the remaining difference to the Clark minor-cycle local
+  active-pixel subtraction sequence after the first roughly 15-20 matching
+  components.
+- Rejected candidate: changing the exterior-PSF/sidelobe measurement to an
+  inclusive distance-boundary interpretation of CASA's `absMaxBeyondDist`
+  worsened the single-channel deep diagnostic
+  (`w4-clark-single-channel-deep-cycle-after-extpsf`) and was reverted. The
+  previous `max_abs_outside_patch` behavior remains.
 
 Post-fix restore diagnostics for the deep Hogbom row:
 

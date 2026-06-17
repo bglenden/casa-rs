@@ -41,7 +41,10 @@ use std::{
     fs::OpenOptions,
     hash::{BuildHasherDefault, Hasher},
     io::Write,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -9110,9 +9113,16 @@ fn append_clark_trace(line: String) {
     let Some(path) = env::var_os("CASA_RS_CLARK_TRACE") else {
         return;
     };
+    static CLARK_TRACE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let Ok(_guard) = CLARK_TRACE_LOCK.get_or_init(|| Mutex::new(())).lock() else {
+        eprintln!("failed to append CASA_RS_CLARK_TRACE: trace lock poisoned");
+        return;
+    };
     match OpenOptions::new().create(true).append(true).open(path) {
         Ok(mut file) => {
-            let _ = writeln!(file, "{line}");
+            let mut record = line;
+            record.push('\n');
+            let _ = file.write_all(record.as_bytes());
         }
         Err(error) => {
             eprintln!("failed to append CASA_RS_CLARK_TRACE: {error}");
@@ -13735,15 +13745,17 @@ fn run_clark_minor_cycle(
             cycle_peak_abs,
             psf_patch.max_exterior_abs,
         );
-        let selection_limit =
-            clark_active_selection_limit(residual, request.clean_mask.as_ref(), flux_limit)
-                .max(cycle_threshold_jy_per_beam);
+        let selection_limit = flux_limit.max(cycle_threshold_jy_per_beam);
         let mut active_pixels =
             collect_clark_active_pixels(residual, request.clean_mask.as_ref(), selection_limit);
         active_set_build_elapsed += active_set_started.elapsed();
         pixels_searched = pixels_searched.saturating_add(image_pixels.saturating_mul(3));
+        let (patch_nx, patch_ny) = psf_patch.patch.dim();
         append_clark_trace(format!(
-            "{{\"event\":\"subcycle_start\",\"subcycle\":0,\"cycle_update_start\":0,\"cycle_peak_abs\":{:.17e},\"max_exterior_abs\":{:.17e},\"flux_limit\":{:.17e},\"cycle_threshold\":{:.17e},\"selection_limit\":{:.17e},\"active_pixels\":{},\"cycle_reported_niter\":{},\"max_active_pixels\":{},\"histogram_bins\":{},\"algorithm\":\"casa_clark_single_solve\"}}",
+            "{{\"event\":\"subcycle_start\",\"subcycle\":0,\"cycle_update_start\":0,\"reffreq_hz\":{:.17e},\"selected_frequency_min_hz\":{:.17e},\"selected_frequency_max_hz\":{:.17e},\"cycle_peak_abs\":{:.17e},\"max_exterior_abs\":{:.17e},\"flux_limit\":{:.17e},\"cycle_threshold\":{:.17e},\"selection_limit\":{:.17e},\"active_pixels\":{},\"cycle_reported_niter\":{},\"max_active_pixels\":{},\"histogram_bins\":{},\"psf_patch_nx\":{},\"psf_patch_ny\":{},\"psf_patch_radius_x\":{},\"psf_patch_radius_y\":{},\"algorithm\":\"casa_clark_single_solve\"}}",
+            request.reffreq_hz,
+            request.selected_frequency_range_hz[0],
+            request.selected_frequency_range_hz[1],
             cycle_peak_abs,
             psf_patch.max_exterior_abs,
             flux_limit,
@@ -13752,7 +13764,11 @@ fn run_clark_minor_cycle(
             active_pixels.len(),
             cycle_reported_niter,
             CLARK_MAX_ACTIVE_PIXELS,
-            CLARK_HISTOGRAM_BINS
+            CLARK_HISTOGRAM_BINS,
+            patch_nx,
+            patch_ny,
+            psf_patch.radius_x,
+            psf_patch.radius_y,
         ));
         if active_pixels.is_empty() {
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
@@ -13779,15 +13795,20 @@ fn run_clark_minor_cycle(
                 ) {
                     stop_reason = Some(reason);
                     append_clark_trace(format!(
-                        "{{\"event\":\"stop\",\"cycle_update\":{},\"reason\":\"{:?}\",\"peak_abs\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
-                        cycle_component_updates, reason, peak_abs, iter_flux_limit
+                        "{{\"event\":\"stop\",\"cycle_update\":{},\"reffreq_hz\":{:.17e},\"reason\":\"{:?}\",\"peak_abs\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                        cycle_component_updates,
+                        request.reffreq_hz,
+                        reason,
+                        peak_abs,
+                        iter_flux_limit
                     ));
                     break;
                 }
                 let component = request.clean.gain * peak_pixel.value;
                 append_clark_trace(format!(
-                    "{{\"event\":\"component\",\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                    "{{\"event\":\"component\",\"cycle_update\":{},\"reffreq_hz\":{:.17e},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
                     cycle_component_updates,
+                    request.reffreq_hz,
                     peak_pixel.x,
                     peak_pixel.y,
                     peak_pixel.value,
@@ -14218,15 +14239,23 @@ fn run_clark_cotton_schwab(
         ));
         minor_iterations += outcome.actual_updates;
         reported_minor_iterations = reported_after_outcome;
+        let mut stop_after_cycle = false;
         if let Some(reason) = outcome.stop_reason {
             match reason {
                 CleanStopReason::CycleThresholdReached if outcome.updated_model => {}
+                CleanStopReason::CycleThresholdReached => {
+                    clean_stop_reason = Some(reason);
+                }
                 _ => {
                     clean_stop_reason = Some(reason);
+                    stop_after_cycle = true;
                 }
             }
         }
         if !outcome.updated_model {
+            break;
+        }
+        if stop_after_cycle {
             break;
         }
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -14917,21 +14946,6 @@ fn clark_active_flux_limit(
         CLARK_HISTOGRAM_BINS,
     );
     exterior_limit.max(histogram_limit) / 8.0
-}
-
-fn clark_active_selection_limit(
-    residual: &Array2<f32>,
-    mask: Option<&Array2<bool>>,
-    flux_limit: f32,
-) -> f32 {
-    let histogram_limit = clark_biggest_residual_limit(
-        residual,
-        mask,
-        CLARK_MAX_ACTIVE_PIXELS,
-        flux_limit,
-        CLARK_HISTOGRAM_BINS,
-    );
-    flux_limit.max(histogram_limit)
 }
 
 fn clark_biggest_residual_limit(
@@ -23209,10 +23223,10 @@ mod tests {
         CLARK_HISTOGRAM_BINS, CLARK_MAX_ACTIVE_PIXELS, ClarkPsfPatch, CleanConfig, CleanStopReason,
         CompatibilityMode, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
         GridderMode, GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch,
-        HogbomIterationMode, ImageGeometry, ImageWindow, ImagingRequest, ImagingStageTimings,
-        MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock, StandardGridder,
-        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
+        HogbomIterationMode, ImageGeometry, ImageWindow, ImagingError, ImagingRequest,
+        ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes,
+        PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
+        StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
         StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
         StandardMfsPlannedWeightedSampleRunBlock, StandardMfsWeightedSample, VisibilityBatch,
@@ -23220,18 +23234,18 @@ mod tests {
         WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
         add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
         build_direct_components, build_direct_pixel_coordinates, build_multiscale_scale_masks,
-        clark_active_flux_limit, clark_active_selection_limit, clark_biggest_residual_limit,
-        collect_clark_active_pixels, compute_cycle_threshold,
-        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
-        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        kernel_nonzero_support, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
-        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
-        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
-        peak_location_masked_in_window,
+        clark_active_flux_limit, clark_biggest_residual_limit, collect_clark_active_pixels,
+        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
+        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
+        dirty_clean_config, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
+        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
+        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
+        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
+        peak_location_masked, peak_location_masked_in_window,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
-        primary_beam_voltage_pattern_for_offsets, run_clark_minor_cycle, run_hogbom_minor_cycle,
-        run_imaging, run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        primary_beam_voltage_pattern_for_offsets, run_clark_cotton_schwab, run_clark_minor_cycle,
+        run_hogbom_minor_cycle, run_imaging, run_imaging_owned,
+        run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -27027,7 +27041,7 @@ mod tests {
     }
 
     #[test]
-    fn clark_histogram_limit_reduces_large_active_sets() {
+    fn clark_flux_limit_uses_histogram_before_empirical_depth() {
         let residual = Array2::from_shape_vec(
             (1, 40_000),
             (1..=40_000).map(|value| value as f32).collect(),
@@ -27042,14 +27056,13 @@ mod tests {
             CLARK_HISTOGRAM_BINS,
         );
         let flux_limit = clark_active_flux_limit(&residual, None, 40_000.0, 0.0);
-        let selection_limit = clark_active_selection_limit(&residual, None, flux_limit);
-        let active_pixels = collect_clark_active_pixels(&residual, None, selection_limit);
+        let active_pixels = collect_clark_active_pixels(&residual, None, flux_limit);
 
         assert!(histogram_limit > 0.0);
-        assert!(selection_limit > 0.0);
+        assert!((flux_limit - histogram_limit / 8.0).abs() < 1.0e-3);
         assert!(
-            active_pixels.len() <= CLARK_MAX_ACTIVE_PIXELS,
-            "active set should honor CLARK_MAX_ACTIVE_PIXELS, got {}",
+            active_pixels.len() > CLARK_MAX_ACTIVE_PIXELS,
+            "CASA Clark can keep more than CLARK_MAX_ACTIVE_PIXELS after the empirical /8 depth, got {}",
             active_pixels.len()
         );
     }
@@ -27058,7 +27071,7 @@ mod tests {
     fn clark_minor_cycle_updates_model_without_full_residual_replay() {
         let request = ImagingRequest {
             geometry: ImageGeometry {
-                image_shape: [5, 5],
+                image_shape: [21, 21],
                 cell_size_rad: [1.0, 1.0],
             },
             visibility_batches: Vec::new(),
@@ -27140,7 +27153,96 @@ mod tests {
     }
 
     #[test]
-    fn clark_local_cycle_threshold_does_not_stop_deep_clean_budget() {
+    fn clark_controller_refreshes_after_internal_cycle_threshold() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [5, 5],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Clark,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 20,
+                major_cycle_limit: None,
+                gain: 0.5,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 20,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((21, 21));
+        psf[(10, 10)] = 1.0;
+        psf[(9, 10)] = 0.2;
+        psf[(11, 10)] = 0.2;
+        psf[(10, 9)] = 0.2;
+        psf[(10, 11)] = 0.2;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((21, 21));
+        let mut residual = Array2::<f32>::zeros((21, 21));
+        residual[(10, 10)] = 1.0;
+        residual[(9, 10)] = 0.2;
+        residual[(11, 10)] = 0.2;
+        residual[(10, 9)] = 0.2;
+        residual[(10, 11)] = 0.2;
+        let refreshed_residual = Array2::<f32>::zeros((21, 21));
+        let mut refresh_calls = 0usize;
+        let mut refresh_residual = |_model: &Array2<f32>,
+                                    _stage_timings: &mut ImagingStageTimings|
+         -> Result<Array2<f32>, ImagingError> {
+            refresh_calls += 1;
+            Ok(refreshed_residual.clone())
+        };
+        let mut stage_timings = ImagingStageTimings::default();
+        let mut warnings = Vec::new();
+
+        let state = run_clark_cotton_schwab(
+            &request,
+            &psf_state,
+            &mut stage_timings,
+            &mut refresh_residual,
+            &mut model,
+            residual,
+            0.2,
+            1.0,
+            Some(0.9),
+            &mut warnings,
+        )
+        .expect("run Clark controller");
+
+        assert_eq!(
+            state.clean_stop_reason,
+            Some(CleanStopReason::GlobalThresholdReached)
+        );
+        assert_eq!(refresh_calls, 1);
+        assert!(state.minor_iterations < request.clean.niter);
+    }
+
+    #[test]
+    fn clark_without_internal_cycle_threshold_uses_deep_clean_budget() {
         let samples = vec![
             (-140.0, -110.0, 0.0),
             (-80.0, 60.0, 0.0),

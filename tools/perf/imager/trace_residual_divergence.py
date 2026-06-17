@@ -157,7 +157,22 @@ def case_controls(case: str) -> dict[str, Any]:
         return {"niter": 50, "cycleniter": 50, "dirty_only": False}
     if case == "full":
         return {"niter": 500, "cycleniter": 50, "dirty_only": False}
+    if case == "deep-cycle":
+        return {"niter": 2000, "cycleniter": 2000, "dirty_only": False}
+    if case == "cycle1479":
+        return {"niter": 1479, "cycleniter": 1479, "dirty_only": False}
     raise ValueError(f"unsupported case {case!r}")
+
+
+def rust_weighting(weighting: str, robust: float) -> dict[str, Any]:
+    normalized = weighting.lower()
+    if normalized == "natural":
+        return {"kind": "natural"}
+    if normalized == "uniform":
+        return {"kind": "uniform"}
+    if normalized == "briggs":
+        return {"kind": "briggs", "robust": robust}
+    raise ValueError(f"unsupported weighting {weighting!r}")
 
 
 def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[str, Any]:
@@ -173,7 +188,7 @@ def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         "channel_count": args.channel_count,
         "data_column": "DATA",
         "spectral_mode": "mfs",
-        "weighting": {"kind": "briggs", "robust": args.robust},
+        "weighting": rust_weighting(args.weighting, args.robust),
         "deconvolver": args.deconvolver,
         "nterms": 1,
         "niter": controls["niter"],

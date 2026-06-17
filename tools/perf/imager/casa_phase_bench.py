@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import statistics
 import tempfile
@@ -37,6 +38,79 @@ def median(values: List[float]) -> float:
 def median_int(values: List[int]) -> int:
     ordered = sorted(values)
     return ordered[len(ordered) // 2]
+
+
+def summarize_summaryminor(summaryminor: object) -> Dict[str, object]:
+    """Return compact CASA minor-cycle summary facts without dumping large arrays."""
+    shape = getattr(summaryminor, "shape", None)
+    if shape is not None and len(shape) == 2:
+        fields = int(shape[0])
+        entries = int(shape[1])
+        facts: Dict[str, object] = {
+            "present": True,
+            "matrix_shape": [fields, entries],
+            "total_entries": entries,
+            "total_iterations": 0.0,
+            "iterations_by_entry": [],
+            "max_cycle_threshold": 0.0,
+            "cycle_threshold_by_entry": [],
+            "stop_codes": {},
+        }
+        if entries > 0 and fields > 0:
+            facts["total_iterations"] = float(summaryminor[0].sum())
+            facts["iterations_by_entry"] = [float(value) for value in summaryminor[0].tolist()]
+        if entries > 0 and fields > 3:
+            facts["max_cycle_threshold"] = float(summaryminor[3].max())
+            facts["cycle_threshold_by_entry"] = [
+                float(value) for value in summaryminor[3].tolist()
+            ]
+        if entries > 0 and fields > 14:
+            stop_codes: Dict[str, int] = {}
+            for value in summaryminor[14]:
+                key = str(int(value))
+                stop_codes[key] = stop_codes.get(key, 0) + 1
+            facts["stop_codes"] = stop_codes
+        return facts
+    if not isinstance(summaryminor, dict):
+        return {"present": False}
+    facts: Dict[str, object] = {
+        "present": True,
+        "field_count": len(summaryminor),
+        "channels_with_entries": 0,
+        "total_entries": 0,
+        "total_iterations": 0.0,
+        "max_cycle_threshold": 0.0,
+        "stop_codes": {},
+    }
+    stop_codes: Dict[str, int] = {}
+    for field_value in summaryminor.values():
+        if not isinstance(field_value, dict):
+            continue
+        for channel_value in field_value.values():
+            if not isinstance(channel_value, dict):
+                continue
+            for pol_value in channel_value.values():
+                if not isinstance(pol_value, list) or not pol_value:
+                    continue
+                if not all(isinstance(row, list) for row in pol_value):
+                    continue
+                rows = list(zip(*pol_value))
+                facts["channels_with_entries"] = int(facts["channels_with_entries"]) + 1
+                facts["total_entries"] = int(facts["total_entries"]) + len(rows)
+                for row in rows:
+                    if len(row) > 0 and isinstance(row[0], (int, float)):
+                        facts["total_iterations"] = float(facts["total_iterations"]) + float(
+                            row[0]
+                        )
+                    if len(row) > 3 and isinstance(row[3], (int, float)):
+                        facts["max_cycle_threshold"] = max(
+                            float(facts["max_cycle_threshold"]), float(row[3])
+                        )
+                    if len(row) > 14 and isinstance(row[14], (int, float)):
+                        key = str(int(row[14]))
+                        stop_codes[key] = stop_codes.get(key, 0) + 1
+    facts["stop_codes"] = stop_codes
+    return facts
 
 
 def timed(callable_obj: Callable, *args, **kwargs) -> Tuple[float, object]:
@@ -191,6 +265,7 @@ def main() -> None:
     stage_values: Dict[str, List[float]] = {name: [] for name in stage_names}
     clean_major_counts: List[int] = []
     minor_cycle_counts: List[int] = []
+    clean_control_records: List[Dict[str, object]] = []
 
     with tempfile.TemporaryDirectory() as tempdir:
         for run_index in range(repeats):
@@ -291,6 +366,31 @@ def main() -> None:
                         elapsed, done_minor = timed(imager.runMinorCycle)
                         per_stage["minor_cycle"] += elapsed
                         minor_cycles += 1
+                        if hasattr(imager, "IBtool"):
+                            try:
+                                summary = imager.IBtool.getiterationsummary()
+                                clean_control_records.append(
+                                    {
+                                        "minor_cycle": minor_cycles,
+                                        "done_minor": bool(done_minor),
+                                        "iterdone": int(summary.get("iterdone", 0)),
+                                        "nmajordone": int(summary.get("nmajordone", 0)),
+                                        "stopcode": int(summary.get("stopcode", 0)),
+                                        "maxpsfsidelobe": float(
+                                            summary.get("maxpsfsidelobe", 0.0)
+                                        ),
+                                        "cyclethreshold": float(
+                                            summary.get("cyclethreshold", 0.0)
+                                        ),
+                                        "summaryminor": summarize_summaryminor(
+                                            summary.get("summaryminor")
+                                        ),
+                                    }
+                                )
+                            except Exception as error:  # pragma: no cover - diagnostic only
+                                clean_control_records.append(
+                                    {"minor_cycle": minor_cycles, "error": str(error)}
+                                )
 
                         if done_minor:
                             elapsed, _ = timed(imager.runMajorCycle)
@@ -352,6 +452,11 @@ def main() -> None:
     print(
         "result medians: clean_major_cycles={} minor_cycles={}".format(
             median_int(clean_major_counts), median_int(minor_cycle_counts)
+        )
+    )
+    print(
+        "clean_control_diagnostics_json={}".format(
+            json.dumps(clean_control_records[-5:], sort_keys=True)
         )
     )
 
