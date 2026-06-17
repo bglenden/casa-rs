@@ -49,8 +49,13 @@
     },
     {
       "row_id": "standard_cube_clean_multiscale",
-      "role": "metal_default",
+      "role": "casa_cpp",
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json"
+    },
+    {
+      "row_id": "standard_cube_clean_multiscale",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-multiscale-medium64-multicpu-deep/20260617T013555Z-wave4-standard-cube-line-medium-clean-multiscale-585d9f40.json"
     },
     {
       "row_id": "cubedata_dirty",
