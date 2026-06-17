@@ -68,6 +68,16 @@
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-multiscale-medium64-multicpu-deep/20260617T013555Z-wave4-standard-cube-line-medium-clean-multiscale-585d9f40.json"
     },
     {
+      "row_id": "standard_cube_clean_multiscale",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-real-standard-multiscale-medium64-multicpu/20260617T195658Z-wave4-standard-cube-line-medium-clean-multiscale-bd362a9a.json"
+    },
+    {
+      "row_id": "standard_cube_clean_multiscale",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-real-standard-multiscale-medium64-metal/20260617T201008Z-wave4-standard-cube-line-medium-clean-multiscale-db014b4f.json"
+    },
+    {
       "row_id": "cubedata_dirty",
       "role": "serial_cpu",
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-forced1-current/20260616T172921Z-wave4-standard-cubedata-line-medium-b38c7e90.json"
@@ -130,12 +140,12 @@
     {
       "row_id": "cubedata_clean_multiscale",
       "role": "multi_worker_cpu",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-multiscale-multicpu/20260616T191443Z-wave4-standard-cubedata-line-medium-clean-multiscale-452c6155.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-real-cubedata-multiscale-medium64-multicpu/20260617T202537Z-wave4-standard-cubedata-line-medium-clean-multiscale-9f2d621b.json"
     },
     {
       "row_id": "cubedata_clean_multiscale",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-multiscale-auto-reject-metal/20260616T195624Z-wave4-standard-cubedata-line-medium-clean-multiscale-1464ab93.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-real-cubedata-multiscale-medium64-metal/20260617T203931Z-wave4-standard-cubedata-line-medium-clean-multiscale-24b1f33b.json"
     },
     {
       "row_id": "cubedata_clean_multiscale",
