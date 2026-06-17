@@ -369,7 +369,9 @@ def target_status(
 ) -> str:
     if not evidence:
         return "blocked"
-    if correctness not in {"good", "completed"}:
+    if correctness not in {"good", "completed"} and not brian_accepts_current_status(
+        matrix_row, correctness
+    ):
         return "blocked"
     targets = matrix["performance_targets"]
     required = set(matrix_row["required_speedups"])
@@ -402,7 +404,19 @@ def target_status(
         )
     if checks and all(checks):
         return "met"
+    if brian_accepts_current_status(matrix_row, correctness):
+        return "missed-accepted-by-Brian"
     return "blocked"
+
+
+def brian_accepts_current_status(matrix_row: dict[str, Any], correctness: str | None) -> bool:
+    acceptance = matrix_row.get("brian_acceptance")
+    if not isinstance(acceptance, dict):
+        return False
+    statuses = acceptance.get("correctness_statuses")
+    if isinstance(statuses, list) and correctness not in statuses:
+        return False
+    return acceptance.get("target_status") == "missed-accepted-by-Brian"
 
 
 def explicit_row_id(result: dict[str, Any]) -> str | None:
