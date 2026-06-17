@@ -2804,6 +2804,14 @@ fn cube_per_plane_runtime_config(
         }
         PerPlaneExecutionBackend::Wave3MetalGrouped => StandardMfsAccelerationPolicy::Metal,
     };
+    if eligibility.selected_backend == PerPlaneExecutionBackend::Wave3MetalGrouped
+        && config.deconvolver == Deconvolver::Hogbom
+    {
+        plane_config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        plane_config.standard_mfs_residual_backend = Some("metal-row-run-grouped".to_string());
+        plane_config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
+        plane_config.standard_mfs_metal_grouped_input_cache = Some(true);
+    }
     plane_config
 }
 
@@ -14494,6 +14502,21 @@ fn apply_standard_mfs_runtime_plan_locked(
         guard.set("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE", value);
     }
 
+    let hogbom_minor_cycle_backend = if config.deconvolver == Deconvolver::Hogbom {
+        match config.standard_mfs_acceleration {
+            StandardMfsAccelerationPolicy::Auto if auto_metal => Some("metal"),
+            StandardMfsAccelerationPolicy::Metal => Some("metal"),
+            StandardMfsAccelerationPolicy::Auto
+            | StandardMfsAccelerationPolicy::Cpu
+            | StandardMfsAccelerationPolicy::MultiCpu => Some("cpu"),
+        }
+    } else {
+        None
+    };
+    if let Some(value) = hogbom_minor_cycle_backend {
+        guard.set("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND", value);
+    }
+
     let mtmfs_metal_backend =
         if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
             "metal-sample-cache"
@@ -14506,12 +14529,15 @@ fn apply_standard_mfs_runtime_plan_locked(
         } else {
             "not_applicable"
         };
-    let hogbom_metal_backend =
-        if config.deconvolver == Deconvolver::Hogbom && (auto_metal || metal_policy) {
-            "metal-minor-cycle"
-        } else {
-            "not_applicable"
-        };
+    let hogbom_metal_backend = if config.deconvolver == Deconvolver::Hogbom
+        && hogbom_minor_cycle_backend == Some("metal")
+    {
+        "metal-minor-cycle"
+    } else if config.deconvolver == Deconvolver::Hogbom {
+        "cpu-minor-cycle"
+    } else {
+        "not_applicable"
+    };
 
     eprintln!(
         "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} hogbom_metal_backend={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
@@ -41721,7 +41747,19 @@ mod tests {
             assert!(eligibility.fallback_reasons.is_empty());
             assert_eq!(
                 plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::Metal
+                StandardMfsAccelerationPolicy::MultiCpu
+            );
+            assert_eq!(
+                plane_config.standard_mfs_residual_backend.as_deref(),
+                Some("metal-row-run-grouped")
+            );
+            assert_eq!(
+                plane_config.standard_mfs_initial_dirty_backend.as_deref(),
+                Some("metal-row-run-grouped")
+            );
+            assert_eq!(
+                plane_config.standard_mfs_metal_grouped_input_cache,
+                Some(true)
             );
         } else {
             assert_eq!(

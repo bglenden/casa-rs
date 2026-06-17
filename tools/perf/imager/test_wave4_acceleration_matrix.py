@@ -122,6 +122,45 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
         self.assertIsNone(row["casa_s"])
         self.assertIsNone(row["speedup_default_vs_casa"])
 
+    def test_worker_and_metal_speedups_require_comparable_tier_and_shape(self) -> None:
+        matrix = wave4_acceleration_matrix.load_matrix(
+            wave4_acceleration_matrix.MATRIX_PATH
+        )
+        serial = fake_result(
+            "cubedata_clean_hogbom",
+            "serial_cpu",
+            rust_seconds=300.0,
+            casa_seconds=None,
+            backend="serial_cpu",
+            workers=1,
+        )
+        multi = fake_result(
+            "cubedata_clean_hogbom",
+            "multi_worker_cpu",
+            rust_seconds=100.0,
+            casa_seconds=None,
+            backend="wave3_fixed_tile_cpu",
+            workers=8,
+        )
+        metal = fake_result(
+            "cubedata_clean_hogbom",
+            "metal_default",
+            rust_seconds=80.0,
+            casa_seconds=None,
+            backend="wave3_metal_grouped",
+            workers=8,
+        )
+        metal["mode"]["channel_count"] = 512
+
+        rows = wave4_acceleration_matrix.build_closeout_table(
+            matrix, [serial, multi, metal]
+        )
+        row = next(row for row in rows if row["row_id"] == "cubedata_clean_hogbom")
+
+        self.assertEqual(3.0, row["speedup_auto_vs_serial"])
+        self.assertIsNone(row["speedup_metal_vs_multi_worker_cpu"])
+        self.assertEqual("512 ch, 1024", row["shape"])
+
     def test_cli_writes_markdown_table_from_result_json(self) -> None:
         matrix = wave4_acceleration_matrix.load_matrix(
             wave4_acceleration_matrix.MATRIX_PATH

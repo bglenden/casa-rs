@@ -315,10 +315,10 @@ def build_closeout_row(
     baseline_seconds = rust_seconds(baseline)
     correctness_result = best_correctness_result(evidence)
     correctness = correctness_status(correctness_result)
-    speedup_auto_vs_serial = speedup(serial_seconds, multi_seconds)
-    speedup_metal_vs_multi = speedup(multi_seconds, metal_seconds)
+    speedup_auto_vs_serial = speedup_between(serial, multi)
+    speedup_metal_vs_multi = speedup_between(multi, metal)
     speedup_default_vs_casa = speedup(casa_seconds, default_seconds)
-    speedup_default_vs_baseline = speedup(baseline_seconds, default_seconds)
+    speedup_default_vs_baseline = speedup_between(baseline, default)
     row = {
         "mode_family": matrix_row["mode_family"],
         "phase": matrix_row["phase"],
@@ -527,6 +527,14 @@ def speedup(before: float | None, after: float | None) -> float | None:
     if before is None or after is None or after <= 0:
         return None
     return before / after
+
+
+def speedup_between(
+    before: dict[str, Any] | None, after: dict[str, Any] | None
+) -> float | None:
+    if before is None or after is None or not comparable_shape(before, after):
+        return None
+    return speedup(rust_seconds(before), rust_seconds(after))
 
 
 def dataset_tier(result: dict[str, Any] | None) -> str | None:

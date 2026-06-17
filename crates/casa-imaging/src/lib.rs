@@ -12583,22 +12583,23 @@ fn run_hogbom_minor_cycle_cpu(
 }
 
 fn standard_mfs_hogbom_metal_minor_cycle_enabled() -> Result<bool, ImagingError> {
+    if let Some(value) = env::var_os("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND") {
+        let value = value.to_string_lossy().trim().to_ascii_lowercase();
+        return match value.as_str() {
+            "metal" | "metal-minor-cycle" => Ok(true),
+            "cpu" | "off" | "none" => Ok(false),
+            other => Err(ImagingError::InvalidRequest(format!(
+                "unsupported CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND value '{other}'"
+            ))),
+        };
+    }
     let backend = standard_mfs_backend_selection_from_env()?;
-    if matches!(
+    Ok(matches!(
         backend,
         StandardMfsBackendSelection::Metal
             | StandardMfsBackendSelection::MetalRowRun
             | StandardMfsBackendSelection::MetalRowRunGrouped
-    ) {
-        return Ok(true);
-    }
-    if standard_mfs_residual_backend_selection_from_env()?.is_some() {
-        return Ok(true);
-    }
-    if standard_mfs_initial_dirty_backend_selection_from_env()?.is_some() {
-        return Ok(true);
-    }
-    Ok(false)
+    ))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
