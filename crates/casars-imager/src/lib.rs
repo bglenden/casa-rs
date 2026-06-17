@@ -2730,24 +2730,13 @@ fn plan_cube_per_plane_execution(
     if cfg!(target_os = "macos") && !metal_device_available {
         fallback_reasons.push("metal_device_unavailable");
     }
-    let rejects_single_channel_cube_clean_metal_refresh = matches!(
-        config.standard_mfs_acceleration,
-        StandardMfsAccelerationPolicy::Auto | StandardMfsAccelerationPolicy::Metal
-    ) && metal_eligible;
-    if rejects_single_channel_cube_clean_metal_refresh {
-        fallback_reasons.push("single_channel_cube_clean_metal_refresh_replay_dominated");
-    }
     let owned_single_plane_identity_path = cube_clean_uses_owned_single_plane_identity_path(config);
     let selected_backend = match config.standard_mfs_acceleration {
         StandardMfsAccelerationPolicy::Cpu => PerPlaneExecutionBackend::SerialCpu,
-        StandardMfsAccelerationPolicy::Metal
-            if metal_eligible && !rejects_single_channel_cube_clean_metal_refresh =>
-        {
+        StandardMfsAccelerationPolicy::Metal if metal_eligible => {
             PerPlaneExecutionBackend::Wave3MetalGrouped
         }
-        StandardMfsAccelerationPolicy::Auto
-            if metal_eligible && !rejects_single_channel_cube_clean_metal_refresh =>
-        {
+        StandardMfsAccelerationPolicy::Auto if metal_eligible => {
             PerPlaneExecutionBackend::Wave3MetalGrouped
         }
         StandardMfsAccelerationPolicy::MultiCpu
@@ -41464,14 +41453,20 @@ mod tests {
         let plan = plan_cube_per_plane_execution(&config, output_planes, hardware_threads);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
-        assert_eq!(
-            plan.selected_backend,
-            PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-        );
         if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
             assert!(
+                plan.fallback_reasons.is_empty(),
+                "eligible auto clean cube should not report Metal fallback reasons: {:?}",
                 plan.fallback_reasons
-                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
+            );
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3MetalGrouped
+            );
+        } else {
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
             );
         }
         assert!(plan.fixed_tile_cpu_eligible);
@@ -41513,12 +41508,9 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+                PerPlaneExecutionBackend::Wave3MetalGrouped
             );
-            assert!(
-                plan.fallback_reasons
-                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
-            );
+            assert!(plan.fallback_reasons.is_empty());
         } else {
             assert!(!plan.metal_eligible);
             assert_eq!(
@@ -41574,12 +41566,9 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+                PerPlaneExecutionBackend::Wave3MetalGrouped
             );
-            assert!(
-                plan.fallback_reasons
-                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
-            );
+            assert!(plan.fallback_reasons.is_empty());
         } else {
             assert!(!plan.metal_eligible);
             assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
@@ -41629,12 +41618,9 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+                PerPlaneExecutionBackend::Wave3MetalGrouped
             );
-            assert!(
-                plan.fallback_reasons
-                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
-            );
+            assert!(plan.fallback_reasons.is_empty());
         } else {
             assert!(!plan.metal_eligible);
             assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
@@ -41695,7 +41681,7 @@ mod tests {
     }
 
     #[test]
-    fn cube_per_plane_runtime_plan_rejects_grouped_metal_for_single_channel_cube_clean() {
+    fn cube_per_plane_runtime_plan_selects_grouped_metal_for_single_channel_cube_clean() {
         let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
         let output_planes = hardware_threads.saturating_mul(2).max(2);
         let config = CliConfig::parse([
@@ -41730,16 +41716,12 @@ mod tests {
         if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
             assert_eq!(
                 eligibility.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
+                PerPlaneExecutionBackend::Wave3MetalGrouped
             );
-            assert!(
-                eligibility
-                    .fallback_reasons
-                    .contains(&"single_channel_cube_clean_metal_refresh_replay_dominated")
-            );
+            assert!(eligibility.fallback_reasons.is_empty());
             assert_eq!(
                 plane_config.standard_mfs_acceleration,
-                StandardMfsAccelerationPolicy::MultiCpu
+                StandardMfsAccelerationPolicy::Metal
             );
         } else {
             assert_eq!(

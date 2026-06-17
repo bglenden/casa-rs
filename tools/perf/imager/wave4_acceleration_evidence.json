@@ -79,13 +79,23 @@
     },
     {
       "row_id": "cubedata_clean_clark",
+      "role": "serial_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-cubedata-clark-medium64-serial1-splitlimit/20260617T010059Z-wave4-standard-cubedata-line-medium-clean-clark-ec890e49.json"
+    },
+    {
+      "row_id": "cubedata_clean_clark",
       "role": "multi_worker_cpu",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-clark-multicpu/20260616T191237Z-wave4-standard-cubedata-line-medium-clean-clark-815af171.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-cubedata-clark-medium64-multicpu-splitlimit/20260617T005517Z-wave4-standard-cubedata-line-medium-clean-clark-ad9db44f.json"
     },
     {
       "row_id": "cubedata_clean_clark",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-clark-auto-reject-metal/20260616T195339Z-wave4-standard-cubedata-line-medium-clean-clark-c261a5ae.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-cubedata-clark-medium64-auto-metal-default/20260617T010937Z-wave4-standard-cubedata-line-medium-clean-clark-673227b7.json"
+    },
+    {
+      "row_id": "cubedata_clean_clark",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-cubedata-clark-correctness-splitlimit/20260617T005823Z-wave4-standard-cubedata-line-small-clean-clark-correctness-9d1c29c0.json"
     },
     {
       "row_id": "cubedata_clean_multiscale",

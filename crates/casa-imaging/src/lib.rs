@@ -13734,7 +13734,9 @@ fn run_clark_minor_cycle(
             cycle_peak_abs,
             psf_patch.max_exterior_abs,
         );
-        let selection_limit = flux_limit.max(cycle_threshold_jy_per_beam);
+        let selection_limit =
+            clark_active_selection_limit(residual, request.clean_mask.as_ref(), flux_limit)
+                .max(cycle_threshold_jy_per_beam);
         let mut active_pixels =
             collect_clark_active_pixels(residual, request.clean_mask.as_ref(), selection_limit);
         active_set_build_elapsed += active_set_started.elapsed();
@@ -14914,6 +14916,21 @@ fn clark_active_flux_limit(
         CLARK_HISTOGRAM_BINS,
     );
     exterior_limit.max(histogram_limit) / 8.0
+}
+
+fn clark_active_selection_limit(
+    residual: &Array2<f32>,
+    mask: Option<&Array2<bool>>,
+    flux_limit: f32,
+) -> f32 {
+    let histogram_limit = clark_biggest_residual_limit(
+        residual,
+        mask,
+        CLARK_MAX_ACTIVE_PIXELS,
+        flux_limit,
+        CLARK_HISTOGRAM_BINS,
+    );
+    flux_limit.max(histogram_limit)
 }
 
 fn clark_biggest_residual_limit(
@@ -23202,14 +23219,15 @@ mod tests {
         WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
         add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
         build_direct_components, build_direct_pixel_coordinates, build_multiscale_scale_masks,
-        clark_active_flux_limit, clark_biggest_residual_limit, collect_clark_active_pixels,
-        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
-        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
-        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
-        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
-        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, peak_location_masked_in_window,
+        clark_active_flux_limit, clark_active_selection_limit, clark_biggest_residual_limit,
+        collect_clark_active_pixels, compute_cycle_threshold,
+        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
+        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        kernel_nonzero_support, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
+        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
+        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
+        peak_location_masked_in_window,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_voltage_pattern_for_offsets, run_clark_minor_cycle, run_hogbom_minor_cycle,
         run_imaging, run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
@@ -27022,12 +27040,17 @@ mod tests {
             0.0,
             CLARK_HISTOGRAM_BINS,
         );
-        let selection_limit = clark_active_flux_limit(&residual, None, 40_000.0, 0.0);
+        let flux_limit = clark_active_flux_limit(&residual, None, 40_000.0, 0.0);
+        let selection_limit = clark_active_selection_limit(&residual, None, flux_limit);
         let active_pixels = collect_clark_active_pixels(&residual, None, selection_limit);
 
         assert!(histogram_limit > 0.0);
         assert!(selection_limit > 0.0);
-        assert!(active_pixels.len() < residual.len());
+        assert!(
+            active_pixels.len() <= CLARK_MAX_ACTIVE_PIXELS,
+            "active set should honor CLARK_MAX_ACTIVE_PIXELS, got {}",
+            active_pixels.len()
+        );
     }
 
     #[test]
