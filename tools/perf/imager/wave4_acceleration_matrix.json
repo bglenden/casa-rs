@@ -78,7 +78,13 @@
       "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
       "multi_worker_requirement": "plane workers first",
       "metal_requirement": "grouped Metal default when eligible",
-      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"]
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-06-17",
+        "reason": "Brian reviewed the regenerated standard cube Hogbom .image, .residual, .model, .psf, and .sumwt panels after the CASA-style restore edge fix and accepted the remaining model/residual component-order divergence for Wave 4. Metal-vs-multi-worker CPU target is met, but default-vs-CASA remains below the 10x target."
+      }
     },
     {
       "row_id": "standard_cube_clean_clark",

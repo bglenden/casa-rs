@@ -33,7 +33,7 @@ GLENDENNING result paths for each row below.
 | Matrix row | Tier / shape | Serial or single-worker s | Multi-worker CPU/auto s | Metal/default s | CASA s | Key speedup | Correctness | Target status | Evidence |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
 | Standard cube dirty | medium, 512 ch, 2048 | 316.815 | 154.741 | n/a | 1918.001 | 2.05x auto vs forced single-worker; 12.39x vs CASA | good | met | `20260616T173624Z-wave4-standard-cube-line-medium-905e11e5` |
-| Standard cube clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | 282.458 | 137.109 | 811.307 | 2.06x Metal vs CPU; 5.92x vs CASA | blocked: restore edge artifact fixed, remaining model/residual component-order divergence | blocked | `20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a` plus unchanged CASA row `20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24` |
+| Standard cube clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | 282.458 | 137.109 | 811.307 | 2.06x Metal vs CPU; 5.92x vs CASA | accepted by Brian on 2026-06-17 after regenerated panel review: restored `.image` edge artifact fixed; remaining `.model`/`.residual` component-order divergence acceptable for Wave 4 | missed-accepted-by-Brian: Metal-vs-CPU target met, CASA speed target missed | `20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a` plus unchanged CASA row `20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24`; regenerated panels under `20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa` |
 | Standard cube clean Clark | medium, 64 ch, 1024, niter=10000 | 160.122 | 36.607 | 32.429 | 409.289 | 4.37x multi-worker vs serial; Metal default is 1.13x vs multi-worker CPU and 12.62x vs CASA | accepted by Brian on 2026-06-17 after panel review: `.model`, `.psf`, `.sumwt` good; small structured `.image`/`.residual` differences acceptable for Wave 4 | missed-accepted-by-Brian: CASA speed target met, Metal-vs-CPU target missed | `20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b`; CASA timing from unchanged row `20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413` |
 | Standard cube clean multiscale | medium, 64 ch, 1024, niter=10000 | n/a | 784.810 | n/a | n/a | blocked: no comparable Metal/serial/CASA row | missing comparable deep CASA correctness | blocked | `20260617T013555Z-wave4-standard-cube-line-medium-clean-multiscale-585d9f40` |
 | Cubedata dirty | medium, 512 ch, 2048 | 349.241 | 146.788 | n/a | 1887.410 | 2.38x auto vs forced single-worker; 12.86x vs CASA | good | met | `20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335` |
@@ -54,7 +54,7 @@ the medium speedup comparator. Cubedata dirty correctness is good, including the
 `.sumwt` non-spatial product reclassification, and its refreshed auto-vs-forced
 single-worker speedup is 2.38x against the 2.0x target.
 
-Clean closeout remains blocked. The matrix now requires clean correctness
+Clean closeout remains blocked on rows that lack comparable deep evidence. The matrix now requires clean correctness
 evidence to match the selected clean iteration depth, so the earlier shallow
 `niter=2` CASA rows no longer satisfy the deep `niter=10000` multiscale or
 cubedata clean rows. Clark's original comparable deep CASA row was blocked by
@@ -71,11 +71,14 @@ minor-cycle backend by default. The CASA-style
 restored-model FFT convolution fix removes the visible `.image` edge artifact
 in the deep standard cube row: whole-cube `.image` RMS drops from `0.115015` to
 `0.029889`, edge16 RMS drops from `0.448945` to `0.032524`, and the worst old
-edge channel drops from `0.819604` to `0.062368`. `.residual`, `.model`,
-`.psf`, and `.sumwt` are unchanged by the restore-only fix. The row is still
-blocked because the remaining `.model`/`.residual` differences are late
-Hogbom component-order divergence after `niter=10000`, and the post-fix default
-row is only 5.92x faster than CASA rather than the 10x target.
+edge channel drops from `0.819604` to `0.062368`. Regenerated panels comparing
+the post-fix Rust products to the unchanged CASA products show `.image`
+`diff_rms=0.0306109`, `.residual` `diff_rms=0.0392355`, `.model`
+`diff_rms=0.0722170`, good `.psf`, and exact `.sumwt`. Brian reviewed those
+regenerated panels on 2026-06-17 and accepted the remaining late Hogbom
+component-order divergence for Wave 4. The row remains a missed target because
+the post-fix default row is only 5.92x faster than CASA rather than the 10x
+target.
 
 ## Standard Cube / Cubedata Refactor Evidence
 
@@ -128,7 +131,7 @@ medium and large mosaic rows intentionally skip CASA:
 | Clean row | Shape | casa-rs s | CASA s | Ratio | Backend | Slabs / active / workers | Modeled I/O GB | Correctness status | Result |
 | --- | --- | ---: | ---: | ---: | --- | --- | ---: | --- | --- |
 | Hogbom, CASA-compatible iteration/control | 512 ch, 2048, niter=100 | 273.021 | 3106.996 | 11.38x | grouped Wave 3 Metal | 13 / 40 / 8 | 69.395 | accepted in W4-08 with model/image/residual/PSF panels; cleaned 186 planes and skipped 326 planes under cube-level controls | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-08-pending-skip/runs/20260616T025901Z-wave1-vla-single-medium-standard-cube-line-clean-hogbom-casa-final-1bc4f17b.json` |
-| Hogbom, deep closeout row | 64 ch, 1024, niter=10000 | 137.109 | 811.307 | 5.92x | grouped Wave 3 Metal with Metal Hogbom minor cycle; CASA-style FFT restoration | 2 / 34 / 10 | recorded in JSON | blocked: restored `.image` edge artifact fixed; remaining `.model`/`.residual` differences are late component-order divergence after deep clean; CPU deep row is also bad against the same CASA products | Rust-only post-fix: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-metal-minor-cycle-casa/20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24.json` |
+| Hogbom, deep closeout row | 64 ch, 1024, niter=10000 | 137.109 | 811.307 | 5.92x | grouped Wave 3 Metal with Metal Hogbom minor cycle; CASA-style FFT restoration | 2 / 34 / 10 | recorded in JSON | accepted by Brian on 2026-06-17 after regenerated panel review: restored `.image` edge artifact fixed; remaining `.model`/`.residual` differences are late component-order divergence after deep clean; Metal-vs-CPU target met, CASA speed target missed | Rust-only post-fix: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-metal-minor-cycle-casa/20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24.json`; regenerated panels: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa/panels` |
 | Clark, deep closeout row | 64 ch, 1024, niter=10000 | 32.429 | 409.289 | 12.62x | grouped Wave 3 Metal default with Metal Clark minor-cycle/peak-search and CPU initial dirty/residual refresh | 2 / 34 / 10 | recorded in JSON | accepted by Brian on 2026-06-17 after panel review: `.model`, `.psf`, and `.sumwt` good; small structured `.image` and `.residual` differences acceptable for Wave 4; CASA speed target met but Metal-vs-CPU target missed at 1.13x | Rust-only Metal minor-cycle row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json` |
 | Clark, 8-channel clean-control probe | 8 ch, 1024, niter=10000 | 16.196 | 62.763 | 3.88x | grouped Wave 3 Metal residual refresh; one CASA cube minor-cycle pass per plane | 1 / 8 / 1 | 0.727 | `.model`, `.psf`, `.sumwt` good; `.image` and `.residual` investigate at 0.14% and 0.23% relative RMS after exact clean-control iteration parity | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-one-pass-control-probe/20260617T154447Z-wave4-standard-cube-line-medium-clean-clark-control-probe-de3e2664.json` |
 | Multiscale | 64 ch, 1024, niter=2 | 26.697 | 231.006 | 8.65x | grouped Wave 3 Metal | 2 / 34 / 10 | 4.925 | `.model`, `.residual`, `.psf`, `.sumwt` good; `.image` investigate with normalized RMS 3.11e-6 and accepted visual residual | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json` |
@@ -215,6 +218,15 @@ Post-fix restore diagnostics for the deep Hogbom row:
   edge16 RMS `0.448945`, interior RMS `0.029709`.
 - New Rust vs unchanged CASA `.image`: RMS `0.029889`, max abs `0.821905`,
   edge16 RMS `0.032524`, interior RMS `0.029709`.
+- Regenerated post-fix review panels compare the Rust-only post-fix products
+  against the unchanged CASA products:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa/panels`.
+  The comparison metrics are `.image` `diff_rms=0.0306109`,
+  `.residual` `diff_rms=0.0392355`, `.model` `diff_rms=0.0722170`,
+  `.psf` good at `1.16e-9`, and exact `.sumwt`.
+- Brian reviewed the regenerated `.image`, `.residual`, `.model`, `.psf`, and
+  `.sumwt` panels on 2026-06-17 and accepted the remaining Hogbom correctness
+  residuals for Wave 4.
 - Worst old edge channel was channel 2: edge RMS `0.819604` before and
   `0.062368` after.
 - New Rust vs old Rust changed only `.image`; `.residual`, `.model`, `.psf`,
