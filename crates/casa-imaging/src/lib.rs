@@ -97,8 +97,6 @@ const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
 const STANDARD_MFS_INITIAL_DIRTY_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND";
-const CLARK_HISTOGRAM_BINS: usize = 1024;
-const CLARK_MAX_ACTIVE_PIXELS: usize = 32 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HogbomMinorCycleOutcome {
@@ -3039,6 +3037,32 @@ where
         execution_config,
         cube_cycle_threshold_jy_per_beam,
         &mut source,
+    )
+}
+
+/// Finish a resident standard-gridder CLEAN plane for one CASA cube minor-cycle pass.
+///
+/// CASA cube deconvolution runs a controller-owned minor-cycle pass over each
+/// plane during a major cycle. The caller is responsible for reducing cube-level
+/// control values before dispatch; this helper prevents a resident plane worker
+/// from privately running a full single-plane Cotton-Schwab loop.
+pub fn finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config<F>(
+    mut prepared: StandardMfsPreparedCleanPlane,
+    execution_config: StandardMfsExecutionConfig,
+    cube_cycle_threshold_jy_per_beam: Option<f32>,
+    replay_planned_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    prepared.request.clean.major_cycle_limit = Some(1);
+    finish_standard_mfs_prepared_clean_plane_with_execution_config(
+        prepared,
+        execution_config,
+        cube_cycle_threshold_jy_per_beam,
+        replay_planned_runs,
     )
 }
 
@@ -13677,7 +13701,8 @@ kernel void hogbom_subtract_psf_and_find_next_peak(
 fn run_clark_minor_cycle(
     request: &ImagingRequest,
     model: &mut Array2<f32>,
-    residual: &Array2<f32>,
+    residual: &mut Array2<f32>,
+    psf: &Array2<f32>,
     cycle_reported_niter: usize,
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
@@ -13698,147 +13723,170 @@ fn run_clark_minor_cycle(
     let mut subtract_updates = 0usize;
     let mut pixels_searched = 0usize;
     let mut pixels_touched = 0usize;
-    let cycle_peak_started = Instant::now();
-    let cycle_peak = peak_location_masked(residual, request.clean_mask.as_ref());
-    peak_search_elapsed += cycle_peak_started.elapsed();
-    peak_searches = peak_searches.saturating_add(1);
-    pixels_searched = pixels_searched.saturating_add(image_pixels);
-    let Some((_, cycle_peak_value)) = cycle_peak else {
-        stop_reason = Some(CleanStopReason::NoCleanablePixels);
-        break_clark_trace(
-            cycle_component_updates,
-            "no_cleanable_pixels",
+    let mut approximate_peak = peak_abs_value_masked(residual, request.clean_mask.as_ref());
+    let mut previous_approximate_peak = approximate_peak;
+    let mut factor = 1.5f32 / 4.5f32;
+    let mut warn_flag = false;
+    let mut max_minor_iterations = cycle_reported_niter;
+    if psf_patch.max_exterior_abs > 0.5 {
+        max_minor_iterations = max_minor_iterations.min(5);
+    } else if psf_patch.max_exterior_abs > 0.35 {
+        max_minor_iterations = max_minor_iterations.min(50);
+    }
+    let mut subcycle = 0usize;
+    while cycle_component_updates < cycle_reported_niter && subcycle < CASA_CLARK_MAX_MAJOR_CYCLES {
+        if let Some(reason) = minor_cycle_stop_reason(
+            approximate_peak,
+            request.clean.threshold_jy_per_beam,
             cycle_threshold_jy_per_beam,
-        );
-        let minor_elapsed = minor_started.elapsed();
-        stage_timings.minor_cycle += minor_elapsed;
-        stage_timings.minor_cycle_solve += minor_elapsed;
-        stage_timings.deconvolver_peak_search += peak_search_elapsed;
-        stage_timings.deconvolver_peak_searches = stage_timings
-            .deconvolver_peak_searches
-            .saturating_add(peak_searches as u64);
-        stage_timings.deconvolver_pixels_searched = stage_timings
-            .deconvolver_pixels_searched
-            .saturating_add(pixels_searched as u64);
-        return HogbomMinorCycleOutcome {
-            updated_model: false,
-            actual_updates: 0,
-            reported_updates: 0,
-            stop_reason,
-            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
-            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
-        };
-    };
-    let cycle_peak_abs = cycle_peak_value.abs();
-    if let Some(reason) = minor_cycle_stop_reason(
-        cycle_peak_abs,
-        request.clean.threshold_jy_per_beam,
-        cycle_threshold_jy_per_beam,
-        nsigma_threshold_jy_per_beam,
-    ) {
-        stop_reason = Some(reason);
-    } else {
-        let active_set_started = Instant::now();
-        let flux_limit = clark_active_flux_limit(
-            residual,
-            request.clean_mask.as_ref(),
-            cycle_peak_abs,
-            psf_patch.max_exterior_abs,
-        );
+            nsigma_threshold_jy_per_beam,
+        ) {
+            stop_reason = Some(reason);
+            break;
+        }
+
+        let mut flux_limit = approximate_peak * psf_patch.max_exterior_abs * factor;
+        if factor > 1.0 {
+            flux_limit = flux_limit.min(0.95 * approximate_peak);
+        }
         let selection_limit = flux_limit.max(cycle_threshold_jy_per_beam);
+        let active_set_started = Instant::now();
         let mut active_pixels =
             collect_clark_active_pixels(residual, request.clean_mask.as_ref(), selection_limit);
         active_set_build_elapsed += active_set_started.elapsed();
-        pixels_searched = pixels_searched.saturating_add(image_pixels.saturating_mul(3));
+        pixels_searched = pixels_searched.saturating_add(image_pixels);
         let (patch_nx, patch_ny) = psf_patch.patch.dim();
         append_clark_trace(format!(
-            "{{\"event\":\"subcycle_start\",\"subcycle\":0,\"cycle_update_start\":0,\"reffreq_hz\":{:.17e},\"selected_frequency_min_hz\":{:.17e},\"selected_frequency_max_hz\":{:.17e},\"cycle_peak_abs\":{:.17e},\"max_exterior_abs\":{:.17e},\"flux_limit\":{:.17e},\"cycle_threshold\":{:.17e},\"selection_limit\":{:.17e},\"active_pixels\":{},\"cycle_reported_niter\":{},\"max_active_pixels\":{},\"histogram_bins\":{},\"psf_patch_nx\":{},\"psf_patch_ny\":{},\"psf_patch_radius_x\":{},\"psf_patch_radius_y\":{},\"algorithm\":\"casa_clark_single_solve\"}}",
+            "{{\"event\":\"subcycle_start\",\"subcycle\":{},\"cycle_update_start\":{},\"reffreq_hz\":{:.17e},\"selected_frequency_min_hz\":{:.17e},\"selected_frequency_max_hz\":{:.17e},\"cycle_peak_abs\":{:.17e},\"max_exterior_abs\":{:.17e},\"factor\":{:.17e},\"flux_limit\":{:.17e},\"cycle_threshold\":{:.17e},\"selection_limit\":{:.17e},\"active_pixels\":{},\"cycle_reported_niter\":{},\"psf_patch_nx\":{},\"psf_patch_ny\":{},\"psf_patch_radius_x\":{},\"psf_patch_radius_y\":{},\"algorithm\":\"casa_clark_lat_solve\"}}",
+            subcycle,
+            cycle_component_updates,
             request.reffreq_hz,
             request.selected_frequency_range_hz[0],
             request.selected_frequency_range_hz[1],
-            cycle_peak_abs,
+            approximate_peak,
             psf_patch.max_exterior_abs,
+            factor,
             flux_limit,
             cycle_threshold_jy_per_beam,
             selection_limit,
             active_pixels.len(),
             cycle_reported_niter,
-            CLARK_MAX_ACTIVE_PIXELS,
-            CLARK_HISTOGRAM_BINS,
             patch_nx,
             patch_ny,
             psf_patch.radius_x,
             psf_patch.radius_y,
         ));
         if active_pixels.is_empty() {
-            stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            if warn_flag {
+                stop_reason = Some(CleanStopReason::NoCleanablePixels);
+                break;
+            }
+            factor *= 1.2;
+            warn_flag = true;
+            subcycle = subcycle.saturating_add(1);
+            continue;
+        }
+
+        let subcycle_limit =
+            (cycle_reported_niter - cycle_component_updates).min(max_minor_iterations);
+        let mut subcycle_updates = 0usize;
+        let mut subcycle_delta_model = Array2::<f32>::zeros(model.dim());
+        let mut fmn = 0.0f32;
+        let mut iter_flux_limit = selection_limit;
+        let subcycle_initial_peak = peak_clark_active_pixel(&active_pixels)
+            .map(|(_, pixel)| pixel.value.abs())
+            .unwrap_or(0.0);
+        let fac = if flux_limit > 0.0 && subcycle_initial_peak > 0.0 {
+            subcycle_initial_peak / flux_limit
         } else {
-            let mut fmn = 1.0f32;
-            let fac = 1.0f32;
-            let mut iter_flux_limit = selection_limit;
-            while cycle_component_updates < cycle_reported_niter {
-                let active_len = active_pixels.len();
-                let active_peak_started = Instant::now();
-                let active_peak = peak_clark_active_pixel(&active_pixels);
-                peak_search_elapsed += active_peak_started.elapsed();
-                peak_searches = peak_searches.saturating_add(1);
-                pixels_searched = pixels_searched.saturating_add(active_len);
-                let Some((_, peak_pixel)) = active_peak else {
-                    break;
-                };
-                let peak_abs = peak_pixel.value.abs();
-                if let Some(reason) = minor_cycle_stop_reason(
-                    peak_abs,
-                    request.clean.threshold_jy_per_beam,
-                    iter_flux_limit,
-                    nsigma_threshold_jy_per_beam,
-                ) {
-                    stop_reason = Some(reason);
-                    append_clark_trace(format!(
-                        "{{\"event\":\"stop\",\"cycle_update\":{},\"reffreq_hz\":{:.17e},\"reason\":\"{:?}\",\"peak_abs\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
-                        cycle_component_updates,
-                        request.reffreq_hz,
-                        reason,
-                        peak_abs,
-                        iter_flux_limit
-                    ));
-                    break;
-                }
-                let component = request.clean.gain * peak_pixel.value;
+            1.0
+        };
+        while subcycle_updates < subcycle_limit {
+            let active_len = active_pixels.len();
+            let active_peak_started = Instant::now();
+            let active_peak = peak_clark_active_pixel(&active_pixels);
+            peak_search_elapsed += active_peak_started.elapsed();
+            peak_searches = peak_searches.saturating_add(1);
+            pixels_searched = pixels_searched.saturating_add(active_len);
+            let Some((_, peak_pixel)) = active_peak else {
+                break;
+            };
+            let peak_abs = peak_pixel.value.abs();
+            if let Some(reason) = minor_cycle_stop_reason(
+                peak_abs,
+                request.clean.threshold_jy_per_beam,
+                iter_flux_limit,
+                nsigma_threshold_jy_per_beam,
+            ) {
+                stop_reason = Some(reason);
                 append_clark_trace(format!(
-                    "{{\"event\":\"component\",\"cycle_update\":{},\"reffreq_hz\":{:.17e},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                    "{{\"event\":\"stop\",\"subcycle\":{},\"cycle_update\":{},\"subcycle_update\":{},\"reffreq_hz\":{:.17e},\"reason\":\"{:?}\",\"peak_abs\":{:.17e},\"iter_flux_limit\":{:.17e}}}",
+                    subcycle,
                     cycle_component_updates,
+                    subcycle_updates,
                     request.reffreq_hz,
-                    peak_pixel.x,
-                    peak_pixel.y,
-                    peak_pixel.value,
-                    component,
+                    reason,
+                    peak_abs,
                     iter_flux_limit
                 ));
-                let model_update_started = Instant::now();
-                model[(peak_pixel.x, peak_pixel.y)] += component;
-                model_update_elapsed += model_update_started.elapsed();
-                let subtract_started = Instant::now();
-                subtract_clark_component_from_active(
-                    &mut active_pixels,
-                    peak_pixel.x,
-                    peak_pixel.y,
-                    component,
-                    psf_patch,
-                );
-                subtract_elapsed += subtract_started.elapsed();
-                subtract_updates = subtract_updates.saturating_add(1);
-                pixels_touched = pixels_touched.saturating_add(active_len);
-                cycle_component_updates += 1;
-                model_updates = model_updates.saturating_add(1);
-                updated_model = true;
-                fmn += fac / cycle_component_updates as f32;
-                iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
+                break;
             }
-            if cycle_component_updates == 0 && stop_reason.is_none() {
-                stop_reason = Some(CleanStopReason::CycleThresholdReached);
-            }
+            let component = request.clean.gain * peak_pixel.value;
+            append_clark_trace(format!(
+                "{{\"event\":\"component\",\"subcycle\":{},\"cycle_update\":{},\"subcycle_update\":{},\"reffreq_hz\":{:.17e},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"iter_flux_limit\":{:.17e},\"fmn\":{:.17e}}}",
+                subcycle,
+                cycle_component_updates,
+                subcycle_updates,
+                request.reffreq_hz,
+                peak_pixel.x,
+                peak_pixel.y,
+                peak_pixel.value,
+                component,
+                iter_flux_limit,
+                fmn
+            ));
+            let model_update_started = Instant::now();
+            model[(peak_pixel.x, peak_pixel.y)] += component;
+            subcycle_delta_model[(peak_pixel.x, peak_pixel.y)] += component;
+            model_update_elapsed += model_update_started.elapsed();
+            let subtract_started = Instant::now();
+            subtract_clark_component_from_active(
+                &mut active_pixels,
+                peak_pixel.x,
+                peak_pixel.y,
+                component,
+                psf_patch,
+            );
+            subtract_elapsed += subtract_started.elapsed();
+            subtract_updates = subtract_updates.saturating_add(1);
+            pixels_touched = pixels_touched.saturating_add(active_len);
+            cycle_component_updates += 1;
+            subcycle_updates += 1;
+            model_updates = model_updates.saturating_add(1);
+            updated_model = true;
+            fmn += fac / cycle_component_updates as f32;
+            iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
         }
+
+        approximate_peak = peak_clark_active_pixel(&active_pixels)
+            .map(|(_, pixel)| pixel.value.abs())
+            .unwrap_or(0.0);
+        if subcycle_updates > 0 {
+            *residual = &*residual - &fft_convolve_real(psf, &subcycle_delta_model);
+        }
+        if approximate_peak > previous_approximate_peak {
+            factor *= 3.0;
+            max_minor_iterations = max_minor_iterations.min(10);
+            warn_flag = true;
+        }
+        previous_approximate_peak = approximate_peak;
+        if subcycle_updates == 0 {
+            break;
+        }
+        if stop_reason.is_some() && cycle_component_updates < cycle_reported_niter {
+            stop_reason = None;
+        }
+        subcycle = subcycle.saturating_add(1);
     }
     if !updated_model && stop_reason.is_none() {
         stop_reason = Some(CleanStopReason::NoCleanablePixels);
@@ -13875,16 +13923,15 @@ fn run_clark_minor_cycle(
     }
 }
 
-fn break_clark_trace(
-    cycle_component_updates: usize,
-    reason: &str,
-    cycle_threshold_jy_per_beam: f32,
-) {
-    append_clark_trace(format!(
-        "{{\"event\":\"stop\",\"cycle_update\":{},\"reason\":\"{}\",\"cycle_threshold\":{:.17e}}}",
-        cycle_component_updates, reason, cycle_threshold_jy_per_beam
-    ));
+fn casa_clark_step_niter(cycle_reported_niter: usize) -> usize {
+    if cycle_reported_niter < 5000 {
+        cycle_reported_niter
+    } else {
+        2000
+    }
 }
+
+const CASA_CLARK_MAX_MAJOR_CYCLES: usize = 10;
 
 #[allow(clippy::too_many_arguments)]
 fn run_multiscale_minor_cycle(
@@ -14204,6 +14251,7 @@ fn run_clark_cotton_schwab(
         }
         let remaining_reported = request.clean.niter - reported_minor_iterations;
         let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
+        let casa_step_reported_niter = casa_clark_step_niter(cycle_reported_niter);
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
             cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
@@ -14213,8 +14261,9 @@ fn run_clark_cotton_schwab(
         let outcome = run_clark_minor_cycle(
             request,
             model,
-            &residual,
-            cycle_reported_niter,
+            &mut residual,
+            &psf_state.psf,
+            casa_step_reported_niter,
             final_cycle_threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
             &psf_patch,
@@ -14929,88 +14978,6 @@ fn max_abs_outside_patch(psf: &Array2<f32>, x0: usize, x1: usize, y0: usize, y1:
         }
     }
     max_abs
-}
-
-fn clark_active_flux_limit(
-    residual: &Array2<f32>,
-    mask: Option<&Array2<bool>>,
-    cycle_peak_abs: f32,
-    max_exterior_psf_abs: f32,
-) -> f32 {
-    let exterior_limit = cycle_peak_abs * max_exterior_psf_abs;
-    let histogram_limit = clark_biggest_residual_limit(
-        residual,
-        mask,
-        CLARK_MAX_ACTIVE_PIXELS,
-        exterior_limit,
-        CLARK_HISTOGRAM_BINS,
-    );
-    exterior_limit.max(histogram_limit) / 8.0
-}
-
-fn clark_biggest_residual_limit(
-    residual: &Array2<f32>,
-    mask: Option<&Array2<bool>>,
-    max_active_pixels: usize,
-    exterior_flux_limit: f32,
-    histogram_bins: usize,
-) -> f32 {
-    if histogram_bins == 0 {
-        return 0.0;
-    }
-
-    let mut min_abs = f32::INFINITY;
-    let mut max_abs = 0.0f32;
-    let mut cleanable_pixels = 0usize;
-    for ((x, y), value) in residual.indexed_iter() {
-        if mask.is_some_and(|mask| !mask[(x, y)]) {
-            continue;
-        }
-        let abs_value = value.abs();
-        min_abs = min_abs.min(abs_value);
-        max_abs = max_abs.max(abs_value);
-        cleanable_pixels += 1;
-    }
-    if cleanable_pixels == 0 || !min_abs.is_finite() {
-        return 0.0;
-    }
-    if max_abs <= min_abs {
-        return max_abs;
-    }
-
-    let mut histogram = vec![0usize; histogram_bins];
-    let scale = histogram_bins as f32 / (max_abs - min_abs);
-    for ((x, y), value) in residual.indexed_iter() {
-        if mask.is_some_and(|mask| !mask[(x, y)]) {
-            continue;
-        }
-        let bin = (((value.abs() - min_abs) * scale) as usize).min(histogram_bins - 1);
-        histogram[bin] += 1;
-    }
-
-    let low_bin = if exterior_flux_limit <= min_abs {
-        0
-    } else if exterior_flux_limit >= max_abs {
-        histogram_bins - 1
-    } else {
-        ((histogram_bins as f32 * (exterior_flux_limit - min_abs) / (max_abs - min_abs)) as usize)
-            .min(histogram_bins - 1)
-    };
-
-    let mut selected_pixels = 0usize;
-    let mut current_bin = histogram_bins as isize - 1;
-    let low_bin = low_bin as isize;
-    while current_bin >= low_bin && selected_pixels <= max_active_pixels {
-        selected_pixels = selected_pixels.saturating_add(histogram[current_bin as usize]);
-        current_bin -= 1;
-    }
-    current_bin += 1;
-
-    if selected_pixels > max_active_pixels && current_bin != histogram_bins as isize - 1 {
-        current_bin += 1;
-    }
-
-    min_abs + current_bin as f32 * (max_abs - min_abs) / histogram_bins as f32
 }
 
 fn collect_clark_active_pixels(
@@ -23220,13 +23187,13 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        CLARK_HISTOGRAM_BINS, CLARK_MAX_ACTIVE_PIXELS, ClarkPsfPatch, CleanConfig, CleanStopReason,
-        CompatibilityMode, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-        GridderMode, GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch,
-        HogbomIterationMode, ImageGeometry, ImageWindow, ImagingError, ImagingRequest,
-        ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes,
-        PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
-        StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
+        ClarkPsfPatch, CleanConfig, CleanStopReason, CompatibilityMode,
+        CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
+        GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
+        ImageGeometry, ImageWindow, ImagingError, ImagingRequest, ImagingStageTimings,
+        MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
+        PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock, StandardGridder,
+        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
         StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
         StandardMfsPlannedWeightedSampleRunBlock, StandardMfsWeightedSample, VisibilityBatch,
@@ -23234,7 +23201,6 @@ mod tests {
         WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
         add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
         build_direct_components, build_direct_pixel_coordinates, build_multiscale_scale_masks,
-        clark_active_flux_limit, clark_biggest_residual_limit, collect_clark_active_pixels,
         compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
         compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
         dirty_clean_config, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
@@ -27041,34 +27007,7 @@ mod tests {
     }
 
     #[test]
-    fn clark_flux_limit_uses_histogram_before_empirical_depth() {
-        let residual = Array2::from_shape_vec(
-            (1, 40_000),
-            (1..=40_000).map(|value| value as f32).collect(),
-        )
-        .unwrap();
-
-        let histogram_limit = clark_biggest_residual_limit(
-            &residual,
-            None,
-            CLARK_MAX_ACTIVE_PIXELS,
-            0.0,
-            CLARK_HISTOGRAM_BINS,
-        );
-        let flux_limit = clark_active_flux_limit(&residual, None, 40_000.0, 0.0);
-        let active_pixels = collect_clark_active_pixels(&residual, None, flux_limit);
-
-        assert!(histogram_limit > 0.0);
-        assert!((flux_limit - histogram_limit / 8.0).abs() < 1.0e-3);
-        assert!(
-            active_pixels.len() > CLARK_MAX_ACTIVE_PIXELS,
-            "CASA Clark can keep more than CLARK_MAX_ACTIVE_PIXELS after the empirical /8 depth, got {}",
-            active_pixels.len()
-        );
-    }
-
-    #[test]
-    fn clark_minor_cycle_updates_model_without_full_residual_replay() {
+    fn clark_minor_cycle_refreshes_image_residual_between_subcycles() {
         let request = ImagingRequest {
             geometry: ImageGeometry {
                 image_shape: [21, 21],
@@ -27102,7 +27041,7 @@ mod tests {
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
-        let residual = Array2::from_shape_vec(
+        let mut residual = Array2::from_shape_vec(
             (5, 5),
             vec![
                 0.0, 0.0, 0.0, 0.0, 0.0, //
@@ -27114,6 +27053,12 @@ mod tests {
         )
         .unwrap();
         let original_residual = residual.clone();
+        let mut psf = Array2::<f32>::zeros((5, 5));
+        psf[(2, 2)] = 1.0;
+        psf[(1, 2)] = 0.1;
+        psf[(3, 2)] = 0.1;
+        psf[(2, 1)] = 0.1;
+        psf[(2, 3)] = 0.1;
         let psf_patch = ClarkPsfPatch {
             patch: Array2::from_shape_vec(
                 (3, 3),
@@ -27134,7 +27079,8 @@ mod tests {
         let outcome = run_clark_minor_cycle(
             &request,
             &mut model,
-            &residual,
+            &mut residual,
+            &psf,
             3,
             0.0,
             0.0,
@@ -27144,7 +27090,7 @@ mod tests {
 
         assert!(outcome.updated_model);
         assert!(outcome.actual_updates > 0);
-        assert_eq!(residual, original_residual);
+        assert_ne!(residual, original_residual);
         assert_eq!(stage_timings.deconvolver_residual_replay, Duration::ZERO);
         assert_eq!(
             stage_timings.deconvolver_model_updates,

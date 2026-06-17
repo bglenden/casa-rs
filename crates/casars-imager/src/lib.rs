@@ -50,7 +50,8 @@ use casa_imaging::{
     StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
     VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
     WTermMode, WeightDensityMode, WeightingMode, WeightingRoutePlan,
-    estimate_psf_sidelobe_from_psf, finish_standard_mfs_prepared_clean_plane_with_execution_config,
+    estimate_psf_sidelobe_from_psf,
+    finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config,
     prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
     primary_beam_voltage_pattern, restore_standard_mfs_model, run_imaging,
     run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
@@ -9986,13 +9987,14 @@ fn finish_direct_clean_cube_plane_from_resident_state(
         )
         .map_err(ImagingError::InvalidRequest)
     };
-    let plane_result = finish_standard_mfs_prepared_clean_plane_with_execution_config(
-        state.prepared,
-        execution_config,
-        Some(cube_cycle_threshold_jy_per_beam),
-        &mut planned_replay,
-    )
-    .map_err(|error| error.to_string())?;
+    let plane_result =
+        finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config(
+            state.prepared,
+            execution_config,
+            Some(cube_cycle_threshold_jy_per_beam),
+            &mut planned_replay,
+        )
+        .map_err(|error| error.to_string())?;
     Ok((
         single_plane_imaging_result_to_cube_result(channel_frequency_hz, plane_result),
         replay_timings,
@@ -51071,8 +51073,8 @@ deconvolver=mtmfs
         let mut clark_config = clean_config.clone();
         clark_config.imagename = clark_prefix.clone();
         clark_config.deconvolver = Deconvolver::Clark;
-        clark_config.niter = 2;
-        clark_config.minor_cycle_length = 1;
+        clark_config.niter = 10_000;
+        clark_config.minor_cycle_length = 10_000;
         {
             let _forced_slab2 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "2");
             let clark_summary = run_from_config(&clark_config).unwrap();
@@ -51086,6 +51088,10 @@ deconvolver=mtmfs
                         <= 1.0e-5
                 }),
                 "Clark cube clean should share the cube-level cycle threshold"
+            );
+            assert!(
+                clark_summary.minor_iterations < clark_config.niter * 4,
+                "Clark cube clean should run one CASA cube minor-cycle pass per plane, not full niter independently on every plane"
             );
         }
         for suffix in ["psf", "residual", "model", "image", "sumwt"] {

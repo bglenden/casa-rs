@@ -245,7 +245,10 @@ def run_casa(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         if args.channel_count == 1
         else f"{args.spw}:{args.channel_start}~{args.channel_start + args.channel_count - 1}"
     )
+    trace_path = prefix.parent / f"{prefix.name}.cpp-clark-trace.jsonl"
     os.environ["SAVE_ALL_RESIMS"] = "true"
+    if args.deconvolver == "clark":
+        os.environ["CASA_CPP_CLARK_TRACE"] = str(trace_path)
     started = time.perf_counter()
     try:
         result = tclean(
@@ -286,6 +289,7 @@ def run_casa(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         )
     finally:
         os.environ.pop("SAVE_ALL_RESIMS", None)
+        os.environ.pop("CASA_CPP_CLARK_TRACE", None)
     elapsed = time.perf_counter() - started
     return {
         "elapsed_seconds": elapsed,
@@ -293,6 +297,7 @@ def run_casa(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         "nmajordone": int(result.get("nmajordone", 0)),
         "stopcode": int(result.get("stopcode", 0)),
         "summaryminor": result.get("summaryminor"),
+        "cpp_clark_trace": str(trace_path) if trace_path.exists() else None,
     }
 
 
