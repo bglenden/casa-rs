@@ -24,8 +24,18 @@
     },
     {
       "row_id": "standard_cube_clean_hogbom",
-      "role": "metal_default",
+      "role": "casa_cpp",
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T055224Z-wave4-standard-cube-line-medium-casa-phase-probe-479fa5f6.json"
+    },
+    {
+      "row_id": "standard_cube_clean_hogbom",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-multicpu-deep/20260617T015108Z-wave4-standard-cube-line-medium-casa-phase-probe-d7c87f10.json"
+    },
+    {
+      "row_id": "standard_cube_clean_hogbom",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-deep-rerun/20260617T015751Z-wave4-standard-cube-line-medium-casa-phase-probe-91f525e9.json"
     },
     {
       "row_id": "standard_cube_clean_clark",
