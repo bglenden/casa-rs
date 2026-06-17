@@ -45,12 +45,12 @@
     {
       "row_id": "standard_cube_clean_clark",
       "role": "multi_worker_cpu",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-clark-medium64-serial-deep/20260617T012948Z-wave4-standard-cube-line-medium-clean-clark-f71725e8.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-debug/harness-cpu/20260617T162732Z-wave4-standard-cube-line-medium-clean-clark-debug-multicpu-8cf06367.json"
     },
     {
       "row_id": "standard_cube_clean_clark",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-debug/harness-auto-after-fix/20260617T163230Z-wave4-standard-cube-line-medium-clean-clark-f09b9e71.json"
     },
     {
       "row_id": "standard_cube_clean_clark",

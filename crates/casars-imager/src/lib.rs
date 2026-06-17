@@ -2731,13 +2731,23 @@ fn plan_cube_per_plane_execution(
     if cfg!(target_os = "macos") && !metal_device_available {
         fallback_reasons.push("metal_device_unavailable");
     }
+    if matches!(
+        config.standard_mfs_acceleration,
+        StandardMfsAccelerationPolicy::Auto
+    ) && metal_eligible
+        && !cube_per_plane_auto_prefers_metal(config)
+    {
+        fallback_reasons.push("auto_prefers_multi_cpu_for_clark");
+    }
     let owned_single_plane_identity_path = cube_clean_uses_owned_single_plane_identity_path(config);
     let selected_backend = match config.standard_mfs_acceleration {
         StandardMfsAccelerationPolicy::Cpu => PerPlaneExecutionBackend::SerialCpu,
         StandardMfsAccelerationPolicy::Metal if metal_eligible => {
             PerPlaneExecutionBackend::Wave3MetalGrouped
         }
-        StandardMfsAccelerationPolicy::Auto if metal_eligible => {
+        StandardMfsAccelerationPolicy::Auto
+            if metal_eligible && cube_per_plane_auto_prefers_metal(config) =>
+        {
             PerPlaneExecutionBackend::Wave3MetalGrouped
         }
         StandardMfsAccelerationPolicy::MultiCpu
@@ -2783,6 +2793,13 @@ fn plan_cube_per_plane_execution(
         per_plane_grid_threads,
         fallback_reasons,
     }
+}
+
+fn cube_per_plane_auto_prefers_metal(config: &CliConfig) -> bool {
+    matches!(
+        config.deconvolver,
+        Deconvolver::Hogbom | Deconvolver::Multiscale
+    )
 }
 
 fn cube_per_plane_runtime_config(
@@ -41586,9 +41603,14 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::Wave3MetalGrouped
+                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
             );
-            assert!(plan.fallback_reasons.is_empty());
+            assert!(
+                plan.fallback_reasons
+                    .contains(&"auto_prefers_multi_cpu_for_clark"),
+                "Clark auto should record why it rejected eligible Metal: {:?}",
+                plan.fallback_reasons
+            );
         } else {
             assert!(!plan.metal_eligible);
             assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
@@ -41598,6 +41620,60 @@ mod tests {
                 .fallback_reasons
                 .contains(&"wave3_fixed_tile_cpu_not_semantically_equivalent")
         );
+    }
+
+    #[test]
+    fn cube_clean_per_plane_execution_honors_explicit_clark_metal() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--deconvolver"),
+            OsString::from("clark"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("metal"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse explicit Clark Metal cube clean config");
+
+        let plan = plan_cube_per_plane_execution(&config, 8, 4);
+        let plane_config = cube_per_plane_runtime_config(&config, &plan);
+
+        assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
+        assert!(plan.fixed_tile_cpu_eligible);
+        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
+            assert!(plan.metal_eligible);
+            assert_eq!(
+                plan.selected_backend,
+                PerPlaneExecutionBackend::Wave3MetalGrouped
+            );
+            assert!(
+                !plan
+                    .fallback_reasons
+                    .contains(&"auto_prefers_multi_cpu_for_clark")
+            );
+            assert_eq!(
+                plane_config.standard_mfs_acceleration,
+                StandardMfsAccelerationPolicy::Metal
+            );
+        } else {
+            assert!(!plan.metal_eligible);
+            assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
+        }
     }
 
     #[test]
