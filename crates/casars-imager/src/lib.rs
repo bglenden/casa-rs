@@ -2731,14 +2731,6 @@ fn plan_cube_per_plane_execution(
     if cfg!(target_os = "macos") && !metal_device_available {
         fallback_reasons.push("metal_device_unavailable");
     }
-    if matches!(
-        config.standard_mfs_acceleration,
-        StandardMfsAccelerationPolicy::Auto
-    ) && metal_eligible
-        && !cube_per_plane_auto_prefers_metal(config)
-    {
-        fallback_reasons.push("auto_prefers_multi_cpu_for_clark");
-    }
     let owned_single_plane_identity_path = cube_clean_uses_owned_single_plane_identity_path(config);
     let selected_backend = match config.standard_mfs_acceleration {
         StandardMfsAccelerationPolicy::Cpu => PerPlaneExecutionBackend::SerialCpu,
@@ -2798,7 +2790,7 @@ fn plan_cube_per_plane_execution(
 fn cube_per_plane_auto_prefers_metal(config: &CliConfig) -> bool {
     matches!(
         config.deconvolver,
-        Deconvolver::Hogbom | Deconvolver::Multiscale
+        Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
     )
 }
 
@@ -2822,6 +2814,12 @@ fn cube_per_plane_runtime_config(
         }
         PerPlaneExecutionBackend::Wave3MetalGrouped => StandardMfsAccelerationPolicy::Metal,
     };
+    if config.deconvolver == Deconvolver::Clark
+        && eligibility.selected_backend == PerPlaneExecutionBackend::Wave3MetalGrouped
+    {
+        plane_config.standard_mfs_residual_backend = Some("cpu".to_string());
+        plane_config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
+    }
     plane_config
 }
 
@@ -14528,6 +14526,21 @@ fn apply_standard_mfs_runtime_plan_locked(
         guard.set("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND", value);
     }
 
+    let clark_minor_cycle_backend = if config.deconvolver == Deconvolver::Clark {
+        match config.standard_mfs_acceleration {
+            StandardMfsAccelerationPolicy::Auto if auto_metal => Some("metal"),
+            StandardMfsAccelerationPolicy::Metal => Some("metal"),
+            StandardMfsAccelerationPolicy::Auto
+            | StandardMfsAccelerationPolicy::Cpu
+            | StandardMfsAccelerationPolicy::MultiCpu => Some("cpu"),
+        }
+    } else {
+        None
+    };
+    if let Some(value) = clark_minor_cycle_backend {
+        guard.set("CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND", value);
+    }
+
     let mtmfs_metal_backend =
         if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
             "metal-sample-cache"
@@ -14549,9 +14562,17 @@ fn apply_standard_mfs_runtime_plan_locked(
     } else {
         "not_applicable"
     };
+    let clark_metal_backend =
+        if config.deconvolver == Deconvolver::Clark && clark_minor_cycle_backend == Some("metal") {
+            "metal-minor-cycle"
+        } else if config.deconvolver == Deconvolver::Clark {
+            "cpu-minor-cycle"
+        } else {
+            "not_applicable"
+        };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} hogbom_metal_backend={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} hogbom_metal_backend={} clark_metal_backend={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         eligible,
         auto_multi_cpu,
@@ -14572,6 +14593,7 @@ fn apply_standard_mfs_runtime_plan_locked(
         metal_cache.as_deref().unwrap_or("planner"),
         metal_cache_source.label(),
         hogbom_metal_backend,
+        clark_metal_backend,
         mtmfs_metal_backend,
         mtmfs_metal_input_cache,
     );
@@ -41398,6 +41420,8 @@ mod tests {
         let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
         let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
         let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+        let _hogbom_minor = EnvGuard::unset("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND");
+        let _clark_minor = EnvGuard::unset("CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND");
 
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -41603,13 +41627,7 @@ mod tests {
             assert!(plan.metal_eligible);
             assert_eq!(
                 plan.selected_backend,
-                PerPlaneExecutionBackend::OwnedSinglePlaneFixedTileCpu
-            );
-            assert!(
-                plan.fallback_reasons
-                    .contains(&"auto_prefers_multi_cpu_for_clark"),
-                "Clark auto should record why it rejected eligible Metal: {:?}",
-                plan.fallback_reasons
+                PerPlaneExecutionBackend::Wave3MetalGrouped
             );
         } else {
             assert!(!plan.metal_eligible);
@@ -41661,14 +41679,17 @@ mod tests {
                 plan.selected_backend,
                 PerPlaneExecutionBackend::Wave3MetalGrouped
             );
-            assert!(
-                !plan
-                    .fallback_reasons
-                    .contains(&"auto_prefers_multi_cpu_for_clark")
-            );
             assert_eq!(
                 plane_config.standard_mfs_acceleration,
                 StandardMfsAccelerationPolicy::Metal
+            );
+            assert_eq!(
+                plane_config.standard_mfs_residual_backend.as_deref(),
+                Some("cpu")
+            );
+            assert_eq!(
+                plane_config.standard_mfs_initial_dirty_backend.as_deref(),
+                Some("cpu")
             );
         } else {
             assert!(!plan.metal_eligible);

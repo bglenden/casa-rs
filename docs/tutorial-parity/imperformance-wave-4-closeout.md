@@ -34,7 +34,7 @@ GLENDENNING result paths for each row below.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
 | Standard cube dirty | medium, 512 ch, 2048 | 316.815 | 154.741 | n/a | 1918.001 | 2.05x auto vs forced single-worker; 12.39x vs CASA | good | met | `20260616T173624Z-wave4-standard-cube-line-medium-905e11e5` |
 | Standard cube clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | 282.458 | 137.109 | 811.307 | 2.06x Metal vs CPU; 5.92x vs CASA | blocked: restore edge artifact fixed, remaining model/residual component-order divergence | blocked | `20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a` plus unchanged CASA row `20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24` |
-| Standard cube clean Clark | medium, 64 ch, 1024, niter=10000 | 160.122 | 36.607 | 41.679 | 409.289 | 4.37x multi-worker vs serial; Auto rejects eligible Metal for Clark and is 9.82x vs CASA | fresh 64-channel row fixes over-cleaning: `.model`, `.psf`, `.sumwt` good; `.image`/`.residual` remain investigate-level structured differences | blocked: correctness needs Brian review and speedup is just under 10x target | `20260617T163230Z-wave4-standard-cube-line-medium-clean-clark-f09b9e71`; CASA timing from unchanged row `20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413` |
+| Standard cube clean Clark | medium, 64 ch, 1024, niter=10000 | 160.122 | 36.607 | 32.429 | 409.289 | 4.37x multi-worker vs serial; Metal default is 1.13x vs multi-worker CPU and 12.62x vs CASA | fresh 64-channel row fixes over-cleaning: `.model`, `.psf`, `.sumwt` good; `.image`/`.residual` remain investigate-level structured differences | blocked: correctness needs Brian review; performance now clears the 10x CASA target but misses the 1.5x Metal-vs-CPU target | `20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b`; CASA timing from unchanged row `20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413` |
 | Standard cube clean multiscale | medium, 64 ch, 1024, niter=10000 | n/a | 784.810 | n/a | n/a | blocked: no comparable Metal/serial/CASA row | missing comparable deep CASA correctness | blocked | `20260617T013555Z-wave4-standard-cube-line-medium-clean-multiscale-585d9f40` |
 | Cubedata dirty | medium, 512 ch, 2048 | 349.241 | 146.788 | n/a | 1887.410 | 2.38x auto vs forced single-worker; 12.86x vs CASA | good | met | `20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335` |
 | Cubedata clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | n/a | 314.402 | n/a | blocked: no comparable medium CASA/serial/multi row | missing comparable deep CASA correctness | blocked | `20260617T011951Z-wave4-standard-cubedata-line-medium-clean-hogbom-e6a16c03` |
@@ -61,8 +61,9 @@ cubedata clean rows. Clark's original comparable deep CASA row was blocked by
 over-cleaning. The 8-channel control probe matches CASA's cube clean-control
 iteration vector exactly, and the fresh 64-channel rerun fixes the model
 over-cleaning: `.model`, `.psf`, and `.sumwt` are good. `.image` and
-`.residual` remain investigate-level structured differences, and current
-Metal/default runtime is 7.56x faster than CASA rather than the 10x target.
+`.residual` remain investigate-level structured differences. The Clark Metal
+minor-cycle path now clears the 10x CASA target at 12.62x, but only gives 1.13x
+over the current multi-worker CPU row, below the 1.5x Metal-vs-CPU target.
 Hogbom has a comparable deep CASA row and now uses the actual Metal Hogbom
 minor-cycle backend by default. The CASA-style
 restored-model FFT convolution fix removes the visible `.image` edge artifact
@@ -126,20 +127,27 @@ medium and large mosaic rows intentionally skip CASA:
 | --- | --- | ---: | ---: | ---: | --- | --- | ---: | --- | --- |
 | Hogbom, CASA-compatible iteration/control | 512 ch, 2048, niter=100 | 273.021 | 3106.996 | 11.38x | grouped Wave 3 Metal | 13 / 40 / 8 | 69.395 | accepted in W4-08 with model/image/residual/PSF panels; cleaned 186 planes and skipped 326 planes under cube-level controls | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-08-pending-skip/runs/20260616T025901Z-wave1-vla-single-medium-standard-cube-line-clean-hogbom-casa-final-1bc4f17b.json` |
 | Hogbom, deep closeout row | 64 ch, 1024, niter=10000 | 137.109 | 811.307 | 5.92x | grouped Wave 3 Metal with Metal Hogbom minor cycle; CASA-style FFT restoration | 2 / 34 / 10 | recorded in JSON | blocked: restored `.image` edge artifact fixed; remaining `.model`/`.residual` differences are late component-order divergence after deep clean; CPU deep row is also bad against the same CASA products | Rust-only post-fix: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-metal-minor-cycle-casa/20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24.json` |
-| Clark, deep closeout row | 64 ch, 1024, niter=10000 | 41.679 | 409.289 | 9.82x | Auto rejects eligible Metal for Clark and uses owned single-plane multi-worker CPU; explicit Metal debug row was 41.748 s | 1 / 64 / 10 | 4.777 | blocked: `.model`, `.psf`, and `.sumwt` good after cube clean-control fix; `.image` and `.residual` remain investigate-level structured differences; speedup is just under 10x target | Rust-only Auto-after-fix: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-debug/harness-auto-after-fix/20260617T163230Z-wave4-standard-cube-line-medium-clean-clark-f09b9e71.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json` |
+| Clark, deep closeout row | 64 ch, 1024, niter=10000 | 32.429 | 409.289 | 12.62x | grouped Wave 3 Metal default with Metal Clark minor-cycle/peak-search and CPU initial dirty/residual refresh | 2 / 34 / 10 | recorded in JSON | blocked: `.model`, `.psf`, and `.sumwt` good after cube clean-control fix; `.image` and `.residual` remain investigate-level structured differences; CASA speed target met but Metal-vs-CPU target missed at 1.13x | Rust-only Metal minor-cycle row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json` |
 | Clark, 8-channel clean-control probe | 8 ch, 1024, niter=10000 | 16.196 | 62.763 | 3.88x | grouped Wave 3 Metal residual refresh; one CASA cube minor-cycle pass per plane | 1 / 8 / 1 | 0.727 | `.model`, `.psf`, `.sumwt` good; `.image` and `.residual` investigate at 0.14% and 0.23% relative RMS after exact clean-control iteration parity | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-one-pass-control-probe/20260617T154447Z-wave4-standard-cube-line-medium-clean-clark-control-probe-de3e2664.json` |
 | Multiscale | 64 ch, 1024, niter=2 | 26.697 | 231.006 | 8.65x | grouped Wave 3 Metal | 2 / 34 / 10 | 4.925 | `.model`, `.residual`, `.psf`, `.sumwt` good; `.image` investigate with normalized RMS 3.11e-6 and accepted visual residual | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json` |
 
 Deep Clark diagnostics:
 
-- Current 64-channel rerun: casa-rs `54.162 s`, CASA `409.289 s`;
-  default-vs-CASA speedup is `7.56x`, which misses the 10x target. The
-  completed bundle is
-  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json`.
+- Current 64-channel Metal minor-cycle rerun: casa-rs `32.429 s`, CASA
+  `409.289 s`; default-vs-CASA speedup is `12.62x`. The completed bundle is
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json`.
 - The current row uses `cube_per_plane_workers=10`,
-  `cube_per_plane_backend=wave3_metal_grouped`, and
-  `clean_residual_refresh_backend=metal-row-run-grouped`; there are no backend
-  fallback reasons.
+  `cube_per_plane_backend=wave3_metal_grouped`, Metal Clark minor-cycle
+  peak-search/subtraction, and CPU initial dirty/residual refresh. There are no
+  backend fallback reasons. The CPU residual choice is intentional: the
+  measured grouped Metal residual row was slower on this workload.
+- Current Metal-vs-CPU evidence: multi-worker CPU is `36.607 s`; Metal minor
+  cycle plus CPU residual is `32.429 s` (`1.13x`). An intermediate row using
+  Metal minor cycle plus grouped Metal residual was `33.451 s` (`1.09x` vs the
+  same CPU row). A pre-chunk Metal command-buffer attempt was rejected because
+  no-op command encoding made the 8-channel probe slower (`25.275 s` vs
+  `16.215 s` CPU/auto); chunking the command stream restored the 8-channel
+  probe to `16.212 s` while reducing peak-search worker time to milliseconds.
 - Product comparison after the cube clean-control fix: `.model`, `.psf`, and
   `.sumwt` are good. `.image` is investigate with `diff_rms=0.00907558`,
   `diff_rms_over_casa_rms=0.00164630`, and `diff_abs_max=2.83636`.
@@ -250,9 +258,10 @@ instead of a continuum/spectral rule.
   readback, zero-fill, or C-order conversion.
 - Use grouped Metal by default only where measured eligibility supports it.
   Hogbom and multiscale medium rows use the shared per-plane Wave 3 Metal
-  backend when eligible. Clark Auto now rejects eligible Metal because the
-  current grouped Metal residual-refresh path was measured slower than the
-  owned single-plane multi-worker CPU path on the 64-channel deep row.
+  backend when eligible. Clark Auto now selects the grouped Metal plan for the
+  minor-cycle peak-search/subtraction work, but forces CPU initial dirty and
+  residual refresh because the grouped Metal residual-refresh path was measured
+  slower on the 64-channel deep row.
 - Keep mosaic cube executor capabilities visible. W4-19 now reports
   `mosaic_multi_plane_stream`, `active_planes > 1`, and `worker_count > 1` for
   representative dirty rows; clean rows use the same slab-plane dispatch but

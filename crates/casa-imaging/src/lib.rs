@@ -168,6 +168,41 @@ struct HogbomMetalCycleState {
     stop_reason: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct ClarkMetalSubcycleParams {
+    active_count: u32,
+    nx: u32,
+    ny: u32,
+    patch_nx: u32,
+    patch_ny: u32,
+    patch_radius_x: u32,
+    patch_radius_y: u32,
+    threads_per_group: u32,
+    component_budget: u32,
+    cycle_update_start: u32,
+    gain: f32,
+    threshold_jy_per_beam: f32,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    flux_limit: f32,
+    iter_flux_limit: f32,
+    fac: f32,
+    _pad0: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct ClarkMetalSubcycleState {
+    peak: HogbomMetalPeakCandidate,
+    component: f32,
+    updates: u32,
+    stopped: u32,
+    stop_reason: u32,
+    fmn: f32,
+    iter_flux_limit: f32,
+}
+
 pub(crate) use trace::{ResidualRefreshTraceInternal, ResidualSampleTraceInternal};
 pub use trace::{
     trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
@@ -12636,6 +12671,26 @@ fn standard_mfs_hogbom_metal_minor_cycle_enabled() -> Result<bool, ImagingError>
     ))
 }
 
+fn standard_mfs_clark_metal_minor_cycle_enabled() -> Result<bool, ImagingError> {
+    if let Some(value) = env::var_os("CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND") {
+        let value = value.to_string_lossy().trim().to_ascii_lowercase();
+        return match value.as_str() {
+            "metal" | "metal-minor-cycle" => Ok(true),
+            "cpu" | "off" | "none" => Ok(false),
+            other => Err(ImagingError::InvalidRequest(format!(
+                "unsupported CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND value '{other}'"
+            ))),
+        };
+    }
+    let backend = standard_mfs_backend_selection_from_env()?;
+    Ok(matches!(
+        backend,
+        StandardMfsBackendSelection::Metal
+            | StandardMfsBackendSelection::MetalRowRun
+            | StandardMfsBackendSelection::MetalRowRunGrouped
+    ))
+}
+
 #[cfg(all(target_os = "macos", not(coverage)))]
 fn hogbom_flatten_array2_x_major(values: &Array2<f32>) -> Vec<f32> {
     let (nx, ny) = values.dim();
@@ -13697,8 +13752,323 @@ kernel void hogbom_subtract_psf_and_find_next_peak(
 }
 "#;
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+const CLARK_MINOR_CYCLE_METAL_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct ClarkPeakCandidate {
+    float abs_value;
+    float value;
+    uint flat_index;
+    uint valid;
+};
+
+struct ClarkReduceParams {
+    uint candidate_count;
+    uint nx;
+    uint ny;
+    uint threads_per_group;
+};
+
+struct ClarkSubcycleParams {
+    uint active_count;
+    uint nx;
+    uint ny;
+    uint patch_nx;
+    uint patch_ny;
+    uint patch_radius_x;
+    uint patch_radius_y;
+    uint threads_per_group;
+    uint component_budget;
+    uint cycle_update_start;
+    float gain;
+    float threshold_jy_per_beam;
+    float cycle_threshold_jy_per_beam;
+    float nsigma_threshold_jy_per_beam;
+    float flux_limit;
+    float iter_flux_limit;
+    float fac;
+    uint _pad0;
+};
+
+struct ClarkSubcycleState {
+    ClarkPeakCandidate peak;
+    float component;
+    uint updates;
+    uint stopped;
+    uint stop_reason;
+    float fmn;
+    float iter_flux_limit;
+};
+
+static inline ClarkPeakCandidate clark_invalid_candidate() {
+    ClarkPeakCandidate candidate;
+    candidate.abs_value = 0.0f;
+    candidate.value = 0.0f;
+    candidate.flat_index = 0u;
+    candidate.valid = 0u;
+    return candidate;
+}
+
+static inline bool clark_candidate_better(ClarkPeakCandidate candidate, ClarkPeakCandidate best) {
+    if (candidate.valid == 0u) {
+        return false;
+    }
+    if (best.valid == 0u) {
+        return true;
+    }
+    if (candidate.abs_value > best.abs_value) {
+        return true;
+    }
+    if (candidate.abs_value == best.abs_value) {
+        return candidate.flat_index < best.flat_index;
+    }
+    return false;
+}
+
+static inline bool clark_threshold_reached_with_tolerance(float peak_abs, float threshold) {
+    if (threshold <= 0.0f) {
+        return peak_abs <= threshold;
+    }
+    const float tolerance = max(0.01f * threshold, 2.0e-8f);
+    return peak_abs <= threshold || fabs(peak_abs - threshold) <= tolerance;
+}
+
+static inline uint clark_stop_reason(float peak_abs, float iter_flux_limit, constant ClarkSubcycleParams &params) {
+    const bool threshold_floor_active =
+        params.threshold_jy_per_beam > 0.0f &&
+        (0.01f * params.threshold_jy_per_beam) < 2.0e-8f &&
+        iter_flux_limit <= params.threshold_jy_per_beam;
+    if (peak_abs < params.threshold_jy_per_beam ||
+        (threshold_floor_active &&
+         clark_threshold_reached_with_tolerance(peak_abs, params.threshold_jy_per_beam))) {
+        return 1u;
+    }
+    if (params.nsigma_threshold_jy_per_beam > params.threshold_jy_per_beam &&
+        peak_abs < params.nsigma_threshold_jy_per_beam) {
+        return 2u;
+    }
+    if (peak_abs < iter_flux_limit) {
+        return 3u;
+    }
+    return 0u;
+}
+
+kernel void clark_peak_active(
+    device const float *active_values [[buffer(0)]],
+    device ClarkPeakCandidate *candidates [[buffer(1)]],
+    constant ClarkSubcycleParams &params [[buffer(2)]],
+    device const ClarkSubcycleState *state [[buffer(3)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup ClarkPeakCandidate local_candidates[1024];
+    ClarkPeakCandidate candidate = clark_invalid_candidate();
+    if (state->stopped == 0u && thread_index < params.active_count) {
+        const float value = active_values[thread_index];
+        candidate.abs_value = fabs(value);
+        candidate.value = value;
+        candidate.flat_index = thread_index;
+        candidate.valid = 1u;
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const ClarkPeakCandidate other = local_candidates[local_index + stride];
+            const ClarkPeakCandidate best = local_candidates[local_index];
+            if (clark_candidate_better(other, best)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        candidates[group_index] = local_candidates[0];
+    }
+}
+
+kernel void clark_reduce_candidates(
+    device const ClarkPeakCandidate *input [[buffer(0)]],
+    device ClarkPeakCandidate *output [[buffer(1)]],
+    constant ClarkReduceParams &params [[buffer(2)]],
+    device const ClarkSubcycleState *state [[buffer(3)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup ClarkPeakCandidate local_candidates[1024];
+    ClarkPeakCandidate candidate = clark_invalid_candidate();
+    if (state->stopped == 0u && thread_index < params.candidate_count) {
+        candidate = input[thread_index];
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const ClarkPeakCandidate other = local_candidates[local_index + stride];
+            const ClarkPeakCandidate best = local_candidates[local_index];
+            if (clark_candidate_better(other, best)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        output[group_index] = local_candidates[0];
+    }
+}
+
+kernel void clark_select_peak(
+    device const ClarkPeakCandidate *peak_candidate [[buffer(0)]],
+    device ClarkPeakCandidate *selected_peak [[buffer(1)]],
+    device ClarkSubcycleState *state [[buffer(2)]],
+    device float *model [[buffer(3)]],
+    device float *delta_model [[buffer(4)]],
+    constant ClarkSubcycleParams &params [[buffer(5)]],
+    device const uint *active_indices [[buffer(6)]],
+    uint thread_index [[thread_position_in_grid]]
+) {
+    if (thread_index != 0u || state->stopped != 0u) {
+        return;
+    }
+    const ClarkPeakCandidate peak = peak_candidate[0];
+    selected_peak[0] = peak;
+    state->peak = peak;
+    if (peak.valid == 0u) {
+        state->stopped = 1u;
+        state->stop_reason = 6u;
+        return;
+    }
+    const uint reason = clark_stop_reason(peak.abs_value, state->iter_flux_limit, params);
+    if (reason != 0u) {
+        state->stopped = 1u;
+        state->stop_reason = reason;
+        return;
+    }
+    const float component = params.gain * peak.value;
+    const uint active_index = peak.flat_index;
+    const uint image_index = active_indices[active_index];
+    state->component = component;
+    state->updates += 1u;
+    model[image_index] += component;
+    delta_model[image_index] += component;
+    const uint total_updates = params.cycle_update_start + state->updates;
+    if (total_updates > 0u) {
+        state->fmn += params.fac / float(total_updates);
+    }
+    state->iter_flux_limit = max(params.flux_limit * state->fmn, params.cycle_threshold_jy_per_beam);
+}
+
+kernel void clark_subtract_active_and_find_next_peak(
+    device const ClarkPeakCandidate *selected_peak [[buffer(0)]],
+    device float *active_values [[buffer(1)]],
+    device const uint *active_indices [[buffer(2)]],
+    device const float *patch [[buffer(3)]],
+    device ClarkPeakCandidate *candidates [[buffer(4)]],
+    constant ClarkSubcycleParams &params [[buffer(5)]],
+    device const ClarkSubcycleState *state [[buffer(6)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup ClarkPeakCandidate local_candidates[1024];
+    ClarkPeakCandidate candidate = clark_invalid_candidate();
+    if (state->stopped == 0u && thread_index < params.active_count) {
+        const ClarkPeakCandidate peak = selected_peak[0];
+        if (peak.valid != 0u) {
+            const uint active_index = thread_index;
+            const uint image_index = active_indices[active_index];
+            const uint peak_image_index = active_indices[peak.flat_index];
+            const uint x = image_index / params.ny;
+            const uint y = image_index - x * params.ny;
+            const uint peak_x = peak_image_index / params.ny;
+            const uint peak_y = peak_image_index - peak_x * params.ny;
+            const int patch_x = int(x) - int(peak_x) + int(params.patch_radius_x);
+            const int patch_y = int(y) - int(peak_y) + int(params.patch_radius_y);
+            if (patch_x >= 0 && patch_y >= 0 &&
+                patch_x < int(params.patch_nx) && patch_y < int(params.patch_ny)) {
+                const uint patch_index = uint(patch_x) * params.patch_ny + uint(patch_y);
+                active_values[active_index] -= state->component * patch[patch_index];
+            }
+            const float value = active_values[active_index];
+            candidate.abs_value = fabs(value);
+            candidate.value = value;
+            candidate.flat_index = active_index;
+            candidate.valid = 1u;
+        }
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const ClarkPeakCandidate other = local_candidates[local_index + stride];
+            const ClarkPeakCandidate best = local_candidates[local_index];
+            if (clark_candidate_better(other, best)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        candidates[group_index] = local_candidates[0];
+    }
+}
+
+kernel void clark_store_peak_only(
+    device const ClarkPeakCandidate *peak_candidate [[buffer(0)]],
+    device ClarkSubcycleState *state [[buffer(1)]],
+    uint thread_index [[thread_position_in_grid]]
+) {
+    if (thread_index != 0u || state->stopped != 0u) {
+        return;
+    }
+    state->peak = peak_candidate[0];
+}
+"#;
+
 #[allow(clippy::too_many_arguments)]
 fn run_clark_minor_cycle(
+    request: &ImagingRequest,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    psf: &Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    psf_patch: &ClarkPsfPatch,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    if standard_mfs_clark_metal_minor_cycle_enabled()? {
+        return run_clark_minor_cycle_metal(
+            request,
+            model,
+            residual,
+            psf,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            psf_patch,
+            stage_timings,
+        );
+    }
+    Ok(run_clark_minor_cycle_cpu(
+        request,
+        model,
+        residual,
+        psf,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        psf_patch,
+        stage_timings,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_clark_minor_cycle_cpu(
     request: &ImagingRequest,
     model: &mut Array2<f32>,
     residual: &mut Array2<f32>,
@@ -13921,6 +14291,816 @@ fn run_clark_minor_cycle(
         final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
         final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(any(not(target_os = "macos"), coverage))]
+fn run_clark_minor_cycle_metal(
+    _request: &ImagingRequest,
+    _model: &mut Array2<f32>,
+    _residual: &mut Array2<f32>,
+    _psf: &Array2<f32>,
+    _cycle_reported_niter: usize,
+    _cycle_threshold_jy_per_beam: f32,
+    _nsigma_threshold_jy_per_beam: f32,
+    _psf_patch: &ClarkPsfPatch,
+    _stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    Err(ImagingError::Unsupported(
+        "Clark minor-cycle backend 'metal' requires macOS Metal".to_string(),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_clark_minor_cycle_metal(
+    request: &ImagingRequest,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    psf: &Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    psf_patch: &ClarkPsfPatch,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    use std::slice;
+
+    use objc2_metal::{MTLBuffer, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions};
+
+    let (nx, ny) = residual.dim();
+    if nx == 0 || ny == 0 {
+        return Ok(HogbomMinorCycleOutcome {
+            updated_model: false,
+            actual_updates: 0,
+            reported_updates: 0,
+            stop_reason: Some(CleanStopReason::NoCleanablePixels),
+            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+        });
+    }
+    if model.dim() != (nx, ny) || psf.dim() != (nx, ny) {
+        return Err(ImagingError::InvalidRequest(
+            "Clark Metal minor cycle requires model, residual, and PSF shapes to match".to_string(),
+        ));
+    }
+    let cell_count = nx
+        .checked_mul(ny)
+        .ok_or_else(|| ImagingError::InvalidRequest("Clark image is too large".to_string()))?;
+    let cell_count_u32 = u32::try_from(cell_count).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal image cell count exceeds u32".to_string())
+    })?;
+    let nx_u32 = u32::try_from(nx).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal image width exceeds u32".to_string())
+    })?;
+    let ny_u32 = u32::try_from(ny).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal image height exceeds u32".to_string())
+    })?;
+    let (patch_nx, patch_ny) = psf_patch.patch.dim();
+    let patch_nx_u32 = u32::try_from(patch_nx).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal PSF patch width exceeds u32".to_string())
+    })?;
+    let patch_ny_u32 = u32::try_from(patch_ny).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal PSF patch height exceeds u32".to_string())
+    })?;
+    let patch_radius_x_u32 = u32::try_from(psf_patch.radius_x).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal PSF patch x radius exceeds u32".to_string())
+    })?;
+    let patch_radius_y_u32 = u32::try_from(psf_patch.radius_y).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal PSF patch y radius exceeds u32".to_string())
+    })?;
+
+    let total_started = Instant::now();
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    let setup_started = Instant::now();
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Clark minor-cycle backend 'metal' could not find a default Metal device".to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Clark minor-cycle backend 'metal' could not create a Metal command queue".to_string(),
+        )
+    })?;
+    let source = objc2_foundation::NSString::from_str(CLARK_MINOR_CYCLE_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "Clark minor-cycle backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let active_peak_pipeline = hogbom_metal_pipeline(&device, &library, "clark_peak_active")?;
+    let reduce_pipeline = hogbom_metal_pipeline(&device, &library, "clark_reduce_candidates")?;
+    let select_pipeline = hogbom_metal_pipeline(&device, &library, "clark_select_peak")?;
+    let subtract_peak_pipeline = hogbom_metal_pipeline(
+        &device,
+        &library,
+        "clark_subtract_active_and_find_next_peak",
+    )?;
+    let store_peak_pipeline = hogbom_metal_pipeline(&device, &library, "clark_store_peak_only")?;
+    let storage_options = MTLResourceOptions::StorageModeShared;
+    let model_values = hogbom_flatten_array2_x_major(model);
+    let model_buffer =
+        hogbom_metal_buffer_from_slice(&device, model_values.as_slice(), storage_options, "model")?;
+    let patch_values = hogbom_flatten_array2_x_major(&psf_patch.patch);
+    let patch_buffer =
+        hogbom_metal_buffer_from_slice(&device, patch_values.as_slice(), storage_options, "patch")?;
+    let setup_elapsed = setup_started.elapsed();
+
+    let mut cycle_component_updates = 0usize;
+    let mut updated_model = false;
+    let mut stop_reason = None;
+    let mut peak_search_elapsed = Duration::ZERO;
+    let mut active_set_build_elapsed = Duration::ZERO;
+    let mut model_update_elapsed = Duration::ZERO;
+    let mut subtract_elapsed = Duration::ZERO;
+    let mut peak_searches = 0usize;
+    let mut model_updates = 0usize;
+    let mut subtract_updates = 0usize;
+    let mut pixels_searched = 0usize;
+    let mut pixels_touched = 0usize;
+    let mut approximate_peak = peak_abs_value_masked(residual, request.clean_mask.as_ref());
+    let mut previous_approximate_peak = approximate_peak;
+    let mut factor = 1.5f32 / 4.5f32;
+    let mut warn_flag = false;
+    let mut max_minor_iterations = cycle_reported_niter;
+    if psf_patch.max_exterior_abs > 0.5 {
+        max_minor_iterations = max_minor_iterations.min(5);
+    } else if psf_patch.max_exterior_abs > 0.35 {
+        max_minor_iterations = max_minor_iterations.min(50);
+    }
+    let mut subcycle = 0usize;
+    let mut command_kernel_elapsed = Duration::ZERO;
+    let mut command_wall_elapsed = Duration::ZERO;
+    let mut readback_elapsed = Duration::ZERO;
+
+    while cycle_component_updates < cycle_reported_niter && subcycle < CASA_CLARK_MAX_MAJOR_CYCLES {
+        if let Some(reason) = minor_cycle_stop_reason(
+            approximate_peak,
+            request.clean.threshold_jy_per_beam,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+        ) {
+            stop_reason = Some(reason);
+            break;
+        }
+
+        let mut flux_limit = approximate_peak * psf_patch.max_exterior_abs * factor;
+        if factor > 1.0 {
+            flux_limit = flux_limit.min(0.95 * approximate_peak);
+        }
+        let selection_limit = flux_limit.max(cycle_threshold_jy_per_beam);
+        let active_set_started = Instant::now();
+        let active_pixels =
+            collect_clark_active_pixels(residual, request.clean_mask.as_ref(), selection_limit);
+        active_set_build_elapsed += active_set_started.elapsed();
+        pixels_searched = pixels_searched.saturating_add(cell_count);
+        if active_pixels.is_empty() {
+            if warn_flag {
+                stop_reason = Some(CleanStopReason::NoCleanablePixels);
+                break;
+            }
+            factor *= 1.2;
+            warn_flag = true;
+            subcycle = subcycle.saturating_add(1);
+            continue;
+        }
+
+        let subcycle_limit =
+            (cycle_reported_niter - cycle_component_updates).min(max_minor_iterations);
+        let subcycle_initial_peak = peak_clark_active_pixel(&active_pixels)
+            .map(|(_, pixel)| pixel.value.abs())
+            .unwrap_or(0.0);
+        let fac = if flux_limit > 0.0 && subcycle_initial_peak > 0.0 {
+            subcycle_initial_peak / flux_limit
+        } else {
+            1.0
+        };
+        let subcycle_started = Instant::now();
+        let subcycle_result = clark_metal_run_active_subcycle(
+            &queue,
+            &device,
+            &active_peak_pipeline,
+            &reduce_pipeline,
+            &select_pipeline,
+            &subtract_peak_pipeline,
+            &store_peak_pipeline,
+            &model_buffer,
+            &patch_buffer,
+            storage_options,
+            &active_pixels,
+            cell_count_u32,
+            nx_u32,
+            ny_u32,
+            patch_nx_u32,
+            patch_ny_u32,
+            patch_radius_x_u32,
+            patch_radius_y_u32,
+            subcycle_limit,
+            cycle_component_updates,
+            request.clean.gain,
+            request.clean.threshold_jy_per_beam,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            flux_limit,
+            selection_limit,
+            fac,
+        )?;
+        command_kernel_elapsed += subcycle_result.command_timing.kernel_elapsed;
+        command_wall_elapsed += subcycle_started.elapsed();
+        readback_elapsed += subcycle_result.readback_elapsed;
+        peak_search_elapsed += subcycle_result.command_timing.kernel_elapsed;
+        peak_searches = peak_searches.saturating_add(subcycle_result.peak_searches);
+        subtract_elapsed += subcycle_result.command_timing.kernel_elapsed;
+        subtract_updates = subtract_updates.saturating_add(subcycle_result.actual_updates);
+        pixels_searched = pixels_searched.saturating_add(
+            subcycle_result
+                .peak_searches
+                .saturating_mul(active_pixels.len()),
+        );
+        pixels_touched = pixels_touched.saturating_add(
+            subcycle_result
+                .actual_updates
+                .saturating_mul(active_pixels.len()),
+        );
+        model_updates = model_updates.saturating_add(subcycle_result.actual_updates);
+        model_update_elapsed += Duration::ZERO;
+        cycle_component_updates =
+            cycle_component_updates.saturating_add(subcycle_result.actual_updates);
+        updated_model |= subcycle_result.actual_updates > 0;
+        approximate_peak = subcycle_result.final_peak_abs;
+
+        if subcycle_result.actual_updates > 0 {
+            let delta_model = Array2::from_shape_vec((nx, ny), subcycle_result.delta_model)
+                .map_err(|error| {
+                    ImagingError::InvalidRequest(format!(
+                        "Clark Metal delta model shape mismatch: {error}"
+                    ))
+                })?;
+            *residual = &*residual - &fft_convolve_real(psf, &delta_model);
+        }
+        if let Some(reason) = subcycle_result.stop_reason {
+            stop_reason = Some(reason);
+        }
+        if approximate_peak > previous_approximate_peak {
+            factor *= 3.0;
+            max_minor_iterations = max_minor_iterations.min(10);
+            warn_flag = true;
+        }
+        previous_approximate_peak = approximate_peak;
+        if subcycle_result.actual_updates == 0 {
+            break;
+        }
+        if stop_reason.is_some() && cycle_component_updates < cycle_reported_niter {
+            stop_reason = None;
+        }
+        subcycle = subcycle.saturating_add(1);
+    }
+
+    if !updated_model && stop_reason.is_none() {
+        stop_reason = Some(CleanStopReason::NoCleanablePixels);
+    }
+    let readback_started = Instant::now();
+    let model_slice = unsafe {
+        slice::from_raw_parts(model_buffer.contents().as_ptr().cast::<f32>(), cell_count)
+    };
+    if let Some(target) = model.as_slice_memory_order_mut() {
+        target.copy_from_slice(model_slice);
+    } else {
+        for x in 0..nx {
+            for y in 0..ny {
+                model[(x, y)] = model_slice[x * ny + y];
+            }
+        }
+    }
+    readback_elapsed += readback_started.elapsed();
+
+    let minor_elapsed = total_started.elapsed();
+    if collect_profile {
+        eprintln!(
+            "standard_mfs_clark_minor_cycle_summary backend=metal_active_set updates={} reported_budget={} stop_reason={:?} image_pixels={} peak_searches={} subtract_updates={} setup_ms={:.3} command_wall_ms={:.3} command_gpu_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            cycle_component_updates,
+            cycle_reported_niter,
+            stop_reason,
+            cell_count,
+            peak_searches,
+            subtract_updates,
+            profile::millis(setup_elapsed),
+            profile::millis(command_wall_elapsed),
+            profile::millis(command_kernel_elapsed),
+            profile::millis(readback_elapsed),
+            profile::millis(minor_elapsed),
+        );
+    }
+    stage_timings.minor_cycle += minor_elapsed;
+    stage_timings.minor_cycle_solve += minor_elapsed;
+    stage_timings.deconvolver_peak_search += peak_search_elapsed;
+    stage_timings.deconvolver_active_set_build += active_set_build_elapsed;
+    stage_timings.deconvolver_model_update += model_update_elapsed;
+    stage_timings.deconvolver_psf_subtract += subtract_elapsed;
+    stage_timings.deconvolver_peak_searches = stage_timings
+        .deconvolver_peak_searches
+        .saturating_add(peak_searches as u64);
+    stage_timings.deconvolver_model_updates = stage_timings
+        .deconvolver_model_updates
+        .saturating_add(model_updates as u64);
+    stage_timings.deconvolver_subtract_updates = stage_timings
+        .deconvolver_subtract_updates
+        .saturating_add(subtract_updates as u64);
+    stage_timings.deconvolver_pixels_searched = stage_timings
+        .deconvolver_pixels_searched
+        .saturating_add(pixels_searched as u64);
+    stage_timings.deconvolver_pixels_touched = stage_timings
+        .deconvolver_pixels_touched
+        .saturating_add(pixels_touched as u64);
+
+    Ok(HogbomMinorCycleOutcome {
+        updated_model,
+        actual_updates: cycle_component_updates,
+        reported_updates: cycle_component_updates.min(cycle_reported_niter),
+        stop_reason,
+        final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+        final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+struct ClarkMetalSubcycleResult {
+    actual_updates: usize,
+    stop_reason: Option<CleanStopReason>,
+    final_peak_abs: f32,
+    peak_searches: usize,
+    delta_model: Vec<f32>,
+    command_timing: HogbomMetalCommandTiming,
+    readback_elapsed: Duration,
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn clark_metal_run_active_subcycle(
+    queue: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>,
+    device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+    active_peak_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    reduce_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    select_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    subtract_peak_pipeline: &objc2::runtime::ProtocolObject<
+        dyn objc2_metal::MTLComputePipelineState,
+    >,
+    store_peak_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    patch_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    storage_options: objc2_metal::MTLResourceOptions,
+    active_pixels: &ClarkActiveSet,
+    cell_count: u32,
+    nx: u32,
+    ny: u32,
+    patch_nx: u32,
+    patch_ny: u32,
+    patch_radius_x: u32,
+    patch_radius_y: u32,
+    component_budget: usize,
+    cycle_update_start: usize,
+    gain: f32,
+    threshold_jy_per_beam: f32,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    flux_limit: f32,
+    iter_flux_limit: f32,
+    fac: f32,
+) -> Result<ClarkMetalSubcycleResult, ImagingError> {
+    use std::slice;
+
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLDevice, MTLSize,
+    };
+
+    let active_count = active_pixels.len();
+    if active_count == 0 || component_budget == 0 {
+        return Ok(ClarkMetalSubcycleResult {
+            actual_updates: 0,
+            stop_reason: Some(CleanStopReason::NoCleanablePixels),
+            final_peak_abs: 0.0,
+            peak_searches: 0,
+            delta_model: vec![0.0; usize::try_from(cell_count).unwrap_or(0)],
+            command_timing: HogbomMetalCommandTiming::default(),
+            readback_elapsed: Duration::ZERO,
+        });
+    }
+    let active_count_u32 = u32::try_from(active_count).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal active set exceeds u32".to_string())
+    })?;
+    let component_budget_u32 = u32::try_from(component_budget).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal component budget exceeds u32".to_string())
+    })?;
+    let cycle_update_start_u32 = u32::try_from(cycle_update_start).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal cycle update count exceeds u32".to_string())
+    })?;
+    let active_values = active_pixels
+        .pixels
+        .iter()
+        .map(|pixel| pixel.value)
+        .collect::<Vec<_>>();
+    let active_indices = active_pixels
+        .pixels
+        .iter()
+        .map(|pixel| {
+            let flat = pixel
+                .x
+                .saturating_mul(active_pixels.image_ny)
+                .saturating_add(pixel.y);
+            u32::try_from(flat).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "Clark Metal active pixel index exceeds u32".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let cell_count_usize = usize::try_from(cell_count).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal cell count overflowed".to_string())
+    })?;
+    let zero_delta = vec![0.0f32; cell_count_usize];
+    let active_values_buffer = hogbom_metal_buffer_from_slice(
+        device,
+        active_values.as_slice(),
+        storage_options,
+        "active",
+    )?;
+    let active_indices_buffer = hogbom_metal_buffer_from_slice(
+        device,
+        active_indices.as_slice(),
+        storage_options,
+        "active indices",
+    )?;
+    let delta_model_buffer =
+        hogbom_metal_buffer_from_slice(device, zero_delta.as_slice(), storage_options, "delta")?;
+
+    let active_threads_per_group =
+        hogbom_metal_threads_per_group(active_peak_pipeline, active_count);
+    let first_candidate_count = active_count.div_ceil(active_threads_per_group);
+    let candidate_bytes = first_candidate_count
+        .max(1)
+        .checked_mul(std::mem::size_of::<HogbomMetalPeakCandidate>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("Clark Metal candidate buffer is too large".to_string())
+        })?;
+    let candidate_a = device
+        .newBufferWithLength_options(candidate_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Clark minor-cycle backend 'metal' could not allocate candidate buffer".to_string(),
+            )
+        })?;
+    let candidate_b = device
+        .newBufferWithLength_options(candidate_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Clark minor-cycle backend 'metal' could not allocate reduction buffer".to_string(),
+            )
+        })?;
+    let selected_peak_buffer = hogbom_metal_buffer_from_slice(
+        device,
+        &[HogbomMetalPeakCandidate::default()],
+        storage_options,
+        "selected peak",
+    )?;
+    let params = ClarkMetalSubcycleParams {
+        active_count: active_count_u32,
+        nx,
+        ny,
+        patch_nx,
+        patch_ny,
+        patch_radius_x,
+        patch_radius_y,
+        threads_per_group: u32::try_from(active_threads_per_group).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "Clark Metal active threadgroup width exceeds u32".to_string(),
+            )
+        })?,
+        component_budget: component_budget_u32,
+        cycle_update_start: cycle_update_start_u32,
+        gain,
+        threshold_jy_per_beam,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        flux_limit,
+        iter_flux_limit,
+        fac,
+        _pad0: 0,
+    };
+    let params_buffer =
+        hogbom_metal_params_buffer(device, &params, storage_options, "Clark subcycle params")?;
+    let initial_state = ClarkMetalSubcycleState {
+        iter_flux_limit,
+        ..Default::default()
+    };
+    let state_buffer =
+        hogbom_metal_buffer_from_slice(device, &[initial_state], storage_options, "Clark state")?;
+
+    let mut reduce_param_buffers = Vec::new();
+    let mut reduce_plan = Vec::new();
+    let mut input_a = true;
+    let mut current_count = first_candidate_count.max(1);
+    while current_count > 1 {
+        let reduce_threads_per_group =
+            hogbom_metal_threads_per_group(reduce_pipeline, current_count);
+        let output_count = current_count.div_ceil(reduce_threads_per_group);
+        let reduce_params = HogbomMetalReduceParams {
+            candidate_count: u32::try_from(current_count).map_err(|_| {
+                ImagingError::InvalidRequest("Clark Metal candidate count exceeds u32".to_string())
+            })?,
+            nx,
+            ny,
+            threads_per_group: u32::try_from(reduce_threads_per_group).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "Clark Metal reduce threadgroup width exceeds u32".to_string(),
+                )
+            })?,
+        };
+        let reduce_params_buffer = hogbom_metal_params_buffer(
+            device,
+            &reduce_params,
+            storage_options,
+            "Clark reduce params",
+        )?;
+        reduce_param_buffers.push(reduce_params_buffer);
+        reduce_plan.push((input_a, output_count, reduce_threads_per_group));
+        input_a = !input_a;
+        current_count = output_count.max(1);
+    }
+    let final_candidate_from_a = input_a;
+    let final_candidate_buffer = if final_candidate_from_a {
+        &candidate_a
+    } else {
+        &candidate_b
+    };
+
+    let active_group_count = active_count.div_ceil(active_threads_per_group);
+    let command_component_budget = component_budget.min(64);
+    let mut command_timing = HogbomMetalCommandTiming::default();
+    let mut peak_searches = 0usize;
+    let mut candidate_ready = false;
+    let mut final_state = initial_state;
+    while usize::try_from(final_state.updates).unwrap_or(usize::MAX) < component_budget
+        && final_state.stopped == 0
+    {
+        let updates_done = usize::try_from(final_state.updates).map_err(|_| {
+            ImagingError::InvalidRequest("Clark Metal update count overflowed".to_string())
+        })?;
+        let updates_remaining = component_budget.saturating_sub(updates_done);
+        if updates_remaining == 0 {
+            break;
+        }
+        let chunk_updates = updates_remaining.min(command_component_budget);
+        let command_buffer = queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Clark minor-cycle backend 'metal' could not create command buffer".to_string(),
+            )
+        })?;
+        if !candidate_ready {
+            let active_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "Clark minor-cycle backend 'metal' could not create active peak encoder"
+                        .to_string(),
+                )
+            })?;
+            active_encoder.setComputePipelineState(active_peak_pipeline);
+            unsafe {
+                active_encoder.setBuffer_offset_atIndex(Some(&active_values_buffer), 0, 0);
+                active_encoder.setBuffer_offset_atIndex(Some(&candidate_a), 0, 1);
+                active_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 2);
+                active_encoder.setBuffer_offset_atIndex(Some(&state_buffer), 0, 3);
+            }
+            active_encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                MTLSize {
+                    width: active_group_count,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: active_threads_per_group,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            active_encoder.endEncoding();
+            peak_searches = peak_searches.saturating_add(1);
+            hogbom_metal_encode_reduce_plan(
+                &command_buffer,
+                reduce_pipeline,
+                &candidate_a,
+                &candidate_b,
+                &reduce_param_buffers,
+                &reduce_plan,
+                &state_buffer,
+            )?;
+        }
+        clark_metal_encode_select_peak(
+            &command_buffer,
+            select_pipeline,
+            final_candidate_buffer,
+            &selected_peak_buffer,
+            &state_buffer,
+            model_buffer,
+            &delta_model_buffer,
+            &params_buffer,
+            &active_indices_buffer,
+        )?;
+
+        for component_index in 0..chunk_updates {
+            let subtract_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "Clark minor-cycle backend 'metal' could not create subtract encoder"
+                        .to_string(),
+                )
+            })?;
+            subtract_encoder.setComputePipelineState(subtract_peak_pipeline);
+            unsafe {
+                subtract_encoder.setBuffer_offset_atIndex(Some(&selected_peak_buffer), 0, 0);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&active_values_buffer), 0, 1);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&active_indices_buffer), 0, 2);
+                subtract_encoder.setBuffer_offset_atIndex(Some(patch_buffer), 0, 3);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&candidate_a), 0, 4);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 5);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&state_buffer), 0, 6);
+            }
+            subtract_encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                MTLSize {
+                    width: active_group_count,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: active_threads_per_group,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            subtract_encoder.endEncoding();
+            peak_searches = peak_searches.saturating_add(1);
+
+            hogbom_metal_encode_reduce_plan(
+                &command_buffer,
+                reduce_pipeline,
+                &candidate_a,
+                &candidate_b,
+                &reduce_param_buffers,
+                &reduce_plan,
+                &state_buffer,
+            )?;
+            if component_index + 1 == chunk_updates {
+                clark_metal_encode_store_peak(
+                    &command_buffer,
+                    store_peak_pipeline,
+                    final_candidate_buffer,
+                    &state_buffer,
+                )?;
+                break;
+            }
+            clark_metal_encode_select_peak(
+                &command_buffer,
+                select_pipeline,
+                final_candidate_buffer,
+                &selected_peak_buffer,
+                &state_buffer,
+                model_buffer,
+                &delta_model_buffer,
+                &params_buffer,
+                &active_indices_buffer,
+            )?;
+        }
+
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        command_timing.kernel_elapsed +=
+            HogbomMetalCommandTiming::from_command_buffer(&command_buffer).kernel_elapsed;
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "Clark minor-cycle backend 'metal' command failed: {message}"
+            )));
+        }
+        final_state = unsafe {
+            *slice::from_raw_parts(
+                state_buffer
+                    .contents()
+                    .as_ptr()
+                    .cast::<ClarkMetalSubcycleState>(),
+                1,
+            )
+            .first()
+            .expect("one Clark Metal state")
+        };
+        candidate_ready = true;
+    }
+
+    let readback_started = Instant::now();
+    let delta_slice = unsafe {
+        slice::from_raw_parts(
+            delta_model_buffer.contents().as_ptr().cast::<f32>(),
+            zero_delta.len(),
+        )
+    };
+    let delta_model = delta_slice.to_vec();
+    let readback_elapsed = readback_started.elapsed();
+    let actual_updates = usize::try_from(final_state.updates).map_err(|_| {
+        ImagingError::InvalidRequest("Clark Metal update count overflowed".to_string())
+    })?;
+    Ok(ClarkMetalSubcycleResult {
+        actual_updates,
+        stop_reason: hogbom_metal_stop_reason(final_state.stop_reason),
+        final_peak_abs: final_state.peak.abs_value,
+        peak_searches,
+        delta_model,
+        command_timing,
+        readback_elapsed,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn clark_metal_encode_select_peak(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    select_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    final_candidate_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    selected_peak_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    delta_model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    active_indices_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<(), ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let select_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Clark minor-cycle backend 'metal' could not create select encoder".to_string(),
+        )
+    })?;
+    select_encoder.setComputePipelineState(select_pipeline);
+    unsafe {
+        select_encoder.setBuffer_offset_atIndex(Some(final_candidate_buffer), 0, 0);
+        select_encoder.setBuffer_offset_atIndex(Some(selected_peak_buffer), 0, 1);
+        select_encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 2);
+        select_encoder.setBuffer_offset_atIndex(Some(model_buffer), 0, 3);
+        select_encoder.setBuffer_offset_atIndex(Some(delta_model_buffer), 0, 4);
+        select_encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 5);
+        select_encoder.setBuffer_offset_atIndex(Some(active_indices_buffer), 0, 6);
+    }
+    select_encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+    );
+    select_encoder.endEncoding();
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn clark_metal_encode_store_peak(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    store_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    final_candidate_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<(), ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Clark minor-cycle backend 'metal' could not create peak-store encoder".to_string(),
+        )
+    })?;
+    encoder.setComputePipelineState(store_pipeline);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(final_candidate_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 1);
+    }
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+    );
+    encoder.endEncoding();
+    Ok(())
 }
 
 fn casa_clark_step_niter(cycle_reported_niter: usize) -> usize {
@@ -14268,7 +15448,7 @@ fn run_clark_cotton_schwab(
             cycle_nsigma_threshold_jy_per_beam,
             &psf_patch,
             stage_timings,
-        );
+        )?;
         let reported_after_outcome =
             reported_minor_iterations.saturating_add(outcome.reported_updates);
         if outcome.updated_model {
@@ -23210,8 +24390,8 @@ mod tests {
         peak_location_masked, peak_location_masked_in_window,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_voltage_pattern_for_offsets, run_clark_cotton_schwab, run_clark_minor_cycle,
-        run_hogbom_minor_cycle, run_imaging, run_imaging_owned,
-        run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        run_clark_minor_cycle_cpu, run_clark_minor_cycle_metal, run_hogbom_minor_cycle,
+        run_imaging, run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -27086,7 +28266,8 @@ mod tests {
             0.0,
             &psf_patch,
             &mut stage_timings,
-        );
+        )
+        .expect("run Clark minor cycle");
 
         assert!(outcome.updated_model);
         assert!(outcome.actual_updates > 0);
@@ -27096,6 +28277,122 @@ mod tests {
             stage_timings.deconvolver_model_updates,
             outcome.actual_updates as u64
         );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn clark_metal_minor_cycle_matches_cpu_on_active_set_plane() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [21, 21],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Clark,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 8,
+                major_cycle_limit: None,
+                gain: 0.18,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 8,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((9, 9));
+        psf[(4, 4)] = 1.0;
+        psf[(3, 4)] = 0.21;
+        psf[(5, 4)] = -0.18;
+        psf[(4, 3)] = 0.14;
+        psf[(4, 5)] = -0.11;
+        psf[(3, 3)] = 0.05;
+        psf[(5, 5)] = -0.04;
+        let psf_patch = ClarkPsfPatch {
+            patch: psf.clone(),
+            radius_x: 4,
+            radius_y: 4,
+            max_exterior_abs: 0.22,
+        };
+        let mut cpu_model = Array2::<f32>::zeros((9, 9));
+        let mut metal_model = Array2::<f32>::zeros((9, 9));
+        let mut cpu_residual = Array2::<f32>::zeros((9, 9));
+        for x in 0..9 {
+            for y in 0..9 {
+                cpu_residual[(x, y)] =
+                    ((x * 13 + y * 17) as f32).sin() * 0.04 + ((x * 7 + y * 5) as f32).cos() * 0.03;
+            }
+        }
+        cpu_residual[(2, 3)] = 2.7;
+        cpu_residual[(6, 5)] = -2.2;
+        cpu_residual[(4, 7)] = 1.8;
+        cpu_residual[(7, 1)] = -1.4;
+        let mut metal_residual = cpu_residual.clone();
+        let mut cpu_timings = ImagingStageTimings::default();
+        let mut metal_timings = ImagingStageTimings::default();
+
+        let cpu = run_clark_minor_cycle_cpu(
+            &request,
+            &mut cpu_model,
+            &mut cpu_residual,
+            &psf,
+            8,
+            0.0,
+            0.0,
+            &psf_patch,
+            &mut cpu_timings,
+        );
+        let metal = run_clark_minor_cycle_metal(
+            &request,
+            &mut metal_model,
+            &mut metal_residual,
+            &psf,
+            8,
+            0.0,
+            0.0,
+            &psf_patch,
+            &mut metal_timings,
+        )
+        .expect("run Metal Clark minor cycle");
+
+        assert_eq!(metal.actual_updates, cpu.actual_updates);
+        assert_eq!(metal.reported_updates, cpu.reported_updates);
+        assert_eq!(metal.stop_reason, cpu.stop_reason);
+        for (index, (&cpu_value, &metal_value)) in
+            cpu_model.iter().zip(metal_model.iter()).enumerate()
+        {
+            assert!(
+                (cpu_value - metal_value).abs() < 2.0e-5,
+                "model mismatch at flat index {index}: cpu={cpu_value} metal={metal_value}"
+            );
+        }
+        for (index, (&cpu_value, &metal_value)) in
+            cpu_residual.iter().zip(metal_residual.iter()).enumerate()
+        {
+            assert!(
+                (cpu_value - metal_value).abs() < 2.0e-5,
+                "residual mismatch at flat index {index}: cpu={cpu_value} metal={metal_value}"
+            );
+        }
+        assert!(metal_timings.deconvolver_peak_search > Duration::ZERO);
     }
 
     #[test]
