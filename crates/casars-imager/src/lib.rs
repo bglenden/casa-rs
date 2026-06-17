@@ -12299,6 +12299,18 @@ fn add_imaging_stage_timings(total: &mut ImagingStageTimings, part: ImagingStage
     total.deconvolver_pixels_touched = total
         .deconvolver_pixels_touched
         .saturating_add(part.deconvolver_pixels_touched);
+    total.deconvolver_full_window_peak_searches = total
+        .deconvolver_full_window_peak_searches
+        .saturating_add(part.deconvolver_full_window_peak_searches);
+    total.deconvolver_full_window_subtract_updates = total
+        .deconvolver_full_window_subtract_updates
+        .saturating_add(part.deconvolver_full_window_subtract_updates);
+    total.deconvolver_peak_search_window_pixels_max = total
+        .deconvolver_peak_search_window_pixels_max
+        .max(part.deconvolver_peak_search_window_pixels_max);
+    total.deconvolver_subtract_window_pixels_max = total
+        .deconvolver_subtract_window_pixels_max
+        .max(part.deconvolver_subtract_window_pixels_max);
     total.major_cycle_refresh += part.major_cycle_refresh;
     total.residual_refresh_overhead += part.residual_refresh_overhead;
     total.multiscale_scale_refresh += part.multiscale_scale_refresh;
@@ -13485,6 +13497,18 @@ fn add_stage_timings(target: &mut ImagingStageTimings, extra: ImagingStageTiming
     target.deconvolver_pixels_touched = target
         .deconvolver_pixels_touched
         .saturating_add(extra.deconvolver_pixels_touched);
+    target.deconvolver_full_window_peak_searches = target
+        .deconvolver_full_window_peak_searches
+        .saturating_add(extra.deconvolver_full_window_peak_searches);
+    target.deconvolver_full_window_subtract_updates = target
+        .deconvolver_full_window_subtract_updates
+        .saturating_add(extra.deconvolver_full_window_subtract_updates);
+    target.deconvolver_peak_search_window_pixels_max = target
+        .deconvolver_peak_search_window_pixels_max
+        .max(extra.deconvolver_peak_search_window_pixels_max);
+    target.deconvolver_subtract_window_pixels_max = target
+        .deconvolver_subtract_window_pixels_max
+        .max(extra.deconvolver_subtract_window_pixels_max);
     target.major_cycle_refresh += extra.major_cycle_refresh;
     target.residual_refresh_overhead += extra.residual_refresh_overhead;
     target.multiscale_scale_refresh += extra.multiscale_scale_refresh;
@@ -17132,7 +17156,7 @@ fn duration_ms(duration: Duration) -> f64 {
 
 fn imaging_stage_timing_detail(timings: ImagingStageTimings) -> String {
     format!(
-        "controller_overhead_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_alloc_ms={:.3} planned_sample_replay_ms={:.3} grid_update_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_image_correction_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_alloc_ms={:.3} residual_degrid_grid_ms={:.3} residual_fft_ms={:.3} residual_image_correction_ms={:.3} residual_normalize_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} minor_cycle_ms={:.3} minor_cycle_solve_ms={:.3} deconvolver_peak_search_ms={:.3} deconvolver_active_set_build_ms={:.3} deconvolver_model_update_ms={:.3} deconvolver_psf_subtract_ms={:.3} deconvolver_residual_replay_ms={:.3} deconvolver_fft_convolve_ms={:.3} deconvolver_peak_searches={} deconvolver_model_updates={} deconvolver_subtract_updates={} deconvolver_pixels_searched={} deconvolver_pixels_touched={} major_cycle_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} multiscale_scale_refresh_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3} total_ms={:.3}",
+        "controller_overhead_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_alloc_ms={:.3} planned_sample_replay_ms={:.3} grid_update_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_image_correction_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_alloc_ms={:.3} residual_degrid_grid_ms={:.3} residual_fft_ms={:.3} residual_image_correction_ms={:.3} residual_normalize_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} minor_cycle_ms={:.3} minor_cycle_solve_ms={:.3} deconvolver_peak_search_ms={:.3} deconvolver_active_set_build_ms={:.3} deconvolver_model_update_ms={:.3} deconvolver_psf_subtract_ms={:.3} deconvolver_residual_replay_ms={:.3} deconvolver_fft_convolve_ms={:.3} deconvolver_peak_searches={} deconvolver_model_updates={} deconvolver_subtract_updates={} deconvolver_pixels_searched={} deconvolver_pixels_touched={} deconvolver_full_window_peak_searches={} deconvolver_full_window_subtract_updates={} deconvolver_peak_search_window_pixels_max={} deconvolver_subtract_window_pixels_max={} major_cycle_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} multiscale_scale_refresh_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3} total_ms={:.3}",
         duration_ms(timings.controller_overhead),
         duration_ms(timings.weighting),
         duration_ms(timings.executor_build),
@@ -17164,6 +17188,10 @@ fn imaging_stage_timing_detail(timings: ImagingStageTimings) -> String {
         timings.deconvolver_subtract_updates,
         timings.deconvolver_pixels_searched,
         timings.deconvolver_pixels_touched,
+        timings.deconvolver_full_window_peak_searches,
+        timings.deconvolver_full_window_subtract_updates,
+        timings.deconvolver_peak_search_window_pixels_max,
+        timings.deconvolver_subtract_window_pixels_max,
         duration_ms(timings.major_cycle_refresh),
         duration_ms(timings.residual_refresh_overhead),
         duration_ms(timings.multiscale_scale_refresh),

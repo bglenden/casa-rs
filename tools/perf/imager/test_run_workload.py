@@ -856,6 +856,21 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
         self.assertEqual("1", kwargs["env"]["IMAGER_BENCH_STREAM_LOG"])
         self.assertEqual("1", kwargs["env"]["CASA_RS_IMAGING_PROGRESS"])
 
+    def test_parse_backend_plan_logs_extracts_multiscale_minor_cycle_summary(
+        self,
+    ) -> None:
+        parsed = run_workload.parse_backend_plan_logs(
+            """standard_mfs_multiscale_minor_cycle_summary backend=cpu updates=100 reported_budget=100 stop_reason=Some(IterationLimitReached) scale_component_counts=0:0,1:0,2:100 peak_searches=303 full_window_peak_searches=9 subtract_updates=300 full_window_subtract_updates=3 pixels_searched=297682758 pixels_touched=294237664 peak_search_window_pixels_max=1048576 subtract_window_pixels_max=1048576 peak_search_ms=432.517 model_update_ms=0.327 subtract_ms=402.430 total_ms=831.951
+"""
+        )
+
+        self.assertEqual(1, len(parsed["minor_cycle_diagnostics"]))
+        self.assertEqual(1, len(parsed["multiscale_minor_cycle_diagnostics"]))
+        fields = parsed["multiscale_minor_cycle_diagnostics"][0]["fields"]
+        self.assertEqual("0:0,1:0,2:100", fields["scale_component_counts"])
+        self.assertEqual(9, fields["full_window_peak_searches"])
+        self.assertEqual(1048576, fields["subtract_window_pixels_max"])
+
     def test_parse_backend_plan_logs_extracts_spectral_slab_events(self) -> None:
         parsed = run_workload.parse_backend_plan_logs(
             """spectral_slab_plan schedule=source_first best_modeled_schedule=source_first executor_capabilities=full_slab_no_output_spill nplanes=8 image_shape=512x512 active_planes=8 slab_count=1 row_block_rows=32768 cache_budget_bytes=1048576 cache_kind=geometry_only visibility_cache_policy=disabled prepared_residency=row_block_stream visibility_cache_bytes=0 visibility_cache_source_channels=0 worker_count=4 backend=cpu_slab memory_target_bytes=536870912 fixed_frontend_bytes=33554432 source_stream_buffer_bytes=16777216 worker_staging_bytes=16777216 per_plane_state_bytes=2102272 component_memory_bytes=residual:1048576,psf:1048576 visibility_staging_bytes_per_plane=0 prepared_visibility_staging_bytes=0 live_prepared_visibility_bytes=888888 live_bucket_bytes=444444 product_scratch_bytes=3145728 product_batch_planes=2 gpu_staging_bytes=0 safety_margin_bytes=0 planned_active_bytes=456789 source_channel_visits=16 max_slab_source_channels=8 full_source_channel_count=16 source_cell_channel_count=64 corr_count=4 visibility_data_element_bytes=8 data_channel_read_granularity=requested_range flag_channel_read_granularity=full_cell weight_spectrum_channel_read_granularity=requested_range visibility_row_channel_bytes=52 visibility_row_fixed_bytes=184 visibility_row_fixed_resident_bytes=928 visibility_row_cache_overhead_bytes=744 visibility_resident_cache_layout=uvw,weight,field,spw,pol,is_cross,channel_origin,spectral_route best_modeled_total_io_bytes=7777 best_modeled_source_read_bytes=700 best_modeled_visibility_cache_io_bytes=0 best_modeled_output_spill_io_bytes=78 best_modeled_product_write_bytes=6999 best_modeled_active_planes=8 best_modeled_slab_count=1 best_modeled_source_channel_visits=16 modeled_total_io_bytes=7777 modeled_source_read_bytes=700 modeled_visibility_cache_fill_bytes=0 modeled_visibility_cache_read_bytes=0 modeled_visibility_cache_io_bytes=0 modeled_output_spill_read_bytes=39 modeled_output_spill_write_bytes=39 modeled_output_spill_io_bytes=78 modeled_product_write_bytes=6999 modeled_no_cache_source_read_bytes=2000 modeled_full_cache_source_read_bytes=700 visibility_cache_saved_read_bytes=1300 candidate_io_costs=source_first:total=7777,source=700,cache=0,spill=78,product=6999,product_groups=4,active_planes=8,slab_count=1,row_block_rows=32768,cache_policy=disabled,residency=row_block_stream,executable=true;hybrid:total=9999,source=1000,cache=3000,spill=0,product=5999,product_groups=4,active_planes=4,slab_count=2,row_block_rows=32768,cache_policy=full_source,residency=row_block_stream,executable=true warnings=none

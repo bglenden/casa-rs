@@ -1949,6 +1949,18 @@ pub struct ImagingStageTimings {
     pub deconvolver_pixels_searched: u64,
     /// Estimated scalar image pixels touched by deconvolver component updates.
     pub deconvolver_pixels_touched: u64,
+    /// Number of deconvolver peak-search operations that covered the full
+    /// image extent.
+    pub deconvolver_full_window_peak_searches: u64,
+    /// Number of deconvolver subtraction operations that covered the full image
+    /// extent.
+    pub deconvolver_full_window_subtract_updates: u64,
+    /// Largest scalar image area examined by a single deconvolver peak-search
+    /// operation.
+    pub deconvolver_peak_search_window_pixels_max: u64,
+    /// Largest scalar image area touched by a single deconvolver subtraction
+    /// operation.
+    pub deconvolver_subtract_window_pixels_max: u64,
     /// Time spent recomputing the image residual during major-cycle refreshes.
     ///
     /// This is the aggregate wall time for each residual refresh and therefore
@@ -2003,6 +2015,10 @@ impl Default for ImagingStageTimings {
             deconvolver_subtract_updates: 0,
             deconvolver_pixels_searched: 0,
             deconvolver_pixels_touched: 0,
+            deconvolver_full_window_peak_searches: 0,
+            deconvolver_full_window_subtract_updates: 0,
+            deconvolver_peak_search_window_pixels_max: 0,
+            deconvolver_subtract_window_pixels_max: 0,
             major_cycle_refresh: Duration::ZERO,
             residual_refresh_overhead: Duration::ZERO,
             multiscale_scale_refresh: Duration::ZERO,

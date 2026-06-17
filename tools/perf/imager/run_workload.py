@@ -786,6 +786,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "minor_cycle_diagnostics": [],
         "hogbom_minor_cycle_diagnostics": [],
         "clark_minor_cycle_diagnostics": [],
+        "multiscale_minor_cycle_diagnostics": [],
         "clean_residual_refresh_diagnostics": [],
         "metal_diagnostics": [],
     }
@@ -853,6 +854,9 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["clark_minor_cycle_diagnostics"].append(parsed)
             if parsed.get("fields", {}).get("backend") != "cpu":
                 buckets["metal_diagnostics"].append(parsed)
+        elif name == "standard_mfs_multiscale_minor_cycle_summary":
+            buckets["minor_cycle_diagnostics"].append(parsed)
+            buckets["multiscale_minor_cycle_diagnostics"].append(parsed)
         elif name == "standard_mfs_clean_residual_refresh_summary":
             buckets["clean_residual_refresh_diagnostics"].append(parsed)
             residual_backend = parsed.get("fields", {}).get("residual_backend")

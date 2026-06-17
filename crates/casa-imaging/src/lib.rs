@@ -15124,9 +15124,27 @@ fn run_multiscale_minor_cycle(
     stage_timings: &mut ImagingStageTimings,
 ) -> HogbomMinorCycleOutcome {
     let full_window = ImageWindow::full(residual.dim());
+    let mut stats = MultiscaleMinorCycleStats::new(multiscale_state.dirty_conv_scales.len());
+    let mut peak_search_elapsed = Duration::ZERO;
+    let mut model_update_elapsed = Duration::ZERO;
+    let mut subtract_elapsed = Duration::ZERO;
+    let cycle_candidate_started = Instant::now();
     let Some(cycle_candidate) =
         select_multiscale_candidate(multiscale_state, request.clean_mask.as_ref(), full_window)
     else {
+        peak_search_elapsed += cycle_candidate_started.elapsed();
+        stats.record_peak_search(full_window, residual.dim());
+        stats.add_to_stage_timings(stage_timings);
+        log_standard_mfs_multiscale_minor_cycle_summary(
+            0,
+            cycle_reported_niter,
+            Some(CleanStopReason::NoCleanablePixels),
+            &stats,
+            peak_search_elapsed,
+            model_update_elapsed,
+            subtract_elapsed,
+            Duration::ZERO,
+        );
         return HogbomMinorCycleOutcome {
             updated_model: false,
             actual_updates: 0,
@@ -15136,6 +15154,8 @@ fn run_multiscale_minor_cycle(
             final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
         };
     };
+    peak_search_elapsed += cycle_candidate_started.elapsed();
+    stats.record_peak_search(full_window, residual.dim());
     let cycle_peak = peak_abs_value_masked(
         &multiscale_state.dirty_conv_scales[0],
         request.clean_mask.as_ref(),
@@ -15147,6 +15167,17 @@ fn run_multiscale_minor_cycle(
         cycle_threshold_jy_per_beam,
         nsigma_threshold_jy_per_beam,
     ) {
+        stats.add_to_stage_timings(stage_timings);
+        log_standard_mfs_multiscale_minor_cycle_summary(
+            0,
+            cycle_reported_niter,
+            Some(reason),
+            &stats,
+            peak_search_elapsed,
+            model_update_elapsed,
+            subtract_elapsed,
+            Duration::ZERO,
+        );
         return HogbomMinorCycleOutcome {
             updated_model: false,
             actual_updates: 0,
@@ -15164,14 +15195,19 @@ fn run_multiscale_minor_cycle(
     let mut dirty_window = full_window;
     let minor_started = Instant::now();
     while cycle_component_updates < cycle_reported_niter {
+        let candidate_started = Instant::now();
         let Some(candidate) = select_multiscale_candidate(
             multiscale_state,
             request.clean_mask.as_ref(),
             dirty_window,
         ) else {
+            peak_search_elapsed += candidate_started.elapsed();
+            stats.record_peak_search(dirty_window, residual.dim());
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
+        peak_search_elapsed += candidate_started.elapsed();
+        stats.record_peak_search(dirty_window, residual.dim());
         let component_abs = candidate.strength.abs();
         if let Some(reason) = minor_cycle_stop_reason(
             component_abs,
@@ -15188,12 +15224,23 @@ fn run_multiscale_minor_cycle(
         }
 
         let component = request.clean.gain * candidate.strength;
+        let model_update_started = Instant::now();
         add_shifted_kernel_with_support(
             model,
             &multiscale_state.scales[candidate.scale_index],
             multiscale_state.scale_supports[candidate.scale_index],
             candidate.position,
             component,
+        );
+        model_update_elapsed += model_update_started.elapsed();
+        stats.record_component(
+            candidate.scale_index,
+            shifted_kernel_support_pixel_count(
+                residual.dim(),
+                &multiscale_state.scales[candidate.scale_index],
+                multiscale_state.scale_supports[candidate.scale_index],
+                candidate.position,
+            ),
         );
         add_shifted_kernel_with_support(
             &mut delta_model,
@@ -15204,6 +15251,7 @@ fn run_multiscale_minor_cycle(
         );
         let component_window =
             ImageWindow::from_casa_shifted_support(residual.dim(), candidate.position);
+        let subtract_started = Instant::now();
         subtract_multiscale_component(
             multiscale_state,
             candidate.scale_index,
@@ -15211,6 +15259,8 @@ fn run_multiscale_minor_cycle(
             component,
             component_window,
         );
+        subtract_elapsed += subtract_started.elapsed();
+        stats.record_subtract(component_window, residual.dim());
         dirty_window = component_window;
         cycle_component_updates += 1;
         updated_model = true;
@@ -15222,11 +15272,28 @@ fn run_multiscale_minor_cycle(
     let minor_elapsed = minor_started.elapsed();
     stage_timings.minor_cycle += minor_elapsed;
     stage_timings.minor_cycle_solve += minor_elapsed;
+    stage_timings.deconvolver_peak_search += peak_search_elapsed;
+    stage_timings.deconvolver_model_update += model_update_elapsed;
+    stage_timings.deconvolver_psf_subtract += subtract_elapsed;
+    stage_timings.deconvolver_model_updates = stage_timings
+        .deconvolver_model_updates
+        .saturating_add(cycle_component_updates as u64);
+    stats.add_to_stage_timings(stage_timings);
     let reported_updates = casa_multiscale_reported_updates(
         cycle_component_updates,
         cycle_reported_niter,
         stop_reason,
         updated_model,
+    );
+    log_standard_mfs_multiscale_minor_cycle_summary(
+        cycle_component_updates,
+        cycle_reported_niter,
+        stop_reason,
+        &stats,
+        peak_search_elapsed,
+        model_update_elapsed,
+        subtract_elapsed,
+        minor_elapsed,
     );
     HogbomMinorCycleOutcome {
         updated_model,
@@ -15314,6 +15381,10 @@ impl ImageWindow {
         x1.saturating_sub(x0)
             .saturating_add(1)
             .saturating_mul(y1.saturating_sub(y0).saturating_add(1))
+    }
+
+    fn is_full(self, shape: (usize, usize)) -> bool {
+        self.bounded_pixel_count(shape) == shape.0.saturating_mul(shape.1)
     }
 }
 
@@ -15564,14 +15635,11 @@ fn run_multiscale_cotton_schwab(
     let mut residual_needs_refresh = false;
     let multiscale_trace = multiscale_trace_sink();
     let scale_count = scales.len();
+    let mut stats = MultiscaleMinorCycleStats::new(scale_count);
     let mut peak_search_elapsed = Duration::ZERO;
     let mut model_update_elapsed = Duration::ZERO;
     let mut subtract_elapsed = Duration::ZERO;
-    let mut peak_searches = 0usize;
     let mut model_updates = 0usize;
-    let mut subtract_updates = 0usize;
-    let mut pixels_searched = 0usize;
-    let mut pixels_touched = 0usize;
 
     while reported_minor_iterations < request.clean.niter {
         if request
@@ -15591,10 +15659,7 @@ fn run_multiscale_cotton_schwab(
             full_window,
         );
         peak_search_elapsed += cycle_candidate_started.elapsed();
-        peak_searches = peak_searches.saturating_add(scale_count);
-        pixels_searched = pixels_searched.saturating_add(
-            scale_count.saturating_mul(full_window.bounded_pixel_count(residual.dim())),
-        );
+        stats.record_peak_search(full_window, residual.dim());
         let Some(cycle_candidate) = cycle_candidate else {
             stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
@@ -15666,10 +15731,7 @@ fn run_multiscale_cotton_schwab(
                 dirty_window,
             );
             peak_search_elapsed += candidate_started.elapsed();
-            peak_searches = peak_searches.saturating_add(scale_count);
-            pixels_searched = pixels_searched.saturating_add(
-                scale_count.saturating_mul(dirty_window.bounded_pixel_count(residual.dim())),
-            );
+            stats.record_peak_search(dirty_window, residual.dim());
             let Some(candidate) = candidate else {
                 cycle_stop_reason = Some(CleanStopReason::NoCleanablePixels);
                 break;
@@ -15720,12 +15782,15 @@ fn run_multiscale_cotton_schwab(
             );
             model_update_elapsed += model_update_started.elapsed();
             model_updates = model_updates.saturating_add(1);
-            pixels_touched = pixels_touched.saturating_add(shifted_kernel_support_pixel_count(
-                residual.dim(),
-                &multiscale_state.scales[candidate.scale_index],
-                multiscale_state.scale_supports[candidate.scale_index],
-                candidate.position,
-            ));
+            stats.record_component(
+                candidate.scale_index,
+                shifted_kernel_support_pixel_count(
+                    residual.dim(),
+                    &multiscale_state.scales[candidate.scale_index],
+                    multiscale_state.scale_supports[candidate.scale_index],
+                    candidate.position,
+                ),
+            );
             let component_window =
                 ImageWindow::from_casa_shifted_support(residual.dim(), candidate.position);
             let subtract_started = Instant::now();
@@ -15737,10 +15802,7 @@ fn run_multiscale_cotton_schwab(
                 component_window,
             );
             subtract_elapsed += subtract_started.elapsed();
-            subtract_updates = subtract_updates.saturating_add(scale_count);
-            pixels_touched = pixels_touched.saturating_add(
-                scale_count.saturating_mul(component_window.bounded_pixel_count(residual.dim())),
-            );
+            stats.record_subtract(component_window, residual.dim());
             dirty_window = component_window;
             cycle_component_updates += 1;
             minor_iterations += 1;
@@ -15836,21 +15898,20 @@ fn run_multiscale_cotton_schwab(
     stage_timings.deconvolver_peak_search += peak_search_elapsed;
     stage_timings.deconvolver_model_update += model_update_elapsed;
     stage_timings.deconvolver_psf_subtract += subtract_elapsed;
-    stage_timings.deconvolver_peak_searches = stage_timings
-        .deconvolver_peak_searches
-        .saturating_add(peak_searches as u64);
     stage_timings.deconvolver_model_updates = stage_timings
         .deconvolver_model_updates
         .saturating_add(model_updates as u64);
-    stage_timings.deconvolver_subtract_updates = stage_timings
-        .deconvolver_subtract_updates
-        .saturating_add(subtract_updates as u64);
-    stage_timings.deconvolver_pixels_searched = stage_timings
-        .deconvolver_pixels_searched
-        .saturating_add(pixels_searched as u64);
-    stage_timings.deconvolver_pixels_touched = stage_timings
-        .deconvolver_pixels_touched
-        .saturating_add(pixels_touched as u64);
+    stats.add_to_stage_timings(stage_timings);
+    log_standard_mfs_multiscale_minor_cycle_summary(
+        minor_iterations,
+        request.clean.niter,
+        clean_stop_reason,
+        &stats,
+        peak_search_elapsed,
+        model_update_elapsed,
+        subtract_elapsed,
+        stage_timings.minor_cycle,
+    );
 
     Ok(CottonSchwabState {
         residual,
@@ -15869,6 +15930,143 @@ struct MultiscaleCandidate {
     strength: f32,
     dirty_value: f32,
     peak_psf: f32,
+}
+
+#[derive(Debug, Clone)]
+struct MultiscaleMinorCycleStats {
+    scale_component_counts: Vec<usize>,
+    peak_searches: usize,
+    full_window_peak_searches: usize,
+    subtract_updates: usize,
+    full_window_subtract_updates: usize,
+    pixels_searched: usize,
+    pixels_touched: usize,
+    peak_search_window_pixels_max: usize,
+    subtract_window_pixels_max: usize,
+}
+
+impl MultiscaleMinorCycleStats {
+    fn new(scale_count: usize) -> Self {
+        Self {
+            scale_component_counts: vec![0; scale_count],
+            peak_searches: 0,
+            full_window_peak_searches: 0,
+            subtract_updates: 0,
+            full_window_subtract_updates: 0,
+            pixels_searched: 0,
+            pixels_touched: 0,
+            peak_search_window_pixels_max: 0,
+            subtract_window_pixels_max: 0,
+        }
+    }
+
+    fn record_peak_search(&mut self, window: ImageWindow, shape: (usize, usize)) {
+        let window_pixels = window.bounded_pixel_count(shape);
+        self.peak_searches = self
+            .peak_searches
+            .saturating_add(self.scale_component_counts.len());
+        self.pixels_searched = self.pixels_searched.saturating_add(
+            self.scale_component_counts
+                .len()
+                .saturating_mul(window_pixels),
+        );
+        self.peak_search_window_pixels_max = self.peak_search_window_pixels_max.max(window_pixels);
+        if window.is_full(shape) {
+            self.full_window_peak_searches = self
+                .full_window_peak_searches
+                .saturating_add(self.scale_component_counts.len());
+        }
+    }
+
+    fn record_component(&mut self, scale_index: usize, model_pixels_touched: usize) {
+        if let Some(count) = self.scale_component_counts.get_mut(scale_index) {
+            *count = count.saturating_add(1);
+        }
+        self.pixels_touched = self.pixels_touched.saturating_add(model_pixels_touched);
+    }
+
+    fn record_subtract(&mut self, window: ImageWindow, shape: (usize, usize)) {
+        let window_pixels = window.bounded_pixel_count(shape);
+        let scale_count = self.scale_component_counts.len();
+        self.subtract_updates = self.subtract_updates.saturating_add(scale_count);
+        self.pixels_touched = self
+            .pixels_touched
+            .saturating_add(scale_count.saturating_mul(window_pixels));
+        self.subtract_window_pixels_max = self.subtract_window_pixels_max.max(window_pixels);
+        if window.is_full(shape) {
+            self.full_window_subtract_updates = self
+                .full_window_subtract_updates
+                .saturating_add(scale_count);
+        }
+    }
+
+    fn add_to_stage_timings(&self, stage_timings: &mut ImagingStageTimings) {
+        stage_timings.deconvolver_peak_searches = stage_timings
+            .deconvolver_peak_searches
+            .saturating_add(self.peak_searches as u64);
+        stage_timings.deconvolver_subtract_updates = stage_timings
+            .deconvolver_subtract_updates
+            .saturating_add(self.subtract_updates as u64);
+        stage_timings.deconvolver_pixels_searched = stage_timings
+            .deconvolver_pixels_searched
+            .saturating_add(self.pixels_searched as u64);
+        stage_timings.deconvolver_pixels_touched = stage_timings
+            .deconvolver_pixels_touched
+            .saturating_add(self.pixels_touched as u64);
+        stage_timings.deconvolver_full_window_peak_searches = stage_timings
+            .deconvolver_full_window_peak_searches
+            .saturating_add(self.full_window_peak_searches as u64);
+        stage_timings.deconvolver_full_window_subtract_updates = stage_timings
+            .deconvolver_full_window_subtract_updates
+            .saturating_add(self.full_window_subtract_updates as u64);
+        stage_timings.deconvolver_peak_search_window_pixels_max = stage_timings
+            .deconvolver_peak_search_window_pixels_max
+            .max(self.peak_search_window_pixels_max as u64);
+        stage_timings.deconvolver_subtract_window_pixels_max = stage_timings
+            .deconvolver_subtract_window_pixels_max
+            .max(self.subtract_window_pixels_max as u64);
+    }
+
+    fn scale_counts_label(&self) -> String {
+        self.scale_component_counts
+            .iter()
+            .enumerate()
+            .map(|(scale_index, count)| format!("{scale_index}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_standard_mfs_multiscale_minor_cycle_summary(
+    updates: usize,
+    reported_budget: usize,
+    stop_reason: Option<CleanStopReason>,
+    stats: &MultiscaleMinorCycleStats,
+    peak_search_elapsed: Duration,
+    model_update_elapsed: Duration,
+    subtract_elapsed: Duration,
+    total_elapsed: Duration,
+) {
+    eprintln!(
+        "standard_mfs_multiscale_minor_cycle_summary backend=cpu updates={} reported_budget={} stop_reason={:?} scale_component_counts={} peak_searches={} full_window_peak_searches={} subtract_updates={} full_window_subtract_updates={} pixels_searched={} pixels_touched={} peak_search_window_pixels_max={} subtract_window_pixels_max={} peak_search_ms={:.3} model_update_ms={:.3} subtract_ms={:.3} total_ms={:.3}",
+        updates,
+        reported_budget,
+        stop_reason,
+        stats.scale_counts_label(),
+        stats.peak_searches,
+        stats.full_window_peak_searches,
+        stats.subtract_updates,
+        stats.full_window_subtract_updates,
+        stats.pixels_searched,
+        stats.pixels_touched,
+        stats.peak_search_window_pixels_max,
+        stats.subtract_window_pixels_max,
+        peak_search_elapsed.as_secs_f64() * 1000.0,
+        model_update_elapsed.as_secs_f64() * 1000.0,
+        subtract_elapsed.as_secs_f64() * 1000.0,
+        total_elapsed.as_secs_f64() * 1000.0,
+    );
 }
 
 fn effective_multiscale_scales(request: &ImagingRequest) -> Vec<f32> {
