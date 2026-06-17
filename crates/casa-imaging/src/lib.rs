@@ -27976,6 +27976,122 @@ mod tests {
         }
     }
 
+    #[test]
+    #[serial(casa_cpp)]
+    fn hogbom_minor_cycle_matches_casacore_hclean_for_edge_components() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [8, 8],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 1,
+                major_cycle_limit: None,
+                gain: 0.35,
+                threshold_jy_per_beam: 0.3,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 1,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((8, 8));
+        psf[(4, 4)] = 1.0;
+        psf[(3, 4)] = 0.23;
+        psf[(5, 4)] = -0.17;
+        psf[(4, 3)] = 0.11;
+        psf[(4, 5)] = -0.07;
+        psf[(2, 4)] = 0.05;
+        psf[(6, 4)] = -0.03;
+        psf[(4, 2)] = 0.025;
+        psf[(4, 6)] = -0.02;
+        psf[(3, 2)] = 0.015;
+        psf[(6, 5)] = -0.012;
+        let psf_state = PsfState {
+            psf: psf.clone(),
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+
+        for (peak_index, peak_value) in [
+            ((0, 0), 1.0),
+            ((0, 7), -1.1),
+            ((7, 0), 1.2),
+            ((7, 7), -1.3),
+            ((3, 0), 0.95),
+            ((4, 7), -0.9),
+        ] {
+            let mut model = Array2::<f32>::zeros((8, 8));
+            let mut residual = Array2::<f32>::zeros((8, 8));
+            residual[peak_index] = peak_value;
+            let original_residual = residual.clone();
+            let mut stage_timings = ImagingStageTimings::default();
+            let outcome = run_hogbom_minor_cycle(
+                &request,
+                &psf_state,
+                &mut model,
+                &mut residual,
+                1,
+                0.3,
+                0.0,
+                &mut stage_timings,
+            )
+            .expect("run Hogbom minor cycle");
+
+            let cpp = match cpp_hogbom_clean_minor_cycle_2d(
+                psf.as_slice().unwrap(),
+                original_residual.as_slice().unwrap(),
+                [8, 8],
+                request.clean.gain,
+                0.3,
+                1,
+            ) {
+                Ok(cpp) => cpp,
+                Err(error) if error == "casacore C++ backend unavailable" => return,
+                Err(error) => panic!("run casacore hclean shim: {error}"),
+            };
+
+            assert_eq!(
+                outcome.reported_updates, cpp.iterdone,
+                "reported updates mismatch for peak {peak_index:?}\nrust model={model:?}\nrust residual={residual:?}\ncpp model={:?}\ncpp residual={:?}",
+                cpp.model, cpp.residual
+            );
+            for (index, (&rust_value, &cpp_value)) in residual.iter().zip(&cpp.residual).enumerate()
+            {
+                assert!(
+                    (rust_value - cpp_value).abs() < 1.0e-6,
+                    "residual mismatch for peak {peak_index:?} at flat index {index}: rust={rust_value} cpp={cpp_value}"
+                );
+            }
+            for (index, (&rust_value, &cpp_value)) in model.iter().zip(&cpp.model).enumerate() {
+                assert!(
+                    (rust_value - cpp_value).abs() < 1.0e-6,
+                    "model mismatch for peak {peak_index:?} at flat index {index}: rust={rust_value} cpp={cpp_value}"
+                );
+            }
+        }
+    }
+
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
     fn hogbom_metal_minor_cycle_matches_cpu_on_simple_plane() {
@@ -28076,6 +28192,240 @@ mod tests {
                 (cpu_value - metal_value).abs() < 2.0e-6,
                 "residual mismatch cpu={cpu_value} metal={metal_value}"
             );
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn hogbom_metal_minor_cycle_matches_cpu_for_long_component_sequence() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [32, 32],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 64,
+                gain: 0.12,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                minor_cycle_length: 64,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((32, 32));
+        psf[(16, 16)] = 1.0;
+        psf[(15, 16)] = 0.21;
+        psf[(17, 16)] = -0.18;
+        psf[(16, 15)] = 0.13;
+        psf[(16, 17)] = -0.09;
+        psf[(14, 16)] = 0.04;
+        psf[(18, 16)] = -0.035;
+        psf[(16, 14)] = 0.025;
+        psf[(16, 18)] = -0.02;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut cpu_model = Array2::<f32>::zeros((32, 32));
+        let mut metal_model = Array2::<f32>::zeros((32, 32));
+        let mut cpu_residual = Array2::<f32>::zeros((32, 32));
+        for x in 3..29 {
+            for y in 2..30 {
+                let value = ((x * 17 + y * 23) as f32).sin() * 0.17
+                    + ((x * 11 + y * 7) as f32).cos() * 0.11;
+                cpu_residual[(x, y)] = value;
+            }
+        }
+        cpu_residual[(7, 9)] = 3.7;
+        cpu_residual[(24, 22)] = -3.1;
+        cpu_residual[(12, 25)] = 2.8;
+        cpu_residual[(26, 5)] = -2.3;
+        let mut metal_residual = cpu_residual.clone();
+        let mut cpu_timings = ImagingStageTimings::default();
+        let mut metal_timings = ImagingStageTimings::default();
+        let cpu = run_hogbom_minor_cycle_cpu(
+            &request,
+            &psf_state,
+            &mut cpu_model,
+            &mut cpu_residual,
+            64,
+            0.0,
+            0.0,
+            &mut cpu_timings,
+        );
+        let metal = run_hogbom_minor_cycle_metal(
+            &request,
+            &psf_state,
+            &mut metal_model,
+            &mut metal_residual,
+            64,
+            0.0,
+            0.0,
+            &mut metal_timings,
+        )
+        .expect("run Metal Hogbom minor cycle");
+        assert_eq!(metal.actual_updates, cpu.actual_updates);
+        assert_eq!(metal.reported_updates, cpu.reported_updates);
+        assert_eq!(metal.stop_reason, cpu.stop_reason);
+        for (index, (&cpu_value, &metal_value)) in
+            cpu_model.iter().zip(metal_model.iter()).enumerate()
+        {
+            assert!(
+                (cpu_value - metal_value).abs() < 1.0e-4,
+                "model mismatch at flat index {index}: cpu={cpu_value} metal={metal_value}"
+            );
+        }
+        for (index, (&cpu_value, &metal_value)) in
+            cpu_residual.iter().zip(metal_residual.iter()).enumerate()
+        {
+            assert!(
+                (cpu_value - metal_value).abs() < 1.0e-4,
+                "residual mismatch at flat index {index}: cpu={cpu_value} metal={metal_value}"
+            );
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn hogbom_metal_minor_cycle_matches_cpu_for_edge_components() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [8, 8],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 1,
+                gain: 0.35,
+                threshold_jy_per_beam: 0.3,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                minor_cycle_length: 1,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((8, 8));
+        psf[(4, 4)] = 1.0;
+        psf[(3, 4)] = 0.23;
+        psf[(5, 4)] = -0.17;
+        psf[(4, 3)] = 0.11;
+        psf[(4, 5)] = -0.07;
+        psf[(2, 4)] = 0.05;
+        psf[(6, 4)] = -0.03;
+        psf[(4, 2)] = 0.025;
+        psf[(4, 6)] = -0.02;
+        psf[(3, 2)] = 0.015;
+        psf[(6, 5)] = -0.012;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+
+        for (peak_index, peak_value) in [
+            ((0, 0), 1.0),
+            ((0, 7), -1.1),
+            ((7, 0), 1.2),
+            ((7, 7), -1.3),
+            ((3, 0), 0.95),
+            ((4, 7), -0.9),
+        ] {
+            let mut cpu_model = Array2::<f32>::zeros((8, 8));
+            let mut metal_model = Array2::<f32>::zeros((8, 8));
+            let mut cpu_residual = Array2::<f32>::zeros((8, 8));
+            cpu_residual[peak_index] = peak_value;
+            let mut metal_residual = cpu_residual.clone();
+            let mut cpu_timings = ImagingStageTimings::default();
+            let mut metal_timings = ImagingStageTimings::default();
+            let cpu = run_hogbom_minor_cycle_cpu(
+                &request,
+                &psf_state,
+                &mut cpu_model,
+                &mut cpu_residual,
+                1,
+                0.3,
+                0.0,
+                &mut cpu_timings,
+            );
+            let metal = run_hogbom_minor_cycle_metal(
+                &request,
+                &psf_state,
+                &mut metal_model,
+                &mut metal_residual,
+                1,
+                0.3,
+                0.0,
+                &mut metal_timings,
+            )
+            .expect("run Metal Hogbom minor cycle");
+            assert_eq!(metal.actual_updates, cpu.actual_updates);
+            assert_eq!(metal.reported_updates, cpu.reported_updates);
+            assert_eq!(metal.stop_reason, cpu.stop_reason);
+            for (index, (&cpu_value, &metal_value)) in
+                cpu_model.iter().zip(metal_model.iter()).enumerate()
+            {
+                assert!(
+                    (cpu_value - metal_value).abs() < 2.0e-6,
+                    "model mismatch for peak {peak_index:?} at flat index {index}: cpu={cpu_value} metal={metal_value}"
+                );
+            }
+            for (index, (&cpu_value, &metal_value)) in
+                cpu_residual.iter().zip(metal_residual.iter()).enumerate()
+            {
+                assert!(
+                    (cpu_value - metal_value).abs() < 2.0e-6,
+                    "residual mismatch for peak {peak_index:?} at flat index {index}: cpu={cpu_value} metal={metal_value}"
+                );
+            }
         }
     }
 
