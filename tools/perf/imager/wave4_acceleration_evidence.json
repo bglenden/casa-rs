@@ -64,7 +64,7 @@
     },
     {
       "row_id": "standard_cube_clean_multiscale",
-      "role": "multi_worker_cpu",
+      "role": "serial_cpu",
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-multiscale-medium64-multicpu-deep/20260617T013555Z-wave4-standard-cube-line-medium-clean-multiscale-585d9f40.json"
     },
     {

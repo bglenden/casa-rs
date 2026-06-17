@@ -783,7 +783,9 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "visibility_geometry_cache": [],
         "executor_limitations": [],
         "worker_diagnostics": [],
+        "minor_cycle_diagnostics": [],
         "hogbom_minor_cycle_diagnostics": [],
+        "clark_minor_cycle_diagnostics": [],
         "clean_residual_refresh_diagnostics": [],
         "metal_diagnostics": [],
     }
@@ -842,7 +844,13 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         elif name.endswith("_executor_limitation"):
             buckets["executor_limitations"].append(parsed)
         elif name == "standard_mfs_hogbom_minor_cycle_summary":
+            buckets["minor_cycle_diagnostics"].append(parsed)
             buckets["hogbom_minor_cycle_diagnostics"].append(parsed)
+            if parsed.get("fields", {}).get("backend") != "cpu":
+                buckets["metal_diagnostics"].append(parsed)
+        elif name == "standard_mfs_clark_minor_cycle_summary":
+            buckets["minor_cycle_diagnostics"].append(parsed)
+            buckets["clark_minor_cycle_diagnostics"].append(parsed)
             if parsed.get("fields", {}).get("backend") != "cpu":
                 buckets["metal_diagnostics"].append(parsed)
         elif name == "standard_mfs_clean_residual_refresh_summary":
@@ -1003,6 +1011,8 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "resolved_tile_anchor": runtime.get("tile_anchor"),
         "resolved_residual_backend": runtime.get("residual_backend"),
         "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
+        "resolved_minor_cycle_backend": runtime.get("minor_cycle_backend"),
+        "resolved_minor_cycle_backend_reason": runtime.get("minor_cycle_backend_reason"),
         "metal_device_available": runtime.get("metal_device_available"),
         "metal_grouped_input_cache": runtime.get("metal_grouped_input_cache"),
         "cube_per_plane_backend": cube_per_plane_backend.get("selected_backend"),

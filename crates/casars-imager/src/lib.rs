@@ -41,16 +41,16 @@ use casa_imaging::{
     PolarizationRoutePlan, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     SourceChannelRoute, SpectralRoutePlan, StandardMfsDirtyAccumulator,
     StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsMetalGroupedInputCachePrefill, StandardMfsModelPredictor,
-    StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBlockSource,
-    StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsPreparedCleanPlane,
-    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow,
-    StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
-    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
-    WTermMode, WeightDensityMode, WeightingMode, WeightingRoutePlan,
-    estimate_psf_sidelobe_from_psf,
+    StandardMfsMetalGroupedInputCachePrefill, StandardMfsMinorCycleBackend,
+    StandardMfsModelPredictor, StandardMfsPairCollapseTransform,
+    StandardMfsPlannedSampleBlockSource, StandardMfsPlannedSampleBuilder,
+    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+    StandardMfsPreparedCleanPlane, StandardMfsRoutableSample, StandardMfsRoutedSample,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization,
+    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
+    VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
+    WeightingMode, WeightingRoutePlan, estimate_psf_sidelobe_from_psf,
     finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config,
     prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
     primary_beam_voltage_pattern, restore_standard_mfs_model, run_imaging,
@@ -14307,6 +14307,67 @@ impl StandardMfsRuntimeDecisionSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StandardMfsMinorCycleBackendPlan {
+    backend: StandardMfsMinorCycleBackend,
+    reason: &'static str,
+}
+
+fn standard_mfs_minor_cycle_backend_plan(
+    config: &CliConfig,
+    metal_requested: bool,
+) -> StandardMfsMinorCycleBackendPlan {
+    if config.dirty_only || config.niter == 0 {
+        return StandardMfsMinorCycleBackendPlan {
+            backend: StandardMfsMinorCycleBackend::Cpu,
+            reason: "not_applicable",
+        };
+    }
+    match config.deconvolver {
+        Deconvolver::Hogbom | Deconvolver::Clark if metal_requested => {
+            StandardMfsMinorCycleBackendPlan {
+                backend: StandardMfsMinorCycleBackend::Metal,
+                reason: "metal_requested_supported",
+            }
+        }
+        Deconvolver::Multiscale if metal_requested => StandardMfsMinorCycleBackendPlan {
+            backend: StandardMfsMinorCycleBackend::Cpu,
+            reason: "multiscale_metal_minor_cycle_not_implemented",
+        },
+        Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale => {
+            StandardMfsMinorCycleBackendPlan {
+                backend: StandardMfsMinorCycleBackend::Cpu,
+                reason: "cpu_policy",
+            }
+        }
+        Deconvolver::Mtmfs => StandardMfsMinorCycleBackendPlan {
+            backend: StandardMfsMinorCycleBackend::Cpu,
+            reason: "not_applicable",
+        },
+    }
+}
+
+fn standard_mfs_minor_cycle_backend_for_config(config: &CliConfig) -> StandardMfsMinorCycleBackend {
+    let standard_mfs_eligible = can_plan_standard_mfs_acceleration(config, false, 1);
+    let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, 1);
+    let mosaic_cube_one_channel_eligible =
+        mosaic_mfs_eligible && mosaic_cube_one_channel_can_use_single_plane_stream(config);
+    let eligible = standard_mfs_eligible || mosaic_mfs_eligible;
+    let metal_requested = match config.standard_mfs_acceleration {
+        StandardMfsAccelerationPolicy::Auto => standard_mfs_auto_metal_enabled(
+            config,
+            eligible,
+            mosaic_mfs_eligible,
+            mosaic_cube_one_channel_eligible,
+            matches!(config.w_term_mode, WTermMode::WProject),
+            casa_imaging::standard_mfs_metal_device_available(),
+        ),
+        StandardMfsAccelerationPolicy::Metal => true,
+        StandardMfsAccelerationPolicy::Cpu | StandardMfsAccelerationPolicy::MultiCpu => false,
+    };
+    standard_mfs_minor_cycle_backend_plan(config, metal_requested).backend
+}
+
 fn apply_standard_mfs_runtime_plan(
     config: &CliConfig,
     force_standard_gridder: bool,
@@ -14511,35 +14572,8 @@ fn apply_standard_mfs_runtime_plan_locked(
         guard.set("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE", value);
     }
 
-    let hogbom_minor_cycle_backend = if config.deconvolver == Deconvolver::Hogbom {
-        match config.standard_mfs_acceleration {
-            StandardMfsAccelerationPolicy::Auto if auto_metal => Some("metal"),
-            StandardMfsAccelerationPolicy::Metal => Some("metal"),
-            StandardMfsAccelerationPolicy::Auto
-            | StandardMfsAccelerationPolicy::Cpu
-            | StandardMfsAccelerationPolicy::MultiCpu => Some("cpu"),
-        }
-    } else {
-        None
-    };
-    if let Some(value) = hogbom_minor_cycle_backend {
-        guard.set("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND", value);
-    }
-
-    let clark_minor_cycle_backend = if config.deconvolver == Deconvolver::Clark {
-        match config.standard_mfs_acceleration {
-            StandardMfsAccelerationPolicy::Auto if auto_metal => Some("metal"),
-            StandardMfsAccelerationPolicy::Metal => Some("metal"),
-            StandardMfsAccelerationPolicy::Auto
-            | StandardMfsAccelerationPolicy::Cpu
-            | StandardMfsAccelerationPolicy::MultiCpu => Some("cpu"),
-        }
-    } else {
-        None
-    };
-    if let Some(value) = clark_minor_cycle_backend {
-        guard.set("CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND", value);
-    }
+    let minor_cycle_backend_plan =
+        standard_mfs_minor_cycle_backend_plan(config, auto_metal || metal_policy);
 
     let mtmfs_metal_backend =
         if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
@@ -14553,26 +14587,9 @@ fn apply_standard_mfs_runtime_plan_locked(
         } else {
             "not_applicable"
         };
-    let hogbom_metal_backend = if config.deconvolver == Deconvolver::Hogbom
-        && hogbom_minor_cycle_backend == Some("metal")
-    {
-        "metal-minor-cycle"
-    } else if config.deconvolver == Deconvolver::Hogbom {
-        "cpu-minor-cycle"
-    } else {
-        "not_applicable"
-    };
-    let clark_metal_backend =
-        if config.deconvolver == Deconvolver::Clark && clark_minor_cycle_backend == Some("metal") {
-            "metal-minor-cycle"
-        } else if config.deconvolver == Deconvolver::Clark {
-            "cpu-minor-cycle"
-        } else {
-            "not_applicable"
-        };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} hogbom_metal_backend={} clark_metal_backend={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         eligible,
         auto_multi_cpu,
@@ -14592,8 +14609,8 @@ fn apply_standard_mfs_runtime_plan_locked(
         initial_dirty_backend_source.label(),
         metal_cache.as_deref().unwrap_or("planner"),
         metal_cache_source.label(),
-        hogbom_metal_backend,
-        clark_metal_backend,
+        minor_cycle_backend_plan.backend.label(),
+        minor_cycle_backend_plan.reason,
         mtmfs_metal_backend,
         mtmfs_metal_input_cache,
     );
@@ -27079,6 +27096,7 @@ struct FixedTileResidencyEstimate {
 fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConfig {
     let fixed_tile_resident = estimated_fixed_tile_residency(config);
     StandardMfsExecutionConfig {
+        minor_cycle_backend: standard_mfs_minor_cycle_backend_for_config(config),
         fixed_tile_resident_bytes: Some(fixed_tile_resident.bytes).filter(|bytes| *bytes > 0),
         fixed_tile_edge: Some(fixed_tile_resident.tile_edge).filter(|edge| *edge > 0),
         fixed_tile_center_boundary: fixed_tile_resident.center_boundary_anchor,
@@ -41420,8 +41438,6 @@ mod tests {
         let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
         let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
         let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
-        let _hogbom_minor = EnvGuard::unset("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND");
-        let _clark_minor = EnvGuard::unset("CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND");
 
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -41670,6 +41686,7 @@ mod tests {
 
         let plan = plan_cube_per_plane_execution(&config, 8, 4);
         let plane_config = cube_per_plane_runtime_config(&config, &plan);
+        let execution_config = standard_mfs_execution_config(&plane_config);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
         assert!(plan.fixed_tile_cpu_eligible);
@@ -41691,9 +41708,17 @@ mod tests {
                 plane_config.standard_mfs_initial_dirty_backend.as_deref(),
                 Some("cpu")
             );
+            assert_eq!(
+                execution_config.minor_cycle_backend,
+                StandardMfsMinorCycleBackend::Metal
+            );
         } else {
             assert!(!plan.metal_eligible);
             assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
+            assert_eq!(
+                execution_config.minor_cycle_backend,
+                StandardMfsMinorCycleBackend::Cpu
+            );
         }
     }
 
@@ -41728,6 +41753,8 @@ mod tests {
         .expect("parse multiscale cube clean config");
 
         let plan = plan_cube_per_plane_execution(&config, 8, 4);
+        let plane_config = cube_per_plane_runtime_config(&config, &plan);
+        let execution_config = standard_mfs_execution_config(&plane_config);
 
         assert_eq!(plan.phase, PerPlaneExecutionPhase::CleanDeconvolution);
         assert!(plan.fixed_tile_cpu_eligible);
@@ -41738,10 +41765,23 @@ mod tests {
                 PerPlaneExecutionBackend::Wave3MetalGrouped
             );
             assert!(plan.fallback_reasons.is_empty());
+            assert_eq!(
+                plane_config.standard_mfs_acceleration,
+                StandardMfsAccelerationPolicy::Metal
+            );
+            let minor_cycle_plan = standard_mfs_minor_cycle_backend_plan(&plane_config, true);
+            assert_eq!(
+                minor_cycle_plan.reason,
+                "multiscale_metal_minor_cycle_not_implemented"
+            );
         } else {
             assert!(!plan.metal_eligible);
             assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
         }
+        assert_eq!(
+            execution_config.minor_cycle_backend,
+            StandardMfsMinorCycleBackend::Cpu
+        );
         assert!(
             !plan
                 .fallback_reasons
@@ -43214,6 +43254,7 @@ mod tests {
         assert_eq!(enabled.tile_edge, 32);
         assert!(enabled.center_boundary_anchor);
         let execution = StandardMfsExecutionConfig {
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
             fixed_tile_resident_bytes: Some(enabled.bytes),
             fixed_tile_edge: Some(enabled.tile_edge),
             fixed_tile_center_boundary: enabled.center_boundary_anchor,
@@ -51205,8 +51246,8 @@ deconvolver=mtmfs
         multiscale_config.deconvolver = Deconvolver::Multiscale;
         multiscale_config.multiscale_scales = vec![0.0, 3.0];
         multiscale_config.small_scale_bias = 0.6;
-        multiscale_config.niter = 2;
-        multiscale_config.minor_cycle_length = 1;
+        multiscale_config.niter = 100;
+        multiscale_config.minor_cycle_length = 100;
         {
             let _forced_slab2 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "2");
             let multiscale_summary = run_from_config(&multiscale_config).unwrap();
@@ -51220,6 +51261,10 @@ deconvolver=mtmfs
                         <= 1.0e-5
                 }),
                 "Multiscale cube clean should share the cube-level cycle threshold"
+            );
+            assert!(
+                multiscale_summary.minor_iterations < multiscale_config.niter * 4,
+                "Multiscale cube clean should run one CASA cube minor-cycle pass per plane, not full niter independently on every plane"
             );
         }
         for suffix in ["psf", "residual", "model", "image", "sumwt"] {

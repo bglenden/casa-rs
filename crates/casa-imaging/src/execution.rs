@@ -18726,9 +18726,10 @@ mod tests {
         StandardMfsTiledCpuExecutor,
     };
     use crate::{
-        ImageGeometry, StandardMfsExecutionConfig, StandardMfsPlannedWeightedSample,
-        StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-        StandardMfsVisibilityPolarization, VisibilityBatch, gridder::StandardGridder,
+        ImageGeometry, StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
+        StandardMfsPlannedWeightedSample, StandardMfsRoutedVisibilityRow,
+        StandardMfsRoutedVisibilityRun, StandardMfsVisibilityPolarization, VisibilityBatch,
+        gridder::StandardGridder,
     };
     use num_complex::{Complex32, Complex64};
     use std::{
@@ -19631,6 +19632,7 @@ mod tests {
         let evicted = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(1),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
@@ -19645,6 +19647,7 @@ mod tests {
         let direct = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
@@ -19792,6 +19795,7 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
@@ -19939,6 +19943,7 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
@@ -20055,6 +20060,7 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
@@ -20248,6 +20254,7 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,

@@ -490,12 +490,34 @@ impl StandardMfsPlannedSampleBuilder {
     }
 }
 
+/// Minor-cycle execution backend selected by the frontend standard-MFS planner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StandardMfsMinorCycleBackend {
+    /// Run the minor cycle on the CPU.
+    #[default]
+    Cpu,
+    /// Run the minor cycle with the Metal backend when the selected deconvolver supports it.
+    Metal,
+}
+
+impl StandardMfsMinorCycleBackend {
+    /// Stable diagnostic label for plan logs and benchmark metadata.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Metal => "metal",
+        }
+    }
+}
+
 /// Runtime execution knobs for standard-MFS backends.
 ///
 /// These values are deliberately separate from [`ImagingRequest`] so callers
 /// can tune memory residency without changing the imaging contract itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StandardMfsExecutionConfig {
+    /// Minor-cycle backend selected by the frontend planner.
+    pub minor_cycle_backend: StandardMfsMinorCycleBackend,
     /// Optional byte budget for resident fixed-tile stage grids.
     ///
     /// When the fixed-tile backend is enabled, the backend converts this budget
@@ -1427,6 +1449,7 @@ where
     let clean_state = run_cotton_schwab_controller_with_refresh(
         &request,
         &psf_state,
+        execution_config.minor_cycle_backend,
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -1841,6 +1864,7 @@ where
         run_cotton_schwab_controller_with_refresh(
             &clean_request,
             &psf_state,
+            StandardMfsMinorCycleBackend::Cpu,
             &mut stage_timings,
             &mut refresh_residual,
             &mut model,
@@ -3153,6 +3177,7 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
     let clean_state = run_cotton_schwab_controller_with_refresh(
         &request,
         &psf_state,
+        execution_config.minor_cycle_backend,
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -3377,6 +3402,7 @@ pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_con
     let clean_state = run_cotton_schwab_controller_with_refresh(
         &request,
         &psf_state,
+        execution_config.minor_cycle_backend,
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -3725,6 +3751,7 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
     let clean_state = run_cotton_schwab_controller_with_refresh(
         &request,
         &psf_state,
+        execution_config.minor_cycle_backend,
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -12014,6 +12041,7 @@ fn run_cotton_schwab_controller(
     run_cotton_schwab_controller_with_refresh(
         request,
         psf_state,
+        execution_config.minor_cycle_backend,
         stage_timings,
         &mut refresh_residual,
         model,
@@ -12029,6 +12057,7 @@ fn run_cotton_schwab_controller(
 fn run_cotton_schwab_controller_with_refresh(
     request: &ImagingRequest,
     psf_state: &PsfState,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     stage_timings: &mut ImagingStageTimings,
     refresh_residual: &mut ResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
@@ -12046,6 +12075,7 @@ fn run_cotton_schwab_controller_with_refresh(
             refresh_residual,
             model,
             residual,
+            minor_cycle_backend,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -12058,6 +12088,7 @@ fn run_cotton_schwab_controller_with_refresh(
             refresh_residual,
             model,
             residual,
+            minor_cycle_backend,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -12070,6 +12101,7 @@ fn run_cotton_schwab_controller_with_refresh(
             refresh_residual,
             model,
             residual,
+            minor_cycle_backend,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -12129,6 +12161,7 @@ fn run_mosaic_image_domain_controller(
             &mut refresh_residual,
             model,
             residual,
+            StandardMfsMinorCycleBackend::Cpu,
             max_psf_sidelobe_level,
             initial_peak,
             None,
@@ -12201,6 +12234,7 @@ fn run_mosaic_image_domain_controller(
                     cycle_reported_niter,
                     final_cycle_threshold_jy_per_beam,
                     cycle_nsigma_threshold_jy_per_beam,
+                    StandardMfsMinorCycleBackend::Cpu,
                     stage_timings,
                 )?,
                 MinorCycleProbe::default(),
@@ -12357,6 +12391,7 @@ fn run_hogbom_cotton_schwab(
     refresh_residual: &mut ResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
@@ -12417,6 +12452,7 @@ fn run_hogbom_cotton_schwab(
             cycle_reported_niter,
             cycle_threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
+            minor_cycle_backend,
             stage_timings,
         )?;
         minor_cycle_traces.push(make_minor_cycle_trace(
@@ -12503,10 +12539,11 @@ fn run_hogbom_minor_cycle(
     cycle_reported_niter: usize,
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
-    if standard_mfs_hogbom_metal_minor_cycle_enabled()? {
-        return run_hogbom_minor_cycle_metal(
+    match minor_cycle_backend {
+        StandardMfsMinorCycleBackend::Cpu => Ok(run_hogbom_minor_cycle_cpu(
             request,
             psf_state,
             model,
@@ -12515,18 +12552,18 @@ fn run_hogbom_minor_cycle(
             cycle_threshold_jy_per_beam,
             nsigma_threshold_jy_per_beam,
             stage_timings,
-        );
+        )),
+        StandardMfsMinorCycleBackend::Metal => run_hogbom_minor_cycle_metal(
+            request,
+            psf_state,
+            model,
+            residual,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            stage_timings,
+        ),
     }
-    Ok(run_hogbom_minor_cycle_cpu(
-        request,
-        psf_state,
-        model,
-        residual,
-        cycle_reported_niter,
-        cycle_threshold_jy_per_beam,
-        nsigma_threshold_jy_per_beam,
-        stage_timings,
-    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -12649,46 +12686,6 @@ fn run_hogbom_minor_cycle_cpu(
         final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
         final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
     }
-}
-
-fn standard_mfs_hogbom_metal_minor_cycle_enabled() -> Result<bool, ImagingError> {
-    if let Some(value) = env::var_os("CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND") {
-        let value = value.to_string_lossy().trim().to_ascii_lowercase();
-        return match value.as_str() {
-            "metal" | "metal-minor-cycle" => Ok(true),
-            "cpu" | "off" | "none" => Ok(false),
-            other => Err(ImagingError::InvalidRequest(format!(
-                "unsupported CASA_RS_STANDARD_MFS_HOGBOM_MINOR_CYCLE_BACKEND value '{other}'"
-            ))),
-        };
-    }
-    let backend = standard_mfs_backend_selection_from_env()?;
-    Ok(matches!(
-        backend,
-        StandardMfsBackendSelection::Metal
-            | StandardMfsBackendSelection::MetalRowRun
-            | StandardMfsBackendSelection::MetalRowRunGrouped
-    ))
-}
-
-fn standard_mfs_clark_metal_minor_cycle_enabled() -> Result<bool, ImagingError> {
-    if let Some(value) = env::var_os("CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND") {
-        let value = value.to_string_lossy().trim().to_ascii_lowercase();
-        return match value.as_str() {
-            "metal" | "metal-minor-cycle" => Ok(true),
-            "cpu" | "off" | "none" => Ok(false),
-            other => Err(ImagingError::InvalidRequest(format!(
-                "unsupported CASA_RS_STANDARD_MFS_CLARK_MINOR_CYCLE_BACKEND value '{other}'"
-            ))),
-        };
-    }
-    let backend = standard_mfs_backend_selection_from_env()?;
-    Ok(matches!(
-        backend,
-        StandardMfsBackendSelection::Metal
-            | StandardMfsBackendSelection::MetalRowRun
-            | StandardMfsBackendSelection::MetalRowRunGrouped
-    ))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -14039,10 +14036,11 @@ fn run_clark_minor_cycle(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
     psf_patch: &ClarkPsfPatch,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
-    if standard_mfs_clark_metal_minor_cycle_enabled()? {
-        return run_clark_minor_cycle_metal(
+    match minor_cycle_backend {
+        StandardMfsMinorCycleBackend::Cpu => Ok(run_clark_minor_cycle_cpu(
             request,
             model,
             residual,
@@ -14052,19 +14050,19 @@ fn run_clark_minor_cycle(
             nsigma_threshold_jy_per_beam,
             psf_patch,
             stage_timings,
-        );
+        )),
+        StandardMfsMinorCycleBackend::Metal => run_clark_minor_cycle_metal(
+            request,
+            model,
+            residual,
+            psf,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            psf_patch,
+            stage_timings,
+        ),
     }
-    Ok(run_clark_minor_cycle_cpu(
-        request,
-        model,
-        residual,
-        psf,
-        cycle_reported_niter,
-        cycle_threshold_jy_per_beam,
-        nsigma_threshold_jy_per_beam,
-        psf_patch,
-        stage_timings,
-    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -15379,6 +15377,7 @@ fn run_clark_cotton_schwab(
     refresh_residual: &mut ResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
@@ -15447,6 +15446,7 @@ fn run_clark_cotton_schwab(
             final_cycle_threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
             &psf_patch,
+            minor_cycle_backend,
             stage_timings,
         )?;
         let reported_after_outcome =
@@ -15532,11 +15532,17 @@ fn run_multiscale_cotton_schwab(
     refresh_residual: &mut ResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
+    if minor_cycle_backend == StandardMfsMinorCycleBackend::Metal {
+        return Err(ImagingError::Unsupported(
+            "standard MFS multiscale minor-cycle backend 'metal' is not implemented; select CPU minor-cycle backend".to_string(),
+        ));
+    }
     let deconvolver_setup_started = Instant::now();
     let scales = effective_multiscale_scales(request);
     let mut multiscale_state = build_multiscale_state(
@@ -24374,20 +24380,21 @@ mod tests {
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
         PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock, StandardGridder,
         StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
-        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsWeightedSample, VisibilityBatch,
-        VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample, WProjectSkipReason,
-        WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
-        add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
-        build_direct_components, build_direct_pixel_coordinates, build_multiscale_scale_masks,
-        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
-        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
-        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
-        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
-        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, peak_location_masked_in_window,
+        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
+        StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
+        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
+        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
+        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
+        build_multiscale_scale_masks, compute_cycle_threshold,
+        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
+        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        kernel_nonzero_support, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
+        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
+        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
+        peak_location_masked_in_window,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_voltage_pattern_for_offsets, run_clark_cotton_schwab, run_clark_minor_cycle,
         run_clark_minor_cycle_cpu, run_clark_minor_cycle_metal, run_hogbom_minor_cycle,
@@ -25923,6 +25930,7 @@ mod tests {
         let streaming = run_standard_mfs_weighted_streaming_with_execution_config(
             streaming_request,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
@@ -26000,6 +26008,7 @@ mod tests {
             1.0,
         )];
         let execution_config = StandardMfsExecutionConfig {
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
             fixed_tile_resident_bytes: Some(usize::MAX),
             fixed_tile_edge: Some(16),
             fixed_tile_center_boundary: false,
@@ -28265,6 +28274,7 @@ mod tests {
             0.0,
             0.0,
             &psf_patch,
+            StandardMfsMinorCycleBackend::Cpu,
             &mut stage_timings,
         )
         .expect("run Clark minor cycle");
@@ -28469,6 +28479,7 @@ mod tests {
             &mut refresh_residual,
             &mut model,
             residual,
+            StandardMfsMinorCycleBackend::Cpu,
             0.2,
             1.0,
             Some(0.9),
@@ -29191,6 +29202,7 @@ mod tests {
             1,
             0.0,
             0.0,
+            StandardMfsMinorCycleBackend::Cpu,
             &mut stage_timings,
         )
         .expect("run Hogbom minor cycle");
@@ -29278,6 +29290,7 @@ mod tests {
             4,
             0.15,
             0.0,
+            StandardMfsMinorCycleBackend::Cpu,
             &mut stage_timings,
         )
         .expect("run Hogbom minor cycle");
@@ -29399,6 +29412,7 @@ mod tests {
                 1,
                 0.3,
                 0.0,
+                StandardMfsMinorCycleBackend::Cpu,
                 &mut stage_timings,
             )
             .expect("run Hogbom minor cycle");
