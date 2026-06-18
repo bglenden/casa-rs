@@ -43459,7 +43459,7 @@ mod tests {
         config.niter = 10;
 
         let plan = cube_slab_plane_worker_plan(&config, 16);
-        assert_eq!(plan.model, "plane_parallel_metal_multiscale_contention_v1");
+        assert_eq!(plan.model, "plane_parallel_metal_multiscale_throughput_v2");
         assert!(plan.candidate_costs.contains("1:cost="));
         assert_eq!(
             cube_slab_plane_worker_capacity(&config, 16),

@@ -40,6 +40,11 @@ pub(crate) struct ImagingWorkerPlanInput {
     pub(crate) backend: ImagingWorkerBackend,
 }
 
+const METAL_MULTISCALE_WAVE_TAIL_MILLI: u128 = 200;
+const METAL_MULTISCALE_WORKER_OVERHEAD_MILLI: u128 = 100;
+const METAL_WAVE_TAIL_MILLI: u128 = 50;
+const METAL_WORKER_OVERHEAD_MILLI: u128 = 25;
+
 impl ImagingWorkerPlanInput {
     fn normalized(self) -> Self {
         let hardware_threads = self.hardware_threads.max(1);
@@ -133,15 +138,28 @@ fn model_worker_candidate(input: ImagingWorkerPlanInput, workers: usize) -> Work
         ImagingWorkerParallelism::PlaneParallel => {
             let waves = input.output_planes.div_ceil(workers).max(1);
             let contention_milli = plane_parallel_contention_milli(input, workers);
-            let cost_units = work_units
+            let total_plane_work_units =
+                work_units.saturating_mul(input.output_planes.max(1) as u128);
+            let worker_throughput_milli = workers as u128 * 1_000;
+            let throughput_cost_units = total_plane_work_units.saturating_mul(contention_milli)
+                / worker_throughput_milli.max(1);
+            let wave_tail_cost_units = work_units
                 .saturating_mul(waves as u128)
-                .saturating_mul(contention_milli)
+                .saturating_mul(plane_parallel_wave_tail_milli(input))
                 / 1_000;
+            let worker_overhead_cost_units = work_units
+                .saturating_mul(workers as u128)
+                .saturating_mul(plane_parallel_worker_overhead_milli(input))
+                / 1_000;
+            let cost_units = throughput_cost_units
+                .saturating_add(wave_tail_cost_units)
+                .saturating_add(worker_overhead_cost_units);
             WorkerCandidate {
                 workers,
                 waves,
                 contention_milli,
-                effective_speedup_milli: workers as u128 * 1_000,
+                effective_speedup_milli: worker_throughput_milli.saturating_mul(1_000)
+                    / contention_milli.max(1),
                 cost_units,
             }
         }
@@ -164,18 +182,38 @@ fn plane_parallel_contention_milli(input: ImagingWorkerPlanInput, workers: usize
     match input.backend {
         ImagingWorkerBackend::MetalMultiscaleMinorCycle => {
             let extra = workers.saturating_sub(1) as u128;
-            let soft_queue_depth = ((input.hardware_threads.max(1) * 3) / 2).max(1) as u128;
+            let plane_amortization = input.output_planes;
+            let soft_queue_depth =
+                (((input.hardware_threads.max(1) * 3) / 2) + plane_amortization).max(1) as u128;
             1_000 + extra.saturating_mul(extra).saturating_mul(1_000) / soft_queue_depth
         }
         ImagingWorkerBackend::Metal => {
             let extra = workers.saturating_sub(1) as u128;
-            let soft_queue_depth = (input.hardware_threads.max(1) * 4).max(1) as u128;
+            let plane_amortization = input.output_planes.div_ceil(2);
+            let soft_queue_depth =
+                ((input.hardware_threads.max(1) * 4) + plane_amortization).max(1) as u128;
             1_000 + extra.saturating_mul(extra).saturating_mul(1_000) / soft_queue_depth
         }
         ImagingWorkerBackend::Cpu | ImagingWorkerBackend::WProjectCpu => {
             let extra = workers.saturating_sub(1) as u128;
             1_000 + extra.saturating_mul(10)
         }
+    }
+}
+
+fn plane_parallel_wave_tail_milli(input: ImagingWorkerPlanInput) -> u128 {
+    match input.backend {
+        ImagingWorkerBackend::MetalMultiscaleMinorCycle => METAL_MULTISCALE_WAVE_TAIL_MILLI,
+        ImagingWorkerBackend::Metal => METAL_WAVE_TAIL_MILLI,
+        ImagingWorkerBackend::Cpu | ImagingWorkerBackend::WProjectCpu => 0,
+    }
+}
+
+fn plane_parallel_worker_overhead_milli(input: ImagingWorkerPlanInput) -> u128 {
+    match input.backend {
+        ImagingWorkerBackend::MetalMultiscaleMinorCycle => METAL_MULTISCALE_WORKER_OVERHEAD_MILLI,
+        ImagingWorkerBackend::Metal => METAL_WORKER_OVERHEAD_MILLI,
+        ImagingWorkerBackend::Cpu | ImagingWorkerBackend::WProjectCpu => 0,
     }
 }
 
@@ -210,18 +248,18 @@ fn worker_model_label(
             "intra_plane_metal_multiscale_diminishing_return_v1"
         }
         (ImagingWorkerParallelism::PlaneParallel, ImagingWorkerBackend::Cpu) => {
-            "plane_parallel_cpu_wave_count_v1"
+            "plane_parallel_cpu_throughput_v2"
         }
         (ImagingWorkerParallelism::PlaneParallel, ImagingWorkerBackend::WProjectCpu) => {
-            "plane_parallel_wproject_cpu_wave_count_v1"
+            "plane_parallel_wproject_cpu_throughput_v2"
         }
         (ImagingWorkerParallelism::PlaneParallel, ImagingWorkerBackend::Metal) => {
-            "plane_parallel_metal_contention_v1"
+            "plane_parallel_metal_throughput_v2"
         }
         (
             ImagingWorkerParallelism::PlaneParallel,
             ImagingWorkerBackend::MetalMultiscaleMinorCycle,
-        ) => "plane_parallel_metal_multiscale_contention_v1",
+        ) => "plane_parallel_metal_multiscale_throughput_v2",
     }
 }
 
@@ -244,6 +282,23 @@ mod tests {
 
         assert_eq!(plan.worker_count, 4, "{plan:?}");
         assert!(plan.candidate_costs.contains("8:cost="));
+    }
+
+    #[test]
+    fn metal_multiscale_many_planes_prefers_more_workers() {
+        let plan = plan_imaging_worker_count(ImagingWorkerPlanInput {
+            output_planes: 64,
+            image_pixels: 1024 * 1024,
+            work_iterations_per_plane: 10_000,
+            scale_count: 3,
+            max_workers: 10,
+            hardware_threads: 10,
+            parallelism: ImagingWorkerParallelism::PlaneParallel,
+            backend: ImagingWorkerBackend::MetalMultiscaleMinorCycle,
+        });
+
+        assert_eq!(plan.worker_count, 10, "{plan:?}");
+        assert_eq!(plan.model, "plane_parallel_metal_multiscale_throughput_v2");
     }
 
     #[test]
