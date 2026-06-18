@@ -9,6 +9,8 @@ use std::{
     fmt,
 };
 
+use crate::imaging_worker_plan::{ImagingWorkerPlanInput, modeled_worker_runtime_cost_units};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
 pub(crate) enum ImagingPassKind {
@@ -1290,6 +1292,8 @@ pub(crate) struct SpectralMemoryPlan {
     pub(crate) visibility_cache_bytes: usize,
     pub(crate) visibility_cache_source_channels: usize,
     pub(crate) worker_count: usize,
+    pub(crate) worker_model: &'static str,
+    pub(crate) modeled_worker_runtime_cost_units: u128,
     pub(crate) backend: &'static str,
     pub(crate) memory_target_bytes: usize,
     pub(crate) fixed_frontend_bytes: usize,
@@ -1350,7 +1354,7 @@ pub(crate) struct SpectralMemoryPlan {
 impl SpectralMemoryPlan {
     pub(crate) fn log_line(&self) -> String {
         format!(
-            "spectral_slab_plan schedule={} best_modeled_schedule={} executor_capabilities={} nplanes={} image_shape={}x{} active_planes={} slab_count={} row_block_rows={} cache_budget_bytes={} cache_kind={} visibility_cache_policy={} prepared_residency={} visibility_cache_bytes={} visibility_cache_source_channels={} worker_count={} backend={} memory_target_bytes={} fixed_frontend_bytes={} source_stream_buffer_bytes={} worker_staging_bytes={} per_plane_state_bytes={} component_memory_bytes={} visibility_staging_bytes_per_plane={} prepared_visibility_staging_bytes={} live_prepared_visibility_bytes={} live_bucket_bytes={} product_scratch_bytes={} product_batch_planes={} resident_plane_state_bytes={} plane_state_residency={} source_buffer_residency={} gpu_staging_bytes={} safety_margin_bytes={} planned_active_bytes={} source_channel_visits={} max_slab_source_channels={} full_source_channel_count={} source_cell_channel_count={} corr_count={} visibility_data_element_bytes={} data_channel_read_granularity={} flag_channel_read_granularity={} weight_spectrum_channel_read_granularity={} visibility_row_channel_bytes={} visibility_row_fixed_bytes={} visibility_row_fixed_resident_bytes={} visibility_row_cache_overhead_bytes={} visibility_resident_cache_layout={} best_modeled_total_io_bytes={} best_modeled_source_read_bytes={} best_modeled_visibility_cache_io_bytes={} best_modeled_output_spill_io_bytes={} best_modeled_product_write_bytes={} best_modeled_active_planes={} best_modeled_slab_count={} best_modeled_source_channel_visits={} modeled_total_io_bytes={} modeled_source_read_bytes={} modeled_visibility_cache_fill_bytes={} modeled_visibility_cache_read_bytes={} modeled_visibility_cache_io_bytes={} modeled_output_spill_read_bytes={} modeled_output_spill_write_bytes={} modeled_output_spill_io_bytes={} modeled_product_write_bytes={} modeled_no_cache_source_read_bytes={} modeled_full_cache_source_read_bytes={} visibility_cache_saved_read_bytes={} candidate_io_costs={} warnings={}",
+            "spectral_slab_plan schedule={} best_modeled_schedule={} executor_capabilities={} nplanes={} image_shape={}x{} active_planes={} slab_count={} row_block_rows={} cache_budget_bytes={} cache_kind={} visibility_cache_policy={} prepared_residency={} visibility_cache_bytes={} visibility_cache_source_channels={} worker_count={} worker_model={} modeled_worker_runtime_cost_units={} backend={} memory_target_bytes={} fixed_frontend_bytes={} source_stream_buffer_bytes={} worker_staging_bytes={} per_plane_state_bytes={} component_memory_bytes={} visibility_staging_bytes_per_plane={} prepared_visibility_staging_bytes={} live_prepared_visibility_bytes={} live_bucket_bytes={} product_scratch_bytes={} product_batch_planes={} resident_plane_state_bytes={} plane_state_residency={} source_buffer_residency={} gpu_staging_bytes={} safety_margin_bytes={} planned_active_bytes={} source_channel_visits={} max_slab_source_channels={} full_source_channel_count={} source_cell_channel_count={} corr_count={} visibility_data_element_bytes={} data_channel_read_granularity={} flag_channel_read_granularity={} weight_spectrum_channel_read_granularity={} visibility_row_channel_bytes={} visibility_row_fixed_bytes={} visibility_row_fixed_resident_bytes={} visibility_row_cache_overhead_bytes={} visibility_resident_cache_layout={} best_modeled_total_io_bytes={} best_modeled_source_read_bytes={} best_modeled_visibility_cache_io_bytes={} best_modeled_output_spill_io_bytes={} best_modeled_product_write_bytes={} best_modeled_active_planes={} best_modeled_slab_count={} best_modeled_source_channel_visits={} modeled_total_io_bytes={} modeled_source_read_bytes={} modeled_visibility_cache_fill_bytes={} modeled_visibility_cache_read_bytes={} modeled_visibility_cache_io_bytes={} modeled_output_spill_read_bytes={} modeled_output_spill_write_bytes={} modeled_output_spill_io_bytes={} modeled_product_write_bytes={} modeled_no_cache_source_read_bytes={} modeled_full_cache_source_read_bytes={} visibility_cache_saved_read_bytes={} candidate_io_costs={} warnings={}",
             self.schedule_kind.as_str(),
             self.best_modeled_schedule_kind.as_str(),
             self.executor_capabilities.as_str(),
@@ -1367,6 +1371,8 @@ impl SpectralMemoryPlan {
             self.visibility_cache_bytes,
             self.visibility_cache_source_channels,
             self.worker_count,
+            self.worker_model,
+            self.modeled_worker_runtime_cost_units,
             self.backend,
             self.memory_target_bytes,
             self.fixed_frontend_bytes,
@@ -1470,6 +1476,7 @@ pub(crate) struct SpectralMemoryPlannerInput {
     pub(crate) product_write_bytes_per_plane: usize,
     pub(crate) max_row_block_rows: usize,
     pub(crate) max_worker_count: usize,
+    pub(crate) worker_plan_input: ImagingWorkerPlanInput,
     pub(crate) requirements: PlaneStateRequirements,
     pub(crate) prepared_residency: PreparedVisibilityResidency,
 }
@@ -1568,6 +1575,7 @@ struct CandidatePlan {
     modeled_product_write_bytes: usize,
     modeled_no_cache_source_read_bytes: usize,
     modeled_product_write_groups: usize,
+    modeled_worker_runtime_cost_units: u128,
     modeled_runtime_cost_bytes: usize,
 }
 
@@ -1925,6 +1933,11 @@ pub(crate) fn plan_spectral_memory(
         visibility_cache_bytes: best.visibility_cache_bytes,
         visibility_cache_source_channels: best.visibility_cache_source_channels,
         worker_count: best.worker_count,
+        worker_model: crate::imaging_worker_plan::plan_imaging_worker_count(
+            input.worker_plan_input,
+        )
+        .model,
+        modeled_worker_runtime_cost_units: best.modeled_worker_runtime_cost_units,
         backend: "cpu_slab",
         memory_target_bytes: input.memory_target_bytes,
         fixed_frontend_bytes: input.fixed_frontend_bytes,
@@ -2148,6 +2161,12 @@ fn build_streaming_candidate(
         .output
         .plane_count
         .div_ceil(product_batch_planes.max(1));
+    let mut worker_plan_input = input.worker_plan_input;
+    worker_plan_input.output_planes = input.output.plane_count;
+    worker_plan_input.image_pixels = input.output.image_pixels();
+    worker_plan_input.max_workers = input.max_worker_count.max(1);
+    let modeled_worker_runtime_cost =
+        modeled_worker_runtime_cost_units(worker_plan_input, worker_count);
     Some(CandidatePlan {
         schedule_kind,
         shape,
@@ -2176,8 +2195,10 @@ fn build_streaming_candidate(
         modeled_product_write_bytes,
         modeled_no_cache_source_read_bytes,
         modeled_product_write_groups,
+        modeled_worker_runtime_cost_units: modeled_worker_runtime_cost,
         modeled_runtime_cost_bytes: modeled_runtime_cost_bytes(
             modeled_total_io_bytes,
+            modeled_worker_runtime_cost,
             per_plane_state_bytes,
             input
                 .product_write_bytes_per_plane
@@ -2245,6 +2266,7 @@ fn integer_sqrt(value: usize) -> usize {
 #[allow(clippy::too_many_arguments)]
 fn modeled_runtime_cost_bytes(
     modeled_total_io_bytes: usize,
+    modeled_worker_runtime_cost_units: u128,
     per_plane_state_bytes: usize,
     modeled_product_write_group_overhead_bytes: usize,
     nplanes: usize,
@@ -2257,7 +2279,10 @@ fn modeled_runtime_cost_bytes(
     let source_block_count = shape
         .slab_count
         .saturating_mul(active_rows.div_ceil(row_block_rows.max(1)));
+    let modeled_worker_runtime_cost_bytes =
+        usize::try_from(modeled_worker_runtime_cost_units).unwrap_or(usize::MAX);
     modeled_total_io_bytes
+        .saturating_add(modeled_worker_runtime_cost_bytes)
         .saturating_add(
             per_plane_state_bytes.saturating_mul(total_plane_worker_waves(
                 nplanes,
@@ -2354,9 +2379,10 @@ fn candidate_io_cost_fragment(candidate: CandidatePlan, executable: bool) -> Str
         .modeled_output_spill_read_bytes
         .saturating_add(candidate.modeled_output_spill_write_bytes);
     format!(
-        "{}:runtime={},total={},source={},cache={},spill={},product={},product_groups={},active_planes={},slab_count={},row_block_rows={},worker_count={},scratch={},product_batch_planes={},cache_policy={},residency={},executable={}",
+        "{}:runtime={},worker_runtime={},total={},source={},cache={},spill={},product={},product_groups={},active_planes={},slab_count={},row_block_rows={},worker_count={},scratch={},product_batch_planes={},cache_policy={},residency={},executable={}",
         candidate.schedule_kind.as_str(),
         candidate.modeled_runtime_cost_bytes,
+        candidate.modeled_worker_runtime_cost_units,
         candidate.modeled_total_io_bytes,
         candidate.modeled_source_read_bytes,
         cache_io,
@@ -2517,6 +2543,7 @@ impl fmt::Display for SpectralPlaneDescriptorKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::imaging_worker_plan::{ImagingWorkerBackend, ImagingWorkerParallelism};
 
     #[test]
     fn observability_log_line_uses_stable_labels() {
@@ -3025,6 +3052,16 @@ mod tests {
                 .saturating_add(std::mem::size_of::<f32>()),
             max_row_block_rows: 32_768,
             max_worker_count: 4,
+            worker_plan_input: ImagingWorkerPlanInput {
+                output_planes: nplanes,
+                image_pixels: image_shape[0].saturating_mul(image_shape[1]),
+                work_iterations_per_plane: 1,
+                scale_count: 1,
+                max_workers: 4,
+                hardware_threads: 4,
+                parallelism: ImagingWorkerParallelism::PlaneParallel,
+                backend: ImagingWorkerBackend::Cpu,
+            },
             requirements: PlaneStateRequirements::dirty_standard(),
             prepared_residency: PreparedVisibilityResidency {
                 sample_lanes_per_source_channel: corr_count,
@@ -3052,6 +3089,11 @@ mod tests {
         assert!(plan.log_line().contains("schedule="));
         assert!(plan.log_line().contains("best_modeled_schedule="));
         assert!(plan.log_line().contains("candidate_io_costs="));
+        assert!(plan.log_line().contains("worker_model="));
+        assert!(
+            plan.log_line()
+                .contains("modeled_worker_runtime_cost_units=")
+        );
         assert!(plan.log_line().contains("modeled_total_io_bytes="));
         assert!(plan.log_line().contains("source_cell_channel_count="));
         assert!(plan.log_line().contains("data_channel_read_granularity="));
@@ -3570,6 +3612,7 @@ mod tests {
             modeled_product_write_bytes: 4_295_164_416,
             modeled_no_cache_source_read_bytes: 3_851_621_280,
             modeled_product_write_groups: 2,
+            modeled_worker_runtime_cost_units: 0,
             modeled_runtime_cost_bytes: 17_179_862_010,
         };
         let mut best = Some(base_candidate);

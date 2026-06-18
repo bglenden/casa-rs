@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 //! Thin MeasurementSet-backed frontend for the pure `casa-imaging` core.
 
+mod imaging_worker_plan;
 mod managed_output;
 mod oracle;
 mod schema;
@@ -81,6 +82,10 @@ use casa_ms::{
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
 use casa_tables::{ColumnSchema, RequiredScalarColumnValues, TiledFileIoStats};
+use imaging_worker_plan::{
+    ImagingWorkerBackend, ImagingWorkerParallelism, ImagingWorkerPlan, ImagingWorkerPlanInput,
+    plan_imaging_worker_count,
+};
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -803,6 +808,13 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
         "standard_mfs_initial_dirty_backend".to_string(),
         config
             .standard_mfs_initial_dirty_backend
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
+    );
+    manifest.insert(
+        "standard_mfs_metal_minor_cycle_chunk".to_string(),
+        config
+            .standard_mfs_metal_minor_cycle_chunk
             .clone()
             .unwrap_or_else(|| "auto".to_string()),
     );
@@ -6766,6 +6778,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
         product_write_bytes_per_plane: cube_slab_product_write_bytes_per_plane(config),
         max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
         max_worker_count: worker_capacity,
+        worker_plan_input: cube_slab_worker_plan_input(config, nplanes, worker_capacity),
         requirements,
         prepared_residency,
     };
@@ -14355,8 +14368,8 @@ fn standard_mfs_minor_cycle_backend_plan(
             }
         }
         Deconvolver::Multiscale if metal_requested => StandardMfsMinorCycleBackendPlan {
-            backend: StandardMfsMinorCycleBackend::Cpu,
-            reason: "multiscale_metal_minor_cycle_not_implemented",
+            backend: StandardMfsMinorCycleBackend::Metal,
+            reason: "metal_requested_supported",
         },
         Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale => {
             StandardMfsMinorCycleBackendPlan {
@@ -14419,11 +14432,8 @@ fn apply_standard_mfs_runtime_plan_locked(
         standard_cube_like_one_channel_can_use_mfs_single_plane_path(config);
     let metal_device_available = casa_imaging::standard_mfs_metal_device_available();
     let wproject_acceleration = matches!(config.w_term_mode, WTermMode::WProject);
-    let auto_threads = if wproject_acceleration {
-        standard_mfs_wproject_auto_grid_threads()
-    } else {
-        standard_mfs_auto_grid_threads()
-    };
+    let grid_worker_plan = standard_mfs_grid_worker_plan(config, wproject_acceleration);
+    let auto_threads = grid_worker_plan.worker_count;
     let auto_metal = standard_mfs_auto_metal_enabled(
         config,
         eligible,
@@ -14596,29 +14606,52 @@ fn apply_standard_mfs_runtime_plan_locked(
         guard.set("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE", value);
     }
 
+    let policy_metal_requested = metal_policy
+        || (config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Auto && auto_metal);
     let minor_cycle_backend_plan =
-        standard_mfs_minor_cycle_backend_plan(config, auto_metal || metal_policy);
+        standard_mfs_minor_cycle_backend_plan(config, policy_metal_requested);
+    let metal_minor_cycle_chunk_default = if minor_cycle_backend_plan.backend
+        == StandardMfsMinorCycleBackend::Metal
+        && config.deconvolver == Deconvolver::Multiscale
+    {
+        Some("auto")
+    } else {
+        None
+    };
+    let (metal_minor_cycle_chunk, metal_minor_cycle_chunk_source) =
+        choose_standard_mfs_runtime_value(
+            config.standard_mfs_metal_minor_cycle_chunk.as_deref(),
+            "CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK",
+            metal_minor_cycle_chunk_default,
+            false,
+        );
+    if let Some(value) = metal_minor_cycle_chunk.as_deref() {
+        guard.set("CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK", value);
+    }
 
-    let mtmfs_metal_backend =
-        if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
-            "metal-sample-cache"
-        } else {
-            "not_applicable"
-        };
+    let mtmfs_metal_backend = if config.deconvolver == Deconvolver::Mtmfs && policy_metal_requested
+    {
+        "metal-sample-cache"
+    } else {
+        "not_applicable"
+    };
     let mtmfs_metal_input_cache =
-        if config.deconvolver == Deconvolver::Mtmfs && (auto_metal || metal_policy) {
+        if config.deconvolver == Deconvolver::Mtmfs && policy_metal_requested {
             "planned"
         } else {
             "not_applicable"
         };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} worker_model={} worker_modeled_cost_units={} worker_candidate_costs={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
         eligible,
         auto_multi_cpu,
-        auto_metal || metal_policy,
+        policy_metal_requested,
         metal_device_available,
+        grid_worker_plan.model,
+        grid_worker_plan.modeled_cost_units,
+        grid_worker_plan.candidate_costs,
         backend.as_deref().unwrap_or("cpu"),
         backend_source.label(),
         grid_threads.as_deref().unwrap_or("1"),
@@ -14635,6 +14668,8 @@ fn apply_standard_mfs_runtime_plan_locked(
         metal_cache_source.label(),
         minor_cycle_backend_plan.backend.label(),
         minor_cycle_backend_plan.reason,
+        metal_minor_cycle_chunk.as_deref().unwrap_or("full"),
+        metal_minor_cycle_chunk_source.label(),
         mtmfs_metal_backend,
         mtmfs_metal_input_cache,
     );
@@ -14652,7 +14687,7 @@ fn apply_standard_mfs_runtime_plan_locked(
                 "sample-range-full-grid"
             },
             grid_threads.as_deref().unwrap_or("1"),
-            if auto_metal || metal_policy {
+            if policy_metal_requested {
                 "screen-projector-metal"
             } else {
                 "disabled"
@@ -14685,7 +14720,10 @@ fn standard_mfs_auto_metal_enabled(
     if config.deconvolver == Deconvolver::Mtmfs {
         return !config.dirty_only && config.niter > 0;
     }
-    if config.deconvolver == Deconvolver::Hogbom {
+    if matches!(
+        config.deconvolver,
+        Deconvolver::Hogbom | Deconvolver::Multiscale
+    ) {
         return !config.dirty_only && config.niter > 0;
     }
     if mosaic_mfs_eligible {
@@ -14786,41 +14824,149 @@ fn mosaic_cube_one_channel_can_use_single_plane_stream(config: &CliConfig) -> bo
         )
 }
 
+fn imaging_hardware_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |value| value.get())
+}
+
 fn standard_mfs_auto_grid_threads() -> usize {
-    std::thread::available_parallelism()
-        .map_or(1, |value| value.get())
-        .clamp(1, 4)
+    plan_imaging_worker_count(ImagingWorkerPlanInput {
+        output_planes: 1,
+        image_pixels: 1024 * 1024,
+        work_iterations_per_plane: 1,
+        scale_count: 1,
+        max_workers: imaging_hardware_threads(),
+        hardware_threads: imaging_hardware_threads(),
+        parallelism: ImagingWorkerParallelism::IntraPlane,
+        backend: ImagingWorkerBackend::Cpu,
+    })
+    .worker_count
+}
+
+fn standard_mfs_grid_worker_plan(
+    config: &CliConfig,
+    wproject_acceleration: bool,
+) -> ImagingWorkerPlan {
+    plan_imaging_worker_count(ImagingWorkerPlanInput {
+        output_planes: 1,
+        image_pixels: config.imsize.saturating_mul(config.imsize),
+        work_iterations_per_plane: imaging_worker_iterations(config),
+        scale_count: imaging_worker_scale_count(config),
+        max_workers: imaging_hardware_threads(),
+        hardware_threads: imaging_hardware_threads(),
+        parallelism: ImagingWorkerParallelism::IntraPlane,
+        backend: if wproject_acceleration {
+            ImagingWorkerBackend::WProjectCpu
+        } else {
+            ImagingWorkerBackend::Cpu
+        },
+    })
 }
 
 fn cube_slab_plane_worker_capacity(config: &CliConfig, output_planes: usize) -> usize {
-    config
-        .standard_mfs_grid_threads
-        .as_deref()
-        .and_then(parse_standard_mfs_grid_threads)
-        .unwrap_or_else(|| cube_slab_auto_plane_workers(output_planes))
-        .max(1)
+    if let Some(explicit_workers) = config
+        .imaging_prepare_workers
+        .or_else(|| env_usize("CASA_RS_IMAGING_PREPARE_WORKERS"))
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            config
+                .standard_mfs_grid_threads
+                .as_deref()
+                .and_then(parse_standard_mfs_grid_threads)
+        })
+    {
+        return explicit_workers.max(1);
+    }
+    cube_slab_plane_worker_plan(config, output_planes).worker_count
 }
 
+#[cfg(test)]
 fn cube_slab_auto_plane_workers(output_planes: usize) -> usize {
-    if output_planes <= 1 {
-        return standard_mfs_auto_grid_threads();
-    }
-    std::thread::available_parallelism()
-        .map_or(1, |value| value.get())
-        .min(output_planes)
-        .max(1)
+    plan_imaging_worker_count(ImagingWorkerPlanInput {
+        output_planes,
+        image_pixels: 1024 * 1024,
+        work_iterations_per_plane: 1,
+        scale_count: 1,
+        max_workers: imaging_hardware_threads(),
+        hardware_threads: imaging_hardware_threads(),
+        parallelism: ImagingWorkerParallelism::PlaneParallel,
+        backend: ImagingWorkerBackend::Cpu,
+    })
+    .worker_count
 }
 
 fn mosaic_mfs_cpu_grid_threads(auto_threads: usize) -> usize {
-    auto_threads.clamp(1, 4)
+    auto_threads.max(1)
 }
 
 fn standard_mfs_wproject_auto_grid_threads() -> usize {
-    let hardware_threads = std::thread::available_parallelism().map_or(1, |value| value.get());
-    if hardware_threads >= 4 {
-        hardware_threads.saturating_add(2).clamp(1, 12)
+    plan_imaging_worker_count(ImagingWorkerPlanInput {
+        output_planes: 1,
+        image_pixels: 1024 * 1024,
+        work_iterations_per_plane: 1,
+        scale_count: 1,
+        max_workers: imaging_hardware_threads(),
+        hardware_threads: imaging_hardware_threads(),
+        parallelism: ImagingWorkerParallelism::IntraPlane,
+        backend: ImagingWorkerBackend::WProjectCpu,
+    })
+    .worker_count
+}
+
+fn cube_slab_plane_worker_plan(config: &CliConfig, output_planes: usize) -> ImagingWorkerPlan {
+    plan_imaging_worker_count(cube_slab_worker_plan_input(
+        config,
+        output_planes,
+        imaging_hardware_threads(),
+    ))
+}
+
+fn cube_slab_worker_plan_input(
+    config: &CliConfig,
+    output_planes: usize,
+    max_workers: usize,
+) -> ImagingWorkerPlanInput {
+    ImagingWorkerPlanInput {
+        output_planes,
+        image_pixels: config.imsize.saturating_mul(config.imsize),
+        work_iterations_per_plane: imaging_worker_iterations(config),
+        scale_count: imaging_worker_scale_count(config),
+        max_workers,
+        hardware_threads: imaging_hardware_threads(),
+        parallelism: ImagingWorkerParallelism::PlaneParallel,
+        backend: cube_slab_worker_backend(config),
+    }
+}
+
+fn cube_slab_worker_backend(config: &CliConfig) -> ImagingWorkerBackend {
+    if clean_is_dirty(config) {
+        return ImagingWorkerBackend::Cpu;
+    }
+    let metal_requested = matches!(
+        config.standard_mfs_acceleration,
+        StandardMfsAccelerationPolicy::Auto | StandardMfsAccelerationPolicy::Metal
+    );
+    if metal_requested && config.deconvolver == Deconvolver::Multiscale {
+        ImagingWorkerBackend::MetalMultiscaleMinorCycle
+    } else if metal_requested {
+        ImagingWorkerBackend::Metal
     } else {
-        hardware_threads
+        ImagingWorkerBackend::Cpu
+    }
+}
+
+fn imaging_worker_iterations(config: &CliConfig) -> usize {
+    if clean_is_dirty(config) {
+        1
+    } else {
+        config.niter.max(1)
+    }
+}
+
+fn imaging_worker_scale_count(config: &CliConfig) -> usize {
+    if config.deconvolver == Deconvolver::Multiscale {
+        config.multiscale_scales.len().max(1)
+    } else {
+        1
     }
 }
 
@@ -15221,6 +15367,8 @@ pub struct CliConfig {
     pub standard_mfs_residual_backend: Option<String>,
     /// Optional explicit standard-MFS initial dirty/PSF backend override.
     pub standard_mfs_initial_dirty_backend: Option<String>,
+    /// Optional standard-MFS Metal minor-cycle command-buffer component chunk.
+    pub standard_mfs_metal_minor_cycle_chunk: Option<String>,
     /// Optional explicit Metal grouped input cache override.
     pub standard_mfs_metal_grouped_input_cache: Option<bool>,
     /// Optional standard-MFS planner memory target in MiB.
@@ -15325,6 +15473,7 @@ impl CliConfig {
         let mut standard_mfs_tile_anchor = None::<String>;
         let mut standard_mfs_residual_backend = None::<String>;
         let mut standard_mfs_initial_dirty_backend = None::<String>;
+        let mut standard_mfs_metal_minor_cycle_chunk = None::<String>;
         let mut standard_mfs_metal_grouped_input_cache = None::<bool>;
         let mut standard_mfs_memory_target_mb = None::<usize>;
         let mut standard_mfs_prepare_buffer_mb = None::<usize>;
@@ -15764,6 +15913,12 @@ impl CliConfig {
                     )?);
                     continue;
                 }
+                "--standard-mfs-metal-minor-cycle-chunk" => {
+                    let value = next_value(&mut args, "--standard-mfs-metal-minor-cycle-chunk")?;
+                    validate_standard_mfs_metal_minor_cycle_chunk(&value)?;
+                    standard_mfs_metal_minor_cycle_chunk = Some(value);
+                    continue;
+                }
                 "--standard-mfs-metal-grouped-input-cache" => {
                     standard_mfs_metal_grouped_input_cache = Some(parse_bool_arg(
                         &next_value(&mut args, "--standard-mfs-metal-grouped-input-cache")?,
@@ -15926,6 +16081,7 @@ impl CliConfig {
             standard_mfs_tile_anchor,
             standard_mfs_residual_backend,
             standard_mfs_initial_dirty_backend,
+            standard_mfs_metal_minor_cycle_chunk,
             standard_mfs_metal_grouped_input_cache,
             standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb,
@@ -26348,6 +26504,16 @@ fn standard_mfs_memory_plan_with_visibility_shape(
         bucket_sample_bytes: ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES,
         max_live_row_blocks,
     };
+    let worker_plan_input = ImagingWorkerPlanInput {
+        output_planes: 1,
+        image_pixels: config.imsize.saturating_mul(config.imsize),
+        work_iterations_per_plane: imaging_worker_iterations(config),
+        scale_count: imaging_worker_scale_count(config),
+        max_workers: worker_buffers,
+        hardware_threads: imaging_hardware_threads(),
+        parallelism: ImagingWorkerParallelism::IntraPlane,
+        backend: ImagingWorkerBackend::Cpu,
+    };
     let shape_plan =
         spectral_slab::plan_spectral_memory(spectral_slab::SpectralMemoryPlannerInput {
             output: spectral_slab::ImagingOutputShape {
@@ -26367,6 +26533,7 @@ fn standard_mfs_memory_plan_with_visibility_shape(
             product_write_bytes_per_plane: 0,
             max_row_block_rows: row_block_override.unwrap_or(active_row_count.max(1)),
             max_worker_count: worker_buffers,
+            worker_plan_input,
             requirements: spectral_slab::PlaneStateRequirements::default(),
             prepared_residency,
         })
@@ -26399,6 +26566,7 @@ fn standard_mfs_memory_plan_with_visibility_shape(
                 product_write_bytes_per_plane: 0,
                 max_row_block_rows: 1,
                 max_worker_count: worker_buffers,
+                worker_plan_input,
                 requirements: spectral_slab::PlaneStateRequirements::default(),
                 prepared_residency,
             })
@@ -26856,6 +27024,31 @@ fn parse_standard_mfs_grid_threads(value: &str) -> Option<usize> {
         return Some(std::thread::available_parallelism().map_or(1, |value| value.get()));
     }
     value.parse::<usize>().ok().filter(|value| *value > 0)
+}
+
+fn validate_standard_mfs_metal_minor_cycle_chunk(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto")
+        || value.eq_ignore_ascii_case("full")
+        || parse_standard_mfs_metal_minor_cycle_auto_target(value).is_some()
+    {
+        return Ok(());
+    }
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Ok(()),
+        _ => Err(format!(
+            "unsupported --standard-mfs-metal-minor-cycle-chunk {value:?}; expected auto, auto:<positive-ms>, full, or a positive integer"
+        )),
+    }
+}
+
+fn parse_standard_mfs_metal_minor_cycle_auto_target(value: &str) -> Option<f64> {
+    let lowercase = value.trim().to_ascii_lowercase();
+    let target_ms = lowercase.strip_prefix("auto:")?.parse::<f64>().ok()?;
+    target_ms
+        .is_finite()
+        .then_some(target_ms)
+        .filter(|value| *value > 0.0)
 }
 
 fn estimated_image_working_set_bytes(config: &CliConfig) -> usize {
@@ -40852,6 +41045,8 @@ Options:
                             override residual refresh backend: cpu, metal, metal-row-run, or metal-row-run-grouped
   --standard-mfs-initial-dirty-backend MODE
                             override initial dirty/PSF backend: cpu or metal-row-run-grouped
+  --standard-mfs-metal-minor-cycle-chunk auto|auto:MS|full|N
+                            override Metal minor-cycle command-buffer component chunk
   --standard-mfs-metal-grouped-input-cache true|false
                             override planner use of the grouped Metal input cache
   --standard-mfs-memory-target-mb N
@@ -41206,6 +41401,8 @@ mod tests {
             OsString::from("3"),
             OsString::from("--standard-mfs-residual-backend"),
             OsString::from("cpu"),
+            OsString::from("--standard-mfs-metal-minor-cycle-chunk"),
+            OsString::from("auto:1000"),
             OsString::from("--standard-mfs-metal-grouped-input-cache"),
             OsString::from("false"),
             OsString::from("--standard-mfs-memory-target-mb"),
@@ -41229,6 +41426,10 @@ mod tests {
         );
         assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("3"));
         assert_eq!(config.standard_mfs_residual_backend.as_deref(), Some("cpu"));
+        assert_eq!(
+            config.standard_mfs_metal_minor_cycle_chunk.as_deref(),
+            Some("auto:1000")
+        );
         assert_eq!(config.standard_mfs_metal_grouped_input_cache, Some(false));
         assert_eq!(config.standard_mfs_memory_target_mb, Some(4096));
         assert_eq!(config.standard_mfs_prepare_buffer_mb, Some(512));
@@ -41798,18 +41999,22 @@ mod tests {
                 StandardMfsAccelerationPolicy::Metal
             );
             let minor_cycle_plan = standard_mfs_minor_cycle_backend_plan(&plane_config, true);
-            assert_eq!(
-                minor_cycle_plan.reason,
-                "multiscale_metal_minor_cycle_not_implemented"
-            );
+            assert_eq!(minor_cycle_plan.reason, "metal_requested_supported");
         } else {
             assert!(!plan.metal_eligible);
             assert_ne!(plan.selected_backend, PerPlaneExecutionBackend::SerialCpu);
         }
-        assert_eq!(
-            execution_config.minor_cycle_backend,
-            StandardMfsMinorCycleBackend::Cpu
-        );
+        if cfg!(target_os = "macos") && casa_imaging::standard_mfs_metal_device_available() {
+            assert_eq!(
+                execution_config.minor_cycle_backend,
+                StandardMfsMinorCycleBackend::Metal
+            );
+        } else {
+            assert_eq!(
+                execution_config.minor_cycle_backend,
+                StandardMfsMinorCycleBackend::Cpu
+            );
+        }
         assert!(
             !plan
                 .fallback_reasons
@@ -42102,6 +42307,51 @@ mod tests {
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND").as_deref(),
                 Ok("cpu")
+            );
+        }
+    }
+
+    #[test]
+    fn multiscale_metal_runtime_planner_sets_default_minor_cycle_chunk() {
+        let runtime_env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+            .lock()
+            .expect("standard MFS runtime env lock");
+        let _backend = EnvGuard::unset("CASA_RS_STANDARD_MFS_BACKEND");
+        let _threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_GRID_THREADS");
+        let _density_threads = EnvGuard::unset("CASA_RS_STANDARD_MFS_DENSITY_THREADS");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
+        let _residual = EnvGuard::unset("CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND");
+        let _initial = EnvGuard::unset("CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND");
+        let _cache = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE");
+        let _chunk = EnvGuard::unset("CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK");
+
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--imsize"),
+            OsString::from("128"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+            OsString::from("--deconvolver"),
+            OsString::from("multiscale"),
+            OsString::from("--scales"),
+            OsString::from("0,5,15"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("metal"),
+            OsString::from("--niter"),
+            OsString::from("10000"),
+        ])
+        .expect("parse multiscale metal config");
+
+        {
+            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            assert_eq!(
+                env::var("CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK").as_deref(),
+                Ok("auto")
             );
         }
     }
@@ -43182,6 +43432,42 @@ mod tests {
             standard_mfs_density_prepare_threads_for_config(&config, 4),
             4
         );
+    }
+
+    #[test]
+    fn cube_slab_plane_workers_honor_imaging_worker_limit() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let _workers = EnvGuard::set("CASA_RS_IMAGING_PREPARE_WORKERS", "3");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.standard_mfs_grid_threads = Some("8".to_string());
+
+        assert_eq!(cube_slab_plane_worker_capacity(&config, 16), 3);
+
+        config.imaging_prepare_workers = Some(2);
+        assert_eq!(cube_slab_plane_worker_capacity(&config, 16), 2);
+    }
+
+    #[test]
+    fn cube_slab_multiscale_metal_auto_uses_worker_cost_model() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let _workers = EnvGuard::unset("CASA_RS_IMAGING_PREPARE_WORKERS");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.deconvolver = Deconvolver::Multiscale;
+        config.standard_mfs_acceleration = StandardMfsAccelerationPolicy::Metal;
+        config.niter = 10;
+
+        let plan = cube_slab_plane_worker_plan(&config, 16);
+        assert_eq!(plan.model, "plane_parallel_metal_multiscale_contention_v1");
+        assert!(plan.candidate_costs.contains("1:cost="));
+        assert_eq!(
+            cube_slab_plane_worker_capacity(&config, 16),
+            plan.worker_count
+        );
+
+        config.imaging_prepare_workers = Some(8);
+        assert_eq!(cube_slab_plane_worker_capacity(&config, 16), 8);
     }
 
     #[test]
@@ -44960,6 +45246,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -45030,6 +45317,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -45116,6 +45404,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -45194,6 +45483,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -45275,6 +45565,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -45353,6 +45644,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -45423,6 +45715,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -47522,6 +47815,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -47935,6 +48229,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48050,6 +48345,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48161,6 +48457,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48324,6 +48621,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48467,6 +48765,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48563,6 +48862,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48691,6 +48991,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48814,6 +49115,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -48919,6 +49221,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49078,6 +49381,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49189,6 +49493,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49301,6 +49606,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49408,6 +49714,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49531,6 +49838,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49662,6 +49970,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -49770,6 +50079,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -50070,6 +50380,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -50191,6 +50502,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -50329,6 +50641,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -50465,6 +50778,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -50602,6 +50916,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -50795,6 +51110,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -51112,6 +51428,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -51413,6 +51730,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -51574,6 +51892,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -51699,6 +52018,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -51825,6 +52145,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -51959,6 +52280,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -52092,6 +52414,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -52204,6 +52527,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -52309,6 +52633,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -52415,6 +52740,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -52524,6 +52850,7 @@ deconvolver=mtmfs
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
