@@ -7,6 +7,7 @@ pub(crate) struct ImagingWorkerPlan {
     pub(crate) modeled_cost_units: u128,
     pub(crate) model: &'static str,
     pub(crate) candidate_costs: String,
+    pub(crate) backend_command_target_ms: Option<u64>,
 }
 
 /// The parallelism shape being planned.
@@ -78,12 +79,16 @@ pub(crate) fn plan_imaging_worker_count(input: ImagingWorkerPlanInput) -> Imagin
         let candidate = model_worker_candidate(input, workers);
         if fragments.len() < 16 {
             fragments.push(format!(
-                "{}:cost={},waves={},contention_milli={},eff_speedup_milli={}",
+                "{}:cost={},waves={},contention_milli={},eff_speedup_milli={},command_target_ms={}",
                 workers,
                 candidate.cost_units,
                 candidate.waves,
                 candidate.contention_milli,
-                candidate.effective_speedup_milli
+                candidate.effective_speedup_milli,
+                candidate
+                    .backend_command_target_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_string())
             ));
         }
         let replace = best.is_none_or(|current| {
@@ -108,6 +113,7 @@ pub(crate) fn plan_imaging_worker_count(input: ImagingWorkerPlanInput) -> Imagin
         modeled_cost_units: best.cost_units,
         model: worker_model_label(input.parallelism, input.backend),
         candidate_costs: fragments.join(";"),
+        backend_command_target_ms: best.backend_command_target_ms,
     }
 }
 
@@ -120,6 +126,13 @@ pub(crate) fn modeled_worker_runtime_cost_units(
     model_worker_candidate(input.normalized(), worker_count.max(1)).cost_units
 }
 
+pub(crate) fn planned_backend_command_target_ms(
+    input: ImagingWorkerPlanInput,
+    worker_count: usize,
+) -> Option<u64> {
+    model_worker_candidate(input.normalized(), worker_count.max(1)).backend_command_target_ms
+}
+
 #[derive(Debug, Clone, Copy)]
 struct WorkerCandidate {
     workers: usize,
@@ -127,6 +140,7 @@ struct WorkerCandidate {
     contention_milli: u128,
     effective_speedup_milli: u128,
     cost_units: u128,
+    backend_command_target_ms: Option<u64>,
 }
 
 fn model_worker_candidate(input: ImagingWorkerPlanInput, workers: usize) -> WorkerCandidate {
@@ -161,6 +175,7 @@ fn model_worker_candidate(input: ImagingWorkerPlanInput, workers: usize) -> Work
                 effective_speedup_milli: worker_throughput_milli.saturating_mul(1_000)
                     / contention_milli.max(1),
                 cost_units,
+                backend_command_target_ms: backend_command_target_ms(input, workers),
             }
         }
         ImagingWorkerParallelism::IntraPlane => {
@@ -173,9 +188,30 @@ fn model_worker_candidate(input: ImagingWorkerPlanInput, workers: usize) -> Work
                 contention_milli: 1_000,
                 effective_speedup_milli,
                 cost_units,
+                backend_command_target_ms: backend_command_target_ms(input, workers),
             }
         }
     }
+}
+
+fn backend_command_target_ms(input: ImagingWorkerPlanInput, workers: usize) -> Option<u64> {
+    match input.backend {
+        ImagingWorkerBackend::MetalMultiscaleMinorCycle => Some(
+            metal_multiscale_minor_cycle_command_target_ms(input, workers),
+        ),
+        ImagingWorkerBackend::Cpu
+        | ImagingWorkerBackend::WProjectCpu
+        | ImagingWorkerBackend::Metal => None,
+    }
+}
+
+fn metal_multiscale_minor_cycle_command_target_ms(
+    input: ImagingWorkerPlanInput,
+    workers: usize,
+) -> u64 {
+    const BASE_TARGET_MS: u64 = 2_000;
+    let _ = (input, workers);
+    BASE_TARGET_MS
 }
 
 fn plane_parallel_contention_milli(input: ImagingWorkerPlanInput, workers: usize) -> u128 {
@@ -282,6 +318,7 @@ mod tests {
 
         assert_eq!(plan.worker_count, 4, "{plan:?}");
         assert!(plan.candidate_costs.contains("8:cost="));
+        assert_eq!(plan.backend_command_target_ms, Some(2_000));
     }
 
     #[test]
@@ -299,6 +336,7 @@ mod tests {
 
         assert_eq!(plan.worker_count, 10, "{plan:?}");
         assert_eq!(plan.model, "plane_parallel_metal_multiscale_throughput_v2");
+        assert_eq!(plan.backend_command_target_ms, Some(2_000));
     }
 
     #[test]
@@ -315,6 +353,7 @@ mod tests {
         });
 
         assert_eq!(plan.worker_count, 10, "{plan:?}");
+        assert_eq!(plan.backend_command_target_ms, None);
     }
 
     #[test]

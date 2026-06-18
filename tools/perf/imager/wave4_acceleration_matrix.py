@@ -289,9 +289,20 @@ def extra_evidence_role(role: str, evidence: dict[str, dict[str, Any]]) -> str:
     return f"{role}:extra:{index}"
 
 
-def performance_preference_score(result: dict[str, Any]) -> tuple[int, float]:
+def performance_preference_score(result: dict[str, Any]) -> tuple[int, str]:
     tier_score = {"small": 1, "medium": 2, "large": 3}.get(dataset_tier(result), 0)
-    return (tier_score, rust_seconds(result) or 0.0)
+    return (tier_score, evidence_recency_key(result))
+
+
+def evidence_recency_key(result: dict[str, Any]) -> str:
+    for key in ("completed_at", "started_at", "created_at", "run_id"):
+        value = result.get(key)
+        if isinstance(value, str) and value:
+            return value
+    source_path = result.get("_source_path")
+    if isinstance(source_path, str) and source_path:
+        return pathlib.Path(source_path).name
+    return ""
 
 
 def build_closeout_row(
@@ -639,6 +650,13 @@ def worker_count(result: dict[str, Any] | None) -> int | None:
 
 def selected_backend(result: dict[str, Any] | None) -> str | None:
     backend = backend_features(result)
+    cube_backend = backend.get("cube_per_plane_backend")
+    if (
+        cube_backend == "serial_cpu"
+        and backend.get("cube_per_plane_phase") == "dirty_control"
+        and (worker_count(result) or 0) > 1
+    ):
+        return "cpu_multi_plane_workers"
     for key in (
         "mosaic_cube_slab_executor_capabilities",
         "cube_per_plane_backend",

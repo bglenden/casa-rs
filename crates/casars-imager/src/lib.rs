@@ -84,7 +84,7 @@ use casa_ms::{
 use casa_tables::{ColumnSchema, RequiredScalarColumnValues, TiledFileIoStats};
 use imaging_worker_plan::{
     ImagingWorkerBackend, ImagingWorkerParallelism, ImagingWorkerPlan, ImagingWorkerPlanInput,
-    plan_imaging_worker_count,
+    plan_imaging_worker_count, planned_backend_command_target_ms,
 };
 
 #[cfg(target_os = "macos")]
@@ -2841,13 +2841,17 @@ fn apply_cube_per_plane_runtime_plan(
     plane_worker_count: usize,
 ) -> StandardMfsRuntimePlanGuard {
     let eligibility = plan_cube_per_plane_execution(config, output_planes, plane_worker_count);
+    let backend_command_target_ms = planned_backend_command_target_ms(
+        cube_slab_worker_plan_input(config, output_planes, eligibility.plane_worker_count),
+        eligibility.plane_worker_count,
+    );
     let fallback_reasons = if eligibility.fallback_reasons.is_empty() {
         "none".to_string()
     } else {
         eligibility.fallback_reasons.join(",")
     };
     eprintln!(
-        "cube_per_plane_backend_summary phase={} output_planes={} plane_worker_count={} per_plane_grid_threads={} policy={} selected_backend={} fixed_tile_cpu_eligible={} metal_eligible={} metal_device_available={} deconvolver={:?} fallback_reasons={}",
+        "cube_per_plane_backend_summary phase={} output_planes={} plane_worker_count={} per_plane_grid_threads={} policy={} selected_backend={} fixed_tile_cpu_eligible={} metal_eligible={} metal_device_available={} deconvolver={:?} backend_command_target_ms={} fallback_reasons={}",
         eligibility.phase.label(),
         output_planes,
         eligibility.plane_worker_count,
@@ -2858,10 +2862,18 @@ fn apply_cube_per_plane_runtime_plan(
         eligibility.metal_eligible,
         eligibility.metal_device_available,
         config.deconvolver,
+        backend_command_target_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
         fallback_reasons,
     );
     let plane_config = cube_per_plane_runtime_config(config, &eligibility);
-    apply_standard_mfs_runtime_plan(&plane_config, true, 1)
+    apply_standard_mfs_runtime_plan_with_backend_command_target(
+        &plane_config,
+        true,
+        1,
+        backend_command_target_ms,
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -3036,6 +3048,37 @@ fn prepare_mfs_mosaic_source_row_block_plane(
     };
     prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
+    prepare_mfs_mosaic_source_row_block_plane_from_source(
+        ms,
+        config,
+        selection,
+        ddid_info,
+        spectral_window,
+        polarization,
+        flag_row,
+        &source_block,
+        derived_engine,
+        prepare_started_at,
+        prepare_stage_timings,
+        accumulate_timings,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_mfs_mosaic_source_row_block_plane_from_source(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    source_block: &dyn VisibilitySourceRows,
+    derived_engine: Option<&MsCalEngine>,
+    _prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
     let finish = if mosaic_cube_one_channel_can_use_single_plane_stream(config) {
         SourceRowBlockFinish::Cube
@@ -3055,7 +3098,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
             ddid_info,
             spectral_window,
             polarization,
-            source_block: &source_block,
+            source_block,
             flag_row,
             derived_engine,
             standard_mfs_table_values: None,
@@ -3819,20 +3862,19 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_mfs_mosaic_single_plane_stream_products_with_selection(
+fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
     ms: &MeasurementSet,
     read_config: &CliConfig,
     output_config: &CliConfig,
-    data_column: VisibilityDataColumn,
     total_start: Instant,
     selection: &SelectedRowsContext,
     table_values: &PreparedSelectionTableValues,
     ddid_info: &[Option<(usize, usize)>],
     spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
     polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
-    active_selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
-    geometry_columns: &PreparedGeometryColumnCache,
+    shared_visibility_source: Arc<SharedColumnarCubeSlabSource>,
+    shared_density_source: Option<Arc<SharedColumnarCubeSlabSource>>,
 ) -> Result<MosaicSinglePlaneStreamProducts, String> {
     let geometry = ImageGeometry {
         image_shape: [read_config.imsize, read_config.imsize],
@@ -3867,72 +3909,44 @@ fn run_mfs_mosaic_single_plane_stream_products_with_selection(
 
     let prepare_started_at = Instant::now();
     let flag_row = selection.flag_row.as_slice();
-    if active_selected_rows.is_empty() {
-        return Err("selection resolved to no active MFS mosaic rows".to_string());
-    }
-    let channel_read_range = if read_config.spectral_mode.is_cube_like() {
-        selected_channel_read_range_for_cube_source_row_blocks(
-            read_config,
-            table_values,
-            selection,
-            derived_engine,
-        )?
-    } else {
-        selected_channel_read_range_for_shared_single_plane_acceleration(read_config, table_values)?
-    };
-    let selected_channel_count = if read_config.spectral_mode.is_cube_like() {
-        source_stream_selected_channel_count(table_values, channel_read_range)
-    } else {
-        selected_channel_count_estimate_from_table_values(read_config, table_values)
-    };
-    let strategy = standard_mfs_memory_plan_for_ms(
-        read_config,
-        ms,
-        data_column,
-        selected_channel_count,
-        active_selected_rows.len(),
-        table_values.corr_types.len(),
-    )?;
-    validate_standard_mfs_memory_plan(&strategy)?;
-    let row_block_rows = strategy.row_block_rows.max(1);
-    log_standard_mfs_memory_plan_actual(
-        &strategy,
-        active_selected_rows.len(),
-        0,
-        0,
-        "mfs_mosaic_single_plane_stream",
-    );
+    let metadata_source = shared_density_source
+        .as_deref()
+        .unwrap_or(shared_visibility_source.as_ref());
+    let first_block = metadata_source
+        .blocks
+        .first()
+        .ok_or_else(|| "shared mosaic cube source contains no row blocks".to_string())?;
+    let source_rows = shared_visibility_source
+        .blocks
+        .iter()
+        .map(|block| block.visibility.row_count())
+        .sum::<usize>();
+    let selected_channel_count = shared_visibility_source
+        .blocks
+        .first()
+        .map(|block| block.visibility.channel_count)
+        .unwrap_or(0);
     if frontend_progress_enabled() {
         eprintln!(
-            "frontend stage=prepare_plane_input/mfs_mosaic_single_plane_stream rows_total={} selected_channels={} row_block_rows={}",
-            active_selected_rows.len(),
+            "frontend stage=prepare_plane_input/mosaic_cube_shared_plane_source blocks={} rows_total={} selected_channels={}",
+            shared_visibility_source.blocks.len(),
+            source_rows,
             selected_channel_count,
-            row_block_rows,
         );
     }
 
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
-    let mut accumulate_timings = AccumulateRowTimings {
-        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
-        ..Default::default()
-    };
-
-    let first_rows_len = row_block_rows.min(active_selected_rows.len());
-    let first_plane = prepare_mfs_mosaic_source_row_block_plane(
+    let mut accumulate_timings = AccumulateRowTimings::default();
+    let first_plane = prepare_mfs_mosaic_source_row_block_plane_from_source(
         ms,
         read_config,
-        data_column,
-        false,
         selection,
-        table_values,
         ddid_info,
         spectral_window,
         polarization,
         flag_row,
-        &active_selected_rows[..first_rows_len],
+        first_block,
         derived_engine,
-        channel_read_range,
-        geometry_columns,
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
@@ -3975,24 +3989,27 @@ fn run_mfs_mosaic_single_plane_stream_products_with_selection(
             let ordinal = replay_invocation;
             replay_invocation += 1;
             let load_visibility_values = pass.needs_visibility_values();
+            let source = if load_visibility_values {
+                shared_visibility_source.as_ref()
+            } else {
+                shared_density_source
+                    .as_deref()
+                    .unwrap_or(shared_visibility_source.as_ref())
+            };
             let mut block_count = 0usize;
             let mut sample_count = 0usize;
-            for row_chunk in active_selected_rows.chunks(row_block_rows) {
-                let plane = prepare_mfs_mosaic_source_row_block_plane(
+            let mut rows_done = 0usize;
+            for block in &source.blocks {
+                let plane = prepare_mfs_mosaic_source_row_block_plane_from_source(
                     ms,
                     read_config,
-                    data_column,
-                    load_visibility_values,
                     selection,
-                    table_values,
                     ddid_info,
                     spectral_window,
                     polarization,
                     flag_row,
-                    row_chunk,
+                    block,
                     derived_engine,
-                    channel_read_range,
-                    geometry_columns,
                     prepare_started_at,
                     &mut prepare_stage_timings,
                     &mut accumulate_timings,
@@ -4000,10 +4017,11 @@ fn run_mfs_mosaic_single_plane_stream_products_with_selection(
                 .map_err(ImagingError::InvalidRequest)?;
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
                     return Err(ImagingError::InvalidRequest(
-                        "streaming MFS mosaic row block produced standard gridder metadata"
+                        "streaming MFS mosaic shared row block produced standard gridder metadata"
                             .to_string(),
                     ));
                 };
+                rows_done = rows_done.saturating_add(block.visibility.row_count());
                 for (batch, metadata) in plane
                     .batches
                     .into_iter()
@@ -4018,12 +4036,12 @@ fn run_mfs_mosaic_single_plane_stream_products_with_selection(
                 block_count += 1;
                 if frontend_progress_enabled() {
                     eprintln!(
-                        "frontend stage=run_imaging/mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                        "frontend stage=run_imaging/mosaic_cube_shared_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
                         ordinal,
                         pass,
                         load_visibility_values,
-                        (block_count * row_block_rows).min(active_selected_rows.len()),
-                        active_selected_rows.len(),
+                        rows_done,
+                        source_rows,
                         block_count,
                         sample_count,
                         replay_started.elapsed().as_secs_f64(),
@@ -4032,7 +4050,7 @@ fn run_mfs_mosaic_single_plane_stream_products_with_selection(
             }
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
-                    "mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
+                    "mosaic_cube_shared_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
                     ordinal,
                     pass,
                     load_visibility_values,
@@ -4174,7 +4192,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     let (active_planes, worker_count) = mosaic_cube_slab_plane_worker_shape(config, nplanes);
     let slab_manifest = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
     eprintln!(
-        "mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_multi_plane_stream nplanes={} active_planes={} slab_count={} worker_count={} source_reuse=shared_selection_per_plane_source_stream product_state=product_backed_write_through",
+        "mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_multi_plane_stream nplanes={} active_planes={} slab_count={} worker_count={} source_reuse=shared_columnar_slab_source product_state=product_backed_write_through",
         nplanes,
         active_planes,
         slab_manifest.len(),
@@ -4234,9 +4252,6 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic cube rows".to_string());
     }
-    let stage_started_at = Instant::now();
-    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
-    let shared_geometry_elapsed = stage_started_at.elapsed();
     let metadata = collect_cube_slab_run_metadata(
         config,
         channel_start,
@@ -4270,7 +4285,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         0,
     )?;
     let mut write_products_time = product_started.elapsed();
-    let mut prepare_plane_input = metadata_elapsed + shared_geometry_elapsed;
+    let mut prepare_plane_input = metadata_elapsed;
     let mut get_ms_values_into_processing_buffer = Duration::ZERO;
     let mut prepare_processing_buffer = Duration::ZERO;
     let mut run_imaging_time = Duration::ZERO;
@@ -4280,6 +4295,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     let mut major_cycles = 0usize;
     let mut minor_iterations = 0usize;
     let mut channel_summaries = Vec::with_capacity(nplanes);
+    let mut geometry_cache = VisibilityGeometryCache::new(false, 0);
 
     for slab in slab_manifest {
         let slab_started = Instant::now();
@@ -4287,6 +4303,119 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             "mosaic_cube_slab_start slab_id={} plane_start={} plane_end={} worker_count={}",
             slab.slab_id, slab.plane_start, slab.plane_end, worker_count
         );
+        let slab_source_config =
+            slab_config_for_cube_planes(config, channel_start, slab.plane_start, slab.plane_end)?;
+        let channel_read_range = selected_channel_read_range_for_cube_source_row_blocks(
+            &slab_source_config,
+            &table_values,
+            &selection,
+            Some(&derived_engine),
+        )?;
+        let selected_channel_count =
+            source_stream_selected_channel_count(&table_values, channel_read_range);
+        let source_strategy = standard_mfs_memory_plan_for_ms(
+            &slab_source_config,
+            ms,
+            data_column,
+            selected_channel_count,
+            active_selected_rows.len(),
+            table_values.corr_types.len(),
+        )?;
+        validate_standard_mfs_memory_plan(&source_strategy)?;
+        log_standard_mfs_memory_plan_actual(
+            &source_strategy,
+            active_selected_rows.len(),
+            0,
+            0,
+            "mosaic_cube_shared_columnar_slab_source",
+        );
+        let source_prepare_started = Instant::now();
+        let shared_visibility_source = Arc::new(read_shared_columnar_cube_slab_source(
+            ms,
+            &slab_source_config,
+            data_column,
+            true,
+            &selection,
+            &table_values,
+            &ddid_info,
+            &active_selected_rows,
+            &derived_engine,
+            channel_read_range,
+            None,
+            source_strategy.row_block_rows,
+            source_prepare_started,
+            spectral_slab::ImagingPassKind::InitialDirty,
+            slab.slab_id,
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            "mosaic_multi_plane_stream",
+            &mut geometry_cache,
+        )?);
+        let mut shared_source_read_elapsed = shared_visibility_source.elapsed;
+        get_ms_values_into_processing_buffer += shared_visibility_source
+            .stage_timings
+            .get_ms_values_into_processing_buffer;
+        let shared_density_source =
+            if matches!(slab_source_config.weighting, WeightingMode::Natural) {
+                None
+            } else {
+                let density_prepare_started = Instant::now();
+                let density_source = Arc::new(read_shared_columnar_cube_slab_source(
+                    ms,
+                    &slab_source_config,
+                    data_column,
+                    false,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    &active_selected_rows,
+                    &derived_engine,
+                    channel_read_range,
+                    None,
+                    source_strategy.row_block_rows,
+                    density_prepare_started,
+                    spectral_slab::ImagingPassKind::WeightingDensity,
+                    slab.slab_id,
+                    slab.plane_start,
+                    slab.plane_end,
+                    worker_count,
+                    "mosaic_multi_plane_stream",
+                    &mut geometry_cache,
+                )?);
+                shared_source_read_elapsed += density_source.elapsed;
+                get_ms_values_into_processing_buffer += density_source
+                    .stage_timings
+                    .get_ms_values_into_processing_buffer;
+                Some(density_source)
+            };
+        prepare_plane_input += shared_source_read_elapsed;
+        if standard_mfs_profile_detail_enabled() {
+            let density_blocks = shared_density_source
+                .as_ref()
+                .map(|source| source.blocks.len())
+                .unwrap_or(0);
+            eprintln!(
+                "mosaic_cube_shared_columnar_slab_source_summary slab_id={} plane_start={} plane_end={} row_block_rows={} selected_channels={} visibility_blocks={} density_blocks={} visibility_read_ms={:.3} density_read_ms={:.3} logical_visibility_bytes={} modeled_physical_read_bytes={}",
+                slab.slab_id,
+                slab.plane_start,
+                slab.plane_end,
+                source_strategy.row_block_rows,
+                selected_channel_count,
+                shared_visibility_source.blocks.len(),
+                density_blocks,
+                duration_ms(shared_visibility_source.elapsed),
+                duration_ms(
+                    shared_density_source
+                        .as_ref()
+                        .map(|source| source.elapsed)
+                        .unwrap_or(Duration::ZERO)
+                ),
+                shared_visibility_source.logical_output_bytes,
+                shared_visibility_source.modeled_physical_read_bytes,
+            );
+        }
+
         let mut slab_runtime_config = slab_config_for_cube_planes(
             config,
             channel_start,
@@ -4320,20 +4449,19 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
                     plane_config.standard_mfs_grid_threads = Some("1".to_string());
                 }
-                let products = run_mfs_mosaic_single_plane_stream_products_with_selection(
+                let products = run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     ms,
                     &plane_config,
                     &plane_config,
-                    data_column,
                     total_start,
                     &selection,
                     &table_values,
                     &ddid_info,
                     &spectral_window,
                     &polarization,
-                    &active_selected_rows,
                     Some(&derived_engine),
-                    &geometry_columns,
+                    Arc::clone(&shared_visibility_source),
+                    shared_density_source.as_ref().map(Arc::clone),
                 )?;
                 let stage_timings = products.result.diagnostics.stage_timings;
                 Ok((products, stage_timings))
@@ -7065,6 +7193,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 ms,
                 &slab_config,
                 data_column,
+                true,
                 &selection,
                 &table_values,
                 &ddid_info,
@@ -7376,6 +7505,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 ms,
                 &slab_config,
                 data_column,
+                true,
                 &selection,
                 &table_values,
                 &ddid_info,
@@ -14329,6 +14459,7 @@ enum StandardMfsRuntimeDecisionSource {
     Cli,
     Env,
     Policy,
+    Planner,
     NotApplicable,
 }
 
@@ -14339,6 +14470,7 @@ impl StandardMfsRuntimeDecisionSource {
             Self::Cli => "cli",
             Self::Env => "env",
             Self::Policy => "policy",
+            Self::Planner => "planner",
             Self::NotApplicable => "not_applicable",
         }
     }
@@ -14405,6 +14537,31 @@ fn standard_mfs_minor_cycle_backend_for_config(config: &CliConfig) -> StandardMf
     standard_mfs_minor_cycle_backend_plan(config, metal_requested).backend
 }
 
+fn planned_standard_mfs_metal_minor_cycle_chunk(
+    config: &CliConfig,
+    backend_command_target_ms: Option<u64>,
+) -> Option<String> {
+    if config.deconvolver != Deconvolver::Multiscale || clean_is_dirty(config) {
+        return None;
+    }
+    let command_target_ms = backend_command_target_ms.or_else(|| {
+        planned_backend_command_target_ms(
+            ImagingWorkerPlanInput {
+                output_planes: 1,
+                image_pixels: config.imsize.saturating_mul(config.imsize),
+                work_iterations_per_plane: imaging_worker_iterations(config),
+                scale_count: imaging_worker_scale_count(config),
+                max_workers: 1,
+                hardware_threads: imaging_hardware_threads(),
+                parallelism: ImagingWorkerParallelism::PlaneParallel,
+                backend: ImagingWorkerBackend::MetalMultiscaleMinorCycle,
+            },
+            1,
+        )
+    })?;
+    Some(format!("auto:{command_target_ms}"))
+}
+
 fn apply_standard_mfs_runtime_plan(
     config: &CliConfig,
     force_standard_gridder: bool,
@@ -14413,7 +14570,25 @@ fn apply_standard_mfs_runtime_plan(
     let env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
         .lock()
         .expect("standard MFS runtime env lock");
-    apply_standard_mfs_runtime_plan_locked(config, force_standard_gridder, ms_count, env_lock)
+    apply_standard_mfs_runtime_plan_locked(config, force_standard_gridder, ms_count, env_lock, None)
+}
+
+fn apply_standard_mfs_runtime_plan_with_backend_command_target(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+    backend_command_target_ms: Option<u64>,
+) -> StandardMfsRuntimePlanGuard {
+    let env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK
+        .lock()
+        .expect("standard MFS runtime env lock");
+    apply_standard_mfs_runtime_plan_locked(
+        config,
+        force_standard_gridder,
+        ms_count,
+        env_lock,
+        backend_command_target_ms,
+    )
 }
 
 fn apply_standard_mfs_runtime_plan_locked(
@@ -14421,6 +14596,7 @@ fn apply_standard_mfs_runtime_plan_locked(
     force_standard_gridder: bool,
     ms_count: usize,
     env_lock: MutexGuard<'static, ()>,
+    backend_command_target_ms: Option<u64>,
 ) -> StandardMfsRuntimePlanGuard {
     let standard_mfs_eligible =
         can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
@@ -14610,21 +14786,30 @@ fn apply_standard_mfs_runtime_plan_locked(
         || (config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Auto && auto_metal);
     let minor_cycle_backend_plan =
         standard_mfs_minor_cycle_backend_plan(config, policy_metal_requested);
+    let planner_metal_minor_cycle_chunk_default =
+        planned_standard_mfs_metal_minor_cycle_chunk(config, backend_command_target_ms);
     let metal_minor_cycle_chunk_default = if minor_cycle_backend_plan.backend
         == StandardMfsMinorCycleBackend::Metal
         && config.deconvolver == Deconvolver::Multiscale
     {
-        Some("auto")
+        planner_metal_minor_cycle_chunk_default
+            .as_deref()
+            .or(Some("auto"))
     } else {
         None
     };
-    let (metal_minor_cycle_chunk, metal_minor_cycle_chunk_source) =
+    let (metal_minor_cycle_chunk, mut metal_minor_cycle_chunk_source) =
         choose_standard_mfs_runtime_value(
             config.standard_mfs_metal_minor_cycle_chunk.as_deref(),
             "CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK",
             metal_minor_cycle_chunk_default,
             false,
         );
+    if metal_minor_cycle_chunk_source == StandardMfsRuntimeDecisionSource::Auto
+        && planner_metal_minor_cycle_chunk_default.is_some()
+    {
+        metal_minor_cycle_chunk_source = StandardMfsRuntimeDecisionSource::Planner;
+    }
     if let Some(value) = metal_minor_cycle_chunk.as_deref() {
         guard.set("CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK", value);
     }
@@ -17842,6 +18027,7 @@ fn visibility_geometry_cache_key_for_rows(
 fn read_columnar_prepared_source(
     ms: &MeasurementSet,
     data_column_kind: VisibilityDataColumn,
+    include_data: bool,
     selection: &SelectedRowsContext,
     table_values: &PreparedSelectionTableValues,
     ddid_info: &[Option<(usize, usize)>],
@@ -17886,6 +18072,7 @@ fn read_columnar_prepared_source(
         channel_count,
     )
     .with_source_partition(source_partition);
+    request.include_data = include_data;
     request.include_uvw = false;
     request.include_antenna_ids = false;
     request.include_data_desc_ids = false;
@@ -24944,6 +25131,7 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
         let columnar_source = read_columnar_prepared_source(
             ms,
             data_column_kind,
+            true,
             selection,
             table_values,
             ddid_info,
@@ -25155,6 +25343,7 @@ fn read_shared_columnar_cube_slab_source(
     ms: &MeasurementSet,
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
+    include_data: bool,
     selection: &SelectedRowsContext,
     table_values: &PreparedSelectionTableValues,
     ddid_info: &[Option<(usize, usize)>],
@@ -25206,6 +25395,7 @@ fn read_shared_columnar_cube_slab_source(
         let mut columnar_source = read_columnar_prepared_source(
             ms,
             data_column_kind,
+            include_data,
             selection,
             table_values,
             ddid_info,
@@ -25455,6 +25645,7 @@ fn prepare_cube_without_trace_in_source_row_blocks(
         let columnar_source = read_columnar_prepared_source(
             ms,
             data_column_kind,
+            true,
             selection,
             table_values,
             ddid_info,
@@ -41204,6 +41395,7 @@ mod tests {
         let source = read_columnar_prepared_source(
             &ms,
             VisibilityDataColumn::Data,
+            true,
             &selection,
             &table_values,
             &ddid_info,
@@ -41244,6 +41436,7 @@ mod tests {
         let cached_first = read_columnar_prepared_source(
             &ms,
             VisibilityDataColumn::Data,
+            true,
             &selection,
             &table_values,
             &ddid_info,
@@ -41259,6 +41452,7 @@ mod tests {
         let cached_second = read_columnar_prepared_source(
             &ms,
             VisibilityDataColumn::Data,
+            true,
             &selection,
             &table_values,
             &ddid_info,
@@ -41689,7 +41883,8 @@ mod tests {
         .expect("parse minimal config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("fixed_tile")
@@ -42291,7 +42486,8 @@ mod tests {
         .expect("parse mosaic multi-cpu config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
@@ -42348,10 +42544,11 @@ mod tests {
         .expect("parse multiscale metal config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK").as_deref(),
-                Ok("auto")
+                Ok("auto:2000")
             );
         }
     }
@@ -42392,7 +42589,8 @@ mod tests {
         {
             let expected_threads =
                 mosaic_mfs_cpu_grid_threads(standard_mfs_auto_grid_threads()).to_string();
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
@@ -42532,7 +42730,8 @@ mod tests {
         {
             let expected_threads =
                 mosaic_mfs_cpu_grid_threads(standard_mfs_auto_grid_threads()).to_string();
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
@@ -42590,7 +42789,8 @@ mod tests {
         {
             let expected_threads =
                 mosaic_mfs_cpu_grid_threads(standard_mfs_auto_grid_threads()).to_string();
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
@@ -42658,7 +42858,8 @@ mod tests {
         .expect("parse MTMFS config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("fixed_tile")
@@ -42719,7 +42920,8 @@ mod tests {
         .expect("parse W-projection dirty config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
@@ -42880,7 +43082,8 @@ mod tests {
         .expect("parse cpu policy");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("cpu")
@@ -42939,7 +43142,8 @@ mod tests {
         .expect("parse cube one-channel cpu config");
 
         {
-            let _plan = apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock);
+            let _plan =
+                apply_standard_mfs_runtime_plan_locked(&config, false, 1, runtime_env_lock, None);
             assert_eq!(
                 env::var("CASA_RS_STANDARD_MFS_BACKEND").as_deref(),
                 Ok("fixed_tile")

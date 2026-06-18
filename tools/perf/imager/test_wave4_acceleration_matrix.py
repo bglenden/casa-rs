@@ -453,6 +453,22 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
         )
         self.assertEqual("selected", wave4_acceleration_matrix.metal_status(result))
 
+    def test_dirty_cube_multi_plane_worker_backend_is_not_reported_serial(self) -> None:
+        result = fake_result(
+            "standard_cube_dirty",
+            "multi_worker_cpu",
+            rust_seconds=90.0,
+            casa_seconds=None,
+            backend="serial_cpu",
+            workers=10,
+        )
+        result["benchmark_features"]["backend"]["cube_per_plane_phase"] = "dirty_control"
+
+        self.assertEqual(
+            "cpu_multi_plane_workers",
+            wave4_acceleration_matrix.selected_backend(result),
+        )
+
     def test_load_result_preserves_source_path_for_evidence_link(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             path = Path(tempdir) / "result.json"
@@ -504,6 +520,35 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
         self.assertEqual(1, len(loaded))
         self.assertEqual("cubedata_clean_clark", wave4_acceleration_matrix.explicit_row_id(loaded[0]))
         self.assertEqual("multi_worker_cpu", wave4_acceleration_matrix.evidence_role(loaded[0]))
+
+    def test_duplicate_role_prefers_newer_same_tier_evidence_not_slower_runtime(
+        self,
+    ) -> None:
+        older = fake_result(
+            "mosaic_cube_clean_clark",
+            "metal_default",
+            rust_seconds=278.99,
+            casa_seconds=None,
+            backend="mosaic_multi_plane_stream",
+            workers=6,
+        )
+        older["completed_at"] = "2026-06-18T08:30:00Z"
+        newer = fake_result(
+            "mosaic_cube_clean_clark",
+            "metal_default",
+            rust_seconds=242.84,
+            casa_seconds=None,
+            backend="mosaic_multi_plane_stream",
+            workers=6,
+        )
+        newer["completed_at"] = "2026-06-18T09:00:00Z"
+
+        evidence = wave4_acceleration_matrix.index_evidence([older, newer])
+
+        self.assertIs(newer, evidence["mosaic_cube_clean_clark"]["metal_default"])
+        self.assertIs(
+            older, evidence["mosaic_cube_clean_clark"]["metal_default:extra:1"]
+        )
 
 
 def fake_result(

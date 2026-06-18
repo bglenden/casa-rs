@@ -516,12 +516,92 @@ real 1.145408
         self.assertEqual("direct", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
         self.assertEqual("0", plan["run"]["phase_probe"])
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASE_PROBE"])
+        self.assertEqual("0", plan["run"]["skip_casa"])
+        self.assertEqual("0", plan["run"]["skip_rust"])
+        self.assertIsNone(plan["run"]["reuse_rust_prefix"])
+        self.assertIsNone(plan["run"]["reuse_casa_prefix"])
+        self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_SKIP_CASA"])
+        self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_SKIP_RUST"])
+        self.assertNotIn("IMAGER_BENCH_REUSE_RUST_PREFIX", plan["command"]["env"])
+        self.assertNotIn("IMAGER_BENCH_REUSE_CASA_PREFIX", plan["command"]["env"])
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_SKIP_PROFILE"])
         self.assertEqual("runnable", plan["run_support"]["status"])
         self.assertEqual("pending", run_workload.human_review_gate(plan, None)["status"])
         self.assertEqual("Brian", plan["review"]["required_reviewer"])
         self.assertEqual(128 * 128 * 3, plan["benchmark_features"]["image"]["image_work"])
         self.assertEqual(1, plan["benchmark_features"]["visibility"]["selected_channels"])
+
+    def test_skip_rust_can_reuse_existing_rust_products(self) -> None:
+        manifest = {
+            "id": "casa-only-compare",
+            "mode_id": "standard-cube-line-clean-multiscale-final",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "cube",
+                "gridder": "standard",
+            },
+            "run": {
+                "skip_rust": "1",
+                "reuse_rust_prefix": "/bench/products/current-rust/rust",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("1", plan["run"]["skip_rust"])
+        self.assertEqual("/bench/products/current-rust/rust", plan["run"]["reuse_rust_prefix"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_SKIP_RUST"])
+        self.assertEqual(
+            "/bench/products/current-rust/rust",
+            plan["command"]["env"]["IMAGER_BENCH_REUSE_RUST_PREFIX"],
+        )
+
+    def test_skip_casa_can_reuse_existing_casa_products(self) -> None:
+        manifest = {
+            "id": "rust-only-compare",
+            "mode_id": "standard-cube-line-clean-multiscale-final",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "cube",
+                "gridder": "standard",
+            },
+            "run": {
+                "skip_casa": "1",
+                "reuse_casa_prefix": "/bench/products/current-casa/casa",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("1", plan["run"]["skip_casa"])
+        self.assertEqual("/bench/products/current-casa/casa", plan["run"]["reuse_casa_prefix"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_SKIP_CASA"])
+        self.assertEqual(
+            "/bench/products/current-casa/casa",
+            plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
+        )
 
     def test_attach_output_paths_keeps_bulk_artifacts_out_of_result_dir(self) -> None:
         plan = {
@@ -578,6 +658,7 @@ real 1.145408
                 "imaging_row_block_rows": 4096,
                 "imaging_prepare_workers": 3,
                 "standard_mfs_grid_threads": "1",
+                "standard_mfs_metal_minor_cycle_chunk": "auto:1000",
             },
         }
 
@@ -596,6 +677,9 @@ real 1.145408
         self.assertEqual("4096", env["IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS"])
         self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
         self.assertEqual("1", env["IMAGER_BENCH_STANDARD_MFS_GRID_THREADS"])
+        self.assertEqual(
+            "auto:1000", env["IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK"]
+        )
         self.assertEqual("1", env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"])
 
     def test_imaging_overrides_support_backend_sweeps(self) -> None:

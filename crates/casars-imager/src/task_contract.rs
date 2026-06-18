@@ -964,6 +964,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional explicit standard-MFS initial dirty/PSF backend override.
     #[serde(default)]
     pub standard_mfs_initial_dirty_backend: Option<String>,
+    /// Optional standard-MFS Metal minor-cycle command-buffer component chunk.
+    #[serde(default)]
+    pub standard_mfs_metal_minor_cycle_chunk: Option<String>,
     /// Optional explicit Metal grouped input cache override.
     #[serde(default)]
     pub standard_mfs_metal_grouped_input_cache: Option<bool>,
@@ -1054,6 +1057,9 @@ impl ImagerRunTaskRequest {
             standard_mfs_tile_anchor: config.standard_mfs_tile_anchor.clone(),
             standard_mfs_residual_backend: config.standard_mfs_residual_backend.clone(),
             standard_mfs_initial_dirty_backend: config.standard_mfs_initial_dirty_backend.clone(),
+            standard_mfs_metal_minor_cycle_chunk: config
+                .standard_mfs_metal_minor_cycle_chunk
+                .clone(),
             standard_mfs_metal_grouped_input_cache: config.standard_mfs_metal_grouped_input_cache,
             standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb: config.standard_mfs_prepare_buffer_mb,
@@ -1100,6 +1106,9 @@ impl ImagerRunTaskRequest {
                     "invalid multiscale scale {scale}; expected finite value >= 0"
                 ));
             }
+        }
+        if let Some(value) = self.standard_mfs_metal_minor_cycle_chunk.as_deref() {
+            validate_metal_minor_cycle_chunk(value)?;
         }
         if self.use_mask == ImagerCleanMaskMode::AutoMultithresh {
             for (name, value) in [
@@ -1180,6 +1189,7 @@ impl ImagerRunTaskRequest {
             standard_mfs_tile_anchor: self.standard_mfs_tile_anchor.clone(),
             standard_mfs_residual_backend: self.standard_mfs_residual_backend.clone(),
             standard_mfs_initial_dirty_backend: self.standard_mfs_initial_dirty_backend.clone(),
+            standard_mfs_metal_minor_cycle_chunk: self.standard_mfs_metal_minor_cycle_chunk.clone(),
             standard_mfs_metal_grouped_input_cache: self.standard_mfs_metal_grouped_input_cache,
             standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb: self.standard_mfs_prepare_buffer_mb,
@@ -1200,6 +1210,31 @@ impl ImagerRunTaskRequest {
     fn plane_from_text(text: &str) -> Result<ImagerPlaneSelection, String> {
         ImagerPlaneSelection::from_cli_text(text)
     }
+}
+
+fn validate_metal_minor_cycle_chunk(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto")
+        || value.eq_ignore_ascii_case("full")
+        || parse_metal_minor_cycle_auto_target_ms(value).is_some()
+    {
+        return Ok(());
+    }
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Ok(()),
+        _ => Err(format!(
+            "invalid standard_mfs_metal_minor_cycle_chunk {value:?}; expected auto, auto:<positive-ms>, full, or a positive integer"
+        )),
+    }
+}
+
+fn parse_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f64> {
+    let lowercase = value.trim().to_ascii_lowercase();
+    let target_ms = lowercase.strip_prefix("auto:")?.parse::<f64>().ok()?;
+    target_ms
+        .is_finite()
+        .then_some(target_ms)
+        .filter(|value| *value > 0.0)
 }
 
 /// Stable stop reasons for CLEAN controller completion.
@@ -2029,6 +2064,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2103,6 +2139,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2360,6 +2397,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2534,6 +2572,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2693,6 +2732,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,

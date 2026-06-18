@@ -97,6 +97,14 @@ const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
 const STANDARD_MFS_INITIAL_DIRTY_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND";
+const STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK_ENV: &str =
+    "CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK";
+const DEFAULT_STANDARD_MFS_METAL_MINOR_CYCLE_TARGET_MS: f64 = 2_000.0;
+const STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_PIXELS: usize = 2048 * 2048;
+const STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_SCALES: usize = 3;
+const STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_INITIAL_CHUNK: usize = 512;
+const STANDARD_MFS_METAL_MINOR_CYCLE_MIN_AUTO_CHUNK: usize = 32;
+const STANDARD_MFS_METAL_MINOR_CYCLE_MAX_AUTO_CHUNK: usize = 16_384;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HogbomMinorCycleOutcome {
@@ -201,6 +209,53 @@ struct ClarkMetalSubcycleState {
     stop_reason: u32,
     fmn: f32,
     iter_flux_limit: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct MultiscaleMetalCycleParams {
+    cell_count: u32,
+    nx: u32,
+    ny: u32,
+    scale_count: u32,
+    has_scale_masks: u32,
+    threads_per_group: u32,
+    reduce_threads_per_group: u32,
+    reduce_level_count: u32,
+    component_budget: u32,
+    gain: f32,
+    threshold_jy_per_beam: f32,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct MultiscaleMetalReduceParams {
+    candidate_count: u32,
+    cell_count: u32,
+    nx: u32,
+    ny: u32,
+    scale_count: u32,
+    threads_per_group: u32,
+    _pad0: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct MultiscaleMetalCycleState {
+    peak: HogbomMetalPeakCandidate,
+    component: f32,
+    updates: u32,
+    stopped: u32,
+    stop_reason: u32,
+    selected_scale_index: u32,
+    window_x0: u32,
+    window_y0: u32,
+    window_x1: u32,
+    window_y1: u32,
+    initial_component_abs: f32,
+    _pad0: [u32; 2],
 }
 
 pub(crate) use trace::{ResidualRefreshTraceInternal, ResidualSampleTraceInternal};
@@ -12384,6 +12439,1078 @@ fn run_mosaic_image_domain_controller(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn run_multiscale_cotton_schwab_metal(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    stage_timings: &mut ImagingStageTimings,
+    refresh_residual: &mut ResidualRefreshCallback<'_>,
+    model: &mut Array2<f32>,
+    mut residual: Array2<f32>,
+    max_psf_sidelobe_level: f32,
+    initial_peak: f32,
+    cycle_threshold_override_jy_per_beam: Option<f32>,
+    warnings: &mut Vec<String>,
+) -> Result<CottonSchwabState, ImagingError> {
+    let deconvolver_setup_started = Instant::now();
+    let scales = effective_multiscale_scales(request);
+    let mut multiscale_state = build_multiscale_state(
+        &residual,
+        &psf_state.psf,
+        &scales,
+        request.small_scale_bias,
+        request.clean_mask.as_ref(),
+    );
+    stage_timings.deconvolver_setup += deconvolver_setup_started.elapsed();
+    let mut minor_iterations = 0usize;
+    let mut reported_minor_iterations = 0usize;
+    let mut major_cycles = 0usize;
+    let mut clean_stop_reason = None::<CleanStopReason>;
+    let mut minor_cycle_traces = Vec::<MinorCycleTrace>::new();
+    let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
+    let mut min_residual_peak_jy_per_beam = initial_peak;
+    let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
+    let multiscale_trace = multiscale_trace_sink();
+
+    while reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
+        let cycle_setup_started = Instant::now();
+        let full_window = ImageWindow::full(residual.dim());
+        let Some(cycle_candidate) = select_multiscale_candidate(
+            &multiscale_state,
+            request.clean_mask.as_ref(),
+            full_window,
+        ) else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+            clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break;
+        };
+        let cycle_peak = peak_abs_value_masked(
+            &multiscale_state.dirty_conv_scales[0],
+            request.clean_mask.as_ref(),
+        );
+        let cycle_nsigma_threshold_jy_per_beam =
+            nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            cycle_peak,
+            request.clean.threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+        ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+        let remaining_reported = request.clean.niter - reported_minor_iterations;
+        let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
+        let start_reported_iteration = reported_minor_iterations;
+        final_cycle_threshold_jy_per_beam =
+            cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
+                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+            });
+        let probe = MinorCycleProbe {
+            initial_scale_pixels: Some(scales[cycle_candidate.scale_index]),
+            initial_candidate_strength_jy_per_beam: Some(cycle_candidate.strength),
+            initial_candidate_position: Some([
+                cycle_candidate.position.0,
+                cycle_candidate.position.1,
+            ]),
+        };
+        if let Some(trace) = &multiscale_trace {
+            append_multiscale_trace(
+                trace,
+                format!(
+                    "{{\"event\":\"cycle_start\",\"backend\":\"metal\",\"cycle_index\":{},\"start_reported_iteration\":{},\"cycle_reported_niter\":{},\"cycle_peak\":{:.17e},\"cycle_threshold\":{:.17e},\"nsigma_threshold\":{:.17e},\"initial_scale\":{:.17e},\"initial_x\":{},\"initial_y\":{},\"initial_strength\":{:.17e},\"initial_dirty_value\":{:.17e},\"initial_peak_psf\":{:.17e},\"model_flux\":{:.17e}}}",
+                    minor_cycle_traces.len(),
+                    start_reported_iteration,
+                    cycle_reported_niter,
+                    cycle_peak,
+                    final_cycle_threshold_jy_per_beam,
+                    cycle_nsigma_threshold_jy_per_beam,
+                    scales[cycle_candidate.scale_index],
+                    cycle_candidate.position.0,
+                    cycle_candidate.position.1,
+                    cycle_candidate.strength,
+                    cycle_candidate.dirty_value,
+                    cycle_candidate.peak_psf,
+                    model.iter().copied().sum::<f32>(),
+                ),
+            );
+        }
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+        let outcome = run_multiscale_minor_cycle_metal(
+            request,
+            &mut multiscale_state,
+            model,
+            &mut residual,
+            cycle_reported_niter,
+            final_cycle_threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+            stage_timings,
+        )?;
+        minor_iterations = minor_iterations.saturating_add(outcome.actual_updates);
+        if let Some(trace) = &multiscale_trace {
+            let stop_reason = outcome
+                .stop_reason
+                .map(|reason| format!("{reason:?}"))
+                .unwrap_or_else(|| "null".to_string());
+            append_multiscale_trace(
+                trace,
+                format!(
+                    "{{\"event\":\"cycle_end\",\"backend\":\"metal\",\"cycle_index\":{},\"actual_updates\":{},\"reported_updates\":{},\"stop_reason\":\"{}\",\"updated_model\":{},\"minor_iterations\":{},\"reported_minor_iterations_before\":{},\"model_flux\":{:.17e}}}",
+                    minor_cycle_traces.len(),
+                    outcome.actual_updates,
+                    outcome.reported_updates,
+                    stop_reason,
+                    outcome.updated_model,
+                    minor_iterations,
+                    reported_minor_iterations,
+                    model.iter().copied().sum::<f32>(),
+                ),
+            );
+        }
+        minor_cycle_traces.push(make_minor_cycle_trace(
+            minor_cycle_traces.len(),
+            start_reported_iteration,
+            outcome,
+            cycle_peak,
+            &multiscale_state.dirty_conv_scales[0],
+            model,
+            probe,
+        ));
+        reported_minor_iterations =
+            reported_minor_iterations.saturating_add(outcome.reported_updates);
+        if !outcome.updated_model {
+            clean_stop_reason = outcome.stop_reason;
+            break;
+        }
+        residual = multiscale_state.dirty_conv_scales[0].clone();
+        residual_needs_refresh = true;
+        let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        update_divergence_state(
+            warnings,
+            &mut min_residual_peak_jy_per_beam,
+            minor_peak,
+            &mut divergence_warned,
+        );
+        if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
+            clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+            break;
+        }
+        residual = refresh_residual(model, stage_timings)?;
+        let multiscale_refresh_started = Instant::now();
+        refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
+        stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
+        major_cycles += 1;
+        residual_needs_refresh = false;
+        let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        let refreshed_nsigma_threshold_jy_per_beam =
+            nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            refreshed_peak,
+            request.clean.threshold_jy_per_beam,
+            refreshed_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+    }
+    if request.clean.niter > 0 && clean_stop_reason.is_none() {
+        clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        residual = refresh_residual(model, stage_timings)?;
+        major_cycles += 1;
+    }
+
+    Ok(CottonSchwabState {
+        residual,
+        major_cycles,
+        minor_iterations,
+        clean_stop_reason,
+        minor_cycle_traces,
+        final_cycle_threshold_jy_per_beam,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(any(not(target_os = "macos"), coverage))]
+fn run_multiscale_minor_cycle_metal(
+    _request: &ImagingRequest,
+    _multiscale_state: &mut MultiscaleState,
+    _model: &mut Array2<f32>,
+    _residual: &mut Array2<f32>,
+    _cycle_reported_niter: usize,
+    _cycle_threshold_jy_per_beam: f32,
+    _nsigma_threshold_jy_per_beam: f32,
+    _stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    Err(ImagingError::Unsupported(
+        "Multiscale minor-cycle backend 'metal' requires macOS Metal".to_string(),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_multiscale_minor_cycle_metal(
+    request: &ImagingRequest,
+    multiscale_state: &mut MultiscaleState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    use std::{mem, slice};
+
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+        MTLComputeCommandEncoder, MTLCreateSystemDefaultDevice, MTLDevice,
+        MTLDispatchThreadgroupsIndirectArguments, MTLResourceOptions, MTLSize,
+    };
+
+    let (nx, ny) = residual.dim();
+    if nx == 0 || ny == 0 || cycle_reported_niter == 0 {
+        return Ok(HogbomMinorCycleOutcome {
+            updated_model: false,
+            actual_updates: 0,
+            reported_updates: 0,
+            stop_reason: Some(CleanStopReason::NoCleanablePixels),
+            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+        });
+    }
+    if model.dim() != (nx, ny) {
+        return Err(ImagingError::InvalidRequest(
+            "Multiscale Metal minor cycle requires model and residual shapes to match".to_string(),
+        ));
+    }
+    let scale_count = multiscale_state.dirty_conv_scales.len();
+    if scale_count == 0 {
+        return Ok(HogbomMinorCycleOutcome {
+            updated_model: false,
+            actual_updates: 0,
+            reported_updates: 0,
+            stop_reason: Some(CleanStopReason::NoCleanablePixels),
+            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+        });
+    }
+    for image in multiscale_state
+        .dirty_conv_scales
+        .iter()
+        .chain(multiscale_state.scales.iter())
+    {
+        if image.dim() != (nx, ny) {
+            return Err(ImagingError::InvalidRequest(
+                "Multiscale Metal minor cycle requires all scale images to match residual shape"
+                    .to_string(),
+            ));
+        }
+    }
+    for row in &multiscale_state.psf_conv_scales {
+        if row.len() != scale_count {
+            return Err(ImagingError::InvalidRequest(
+                "Multiscale Metal PSF scale matrix has inconsistent scale count".to_string(),
+            ));
+        }
+        for image in row {
+            if image.dim() != (nx, ny) {
+                return Err(ImagingError::InvalidRequest(
+                    "Multiscale Metal PSF scale images must match residual shape".to_string(),
+                ));
+            }
+        }
+    }
+
+    let total_started = Instant::now();
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    let cell_count = nx
+        .checked_mul(ny)
+        .ok_or_else(|| ImagingError::InvalidRequest("Multiscale image is too large".to_string()))?;
+    let total_candidate_count = cell_count.checked_mul(scale_count).ok_or_else(|| {
+        ImagingError::InvalidRequest("Multiscale Metal candidate count is too large".to_string())
+    })?;
+    let cell_count_u32 = u32::try_from(cell_count).map_err(|_| {
+        ImagingError::InvalidRequest("Multiscale Metal image cell count exceeds u32".to_string())
+    })?;
+    let nx_u32 = u32::try_from(nx).map_err(|_| {
+        ImagingError::InvalidRequest("Multiscale Metal image width exceeds u32".to_string())
+    })?;
+    let ny_u32 = u32::try_from(ny).map_err(|_| {
+        ImagingError::InvalidRequest("Multiscale Metal image height exceeds u32".to_string())
+    })?;
+    let scale_count_u32 = u32::try_from(scale_count).map_err(|_| {
+        ImagingError::InvalidRequest("Multiscale Metal scale count exceeds u32".to_string())
+    })?;
+    u32::try_from(total_candidate_count).map_err(|_| {
+        ImagingError::InvalidRequest("Multiscale Metal candidate count exceeds u32".to_string())
+    })?;
+
+    let setup_started = Instant::now();
+    let mut dirty_values = Vec::with_capacity(total_candidate_count);
+    for image in &multiscale_state.dirty_conv_scales {
+        dirty_values.extend(hogbom_flatten_array2_x_major(image));
+    }
+    let mut scale_values = Vec::with_capacity(total_candidate_count);
+    for image in &multiscale_state.scales {
+        scale_values.extend(hogbom_flatten_array2_x_major(image));
+    }
+    let mut psf_values = Vec::with_capacity(total_candidate_count.saturating_mul(scale_count));
+    for scale_index in 0..scale_count {
+        for optimum_scale in 0..scale_count {
+            psf_values.extend(hogbom_flatten_array2_x_major(
+                &multiscale_state.psf_conv_scales[scale_index][optimum_scale],
+            ));
+        }
+    }
+    let mut scale_mask_storage = vec![0u32];
+    let has_scale_masks = multiscale_state.scale_masks.is_some();
+    if let Some(scale_masks) = multiscale_state.scale_masks.as_ref() {
+        scale_mask_storage = Vec::with_capacity(total_candidate_count);
+        for mask in scale_masks {
+            if mask.dim() != (nx, ny) {
+                return Err(ImagingError::InvalidRequest(
+                    "Multiscale Metal scale masks must match residual shape".to_string(),
+                ));
+            }
+            for x in 0..nx {
+                for y in 0..ny {
+                    scale_mask_storage.push(u32::from(mask[(x, y)]));
+                }
+            }
+        }
+    }
+    let model_values = hogbom_flatten_array2_x_major(model);
+    let peak_psf_values = multiscale_state.peak_psf_conv_scales.clone();
+    let scale_bias_values = multiscale_state.scale_bias.clone();
+    let setup_elapsed = setup_started.elapsed();
+
+    let device_queue_started = Instant::now();
+    let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Multiscale minor-cycle backend 'metal' could not find a default Metal device"
+                .to_string(),
+        )
+    })?;
+    let queue = device.newCommandQueue().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Multiscale minor-cycle backend 'metal' could not create a Metal command queue"
+                .to_string(),
+        )
+    })?;
+    let device_queue_elapsed = device_queue_started.elapsed();
+    let shader_compile_started = Instant::now();
+    let source = objc2_foundation::NSString::from_str(MULTISCALE_MINOR_CYCLE_METAL_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|error| {
+            ImagingError::Unsupported(format!(
+                "Multiscale minor-cycle backend 'metal' failed to compile shader: {error:?}"
+            ))
+        })?;
+    let shader_compile_elapsed = shader_compile_started.elapsed();
+    let pipeline_started = Instant::now();
+    let dispatch_pipeline =
+        hogbom_metal_pipeline(&device, &library, "multiscale_prepare_window_dispatch")?;
+    let peak_pipeline = hogbom_metal_pipeline(&device, &library, "multiscale_peak_reduce")?;
+    let reduce_pipeline = hogbom_metal_pipeline(&device, &library, "multiscale_reduce_candidates")?;
+    let select_pipeline = hogbom_metal_pipeline(&device, &library, "multiscale_select_component")?;
+    let subtract_pipeline =
+        hogbom_metal_pipeline(&device, &library, "multiscale_subtract_and_find_next")?;
+    let pipeline_elapsed = pipeline_started.elapsed();
+
+    let storage_options = MTLResourceOptions::StorageModeShared;
+    let buffer_started = Instant::now();
+    let dirty_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        dirty_values.as_slice(),
+        storage_options,
+        "multiscale dirty scales",
+    )?;
+    let model_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        model_values.as_slice(),
+        storage_options,
+        "multiscale model",
+    )?;
+    let scale_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        scale_values.as_slice(),
+        storage_options,
+        "multiscale kernels",
+    )?;
+    let psf_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        psf_values.as_slice(),
+        storage_options,
+        "multiscale PSF kernels",
+    )?;
+    let peak_psf_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        peak_psf_values.as_slice(),
+        storage_options,
+        "multiscale peak PSF",
+    )?;
+    let scale_bias_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        scale_bias_values.as_slice(),
+        storage_options,
+        "multiscale scale bias",
+    )?;
+    let scale_mask_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        scale_mask_storage.as_slice(),
+        storage_options,
+        "multiscale scale masks",
+    )?;
+    let zero_scale_counts = vec![0u32; scale_count];
+    let scale_counts_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        zero_scale_counts.as_slice(),
+        storage_options,
+        "multiscale scale counts",
+    )?;
+    let dispatch_stats_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        &[0u64, 0u64],
+        storage_options,
+        "multiscale dispatch stats",
+    )?;
+    let candidate_threads_per_group =
+        hogbom_metal_threads_per_group(&peak_pipeline, total_candidate_count);
+    let reduce_threads_per_group =
+        hogbom_metal_threads_per_group(&reduce_pipeline, total_candidate_count);
+    let first_candidate_count = total_candidate_count.div_ceil(candidate_threads_per_group);
+    let mut reduce_level_count = 0usize;
+    let mut reduce_count = first_candidate_count.max(1);
+    while reduce_count > 1 {
+        reduce_count = reduce_count.div_ceil(reduce_threads_per_group).max(1);
+        reduce_level_count = reduce_level_count.saturating_add(1);
+    }
+    let candidate_bytes = first_candidate_count
+        .max(1)
+        .checked_mul(mem::size_of::<HogbomMetalPeakCandidate>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal candidate buffer is too large".to_string(),
+            )
+        })?;
+    let reduce_params_bytes = reduce_level_count
+        .max(1)
+        .checked_mul(mem::size_of::<MultiscaleMetalReduceParams>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal reduce params buffer is too large".to_string(),
+            )
+        })?;
+    let indirect_args_bytes = reduce_level_count
+        .saturating_add(1)
+        .max(1)
+        .checked_mul(mem::size_of::<MTLDispatchThreadgroupsIndirectArguments>())
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal indirect dispatch buffer is too large".to_string(),
+            )
+        })?;
+    let candidate_a = device
+        .newBufferWithLength_options(candidate_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not allocate candidate buffer"
+                    .to_string(),
+            )
+        })?;
+    let candidate_b = device
+        .newBufferWithLength_options(candidate_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not allocate reduction buffer"
+                    .to_string(),
+            )
+        })?;
+    let reduce_params_buffer = device
+        .newBufferWithLength_options(reduce_params_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not allocate reduce params buffer"
+                    .to_string(),
+            )
+        })?;
+    let indirect_args_buffer = device
+        .newBufferWithLength_options(indirect_args_bytes, storage_options)
+        .ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not allocate indirect dispatch buffer"
+                    .to_string(),
+            )
+        })?;
+    let selected_peak_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        &[HogbomMetalPeakCandidate::default()],
+        storage_options,
+        "multiscale selected peak",
+    )?;
+    let params = MultiscaleMetalCycleParams {
+        cell_count: cell_count_u32,
+        nx: nx_u32,
+        ny: ny_u32,
+        scale_count: scale_count_u32,
+        has_scale_masks: u32::from(has_scale_masks),
+        threads_per_group: u32::try_from(candidate_threads_per_group).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal candidate threadgroup width exceeds u32".to_string(),
+            )
+        })?,
+        reduce_threads_per_group: u32::try_from(reduce_threads_per_group).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal reduce threadgroup width exceeds u32".to_string(),
+            )
+        })?,
+        reduce_level_count: u32::try_from(reduce_level_count).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal reduce level count exceeds u32".to_string(),
+            )
+        })?,
+        component_budget: u32::try_from(cycle_reported_niter).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "Multiscale Metal component budget exceeds u32".to_string(),
+            )
+        })?,
+        gain: request.clean.gain,
+        threshold_jy_per_beam: request.clean.threshold_jy_per_beam,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+    };
+    let params_buffer =
+        hogbom_metal_params_buffer(&device, &params, storage_options, "multiscale params")?;
+    let initial_state = MultiscaleMetalCycleState {
+        window_x0: 0,
+        window_y0: 0,
+        window_x1: nx_u32.saturating_sub(1),
+        window_y1: ny_u32.saturating_sub(1),
+        ..Default::default()
+    };
+    let state_buffer =
+        hogbom_metal_buffer_from_slice(&device, &[initial_state], storage_options, "state")?;
+    let buffer_elapsed = buffer_started.elapsed();
+
+    let mut input_a = true;
+    for _ in 0..reduce_level_count {
+        input_a = !input_a;
+    }
+    let final_candidate_from_a = input_a;
+    let final_candidate_buffer = if final_candidate_from_a {
+        &candidate_a
+    } else {
+        &candidate_b
+    };
+    let mut command_kernel_elapsed = Duration::ZERO;
+    let mut command_wall_elapsed = Duration::ZERO;
+    let mut dispatch_prepare_dispatches = 0usize;
+    let mut peak_dispatches = 0usize;
+    let mut reduce_dispatches = 0usize;
+    let mut select_dispatches = 0usize;
+    let mut subtract_dispatches = 0usize;
+    let mut command_chunk_planner =
+        standard_mfs_metal_minor_cycle_chunk_planner(cycle_reported_niter, cell_count, scale_count);
+    let initial_command_component_budget =
+        command_chunk_planner.next_chunk(cycle_reported_niter.max(1));
+    let mut final_state = initial_state;
+    let mut command_buffers = 0usize;
+    while usize::try_from(final_state.updates).unwrap_or(usize::MAX) < cycle_reported_niter
+        && final_state.stopped == 0
+    {
+        let updates_done = usize::try_from(final_state.updates).map_err(|_| {
+            ImagingError::InvalidRequest("Multiscale Metal update count overflowed".to_string())
+        })?;
+        let updates_remaining = cycle_reported_niter.saturating_sub(updates_done);
+        if updates_remaining == 0 {
+            break;
+        }
+        let chunk_updates = command_chunk_planner.next_chunk(updates_remaining);
+        let command_started = Instant::now();
+        let command_buffer = queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not create command buffer"
+                    .to_string(),
+            )
+        })?;
+        multiscale_metal_encode_prepare_window_dispatch(
+            &command_buffer,
+            &dispatch_pipeline,
+            &state_buffer,
+            &params_buffer,
+            &reduce_params_buffer,
+            &indirect_args_buffer,
+            &dispatch_stats_buffer,
+        )?;
+        dispatch_prepare_dispatches = dispatch_prepare_dispatches.saturating_add(1);
+        let peak_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not create peak encoder".to_string(),
+            )
+        })?;
+        peak_encoder.setComputePipelineState(&peak_pipeline);
+        unsafe {
+            peak_encoder.setBuffer_offset_atIndex(Some(&dirty_buffer), 0, 0);
+            peak_encoder.setBuffer_offset_atIndex(Some(&scale_mask_buffer), 0, 1);
+            peak_encoder.setBuffer_offset_atIndex(Some(&peak_psf_buffer), 0, 2);
+            peak_encoder.setBuffer_offset_atIndex(Some(&scale_bias_buffer), 0, 3);
+            peak_encoder.setBuffer_offset_atIndex(Some(&candidate_a), 0, 4);
+            peak_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 5);
+            peak_encoder.setBuffer_offset_atIndex(Some(&state_buffer), 0, 6);
+        }
+        unsafe {
+            peak_encoder
+                .dispatchThreadgroupsWithIndirectBuffer_indirectBufferOffset_threadsPerThreadgroup(
+                    &indirect_args_buffer,
+                    0,
+                    MTLSize {
+                        width: candidate_threads_per_group,
+                        height: 1,
+                        depth: 1,
+                    },
+                );
+        }
+        peak_encoder.endEncoding();
+        peak_dispatches = peak_dispatches.saturating_add(1);
+        reduce_dispatches = reduce_dispatches.saturating_add(multiscale_metal_encode_reduce_plan(
+            &command_buffer,
+            &reduce_pipeline,
+            &candidate_a,
+            &candidate_b,
+            &reduce_params_buffer,
+            &indirect_args_buffer,
+            reduce_level_count,
+            reduce_threads_per_group,
+            &state_buffer,
+        )?);
+
+        for _ in 0..chunk_updates {
+            multiscale_metal_encode_select(
+                &command_buffer,
+                &select_pipeline,
+                final_candidate_buffer,
+                &selected_peak_buffer,
+                &state_buffer,
+                &model_buffer,
+                &scale_buffer,
+                &scale_counts_buffer,
+                &params_buffer,
+                &peak_psf_buffer,
+            )?;
+            select_dispatches = select_dispatches.saturating_add(1);
+            multiscale_metal_encode_prepare_window_dispatch(
+                &command_buffer,
+                &dispatch_pipeline,
+                &state_buffer,
+                &params_buffer,
+                &reduce_params_buffer,
+                &indirect_args_buffer,
+                &dispatch_stats_buffer,
+            )?;
+            dispatch_prepare_dispatches = dispatch_prepare_dispatches.saturating_add(1);
+
+            let subtract_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "Multiscale minor-cycle backend 'metal' could not create subtract encoder"
+                        .to_string(),
+                )
+            })?;
+            subtract_encoder.setComputePipelineState(&subtract_pipeline);
+            unsafe {
+                subtract_encoder.setBuffer_offset_atIndex(Some(&selected_peak_buffer), 0, 0);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&dirty_buffer), 0, 1);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&psf_buffer), 0, 2);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&scale_buffer), 0, 3);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&scale_mask_buffer), 0, 4);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&peak_psf_buffer), 0, 5);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&scale_bias_buffer), 0, 6);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&candidate_a), 0, 7);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&model_buffer), 0, 8);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 9);
+                subtract_encoder.setBuffer_offset_atIndex(Some(&state_buffer), 0, 10);
+            }
+            unsafe {
+                subtract_encoder
+                    .dispatchThreadgroupsWithIndirectBuffer_indirectBufferOffset_threadsPerThreadgroup(
+                        &indirect_args_buffer,
+                        0,
+                        MTLSize {
+                            width: candidate_threads_per_group,
+                            height: 1,
+                            depth: 1,
+                        },
+                    );
+            }
+            subtract_encoder.endEncoding();
+            subtract_dispatches = subtract_dispatches.saturating_add(1);
+            reduce_dispatches =
+                reduce_dispatches.saturating_add(multiscale_metal_encode_reduce_plan(
+                    &command_buffer,
+                    &reduce_pipeline,
+                    &candidate_a,
+                    &candidate_b,
+                    &reduce_params_buffer,
+                    &indirect_args_buffer,
+                    reduce_level_count,
+                    reduce_threads_per_group,
+                    &state_buffer,
+                )?);
+        }
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        command_buffers = command_buffers.saturating_add(1);
+        let command_elapsed = command_started.elapsed();
+        command_wall_elapsed += command_elapsed;
+        command_kernel_elapsed +=
+            HogbomMetalCommandTiming::from_command_buffer(&command_buffer).kernel_elapsed;
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "Multiscale minor-cycle backend 'metal' command failed: {message}"
+            )));
+        }
+        final_state = unsafe {
+            *slice::from_raw_parts(
+                state_buffer
+                    .contents()
+                    .as_ptr()
+                    .cast::<MultiscaleMetalCycleState>(),
+                1,
+            )
+            .first()
+            .expect("one Multiscale Metal state")
+        };
+        command_chunk_planner.observe_command(command_elapsed, chunk_updates);
+    }
+
+    let readback_started = Instant::now();
+    let dirty_slice = unsafe {
+        slice::from_raw_parts(
+            dirty_buffer.contents().as_ptr().cast::<f32>(),
+            dirty_values.len(),
+        )
+    };
+    for scale_index in 0..scale_count {
+        let start = scale_index * cell_count;
+        let end = start + cell_count;
+        if let Some(target) =
+            multiscale_state.dirty_conv_scales[scale_index].as_slice_memory_order_mut()
+        {
+            target.copy_from_slice(&dirty_slice[start..end]);
+        } else {
+            for x in 0..nx {
+                for y in 0..ny {
+                    multiscale_state.dirty_conv_scales[scale_index][(x, y)] =
+                        dirty_slice[start + x * ny + y];
+                }
+            }
+        }
+    }
+    let model_slice = unsafe {
+        slice::from_raw_parts(model_buffer.contents().as_ptr().cast::<f32>(), cell_count)
+    };
+    if let Some(target) = model.as_slice_memory_order_mut() {
+        target.copy_from_slice(model_slice);
+    } else {
+        for x in 0..nx {
+            for y in 0..ny {
+                model[(x, y)] = model_slice[x * ny + y];
+            }
+        }
+    }
+    *residual = multiscale_state.dirty_conv_scales[0].clone();
+    let scale_counts = unsafe {
+        slice::from_raw_parts(
+            scale_counts_buffer.contents().as_ptr().cast::<u32>(),
+            scale_count,
+        )
+    };
+    let dispatch_stats = unsafe {
+        slice::from_raw_parts(dispatch_stats_buffer.contents().as_ptr().cast::<u64>(), 2)
+    };
+    let readback_elapsed = readback_started.elapsed();
+
+    let cycle_component_updates = usize::try_from(final_state.updates).map_err(|_| {
+        ImagingError::InvalidRequest("Multiscale Metal update count overflowed".to_string())
+    })?;
+    let stop_reason = hogbom_metal_stop_reason(final_state.stop_reason);
+    let updated_model = cycle_component_updates > 0;
+    let reported_updates = casa_multiscale_reported_updates(
+        cycle_component_updates,
+        cycle_reported_niter,
+        stop_reason,
+        updated_model,
+    );
+    let mut stats = MultiscaleMinorCycleStats::new(scale_count);
+    for (scale_index, count) in scale_counts.iter().copied().enumerate() {
+        stats.scale_component_counts[scale_index] = count as usize;
+    }
+    stats.peak_searches = peak_dispatches
+        .saturating_add(cycle_component_updates)
+        .saturating_mul(scale_count);
+    stats.subtract_updates = cycle_component_updates.saturating_mul(scale_count);
+    stats.full_window_peak_searches = scale_count;
+    stats.full_window_subtract_updates = scale_count;
+    stats.peak_search_window_pixels_max = cell_count;
+    stats.subtract_window_pixels_max = cell_count;
+    stats.pixels_searched = usize::try_from(dispatch_stats[0]).unwrap_or(usize::MAX);
+    stats.pixels_touched = usize::try_from(dispatch_stats[1]).unwrap_or(usize::MAX);
+    let total_elapsed = total_started.elapsed();
+    let peak_search_elapsed = command_kernel_elapsed.mul_f64(0.5);
+    let subtract_elapsed = command_kernel_elapsed.saturating_sub(peak_search_elapsed);
+    let model_update_elapsed = Duration::ZERO;
+    stage_timings.minor_cycle += total_elapsed;
+    stage_timings.minor_cycle_solve += total_elapsed;
+    stage_timings.deconvolver_peak_search += peak_search_elapsed;
+    stage_timings.deconvolver_model_update += model_update_elapsed;
+    stage_timings.deconvolver_psf_subtract += subtract_elapsed;
+    stage_timings.deconvolver_model_updates = stage_timings
+        .deconvolver_model_updates
+        .saturating_add(cycle_component_updates as u64);
+    stats.add_to_stage_timings(stage_timings);
+    log_standard_mfs_multiscale_minor_cycle_summary(
+        "metal_resident_multiscale",
+        cycle_component_updates,
+        cycle_reported_niter,
+        stop_reason,
+        &stats,
+        peak_search_elapsed,
+        model_update_elapsed,
+        subtract_elapsed,
+        total_elapsed,
+    );
+    if collect_profile {
+        eprintln!(
+            "standard_mfs_multiscale_metal_minor_cycle_summary updates={} reported_budget={} stop_reason={:?} image_pixels={} scales={} command_buffers={} command_component_budget={} command_component_budget_final={} command_target_ms={} command_planner_kind={:?} command_calibration_samples={} command_fixed_ms={} command_ms_per_update={} command_predicted_next_ms={} peak_dispatches={} reduce_dispatches={} select_dispatches={} subtract_dispatches={} setup_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_ms={:.3} command_wall_ms={:.3} command_gpu_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            cycle_component_updates,
+            cycle_reported_niter,
+            stop_reason,
+            cell_count,
+            scale_count,
+            command_buffers,
+            initial_command_component_budget,
+            command_chunk_planner.next_chunk(cycle_reported_niter.max(1)),
+            command_chunk_planner
+                .target_ms
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "none".to_string()),
+            command_chunk_planner.kind,
+            command_chunk_planner.observations,
+            command_chunk_planner
+                .fixed_ms
+                .map(|value| format!("{value:.6}"))
+                .unwrap_or_else(|| "unknown".to_string()),
+            command_chunk_planner
+                .ms_per_update
+                .map(|value| format!("{value:.9}"))
+                .unwrap_or_else(|| "unknown".to_string()),
+            command_chunk_planner
+                .predicted_next_ms
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "unknown".to_string()),
+            peak_dispatches,
+            reduce_dispatches,
+            select_dispatches,
+            subtract_dispatches,
+            profile::millis(setup_elapsed),
+            profile::millis(device_queue_elapsed),
+            profile::millis(shader_compile_elapsed),
+            profile::millis(pipeline_elapsed),
+            profile::millis(buffer_elapsed),
+            profile::millis(command_wall_elapsed),
+            profile::millis(command_kernel_elapsed),
+            profile::millis(readback_elapsed),
+            profile::millis(total_elapsed),
+        );
+        eprintln!(
+            "standard_mfs_multiscale_metal_indirect_summary updates={} prepare_dispatches={} reduce_levels={} candidate_threads_per_group={} reduce_threads_per_group={} candidate_search_items={} subtract_items={}",
+            cycle_component_updates,
+            dispatch_prepare_dispatches,
+            reduce_level_count,
+            candidate_threads_per_group,
+            reduce_threads_per_group,
+            dispatch_stats[0],
+            dispatch_stats[1],
+        );
+    }
+
+    Ok(HogbomMinorCycleOutcome {
+        updated_model,
+        actual_updates: cycle_component_updates,
+        reported_updates,
+        stop_reason,
+        final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+        final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+    })
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn multiscale_metal_encode_prepare_window_dispatch(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    dispatch_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    reduce_params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    indirect_args_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    dispatch_stats_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<(), ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Multiscale minor-cycle backend 'metal' could not create indirect dispatch encoder"
+                .to_string(),
+        )
+    })?;
+    encoder.setComputePipelineState(dispatch_pipeline);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(reduce_params_buffer), 0, 2);
+        encoder.setBuffer_offset_atIndex(Some(indirect_args_buffer), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(dispatch_stats_buffer), 0, 4);
+    }
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+    );
+    encoder.endEncoding();
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn multiscale_metal_encode_reduce_plan(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    reduce_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    candidate_a: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    candidate_b: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    reduce_params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    indirect_args_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    reduce_level_count: usize,
+    reduce_threads_per_group: usize,
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<usize, ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let mut dispatches = 0usize;
+    let mut input_a_for_reduce = true;
+    let indirect_args_stride =
+        std::mem::size_of::<objc2_metal::MTLDispatchThreadgroupsIndirectArguments>();
+    let reduce_params_stride = std::mem::size_of::<MultiscaleMetalReduceParams>();
+    for reduce_index in 0..reduce_level_count {
+        let reduce_encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "Multiscale minor-cycle backend 'metal' could not create reduce encoder"
+                    .to_string(),
+            )
+        })?;
+        reduce_encoder.setComputePipelineState(reduce_pipeline);
+        let (input_buffer, output_buffer) = if input_a_for_reduce {
+            (candidate_a, candidate_b)
+        } else {
+            (candidate_b, candidate_a)
+        };
+        unsafe {
+            reduce_encoder.setBuffer_offset_atIndex(Some(input_buffer), 0, 0);
+            reduce_encoder.setBuffer_offset_atIndex(Some(output_buffer), 0, 1);
+            reduce_encoder.setBuffer_offset_atIndex(
+                Some(reduce_params_buffer),
+                reduce_index * reduce_params_stride,
+                2,
+            );
+            reduce_encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 3);
+        }
+        unsafe {
+            reduce_encoder
+                .dispatchThreadgroupsWithIndirectBuffer_indirectBufferOffset_threadsPerThreadgroup(
+                    indirect_args_buffer,
+                    (reduce_index + 1) * indirect_args_stride,
+                    MTLSize {
+                        width: reduce_threads_per_group,
+                        height: 1,
+                        depth: 1,
+                    },
+                );
+        }
+        reduce_encoder.endEncoding();
+        dispatches = dispatches.saturating_add(1);
+        input_a_for_reduce = !input_a_for_reduce;
+    }
+    Ok(dispatches)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+#[allow(clippy::too_many_arguments)]
+fn multiscale_metal_encode_select(
+    command_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>,
+    select_pipeline: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    final_candidate_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    selected_peak_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    scale_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    scale_counts_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    peak_psf_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+) -> Result<(), ImagingError> {
+    use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
+
+    let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+        ImagingError::Unsupported(
+            "Multiscale minor-cycle backend 'metal' could not create select encoder".to_string(),
+        )
+    })?;
+    encoder.setComputePipelineState(select_pipeline);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(final_candidate_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(selected_peak_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 2);
+        encoder.setBuffer_offset_atIndex(Some(model_buffer), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(scale_buffer), 0, 4);
+        encoder.setBuffer_offset_atIndex(Some(scale_counts_buffer), 0, 5);
+        encoder.setBuffer_offset_atIndex(Some(params_buffer), 0, 6);
+        encoder.setBuffer_offset_atIndex(Some(peak_psf_buffer), 0, 7);
+    }
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+    );
+    encoder.endEncoding();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_hogbom_cotton_schwab(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -13120,8 +14247,255 @@ fn hogbom_metal_stop_reason(code: u32) -> Option<CleanStopReason> {
         2 => Some(CleanStopReason::NsigmaThresholdReached),
         3 => Some(CleanStopReason::CycleThresholdReached),
         6 => Some(CleanStopReason::NoCleanablePixels),
+        7 => Some(CleanStopReason::DivergenceDetected),
         _ => None,
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum StandardMfsMetalMinorCycleChunkKind {
+    Full,
+    Fixed,
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StandardMfsMetalMinorCycleChunkPlanner {
+    kind: StandardMfsMetalMinorCycleChunkKind,
+    next_chunk: usize,
+    min_chunk: usize,
+    max_chunk: usize,
+    target_ms: Option<f64>,
+    observations: usize,
+    sum_updates: f64,
+    sum_updates_squared: f64,
+    sum_ms: f64,
+    sum_update_ms: f64,
+    fixed_ms: Option<f64>,
+    ms_per_update: Option<f64>,
+    predicted_next_ms: Option<f64>,
+}
+
+impl StandardMfsMetalMinorCycleChunkPlanner {
+    fn next_chunk(&self, updates_remaining: usize) -> usize {
+        self.next_chunk.max(1).min(updates_remaining.max(1))
+    }
+
+    fn observe_command(&mut self, command_elapsed: Duration, encoded_updates: usize) {
+        if self.kind != StandardMfsMetalMinorCycleChunkKind::Auto {
+            return;
+        }
+        let Some(target_ms) = self.target_ms else {
+            return;
+        };
+        let encoded_updates = encoded_updates.max(1);
+        let observed_ms = profile::millis(command_elapsed);
+        if !observed_ms.is_finite() || observed_ms <= 0.0 {
+            return;
+        }
+        self.observations = self.observations.saturating_add(1);
+        let updates = encoded_updates as f64;
+        self.sum_updates += updates;
+        self.sum_updates_squared += updates * updates;
+        self.sum_ms += observed_ms;
+        self.sum_update_ms += updates * observed_ms;
+        self.recompute_cost_model();
+        self.next_chunk = self
+            .planned_chunk_for_target(target_ms)
+            .clamp(self.min_chunk, self.max_chunk);
+        self.predicted_next_ms = self.predict_ms(self.next_chunk);
+    }
+
+    fn recompute_cost_model(&mut self) {
+        if self.observations >= 2 {
+            let count = self.observations as f64;
+            let denominator = count * self.sum_updates_squared - self.sum_updates.powi(2);
+            if denominator.abs() > f64::EPSILON {
+                let slope =
+                    (count * self.sum_update_ms - self.sum_updates * self.sum_ms) / denominator;
+                let intercept = (self.sum_ms - slope * self.sum_updates) / count;
+                if slope.is_finite() && slope > 0.0 && intercept.is_finite() {
+                    self.ms_per_update = Some(slope);
+                    self.fixed_ms = Some(intercept.max(0.0));
+                    return;
+                }
+            }
+        }
+        if self.sum_updates > 0.0 {
+            let slope = self.sum_ms / self.sum_updates;
+            if slope.is_finite() && slope > 0.0 {
+                self.ms_per_update = Some(slope);
+                self.fixed_ms = Some(0.0);
+            }
+        }
+    }
+
+    fn planned_chunk_for_target(&self, target_ms: f64) -> usize {
+        let Some(ms_per_update) = self.ms_per_update else {
+            return self.next_chunk;
+        };
+        if !ms_per_update.is_finite() || ms_per_update <= 0.0 {
+            return self.next_chunk;
+        }
+        let fixed_ms = self.fixed_ms.unwrap_or(0.0).max(0.0);
+        let variable_budget_ms = (target_ms - fixed_ms).max(ms_per_update);
+        let modeled_chunk = (variable_budget_ms / ms_per_update).floor() as usize;
+        modeled_chunk.max(1)
+    }
+
+    fn predict_ms(&self, chunk: usize) -> Option<f64> {
+        let ms_per_update = self.ms_per_update?;
+        let fixed_ms = self.fixed_ms.unwrap_or(0.0).max(0.0);
+        Some(fixed_ms + ms_per_update * chunk.max(1) as f64)
+    }
+}
+
+fn standard_mfs_metal_minor_cycle_chunk_planner(
+    cycle_reported_niter: usize,
+    cell_count: usize,
+    scale_count: usize,
+) -> StandardMfsMetalMinorCycleChunkPlanner {
+    let value = env::var(STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK_ENV).ok();
+    standard_mfs_metal_minor_cycle_chunk_planner_from_value(
+        value.as_deref(),
+        cycle_reported_niter,
+        cell_count,
+        scale_count,
+    )
+}
+
+fn standard_mfs_metal_minor_cycle_chunk_planner_from_value(
+    value: Option<&str>,
+    cycle_reported_niter: usize,
+    cell_count: usize,
+    scale_count: usize,
+) -> StandardMfsMetalMinorCycleChunkPlanner {
+    let cycle_reported_niter = cycle_reported_niter.max(1);
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return StandardMfsMetalMinorCycleChunkPlanner {
+            kind: StandardMfsMetalMinorCycleChunkKind::Full,
+            next_chunk: cycle_reported_niter,
+            min_chunk: cycle_reported_niter,
+            max_chunk: cycle_reported_niter,
+            target_ms: None,
+            observations: 0,
+            sum_updates: 0.0,
+            sum_updates_squared: 0.0,
+            sum_ms: 0.0,
+            sum_update_ms: 0.0,
+            fixed_ms: None,
+            ms_per_update: None,
+            predicted_next_ms: None,
+        };
+    };
+    if value.eq_ignore_ascii_case("full") || value == "0" {
+        return StandardMfsMetalMinorCycleChunkPlanner {
+            kind: StandardMfsMetalMinorCycleChunkKind::Full,
+            next_chunk: cycle_reported_niter,
+            min_chunk: cycle_reported_niter,
+            max_chunk: cycle_reported_niter,
+            target_ms: None,
+            observations: 0,
+            sum_updates: 0.0,
+            sum_updates_squared: 0.0,
+            sum_ms: 0.0,
+            sum_update_ms: 0.0,
+            fixed_ms: None,
+            ms_per_update: None,
+            predicted_next_ms: None,
+        };
+    }
+    if let Some(target_ms) = parse_standard_mfs_metal_minor_cycle_auto_target_ms(value) {
+        let max_chunk = STANDARD_MFS_METAL_MINOR_CYCLE_MAX_AUTO_CHUNK.min(cycle_reported_niter);
+        let min_chunk = STANDARD_MFS_METAL_MINOR_CYCLE_MIN_AUTO_CHUNK
+            .min(max_chunk)
+            .max(1);
+        return StandardMfsMetalMinorCycleChunkPlanner {
+            kind: StandardMfsMetalMinorCycleChunkKind::Auto,
+            next_chunk: standard_mfs_metal_minor_cycle_initial_auto_chunk(
+                cycle_reported_niter,
+                cell_count,
+                scale_count,
+                min_chunk,
+                max_chunk,
+            ),
+            min_chunk,
+            max_chunk,
+            target_ms: Some(target_ms),
+            observations: 0,
+            sum_updates: 0.0,
+            sum_updates_squared: 0.0,
+            sum_ms: 0.0,
+            sum_update_ms: 0.0,
+            fixed_ms: None,
+            ms_per_update: None,
+            predicted_next_ms: None,
+        };
+    }
+    if let Some(chunk) = value.parse::<usize>().ok().filter(|value| *value > 0) {
+        let chunk = chunk.min(cycle_reported_niter).max(1);
+        return StandardMfsMetalMinorCycleChunkPlanner {
+            kind: StandardMfsMetalMinorCycleChunkKind::Fixed,
+            next_chunk: chunk,
+            min_chunk: chunk,
+            max_chunk: chunk,
+            target_ms: None,
+            observations: 0,
+            sum_updates: 0.0,
+            sum_updates_squared: 0.0,
+            sum_ms: 0.0,
+            sum_update_ms: 0.0,
+            fixed_ms: None,
+            ms_per_update: None,
+            predicted_next_ms: None,
+        };
+    }
+    StandardMfsMetalMinorCycleChunkPlanner {
+        kind: StandardMfsMetalMinorCycleChunkKind::Full,
+        next_chunk: cycle_reported_niter,
+        min_chunk: cycle_reported_niter,
+        max_chunk: cycle_reported_niter,
+        target_ms: None,
+        observations: 0,
+        sum_updates: 0.0,
+        sum_updates_squared: 0.0,
+        sum_ms: 0.0,
+        sum_update_ms: 0.0,
+        fixed_ms: None,
+        ms_per_update: None,
+        predicted_next_ms: None,
+    }
+}
+
+fn parse_standard_mfs_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f64> {
+    if value.eq_ignore_ascii_case("auto") {
+        return Some(DEFAULT_STANDARD_MFS_METAL_MINOR_CYCLE_TARGET_MS);
+    }
+    let lowercase = value.to_ascii_lowercase();
+    let suffix = lowercase.strip_prefix("auto:")?;
+    let target_ms = suffix.parse::<f64>().ok()?;
+    target_ms
+        .is_finite()
+        .then_some(target_ms)
+        .filter(|value| *value > 0.0)
+}
+
+fn standard_mfs_metal_minor_cycle_initial_auto_chunk(
+    cycle_reported_niter: usize,
+    cell_count: usize,
+    scale_count: usize,
+    min_chunk: usize,
+    max_chunk: usize,
+) -> usize {
+    let work_items_per_update = cell_count.max(1).saturating_mul(scale_count.max(1));
+    let reference_work_items = STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_PIXELS
+        .saturating_mul(STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_SCALES);
+    let numerator =
+        STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_INITIAL_CHUNK.saturating_mul(reference_work_items);
+    numerator
+        .div_ceil(work_items_per_update)
+        .clamp(min_chunk, max_chunk)
+        .min(cycle_reported_niter.max(1))
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
@@ -13484,6 +14858,447 @@ fn hogbom_metal_threads_per_group(
     }
     power_of_two
 }
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+const MULTISCALE_MINOR_CYCLE_METAL_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct HogbomPeakCandidate {
+    float abs_value;
+    float value;
+    uint flat_index;
+    uint valid;
+};
+
+struct MultiscaleCycleParams {
+    uint cell_count;
+    uint nx;
+    uint ny;
+    uint scale_count;
+    uint has_scale_masks;
+    uint threads_per_group;
+    uint reduce_threads_per_group;
+    uint reduce_level_count;
+    uint component_budget;
+    float gain;
+    float threshold_jy_per_beam;
+    float cycle_threshold_jy_per_beam;
+    float nsigma_threshold_jy_per_beam;
+};
+
+struct MultiscaleReduceParams {
+    uint candidate_count;
+    uint cell_count;
+    uint nx;
+    uint ny;
+    uint scale_count;
+    uint threads_per_group;
+    uint2 _pad0;
+};
+
+struct MultiscaleCycleState {
+    HogbomPeakCandidate peak;
+    float component;
+    uint updates;
+    uint stopped;
+    uint stop_reason;
+    uint selected_scale_index;
+    uint window_x0;
+    uint window_y0;
+    uint window_x1;
+    uint window_y1;
+    float initial_component_abs;
+    uint2 _pad0;
+};
+
+struct MultiscaleDispatchArgs {
+    uint threadgroups_per_grid[3];
+};
+
+struct MultiscaleWindowIndex {
+    uint combined_index;
+    uint scale_index;
+    uint flat_index;
+    uint x;
+    uint y;
+    uint valid;
+};
+
+static inline HogbomPeakCandidate multiscale_invalid_candidate() {
+    HogbomPeakCandidate candidate;
+    candidate.abs_value = 0.0f;
+    candidate.value = 0.0f;
+    candidate.flat_index = 0u;
+    candidate.valid = 0u;
+    return candidate;
+}
+
+static inline uint multiscale_order_key(uint combined_index, uint cell_count, uint nx, uint ny) {
+    const uint scale_index = combined_index / cell_count;
+    const uint flat_index = combined_index - scale_index * cell_count;
+    const uint x = flat_index / ny;
+    const uint y = flat_index - x * ny;
+    return scale_index * cell_count + y * nx + x;
+}
+
+static inline bool multiscale_candidate_better(
+    HogbomPeakCandidate candidate,
+    HogbomPeakCandidate best,
+    uint cell_count,
+    uint nx,
+    uint ny
+) {
+    if (candidate.valid == 0u) {
+        return false;
+    }
+    if (best.valid == 0u) {
+        return true;
+    }
+    if (candidate.abs_value > best.abs_value) {
+        return true;
+    }
+    if (candidate.abs_value == best.abs_value) {
+        return multiscale_order_key(candidate.flat_index, cell_count, nx, ny) <
+               multiscale_order_key(best.flat_index, cell_count, nx, ny);
+    }
+    return false;
+}
+
+static inline uint multiscale_stop_reason(float component_abs, constant MultiscaleCycleParams &params) {
+    const bool threshold_floor_active =
+        params.threshold_jy_per_beam > 0.0f &&
+        (0.01f * params.threshold_jy_per_beam) < 2.0e-8f &&
+        params.cycle_threshold_jy_per_beam <= params.threshold_jy_per_beam;
+    if (component_abs < params.threshold_jy_per_beam ||
+        (threshold_floor_active &&
+         (component_abs <= params.threshold_jy_per_beam ||
+          fabs(component_abs - params.threshold_jy_per_beam) <= max(0.01f * params.threshold_jy_per_beam, 2.0e-8f)))) {
+        return 1u;
+    }
+    if (params.nsigma_threshold_jy_per_beam > params.threshold_jy_per_beam &&
+        component_abs < params.nsigma_threshold_jy_per_beam) {
+        return 2u;
+    }
+    if (component_abs < params.cycle_threshold_jy_per_beam) {
+        return 3u;
+    }
+    return 0u;
+}
+
+static inline uint multiscale_div_ceil(uint value, uint divisor) {
+    return (value + divisor - 1u) / divisor;
+}
+
+static inline uint multiscale_window_width(device const MultiscaleCycleState *state) {
+    return state->window_x1 >= state->window_x0 ? state->window_x1 - state->window_x0 + 1u : 0u;
+}
+
+static inline uint multiscale_window_height(device const MultiscaleCycleState *state) {
+    return state->window_y1 >= state->window_y0 ? state->window_y1 - state->window_y0 + 1u : 0u;
+}
+
+static inline uint multiscale_window_candidate_count(
+    constant MultiscaleCycleParams &params,
+    device const MultiscaleCycleState *state
+) {
+    if (state->stopped != 0u) {
+        return 0u;
+    }
+    return multiscale_window_width(state) * multiscale_window_height(state) * params.scale_count;
+}
+
+static inline void multiscale_prepare_window_dispatch_args(
+    device const MultiscaleCycleState *state,
+    constant MultiscaleCycleParams &params,
+    device MultiscaleReduceParams *reduce_params,
+    device MultiscaleDispatchArgs *dispatch_args,
+    device ulong *dispatch_stats
+) {
+    const uint active_candidates = multiscale_window_candidate_count(params, state);
+    dispatch_stats[0] += ulong(active_candidates);
+    if (state->updates > 0u) {
+        dispatch_stats[1] += ulong(active_candidates);
+    }
+    uint current_count = max(1u, multiscale_div_ceil(max(1u, active_candidates), params.threads_per_group));
+    dispatch_args[0].threadgroups_per_grid[0] = current_count;
+    dispatch_args[0].threadgroups_per_grid[1] = 1u;
+    dispatch_args[0].threadgroups_per_grid[2] = 1u;
+    for (uint level = 0u; level < params.reduce_level_count; ++level) {
+        reduce_params[level].candidate_count = current_count;
+        reduce_params[level].cell_count = params.cell_count;
+        reduce_params[level].nx = params.nx;
+        reduce_params[level].ny = params.ny;
+        reduce_params[level].scale_count = params.scale_count;
+        reduce_params[level].threads_per_group = params.reduce_threads_per_group;
+        reduce_params[level]._pad0 = uint2(0u, 0u);
+        current_count = max(1u, multiscale_div_ceil(max(1u, current_count), params.reduce_threads_per_group));
+        dispatch_args[level + 1u].threadgroups_per_grid[0] = current_count;
+        dispatch_args[level + 1u].threadgroups_per_grid[1] = 1u;
+        dispatch_args[level + 1u].threadgroups_per_grid[2] = 1u;
+    }
+}
+
+static inline MultiscaleWindowIndex multiscale_window_index(
+    uint window_index,
+    constant MultiscaleCycleParams &params,
+    device const MultiscaleCycleState *state
+) {
+    MultiscaleWindowIndex mapped;
+    mapped.combined_index = 0u;
+    mapped.scale_index = 0u;
+    mapped.flat_index = 0u;
+    mapped.x = 0u;
+    mapped.y = 0u;
+    mapped.valid = 0u;
+    const uint width = multiscale_window_width(state);
+    const uint height = multiscale_window_height(state);
+    const uint window_pixels = width * height;
+    if (window_pixels == 0u || window_index >= window_pixels * params.scale_count) {
+        return mapped;
+    }
+    mapped.scale_index = window_index / window_pixels;
+    const uint window_flat = window_index - mapped.scale_index * window_pixels;
+    mapped.x = state->window_x0 + window_flat / height;
+    mapped.y = state->window_y0 + window_flat - (mapped.x - state->window_x0) * height;
+    if (mapped.x >= params.nx || mapped.y >= params.ny) {
+        return mapped;
+    }
+    mapped.flat_index = mapped.x * params.ny + mapped.y;
+    mapped.combined_index = mapped.scale_index * params.cell_count + mapped.flat_index;
+    mapped.valid = 1u;
+    return mapped;
+}
+
+kernel void multiscale_prepare_window_dispatch(
+    device const MultiscaleCycleState *state [[buffer(0)]],
+    constant MultiscaleCycleParams &params [[buffer(1)]],
+    device MultiscaleReduceParams *reduce_params [[buffer(2)]],
+    device MultiscaleDispatchArgs *dispatch_args [[buffer(3)]],
+    device ulong *dispatch_stats [[buffer(4)]],
+    uint thread_index [[thread_position_in_grid]]
+) {
+    if (thread_index != 0u) {
+        return;
+    }
+    multiscale_prepare_window_dispatch_args(
+        state, params, reduce_params, dispatch_args, dispatch_stats);
+}
+
+static inline HogbomPeakCandidate multiscale_make_candidate(
+    device const float *dirty_scales,
+    device const uint *scale_masks,
+    device const float *peak_psf,
+    device const float *scale_bias,
+    uint window_index,
+    constant MultiscaleCycleParams &params,
+    device const MultiscaleCycleState *state
+) {
+    HogbomPeakCandidate candidate = multiscale_invalid_candidate();
+    if (state->stopped != 0u) {
+        return candidate;
+    }
+    const MultiscaleWindowIndex mapped = multiscale_window_index(window_index, params, state);
+    if (mapped.valid == 0u) {
+        return candidate;
+    }
+    if (params.has_scale_masks != 0u && scale_masks[mapped.combined_index] == 0u) {
+        return candidate;
+    }
+    const float peak = peak_psf[mapped.scale_index];
+    const float value = dirty_scales[mapped.combined_index];
+    if (peak <= 0.0f || value == 0.0f) {
+        return candidate;
+    }
+    const float strength = value / peak;
+    const float score = scale_bias[mapped.scale_index] * value * strength;
+    candidate.abs_value = fabs(score);
+    candidate.value = value;
+    candidate.flat_index = mapped.combined_index;
+    candidate.valid = 1u;
+    return candidate;
+}
+
+kernel void multiscale_peak_reduce(
+    device const float *dirty_scales [[buffer(0)]],
+    device const uint *scale_masks [[buffer(1)]],
+    device const float *peak_psf [[buffer(2)]],
+    device const float *scale_bias [[buffer(3)]],
+    device HogbomPeakCandidate *candidates [[buffer(4)]],
+    constant MultiscaleCycleParams &params [[buffer(5)]],
+    device const MultiscaleCycleState *state [[buffer(6)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup HogbomPeakCandidate local_candidates[1024];
+    HogbomPeakCandidate candidate = multiscale_make_candidate(
+        dirty_scales, scale_masks, peak_psf, scale_bias, thread_index, params, state);
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const HogbomPeakCandidate other = local_candidates[local_index + stride];
+            const HogbomPeakCandidate best = local_candidates[local_index];
+            if (multiscale_candidate_better(other, best, params.cell_count, params.nx, params.ny)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        candidates[group_index] = local_candidates[0];
+    }
+}
+
+kernel void multiscale_reduce_candidates(
+    device const HogbomPeakCandidate *input [[buffer(0)]],
+    device HogbomPeakCandidate *output [[buffer(1)]],
+    constant MultiscaleReduceParams &params [[buffer(2)]],
+    device const MultiscaleCycleState *state [[buffer(3)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup HogbomPeakCandidate local_candidates[1024];
+    HogbomPeakCandidate candidate = multiscale_invalid_candidate();
+    if (state->stopped == 0u && thread_index < params.candidate_count) {
+        candidate = input[thread_index];
+    }
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const HogbomPeakCandidate other = local_candidates[local_index + stride];
+            const HogbomPeakCandidate best = local_candidates[local_index];
+            if (multiscale_candidate_better(other, best, params.cell_count, params.nx, params.ny)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        output[group_index] = local_candidates[0];
+    }
+}
+
+kernel void multiscale_select_component(
+    device const HogbomPeakCandidate *peak_candidate [[buffer(0)]],
+    device HogbomPeakCandidate *selected_peak [[buffer(1)]],
+    device MultiscaleCycleState *state [[buffer(2)]],
+    device float *model [[buffer(3)]],
+    device const float *scale_kernels [[buffer(4)]],
+    device uint *scale_counts [[buffer(5)]],
+    constant MultiscaleCycleParams &params [[buffer(6)]],
+    device const float *peak_psf [[buffer(7)]],
+    uint thread_index [[thread_position_in_grid]]
+) {
+    if (thread_index != 0u || state->stopped != 0u) {
+        return;
+    }
+    const HogbomPeakCandidate peak = peak_candidate[0];
+    selected_peak[0] = peak;
+    state->peak = peak;
+    if (peak.valid == 0u) {
+        state->stopped = 1u;
+        state->stop_reason = 6u;
+        return;
+    }
+    const uint scale_index = peak.flat_index / params.cell_count;
+    const uint flat_index = peak.flat_index - scale_index * params.cell_count;
+    const float scale_peak_psf = max(1.0e-20f, peak_psf[scale_index]);
+    const float strength = peak.value / scale_peak_psf;
+    const float component_abs = fabs(strength);
+    state->selected_scale_index = scale_index;
+    const uint reason = multiscale_stop_reason(component_abs, params);
+    if (reason != 0u) {
+        state->stopped = 1u;
+        state->stop_reason = reason;
+        return;
+    }
+    if (state->updates > 0u && component_abs > state->initial_component_abs * 1.5f) {
+        state->stopped = 1u;
+        state->stop_reason = 7u;
+        return;
+    }
+    if (state->updates == 0u) {
+        state->initial_component_abs = component_abs;
+    }
+    state->component = params.gain * strength;
+    state->updates += 1u;
+    scale_counts[scale_index] += 1u;
+    const uint peak_x = flat_index / params.ny;
+    const uint peak_y = flat_index - peak_x * params.ny;
+    const uint half_x = params.nx / 2u;
+    const uint half_y = params.ny / 2u;
+    state->window_x0 = peak_x > half_x ? peak_x - half_x : 0u;
+    state->window_y0 = peak_y > half_y ? peak_y - half_y : 0u;
+    state->window_x1 = min(params.nx - 1u, peak_x + half_x - 1u);
+    state->window_y1 = min(params.ny - 1u, peak_y + half_y - 1u);
+}
+
+kernel void multiscale_subtract_and_find_next(
+    device const HogbomPeakCandidate *selected_peak [[buffer(0)]],
+    device float *dirty_scales [[buffer(1)]],
+    device const float *psf_scales [[buffer(2)]],
+    device const float *scale_kernels [[buffer(3)]],
+    device const uint *scale_masks [[buffer(4)]],
+    device const float *peak_psf [[buffer(5)]],
+    device const float *scale_bias [[buffer(6)]],
+    device HogbomPeakCandidate *candidates [[buffer(7)]],
+    device float *model [[buffer(8)]],
+    constant MultiscaleCycleParams &params [[buffer(9)]],
+    device const MultiscaleCycleState *state [[buffer(10)]],
+    uint thread_index [[thread_position_in_grid]],
+    uint local_index [[thread_index_in_threadgroup]],
+    uint group_index [[threadgroup_position_in_grid]]
+) {
+    threadgroup HogbomPeakCandidate local_candidates[1024];
+    const MultiscaleWindowIndex mapped = multiscale_window_index(thread_index, params, state);
+    if (state->stopped == 0u && mapped.valid != 0u) {
+        const HogbomPeakCandidate peak = selected_peak[0];
+        const uint selected_scale = state->selected_scale_index;
+        const uint peak_flat = peak.flat_index - selected_scale * params.cell_count;
+        const uint peak_x = peak_flat / params.ny;
+        const uint peak_y = peak_flat - peak_x * params.ny;
+        const int kernel_x = int(mapped.x) - int(peak_x) + int(params.nx / 2u);
+        const int kernel_y = int(mapped.y) - int(peak_y) + int(params.ny / 2u);
+        if (kernel_x >= 0 && kernel_y >= 0 &&
+            kernel_x < int(params.nx) && kernel_y < int(params.ny)) {
+            const uint kernel_index = uint(kernel_x) * params.ny + uint(kernel_y);
+            if (mapped.scale_index == 0u) {
+                model[mapped.flat_index] += state->component *
+                    scale_kernels[selected_scale * params.cell_count + kernel_index];
+            }
+            const uint psf_index =
+                ((mapped.scale_index * params.scale_count + selected_scale) * params.cell_count) +
+                kernel_index;
+            dirty_scales[mapped.combined_index] -= state->component * psf_scales[psf_index];
+        }
+    }
+
+    HogbomPeakCandidate candidate = multiscale_make_candidate(
+        dirty_scales, scale_masks, peak_psf, scale_bias, thread_index, params, state);
+    local_candidates[local_index] = candidate;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = params.threads_per_group >> 1; stride > 0u; stride >>= 1) {
+        if (local_index < stride) {
+            const HogbomPeakCandidate other = local_candidates[local_index + stride];
+            const HogbomPeakCandidate best = local_candidates[local_index];
+            if (multiscale_candidate_better(other, best, params.cell_count, params.nx, params.ny)) {
+                local_candidates[local_index] = other;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local_index == 0u) {
+        candidates[group_index] = local_candidates[0];
+    }
+}
+"#;
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 const HOGBOM_MINOR_CYCLE_METAL_SHADER: &str = r#"
@@ -15136,6 +16951,7 @@ fn run_multiscale_minor_cycle(
         stats.record_peak_search(full_window, residual.dim());
         stats.add_to_stage_timings(stage_timings);
         log_standard_mfs_multiscale_minor_cycle_summary(
+            "cpu",
             0,
             cycle_reported_niter,
             Some(CleanStopReason::NoCleanablePixels),
@@ -15169,6 +16985,7 @@ fn run_multiscale_minor_cycle(
     ) {
         stats.add_to_stage_timings(stage_timings);
         log_standard_mfs_multiscale_minor_cycle_summary(
+            "cpu",
             0,
             cycle_reported_niter,
             Some(reason),
@@ -15218,8 +17035,13 @@ fn run_multiscale_minor_cycle(
             stop_reason = Some(reason);
             break;
         }
-        if cycle_component_updates > 0 && component_abs > initial_cycle_component * 1.5 {
-            stop_reason = Some(CleanStopReason::DivergenceDetected);
+        if let Some(reason) = casa_multiscale_divergence_stop_reason(
+            candidate,
+            multiscale_state.dirty_conv_scales.len(),
+            initial_cycle_component,
+            cycle_component_updates,
+        ) {
+            stop_reason = Some(reason);
             break;
         }
 
@@ -15286,6 +17108,7 @@ fn run_multiscale_minor_cycle(
         updated_model,
     );
     log_standard_mfs_multiscale_minor_cycle_summary(
+        "cpu",
         cycle_component_updates,
         cycle_reported_niter,
         stop_reason,
@@ -15610,9 +17433,18 @@ fn run_multiscale_cotton_schwab(
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     if minor_cycle_backend == StandardMfsMinorCycleBackend::Metal {
-        return Err(ImagingError::Unsupported(
-            "standard MFS multiscale minor-cycle backend 'metal' is not implemented; select CPU minor-cycle backend".to_string(),
-        ));
+        return run_multiscale_cotton_schwab_metal(
+            request,
+            psf_state,
+            stage_timings,
+            refresh_residual,
+            model,
+            residual,
+            max_psf_sidelobe_level,
+            initial_peak,
+            cycle_threshold_override_jy_per_beam,
+            warnings,
+        );
     }
     let deconvolver_setup_started = Instant::now();
     let scales = effective_multiscale_scales(request);
@@ -15746,8 +17578,13 @@ fn run_multiscale_cotton_schwab(
                 cycle_stop_reason = Some(stop_reason);
                 break;
             }
-            if cycle_component_updates > 0 && component_abs > initial_cycle_component * 1.5 {
-                cycle_stop_reason = Some(CleanStopReason::DivergenceDetected);
+            if let Some(stop_reason) = casa_multiscale_divergence_stop_reason(
+                candidate,
+                multiscale_state.dirty_conv_scales.len(),
+                initial_cycle_component,
+                cycle_component_updates,
+            ) {
+                cycle_stop_reason = Some(stop_reason);
                 break;
             }
 
@@ -15903,6 +17740,7 @@ fn run_multiscale_cotton_schwab(
         .saturating_add(model_updates as u64);
     stats.add_to_stage_timings(stage_timings);
     log_standard_mfs_multiscale_minor_cycle_summary(
+        "cpu",
         minor_iterations,
         request.clean.niter,
         clean_stop_reason,
@@ -15930,6 +17768,20 @@ struct MultiscaleCandidate {
     strength: f32,
     dirty_value: f32,
     peak_psf: f32,
+}
+
+fn casa_multiscale_divergence_stop_reason(
+    candidate: MultiscaleCandidate,
+    _scale_count: usize,
+    initial_cycle_component_abs: f32,
+    cycle_component_updates: usize,
+) -> Option<CleanStopReason> {
+    if cycle_component_updates > 0
+        && candidate.strength.abs() > initial_cycle_component_abs.abs() * 1.5
+    {
+        return Some(CleanStopReason::DivergenceDetected);
+    }
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -16039,6 +17891,7 @@ impl MultiscaleMinorCycleStats {
 
 #[allow(clippy::too_many_arguments)]
 fn log_standard_mfs_multiscale_minor_cycle_summary(
+    backend: &str,
     updates: usize,
     reported_budget: usize,
     stop_reason: Option<CleanStopReason>,
@@ -16049,7 +17902,8 @@ fn log_standard_mfs_multiscale_minor_cycle_summary(
     total_elapsed: Duration,
 ) {
     eprintln!(
-        "standard_mfs_multiscale_minor_cycle_summary backend=cpu updates={} reported_budget={} stop_reason={:?} scale_component_counts={} peak_searches={} full_window_peak_searches={} subtract_updates={} full_window_subtract_updates={} pixels_searched={} pixels_touched={} peak_search_window_pixels_max={} subtract_window_pixels_max={} peak_search_ms={:.3} model_update_ms={:.3} subtract_ms={:.3} total_ms={:.3}",
+        "standard_mfs_multiscale_minor_cycle_summary backend={} updates={} reported_budget={} stop_reason={:?} scale_component_counts={} peak_searches={} full_window_peak_searches={} subtract_updates={} full_window_subtract_updates={} pixels_searched={} pixels_touched={} peak_search_window_pixels_max={} subtract_window_pixels_max={} peak_search_ms={:.3} model_update_ms={:.3} subtract_ms={:.3} total_ms={:.3}",
+        backend,
         updates,
         reported_budget,
         stop_reason,
@@ -24630,9 +26484,9 @@ mod tests {
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
         ImageGeometry, ImageWindow, ImagingError, ImagingRequest, ImagingStageTimings,
-        MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock, StandardGridder,
-        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
+        MosaicGridderConfig, MtmfsRequest, MultiscaleCandidate, ParallelHandBatch, PlaneStokes,
+        PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
+        StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
         StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
         StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
@@ -24640,14 +26494,14 @@ mod tests {
         WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
         apply_weighting, build_direct_components, build_direct_pixel_coordinates,
-        build_multiscale_scale_masks, compute_cycle_threshold,
-        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
-        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        kernel_nonzero_support, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
-        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
-        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
-        peak_location_masked_in_window,
+        build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
+        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
+        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
+        dirty_clean_config, fft_convolve_real, kernel_nonzero_support, make_multiscale_kernel,
+        mean_stddev, minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
+        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
+        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
+        peak_location_masked, peak_location_masked_in_window,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_voltage_pattern_for_offsets, run_clark_cotton_schwab, run_clark_minor_cycle,
         run_clark_minor_cycle_cpu, run_clark_minor_cycle_metal, run_hogbom_minor_cycle,
@@ -24663,8 +26517,10 @@ mod tests {
     };
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::{
-        compute_dirty_psf_and_residual_standard_metal, run_hogbom_minor_cycle_cpu,
-        run_hogbom_minor_cycle_metal, standard_mfs_metal_device_available,
+        build_multiscale_state, compute_dirty_psf_and_residual_standard_metal,
+        peak_abs_value_masked, run_hogbom_minor_cycle_cpu, run_hogbom_minor_cycle_metal,
+        run_multiscale_cotton_schwab, run_multiscale_minor_cycle_metal,
+        standard_mfs_metal_device_available,
     };
 
     #[test]
@@ -24676,6 +26532,59 @@ mod tests {
         assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
         assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    fn multiscale_metal_auto_chunk_planner_uses_shape_scaled_adaptive_chunks() {
+        let mut planner = super::standard_mfs_metal_minor_cycle_chunk_planner_from_value(
+            Some("auto"),
+            10_000,
+            2048 * 2048,
+            3,
+        );
+
+        assert_eq!(
+            planner.kind,
+            super::StandardMfsMetalMinorCycleChunkKind::Auto
+        );
+        assert_eq!(planner.target_ms, Some(2000.0));
+        assert_eq!(planner.next_chunk(10_000), 512);
+
+        planner.observe_command(Duration::from_millis(4_000), 512);
+        assert!(planner.next_chunk(10_000) < 512);
+
+        let mut calibrated = super::standard_mfs_metal_minor_cycle_chunk_planner_from_value(
+            Some("auto:1000"),
+            10_000,
+            2048 * 2048,
+            3,
+        );
+        calibrated.observe_command(Duration::from_millis(250), 100);
+        calibrated.observe_command(Duration::from_millis(1050), 500);
+        assert_eq!(calibrated.observations, 2);
+        assert!((calibrated.fixed_ms.unwrap() - 50.0).abs() < 1.0e-6);
+        assert!((calibrated.ms_per_update.unwrap() - 2.0).abs() < 1.0e-6);
+        assert_eq!(calibrated.next_chunk(10_000), 475);
+        assert!((calibrated.predicted_next_ms.unwrap() - 1000.0).abs() < 1.0e-6);
+
+        let mut fast_planner = super::standard_mfs_metal_minor_cycle_chunk_planner_from_value(
+            Some("auto:1000"),
+            10_000,
+            1024 * 1024,
+            3,
+        );
+        let initial_fast_chunk = fast_planner.next_chunk(10_000);
+        fast_planner.observe_command(Duration::from_millis(250), initial_fast_chunk);
+        assert!(fast_planner.next_chunk(10_000) > initial_fast_chunk);
+
+        let full = super::standard_mfs_metal_minor_cycle_chunk_planner_from_value(
+            Some("full"),
+            10_000,
+            2048 * 2048,
+            3,
+        );
+        assert_eq!(full.kind, super::StandardMfsMetalMinorCycleChunkKind::Full);
+        assert_eq!(full.next_chunk(10_000), 10_000);
     }
 
     #[test]
@@ -28306,6 +30215,42 @@ mod tests {
     }
 
     #[test]
+    fn multiscale_does_not_stop_on_negative_largest_scale_by_default() {
+        let candidate = MultiscaleCandidate {
+            scale_index: 2,
+            position: (8, 8),
+            strength: -1.0,
+            dirty_value: -1.0,
+            peak_psf: 1.0,
+        };
+
+        assert_eq!(
+            casa_multiscale_divergence_stop_reason(candidate, 3, 10.0, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn multiscale_stops_when_component_grows_by_half_after_progress() {
+        let candidate = MultiscaleCandidate {
+            scale_index: 0,
+            position: (8, 8),
+            strength: 15.1,
+            dirty_value: 15.1,
+            peak_psf: 1.0,
+        };
+
+        assert_eq!(
+            casa_multiscale_divergence_stop_reason(candidate, 3, 10.0, 1),
+            Some(CleanStopReason::DivergenceDetected)
+        );
+        assert_eq!(
+            casa_multiscale_divergence_stop_reason(candidate, 3, 10.0, 0),
+            None
+        );
+    }
+
+    #[test]
     fn multiscale_scales_zero_matches_clark_single_component_behavior() {
         let samples = vec![
             (-140.0, -110.0, 0.0),
@@ -29803,6 +31748,206 @@ mod tests {
             assert!(
                 (cpu_value - metal_value).abs() < 2.0e-6,
                 "residual mismatch cpu={cpu_value} metal={metal_value}"
+            );
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn multiscale_metal_minor_cycle_runs_resident_backend() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [16, 16],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Multiscale,
+            multiscale_scales: vec![0.0, 3.0],
+            small_scale_bias: 0.6,
+            clean: CleanConfig {
+                niter: 6,
+                gain: 0.2,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                minor_cycle_length: 6,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((16, 16));
+        psf[(8, 8)] = 1.0;
+        psf[(7, 8)] = 0.12;
+        psf[(9, 8)] = -0.09;
+        psf[(8, 7)] = 0.08;
+        psf[(8, 9)] = -0.06;
+        let mut residual = Array2::<f32>::zeros((16, 16));
+        residual[(7, 8)] = 2.0;
+        residual[(8, 8)] = 2.4;
+        residual[(9, 8)] = 1.8;
+        residual[(4, 11)] = -1.2;
+        let mut state = build_multiscale_state(
+            &residual,
+            &psf,
+            &request.multiscale_scales,
+            request.small_scale_bias,
+            request.clean_mask.as_ref(),
+        );
+        let mut model = Array2::<f32>::zeros((16, 16));
+        let initial_peak = peak_abs_value_masked(&state.dirty_conv_scales[0], None);
+        let mut timings = ImagingStageTimings::default();
+        let outcome = run_multiscale_minor_cycle_metal(
+            &request,
+            &mut state,
+            &mut model,
+            &mut residual,
+            6,
+            0.0,
+            0.0,
+            &mut timings,
+        )
+        .expect("run Metal multiscale minor cycle");
+        assert!(outcome.actual_updates > 0);
+        assert!(model.iter().any(|value| value.abs() > 0.0));
+        assert!(peak_abs_value_masked(&state.dirty_conv_scales[0], None) < initial_peak);
+        assert!(timings.minor_cycle > Duration::ZERO);
+        assert!(timings.deconvolver_model_updates > 0);
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn multiscale_metal_cotton_schwab_tracks_cpu_model() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [16, 16],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Multiscale,
+            multiscale_scales: vec![0.0, 3.0],
+            small_scale_bias: 0.6,
+            clean: CleanConfig {
+                niter: 8,
+                gain: 0.18,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                minor_cycle_length: 8,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((16, 16));
+        psf[(8, 8)] = 1.0;
+        psf[(7, 8)] = 0.10;
+        psf[(9, 8)] = -0.08;
+        psf[(8, 7)] = 0.06;
+        psf[(8, 9)] = -0.05;
+        let psf_state = PsfState {
+            psf: psf.clone(),
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut residual = Array2::<f32>::zeros((16, 16));
+        for x in 5..11 {
+            for y in 6..10 {
+                residual[(x, y)] = 0.6 + 0.03 * (x as f32 - y as f32);
+            }
+        }
+        residual[(4, 12)] = -1.0;
+        let initial_residual = residual.clone();
+        let mut cpu_model = Array2::<f32>::zeros((16, 16));
+        let mut metal_model = Array2::<f32>::zeros((16, 16));
+        let mut cpu_timings = ImagingStageTimings::default();
+        let mut metal_timings = ImagingStageTimings::default();
+        let mut cpu_refresh = |current_model: &Array2<f32>,
+                               _timings: &mut ImagingStageTimings|
+         -> Result<Array2<f32>, ImagingError> {
+            Ok(&initial_residual - &fft_convolve_real(&psf, current_model))
+        };
+        let cpu = run_multiscale_cotton_schwab(
+            &request,
+            &psf_state,
+            &mut cpu_timings,
+            &mut cpu_refresh,
+            &mut cpu_model,
+            residual.clone(),
+            StandardMfsMinorCycleBackend::Cpu,
+            0.1,
+            peak_abs_value_masked(&residual, None),
+            Some(0.0),
+            &mut Vec::new(),
+        )
+        .expect("run CPU multiscale");
+        let mut metal_refresh = |current_model: &Array2<f32>,
+                                 _timings: &mut ImagingStageTimings|
+         -> Result<Array2<f32>, ImagingError> {
+            Ok(&initial_residual - &fft_convolve_real(&psf_state.psf, current_model))
+        };
+        let metal = run_multiscale_cotton_schwab(
+            &request,
+            &psf_state,
+            &mut metal_timings,
+            &mut metal_refresh,
+            &mut metal_model,
+            residual.clone(),
+            StandardMfsMinorCycleBackend::Metal,
+            0.1,
+            peak_abs_value_masked(&residual, None),
+            Some(0.0),
+            &mut Vec::new(),
+        )
+        .expect("run Metal multiscale");
+        assert_eq!(metal.minor_iterations, cpu.minor_iterations);
+        for (index, (&cpu_value, &metal_value)) in
+            cpu_model.iter().zip(metal_model.iter()).enumerate()
+        {
+            assert!(
+                (cpu_value - metal_value).abs() < 2.0e-4,
+                "model mismatch at {index}: cpu={cpu_value} metal={metal_value}"
+            );
+        }
+        for (index, (&cpu_value, &metal_value)) in
+            cpu.residual.iter().zip(metal.residual.iter()).enumerate()
+        {
+            assert!(
+                (cpu_value - metal_value).abs() < 2.0e-4,
+                "residual mismatch at {index}: cpu={cpu_value} metal={metal_value}"
             );
         }
     }

@@ -333,11 +333,22 @@ def build_plan(
     )
     if skip_casa.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.skip_casa must be 0/1, true/false, yes/no, or on/off")
+    skip_rust = os.environ.get("CASA_RS_BENCH_SKIP_RUST") or str_value(
+        run, "skip_rust", "0"
+    )
+    if skip_rust.lower() not in SUPPORTED_BOOLEAN_FLAGS:
+        raise HarnessError("run.skip_rust must be 0/1, true/false, yes/no, or on/off")
     skip_profile = os.environ.get("CASA_RS_BENCH_SKIP_PROFILE") or str_value(
         run, "skip_profile", "0"
     )
     if skip_profile.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.skip_profile must be 0/1, true/false, yes/no, or on/off")
+    reuse_rust_prefix = os.environ.get("CASA_RS_BENCH_REUSE_RUST_PREFIX") or str_value(
+        run, "reuse_rust_prefix", ""
+    )
+    reuse_casa_prefix = os.environ.get("CASA_RS_BENCH_REUSE_CASA_PREFIX") or str_value(
+        run, "reuse_casa_prefix", ""
+    )
     profile_repeats = os.environ.get("CASA_RS_BENCH_PROFILE_REPEATS") or str(
         int_value(run, "profile_repeats", repeats)
     )
@@ -405,11 +416,17 @@ def build_plan(
         "IMAGER_BENCH_MS_STAGING": ms_staging,
         "IMAGER_BENCH_PHASE_PROBE": phase_probe,
         "IMAGER_BENCH_SKIP_CASA": skip_casa,
+        "IMAGER_BENCH_SKIP_RUST": skip_rust,
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
+    if reuse_rust_prefix:
+        env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
+    if reuse_casa_prefix:
+        env["IMAGER_BENCH_REUSE_CASA_PREFIX"] = reuse_casa_prefix
     optional_imaging_env = {
         "standard_mfs_grid_threads": "IMAGER_BENCH_STANDARD_MFS_GRID_THREADS",
+        "standard_mfs_metal_minor_cycle_chunk": "IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK",
         "imaging_memory_target_mb": "IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB",
         "imaging_prepare_buffer_mb": "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
         "imaging_row_block_rows": "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
@@ -417,7 +434,10 @@ def build_plan(
     }
     for imaging_key, env_key in optional_imaging_env.items():
         if imaging.get(imaging_key) is not None:
-            if imaging_key == "standard_mfs_grid_threads":
+            if imaging_key in {
+                "standard_mfs_grid_threads",
+                "standard_mfs_metal_minor_cycle_chunk",
+            }:
                 env[env_key] = str(imaging[imaging_key])
             else:
                 env[env_key] = str(int_value(imaging, imaging_key, 0))
@@ -458,6 +478,11 @@ def build_plan(
             "standard_mfs_acceleration": str_value(
                 imaging, "standard_mfs_acceleration", "auto"
             ),
+            "standard_mfs_metal_minor_cycle_chunk": (
+                str(imaging["standard_mfs_metal_minor_cycle_chunk"])
+                if imaging.get("standard_mfs_metal_minor_cycle_chunk") is not None
+                else None
+            ),
             "hogbom_iteration_mode": hogbom_iteration_mode,
             "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
@@ -470,6 +495,10 @@ def build_plan(
             or str_value(run, "storage_label", "script-staged-tempdir"),
             "ms_staging": ms_staging,
             "phase_probe": phase_probe,
+            "skip_casa": skip_casa,
+            "skip_rust": skip_rust,
+            "reuse_rust_prefix": reuse_rust_prefix or None,
+            "reuse_casa_prefix": reuse_casa_prefix or None,
             "env": extra_env,
             "stream_log": (
                 bool(stream_log_override)
@@ -857,6 +886,13 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         elif name == "standard_mfs_multiscale_minor_cycle_summary":
             buckets["minor_cycle_diagnostics"].append(parsed)
             buckets["multiscale_minor_cycle_diagnostics"].append(parsed)
+            if parsed.get("fields", {}).get("backend") != "cpu":
+                buckets["metal_diagnostics"].append(parsed)
+        elif name in {
+            "standard_mfs_multiscale_metal_minor_cycle_summary",
+            "standard_mfs_multiscale_metal_indirect_summary",
+        }:
+            buckets["metal_diagnostics"].append(parsed)
         elif name == "standard_mfs_clean_residual_refresh_summary":
             buckets["clean_residual_refresh_diagnostics"].append(parsed)
             residual_backend = parsed.get("fields", {}).get("residual_backend")

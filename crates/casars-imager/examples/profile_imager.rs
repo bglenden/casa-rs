@@ -43,6 +43,7 @@ struct Options {
     deconvolver: Deconvolver,
     standard_mfs_acceleration: StandardMfsAccelerationPolicy,
     standard_mfs_grid_threads: Option<String>,
+    standard_mfs_metal_minor_cycle_chunk: Option<String>,
     imaging_memory_target_mb: Option<usize>,
     imaging_prepare_buffer_mb: Option<usize>,
     imaging_row_block_rows: Option<usize>,
@@ -412,6 +413,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         standard_mfs_tile_anchor: None,
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
+        standard_mfs_metal_minor_cycle_chunk: options.standard_mfs_metal_minor_cycle_chunk.clone(),
         standard_mfs_metal_grouped_input_cache: None,
         standard_mfs_memory_target_mb: None,
         standard_mfs_prepare_buffer_mb: None,
@@ -548,6 +550,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut deconvolver = Deconvolver::Hogbom;
     let mut standard_mfs_acceleration = StandardMfsAccelerationPolicy::Auto;
     let mut standard_mfs_grid_threads = None::<String>;
+    let mut standard_mfs_metal_minor_cycle_chunk = None::<String>;
     let mut imaging_memory_target_mb = None::<usize>;
     let mut imaging_prepare_buffer_mb = None::<usize>;
     let mut imaging_row_block_rows = None::<usize>;
@@ -628,6 +631,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--standard-mfs-grid-threads" => {
                 standard_mfs_grid_threads =
                     Some(next_value(&mut args, "--standard-mfs-grid-threads")?)
+            }
+            "--standard-mfs-metal-minor-cycle-chunk" => {
+                let value = next_value(&mut args, "--standard-mfs-metal-minor-cycle-chunk")?;
+                validate_metal_minor_cycle_chunk(&value)?;
+                standard_mfs_metal_minor_cycle_chunk = Some(value);
             }
             "--imaging-memory-target-mb" => {
                 imaging_memory_target_mb =
@@ -729,6 +737,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         deconvolver,
         standard_mfs_acceleration,
         standard_mfs_grid_threads,
+        standard_mfs_metal_minor_cycle_chunk,
         imaging_memory_target_mb,
         imaging_prepare_buffer_mb,
         imaging_row_block_rows,
@@ -870,6 +879,31 @@ fn parse_standard_mfs_acceleration(text: &str) -> Result<StandardMfsAcceleration
     }
 }
 
+fn validate_metal_minor_cycle_chunk(text: &str) -> Result<(), String> {
+    let value = text.trim();
+    if value.eq_ignore_ascii_case("auto")
+        || value.eq_ignore_ascii_case("full")
+        || parse_metal_minor_cycle_auto_target_ms(value).is_some()
+    {
+        return Ok(());
+    }
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Ok(()),
+        _ => Err(format!(
+            "unsupported --standard-mfs-metal-minor-cycle-chunk value {text:?}; expected auto, auto:<positive-ms>, full, or a positive integer"
+        )),
+    }
+}
+
+fn parse_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f64> {
+    let lowercase = value.trim().to_ascii_lowercase();
+    let target_ms = lowercase.strip_prefix("auto:")?.parse::<f64>().ok()?;
+    target_ms
+        .is_finite()
+        .then_some(target_ms)
+        .filter(|value| *value > 0.0)
+}
+
 fn parse_hogbom_iteration_mode(text: &str) -> Result<HogbomIterationMode, String> {
     match text.to_ascii_lowercase().as_str() {
         "strict" => Ok(HogbomIterationMode::Strict),
@@ -940,6 +974,7 @@ Options:
   --deconvolver hogbom|clark|multiscale|mtmfs
   --standard-mfs-acceleration auto|cpu|multi-cpu|metal
   --standard-mfs-grid-threads N|auto
+  --standard-mfs-metal-minor-cycle-chunk auto|auto:MS|full|N
   --imaging-memory-target-mb N
   --imaging-prepare-buffer-mb N
   --imaging-row-block-rows N
