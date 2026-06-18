@@ -45,6 +45,12 @@ const METAL_MULTISCALE_WAVE_TAIL_MILLI: u128 = 200;
 const METAL_MULTISCALE_WORKER_OVERHEAD_MILLI: u128 = 100;
 const METAL_WAVE_TAIL_MILLI: u128 = 50;
 const METAL_WORKER_OVERHEAD_MILLI: u128 = 25;
+const METAL_MULTISCALE_MIN_COMMAND_TARGET_MS: u64 = 2_000;
+const METAL_MULTISCALE_MAX_COMMAND_TARGET_MS: u64 = 16_000;
+const METAL_MULTISCALE_REFERENCE_ITERATIONS: usize = 1_000;
+const METAL_MULTISCALE_REFERENCE_PIXELS: usize = 1024 * 1024;
+const METAL_MULTISCALE_REFERENCE_SCALES: usize = 3;
+const METAL_MULTISCALE_REFERENCE_WORKERS: usize = 4;
 
 impl ImagingWorkerPlanInput {
     fn normalized(self) -> Self {
@@ -209,9 +215,38 @@ fn metal_multiscale_minor_cycle_command_target_ms(
     input: ImagingWorkerPlanInput,
     workers: usize,
 ) -> u64 {
-    const BASE_TARGET_MS: u64 = 2_000;
-    let _ = (input, workers);
-    BASE_TARGET_MS
+    let iteration_scale = sqrt_ratio(
+        input.work_iterations_per_plane,
+        METAL_MULTISCALE_REFERENCE_ITERATIONS,
+    )
+    .max(1.0);
+    let pixel_scale = sqrt_ratio(input.image_pixels, METAL_MULTISCALE_REFERENCE_PIXELS);
+    let scale_scale = sqrt_ratio(input.scale_count, METAL_MULTISCALE_REFERENCE_SCALES).max(1.0);
+    let worker_scale = match input.parallelism {
+        ImagingWorkerParallelism::PlaneParallel => {
+            sqrt_ratio(workers.max(1), METAL_MULTISCALE_REFERENCE_WORKERS).clamp(1.0, 1.6)
+        }
+        ImagingWorkerParallelism::IntraPlane => 1.0,
+    };
+    let modeled_ms = METAL_MULTISCALE_MIN_COMMAND_TARGET_MS as f64
+        * iteration_scale
+        * pixel_scale
+        * scale_scale
+        * worker_scale;
+    round_command_target_ms(modeled_ms)
+}
+
+fn sqrt_ratio(value: usize, reference: usize) -> f64 {
+    ((value.max(1) as f64) / (reference.max(1) as f64)).sqrt()
+}
+
+fn round_command_target_ms(modeled_ms: f64) -> u64 {
+    const QUANTUM_MS: f64 = 500.0;
+    let rounded = ((modeled_ms - 1.0e-9) / QUANTUM_MS).ceil() * QUANTUM_MS;
+    (rounded as u64).clamp(
+        METAL_MULTISCALE_MIN_COMMAND_TARGET_MS,
+        METAL_MULTISCALE_MAX_COMMAND_TARGET_MS,
+    )
 }
 
 fn plane_parallel_contention_milli(input: ImagingWorkerPlanInput, workers: usize) -> u128 {
@@ -318,7 +353,7 @@ mod tests {
 
         assert_eq!(plan.worker_count, 4, "{plan:?}");
         assert!(plan.candidate_costs.contains("8:cost="));
-        assert_eq!(plan.backend_command_target_ms, Some(2_000));
+        assert_eq!(plan.backend_command_target_ms, Some(13_000));
     }
 
     #[test]
@@ -336,7 +371,7 @@ mod tests {
 
         assert_eq!(plan.worker_count, 10, "{plan:?}");
         assert_eq!(plan.model, "plane_parallel_metal_multiscale_throughput_v2");
-        assert_eq!(plan.backend_command_target_ms, Some(2_000));
+        assert_eq!(plan.backend_command_target_ms, Some(10_000));
     }
 
     #[test]

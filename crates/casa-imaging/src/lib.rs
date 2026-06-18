@@ -163,7 +163,8 @@ struct HogbomMetalCycleParams {
     threshold_jy_per_beam: f32,
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
-    _pad0: [u32; 2],
+    trace_components: u32,
+    _pad0: u32,
 }
 
 #[repr(C)]
@@ -174,6 +175,22 @@ struct HogbomMetalCycleState {
     updates: u32,
     stopped: u32,
     stop_reason: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct HogbomMetalComponentTrace {
+    value: f32,
+    component: f32,
+    flat_index: u32,
+    update_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CleanMaskSummary {
+    has_mask: bool,
+    pixels: usize,
+    fingerprint: u64,
 }
 
 #[repr(C)]
@@ -941,7 +958,12 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     }
     ensure_standard_mfs_backend_available()?;
     if let GridderMode::Mosaic(config) = &request.gridder_mode {
-        return run_mosaic_dirty_imaging(request, config, total_started);
+        return run_mosaic_dirty_imaging(
+            request,
+            config,
+            StandardMfsExecutionConfig::default(),
+            total_started,
+        );
     }
 
     let gridder = StandardGridder::new(request.geometry)?;
@@ -987,7 +1009,7 @@ pub fn run_imaging_owned_with_execution_config(
     }
     ensure_standard_mfs_backend_available()?;
     if let GridderMode::Mosaic(config) = &request.gridder_mode {
-        return run_mosaic_dirty_imaging(&request, config, total_started);
+        return run_mosaic_dirty_imaging(&request, config, execution_config, total_started);
     }
 
     let gridder = StandardGridder::new(request.geometry)?;
@@ -1656,6 +1678,7 @@ impl SinglePlaneStreamPass {
 /// MeasurementSet reading or full-plane materialization policy.
 pub fn run_mosaic_mfs_from_single_plane_stream<F>(
     mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
     weight_density_mode: WeightDensityMode,
     mut replay_unweighted_blocks: F,
 ) -> Result<ImagingResult, ImagingError>
@@ -1919,7 +1942,7 @@ where
         run_cotton_schwab_controller_with_refresh(
             &clean_request,
             &psf_state,
-            StandardMfsMinorCycleBackend::Cpu,
+            execution_config.minor_cycle_backend,
             &mut stage_timings,
             &mut refresh_residual,
             &mut model,
@@ -5733,12 +5756,15 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
         }
         residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
-        update_divergence_state(
+        if let Some(stop_reason) = update_divergence_state(
             &mut warnings,
             &mut min_residual_peak_jy_per_beam,
             minor_peak,
             &mut divergence_warned,
-        );
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
         if reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
@@ -6612,6 +6638,7 @@ struct MosaicDirtyParallelContribution {
 fn run_mosaic_dirty_imaging(
     request: &ImagingRequest,
     config: &MosaicGridderConfig,
+    execution_config: StandardMfsExecutionConfig,
     total_started: Instant,
 ) -> Result<ImagingResult, ImagingError> {
     if request.w_term_mode != WTermMode::None {
@@ -7230,6 +7257,7 @@ fn run_mosaic_dirty_imaging(
             accumulated_residual,
             max_psf_sidelobe_level,
             initial_peak,
+            execution_config.minor_cycle_backend,
             &mut warnings,
             mosaic_metal_group_cache.as_deref(),
         )?
@@ -9240,9 +9268,16 @@ fn append_hogbom_trace(line: String) {
     let Some(path) = env::var_os("CASA_RS_HOGBOM_TRACE") else {
         return;
     };
+    static HOGBOM_TRACE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let Ok(_guard) = HOGBOM_TRACE_LOCK.get_or_init(|| Mutex::new(())).lock() else {
+        eprintln!("failed to append CASA_RS_HOGBOM_TRACE: trace lock poisoned");
+        return;
+    };
     match OpenOptions::new().create(true).append(true).open(path) {
         Ok(mut file) => {
-            let _ = writeln!(file, "{line}");
+            let mut record = line;
+            record.push('\n');
+            let _ = file.write_all(record.as_bytes());
         }
         Err(error) => {
             eprintln!("failed to append CASA_RS_HOGBOM_TRACE: {error}");
@@ -9816,6 +9851,39 @@ fn request_for_mosaic_clean_mask(
         w_term_mode: request.w_term_mode,
         w_project_planes: request.w_project_planes,
         compatibility: request.compatibility,
+    }
+}
+
+fn clean_mask_summary(
+    clean_mask: Option<&Array2<bool>>,
+    fallback_shape: (usize, usize),
+) -> CleanMaskSummary {
+    let Some(clean_mask) = clean_mask else {
+        return CleanMaskSummary {
+            has_mask: false,
+            pixels: fallback_shape.0.saturating_mul(fallback_shape.1),
+            fingerprint: 0,
+        };
+    };
+
+    let mut pixels = 0usize;
+    let mut fingerprint = 0xcbf29ce484222325u64;
+    fingerprint ^= clean_mask.dim().0 as u64;
+    fingerprint = fingerprint.wrapping_mul(0x100000001b3);
+    fingerprint ^= clean_mask.dim().1 as u64;
+    fingerprint = fingerprint.wrapping_mul(0x100000001b3);
+    for ((x, y), value) in clean_mask.indexed_iter() {
+        if !*value {
+            continue;
+        }
+        pixels = pixels.saturating_add(1);
+        fingerprint ^= ((x as u64) << 32) ^ y as u64;
+        fingerprint = fingerprint.wrapping_mul(0x100000001b3);
+    }
+    CleanMaskSummary {
+        has_mask: true,
+        pixels,
+        fingerprint,
     }
 }
 
@@ -12180,9 +12248,10 @@ fn run_mosaic_image_domain_controller(
     psf_state: &PsfState,
     stage_timings: &mut ImagingStageTimings,
     model: &mut Array2<f32>,
-    mut residual: Array2<f32>,
+    residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
     warnings: &mut Vec<String>,
     metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
 ) -> Result<CottonSchwabState, ImagingError> {
@@ -12191,251 +12260,36 @@ fn run_mosaic_image_domain_controller(
             "mosaic gridder does not support deconvolver='mtmfs'".to_string(),
         ));
     }
-    if request.deconvolver == Deconvolver::Clark {
-        let mut refresh_residual = |model: &Array2<f32>,
-                                    stage_timings: &mut ImagingStageTimings|
-         -> Result<Array2<f32>, ImagingError> {
-            compute_mosaic_residual(
-                request,
-                config,
-                gridder,
-                groups,
-                projector_cache,
-                conv_sampling,
-                model,
-                psf_state,
-                weight_image,
-                stage_timings,
-                metal_group_cache,
-            )
-        };
-        return run_clark_cotton_schwab(
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        compute_mosaic_residual(
             request,
-            psf_state,
-            stage_timings,
-            &mut refresh_residual,
+            config,
+            gridder,
+            groups,
+            projector_cache,
+            conv_sampling,
             model,
-            residual,
-            StandardMfsMinorCycleBackend::Cpu,
-            max_psf_sidelobe_level,
-            initial_peak,
-            None,
-            warnings,
-        );
-    }
-    let mut multiscale_state = (request.deconvolver == Deconvolver::Multiscale).then(|| {
-        let scales = effective_multiscale_scales(request);
-        build_multiscale_state(
-            &residual,
-            &psf_state.psf,
-            &scales,
-            request.small_scale_bias,
-            request.clean_mask.as_ref(),
+            psf_state,
+            weight_image,
+            stage_timings,
+            metal_group_cache,
         )
-    });
-    let mut minor_iterations = 0usize;
-    let mut reported_minor_iterations = 0usize;
-    let mut major_cycles = 0usize;
-    let mut clean_stop_reason = None::<CleanStopReason>;
-    let mut minor_cycle_traces = Vec::<MinorCycleTrace>::new();
-    let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
-    let mut min_residual_peak_jy_per_beam = initial_peak;
-    let mut divergence_warned = false;
-    let mut residual_needs_refresh = false;
-    while reported_minor_iterations < request.clean.niter {
-        if request
-            .clean
-            .major_cycle_limit
-            .is_some_and(|limit| major_cycles >= limit)
-        {
-            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
-            break;
-        }
-        let cycle_peak = match request.deconvolver {
-            Deconvolver::Multiscale => multiscale_state.as_ref().map(|state| {
-                peak_abs_value_masked(&state.dirty_conv_scales[0], request.clean_mask.as_ref())
-            }),
-            _ => peak_location_masked(&residual, request.clean_mask.as_ref())
-                .map(|(_, value)| value.abs()),
-        };
-        let Some(cycle_peak) = cycle_peak else {
-            clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
-            break;
-        };
-        let cycle_nsigma_threshold_jy_per_beam =
-            nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
-        if let Some(stop_reason) = tolerant_clean_stop_reason(
-            cycle_peak,
-            request.clean.threshold_jy_per_beam,
-            cycle_nsigma_threshold_jy_per_beam,
-        ) {
-            clean_stop_reason = Some(stop_reason);
-            break;
-        }
-
-        let remaining_reported = request.clean.niter - reported_minor_iterations;
-        let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
-        let start_reported_iteration = reported_minor_iterations;
-        final_cycle_threshold_jy_per_beam =
-            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
-
-        let (outcome, probe) = match request.deconvolver {
-            Deconvolver::Hogbom => (
-                run_hogbom_minor_cycle(
-                    request,
-                    psf_state,
-                    model,
-                    &mut residual,
-                    cycle_reported_niter,
-                    final_cycle_threshold_jy_per_beam,
-                    cycle_nsigma_threshold_jy_per_beam,
-                    StandardMfsMinorCycleBackend::Cpu,
-                    stage_timings,
-                )?,
-                MinorCycleProbe::default(),
-            ),
-            Deconvolver::Clark => {
-                unreachable!("mosaic Clark is handled by run_clark_cotton_schwab")
-            }
-            Deconvolver::Multiscale => {
-                let state = multiscale_state
-                    .as_mut()
-                    .expect("multiscale state should exist");
-                let probe = select_multiscale_candidate(
-                    state,
-                    request.clean_mask.as_ref(),
-                    ImageWindow::full(residual.dim()),
-                )
-                .map(|candidate| MinorCycleProbe {
-                    initial_scale_pixels: Some(
-                        effective_multiscale_scales(request)[candidate.scale_index],
-                    ),
-                    initial_candidate_strength_jy_per_beam: Some(candidate.strength),
-                    initial_candidate_position: Some([candidate.position.0, candidate.position.1]),
-                })
-                .unwrap_or_default();
-                (
-                    run_multiscale_minor_cycle(
-                        request,
-                        &psf_state.psf,
-                        state,
-                        model,
-                        &mut residual,
-                        cycle_reported_niter,
-                        final_cycle_threshold_jy_per_beam,
-                        cycle_nsigma_threshold_jy_per_beam,
-                        stage_timings,
-                    ),
-                    probe,
-                )
-            }
-            Deconvolver::Mtmfs => unreachable!("MTMFS mosaic was rejected above"),
-        };
-
-        let reported_after_outcome =
-            reported_minor_iterations.saturating_add(outcome.reported_updates);
-        minor_cycle_traces.push(make_minor_cycle_trace(
-            minor_cycle_traces.len(),
-            start_reported_iteration,
-            outcome,
-            cycle_peak,
-            &residual,
-            model,
-            probe,
-        ));
-        minor_iterations += outcome.actual_updates;
-        reported_minor_iterations = reported_after_outcome;
-        let mut stop_after_refresh = None::<CleanStopReason>;
-        if let Some(reason) = outcome.stop_reason {
-            match reason {
-                CleanStopReason::CycleThresholdReached if outcome.updated_model => {}
-                CleanStopReason::CycleThresholdReached => {
-                    clean_stop_reason = Some(reason);
-                }
-                _ => {
-                    clean_stop_reason = Some(reason);
-                    stop_after_refresh = Some(reason);
-                }
-            }
-        }
-        if !outcome.updated_model {
-            break;
-        }
-        residual_needs_refresh = true;
-        let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
-        update_divergence_state(
-            warnings,
-            &mut min_residual_peak_jy_per_beam,
-            minor_peak,
-            &mut divergence_warned,
-        );
-        if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
-            clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
-            break;
-        }
-
-        residual = compute_mosaic_residual(
-            request,
-            config,
-            gridder,
-            groups,
-            projector_cache,
-            conv_sampling,
-            model,
-            psf_state,
-            weight_image,
-            stage_timings,
-            metal_group_cache,
-        )?;
-        major_cycles += 1;
-        residual_needs_refresh = false;
-        if let Some(state) = multiscale_state.as_mut() {
-            refresh_multiscale_dirty_conv_scales(state, &residual);
-        }
-        let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
-        let refreshed_nsigma_threshold_jy_per_beam =
-            nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
-        if stop_after_refresh.is_some() {
-            break;
-        }
-        if let Some(stop_reason) = tolerant_clean_stop_reason(
-            refreshed_peak,
-            request.clean.threshold_jy_per_beam,
-            refreshed_nsigma_threshold_jy_per_beam,
-        ) {
-            clean_stop_reason = Some(stop_reason);
-            break;
-        }
-    }
-
-    if request.clean.niter > 0 && clean_stop_reason.is_none() {
-        clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
-    }
-    if residual_needs_refresh {
-        residual = compute_mosaic_residual(
-            request,
-            config,
-            gridder,
-            groups,
-            projector_cache,
-            conv_sampling,
-            model,
-            psf_state,
-            weight_image,
-            stage_timings,
-            metal_group_cache,
-        )?;
-        major_cycles += 1;
-    }
-
-    Ok(CottonSchwabState {
+    };
+    run_cotton_schwab_controller_with_refresh(
+        request,
+        psf_state,
+        minor_cycle_backend,
+        stage_timings,
+        &mut refresh_residual,
+        model,
         residual,
-        major_cycles,
-        minor_iterations,
-        clean_stop_reason,
-        minor_cycle_traces,
-        final_cycle_threshold_jy_per_beam,
-    })
+        max_psf_sidelobe_level,
+        initial_peak,
+        None,
+        warnings,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -12593,12 +12447,15 @@ fn run_multiscale_cotton_schwab_metal(
         residual = multiscale_state.dirty_conv_scales[0].clone();
         residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
-        update_divergence_state(
+        if let Some(stop_reason) = update_divergence_state(
             warnings,
             &mut min_residual_peak_jy_per_beam,
             minor_peak,
             &mut divergence_warned,
-        );
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
         if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
@@ -13206,31 +13063,15 @@ fn run_multiscale_minor_cycle_metal(
     for scale_index in 0..scale_count {
         let start = scale_index * cell_count;
         let end = start + cell_count;
-        if let Some(target) =
-            multiscale_state.dirty_conv_scales[scale_index].as_slice_memory_order_mut()
-        {
-            target.copy_from_slice(&dirty_slice[start..end]);
-        } else {
-            for x in 0..nx {
-                for y in 0..ny {
-                    multiscale_state.dirty_conv_scales[scale_index][(x, y)] =
-                        dirty_slice[start + x * ny + y];
-                }
-            }
-        }
+        copy_x_major_slice_to_array2(
+            &mut multiscale_state.dirty_conv_scales[scale_index],
+            &dirty_slice[start..end],
+        )?;
     }
     let model_slice = unsafe {
         slice::from_raw_parts(model_buffer.contents().as_ptr().cast::<f32>(), cell_count)
     };
-    if let Some(target) = model.as_slice_memory_order_mut() {
-        target.copy_from_slice(model_slice);
-    } else {
-        for x in 0..nx {
-            for y in 0..ny {
-                model[(x, y)] = model_slice[x * ny + y];
-            }
-        }
-    }
+    copy_x_major_slice_to_array2(model, model_slice)?;
     *residual = multiscale_state.dirty_conv_scales[0].clone();
     let scale_counts = unsafe {
         slice::from_raw_parts(
@@ -13570,6 +13411,23 @@ fn run_hogbom_cotton_schwab(
             cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
                 compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
             });
+        if profile::standard_mfs_profile_detail_enabled() {
+            let mask = clean_mask_summary(request.clean_mask.as_ref(), residual.dim());
+            eprintln!(
+                "standard_mfs_hogbom_cycle_start backend={:?} cycle_index={} start_reported_iteration={} cycle_reported_niter={} cycle_peak={:.9e} cycle_threshold={:.9e} nsigma_threshold={:.9e} max_psf_sidelobe={:.9e} has_mask={} mask_pixels={} mask_fingerprint={:016x}",
+                minor_cycle_backend,
+                minor_cycle_traces.len(),
+                start_reported_iteration,
+                cycle_reported_niter,
+                cycle_peak,
+                cycle_threshold_jy_per_beam,
+                cycle_nsigma_threshold_jy_per_beam,
+                max_psf_sidelobe_level,
+                mask.has_mask,
+                mask.pixels,
+                mask.fingerprint,
+            );
+        }
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_hogbom_minor_cycle(
             request,
@@ -13612,12 +13470,15 @@ fn run_hogbom_cotton_schwab(
         }
         residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
-        update_divergence_state(
+        if let Some(stop_reason) = update_divergence_state(
             warnings,
             &mut min_residual_peak_jy_per_beam,
             minor_peak,
             &mut divergence_warned,
-        );
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
         if reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
@@ -13716,6 +13577,7 @@ fn run_hogbom_minor_cycle_cpu(
     let mut peak_searches = 0usize;
     let mut subtract_updates = 0usize;
     let image_pixels = residual.len();
+    let mut first_peak = None::<((usize, usize), f32)>;
     while cycle_component_updates < cycle_component_budget {
         let peak_started = Instant::now();
         let peak = hclean_peak_location_masked(residual, request.clean_mask.as_ref());
@@ -13725,6 +13587,9 @@ fn run_hogbom_minor_cycle_cpu(
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
+        if first_peak.is_none() {
+            first_peak = Some(((peak_x, peak_y), peak_value));
+        }
         let peak_abs = peak_value.abs();
         if let Some(reason) = minor_cycle_stop_reason(
             peak_abs,
@@ -13737,8 +13602,8 @@ fn run_hogbom_minor_cycle_cpu(
         }
         let component = request.clean.gain * peak_value;
         append_hogbom_trace(format!(
-            "{{\"event\":\"component\",\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e}}}",
-            cycle_component_updates, peak_x, peak_y, peak_value, component
+            "{{\"event\":\"component\",\"backend\":\"cpu\",\"reffreq_hz\":{:.17e},\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e}}}",
+            request.reffreq_hz, cycle_component_updates, peak_x, peak_y, peak_value, component
         ));
         let model_update_started = Instant::now();
         model[(peak_x, peak_y)] += component;
@@ -13768,13 +13633,23 @@ fn run_hogbom_minor_cycle_cpu(
     }
     let minor_elapsed = minor_started.elapsed();
     if collect_profile {
+        let mask = clean_mask_summary(request.clean_mask.as_ref(), residual.dim());
+        let (first_peak_abs, first_peak_x, first_peak_y) = first_peak
+            .map(|((x, y), value)| (value.abs(), x, y))
+            .unwrap_or((0.0, 0, 0));
         eprintln!(
-            "standard_mfs_hogbom_minor_cycle_summary backend=cpu updates={} reported_budget={} component_budget={} stop_reason={:?} image_pixels={} peak_searches={} subtract_updates={} peak_scan_estimated_bytes={} peak_search_ms={:.3} subtract_ms={:.3} total_ms={:.3}",
+            "standard_mfs_hogbom_minor_cycle_summary backend=cpu updates={} reported_budget={} component_budget={} stop_reason={:?} image_pixels={} has_mask={} mask_pixels={} mask_fingerprint={:016x} first_peak_abs={:.9e} first_peak_x={} first_peak_y={} peak_searches={} subtract_updates={} peak_scan_estimated_bytes={} peak_search_ms={:.3} subtract_ms={:.3} total_ms={:.3}",
             cycle_component_updates,
             cycle_reported_niter,
             cycle_component_budget,
             stop_reason,
             image_pixels,
+            mask.has_mask,
+            mask.pixels,
+            mask.fingerprint,
+            first_peak_abs,
+            first_peak_x,
+            first_peak_y,
             peak_searches,
             subtract_updates,
             peak_searches
@@ -13825,6 +13700,59 @@ fn hogbom_flatten_array2_x_major(values: &Array2<f32>) -> Vec<f32> {
         }
     }
     flattened
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn copy_x_major_slice_to_array2(
+    target: &mut Array2<f32>,
+    values: &[f32],
+) -> Result<(), ImagingError> {
+    let (nx, ny) = target.dim();
+    if values.len() != nx.saturating_mul(ny) {
+        return Err(ImagingError::InvalidRequest(format!(
+            "Metal x-major readback length mismatch: got {} values for array shape {}x{}",
+            values.len(),
+            nx,
+            ny
+        )));
+    }
+    if target.is_standard_layout()
+        && let Some(target_values) = target.as_slice_memory_order_mut()
+    {
+        target_values.copy_from_slice(values);
+        return Ok(());
+    }
+    for x in 0..nx {
+        for y in 0..ny {
+            target[(x, y)] = values[x * ny + y];
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn array2_max_abs_diff_with_first(
+    lhs: &Array2<f32>,
+    rhs: &Array2<f32>,
+) -> (f32, Option<((usize, usize), f32, f32)>) {
+    let (nx, ny) = lhs.dim();
+    if rhs.dim() != (nx, ny) {
+        return (f32::INFINITY, None);
+    }
+    let mut max_abs = 0.0f32;
+    let mut first = None;
+    for x in 0..nx {
+        for y in 0..ny {
+            let diff = (lhs[(x, y)] - rhs[(x, y)]).abs();
+            if diff > max_abs {
+                max_abs = diff;
+            }
+            if diff > 1.0e-5 && first.is_none() {
+                first = Some(((x, y), lhs[(x, y)], rhs[(x, y)]));
+            }
+        }
+    }
+    (max_abs, first)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -13898,16 +13826,15 @@ fn run_hogbom_minor_cycle_metal(
 
     let total_started = Instant::now();
     let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    let verify_cpu = env::var_os("CASA_RS_HOGBOM_METAL_VERIFY_CPU").is_some();
     let setup_started = Instant::now();
-    let cpu_reference_peak = hclean_peak_location_masked(residual, request.clean_mask.as_ref());
+    let cpu_reference_peak = collect_profile
+        .then(|| hclean_peak_location_masked(residual, request.clean_mask.as_ref()))
+        .flatten();
     let (cpu_reference_peak_abs, cpu_reference_peak_x, cpu_reference_peak_y) = cpu_reference_peak
         .map(|((x, y), value)| (value.abs(), x, y))
         .unwrap_or((0.0, 0, 0));
-    let clean_mask_pixels = request
-        .clean_mask
-        .as_ref()
-        .map(|mask| mask.iter().filter(|value| **value).count())
-        .unwrap_or(cell_count);
+    let clean_mask = clean_mask_summary(request.clean_mask.as_ref(), (nx, ny));
     let residual_values = hogbom_flatten_array2_x_major(residual);
     let psf_values = hogbom_flatten_array2_x_major(&psf_state.psf);
     let mask_values = request.clean_mask.as_ref().map(|mask| {
@@ -13920,6 +13847,7 @@ fn run_hogbom_minor_cycle_metal(
         }
         values
     });
+    let cpu_verify_inputs = verify_cpu.then(|| (model.clone(), residual.clone()));
     let setup_elapsed = setup_started.elapsed();
 
     let device_queue_started = Instant::now();
@@ -14020,8 +13948,23 @@ fn run_hogbom_minor_cycle_metal(
         threshold_jy_per_beam: request.clean.threshold_jy_per_beam,
         cycle_threshold_jy_per_beam,
         nsigma_threshold_jy_per_beam,
-        _pad0: [0; 2],
+        trace_components: u32::from(env::var_os("CASA_RS_HOGBOM_TRACE").is_some()),
+        _pad0: 0,
     };
+    let trace_storage = vec![
+        HogbomMetalComponentTrace::default();
+        if cycle_params.trace_components != 0 {
+            cycle_component_budget.max(1)
+        } else {
+            1
+        }
+    ];
+    let trace_buffer = hogbom_metal_buffer_from_slice(
+        &device,
+        trace_storage.as_slice(),
+        storage_options,
+        "component trace",
+    )?;
     let cycle_started = Instant::now();
     let (
         cycle_state,
@@ -14044,6 +13987,7 @@ fn run_hogbom_minor_cycle_metal(
         &candidate_a,
         &candidate_b,
         &selected_peak_buffer,
+        &trace_buffer,
         storage_options,
         cycle_params,
         first_candidate_count,
@@ -14068,40 +14012,76 @@ fn run_hogbom_minor_cycle_metal(
             cell_count,
         )
     };
-    if let Some(target) = residual.as_slice_memory_order_mut() {
-        target.copy_from_slice(residual_slice);
-    } else {
-        for x in 0..nx {
-            for y in 0..ny {
-                residual[(x, y)] = residual_slice[x * ny + y];
-            }
-        }
-    }
+    copy_x_major_slice_to_array2(residual, residual_slice)?;
     let model_slice = unsafe {
         slice::from_raw_parts(model_buffer.contents().as_ptr().cast::<f32>(), cell_count)
     };
-    if let Some(target) = model.as_slice_memory_order_mut() {
-        target.copy_from_slice(model_slice);
-    } else {
-        for x in 0..nx {
-            for y in 0..ny {
-                model[(x, y)] = model_slice[x * ny + y];
-            }
+    copy_x_major_slice_to_array2(model, model_slice)?;
+    readback_elapsed += readback_started.elapsed();
+    if cycle_params.trace_components != 0 {
+        let trace_slice = unsafe {
+            slice::from_raw_parts(
+                trace_buffer
+                    .contents()
+                    .as_ptr()
+                    .cast::<HogbomMetalComponentTrace>(),
+                trace_storage.len(),
+            )
+        };
+        for trace in trace_slice.iter().take(cycle_component_updates) {
+            let x = usize::try_from(trace.flat_index)
+                .ok()
+                .map(|flat| flat / ny)
+                .unwrap_or(0);
+            let y = usize::try_from(trace.flat_index)
+                .ok()
+                .map(|flat| flat % ny)
+                .unwrap_or(0);
+            append_hogbom_trace(format!(
+                "{{\"event\":\"component\",\"backend\":\"metal\",\"reffreq_hz\":{:.17e},\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e}}}",
+                request.reffreq_hz, trace.update_index, x, y, trace.value, trace.component
+            ));
         }
     }
-    readback_elapsed += readback_started.elapsed();
+    if let Some((mut cpu_model, mut cpu_residual)) = cpu_verify_inputs {
+        let mut cpu_timings = ImagingStageTimings::default();
+        let cpu_outcome = run_hogbom_minor_cycle_cpu(
+            request,
+            psf_state,
+            &mut cpu_model,
+            &mut cpu_residual,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            &mut cpu_timings,
+        );
+        let model_diff = array2_max_abs_diff_with_first(model, &cpu_model);
+        let residual_diff = array2_max_abs_diff_with_first(residual, &cpu_residual);
+        eprintln!(
+            "hogbom_metal_cpu_verify metal_updates={} cpu_updates={} metal_stop={:?} cpu_stop={:?} model_max_abs_diff={:.9e} model_first_diff={:?} residual_max_abs_diff={:.9e} residual_first_diff={:?}",
+            cycle_component_updates,
+            cpu_outcome.actual_updates,
+            stop_reason,
+            cpu_outcome.stop_reason,
+            model_diff.0,
+            model_diff.1,
+            residual_diff.0,
+            residual_diff.1,
+        );
+    }
 
     let total_elapsed = total_started.elapsed();
     if collect_profile {
         eprintln!(
-            "standard_mfs_hogbom_minor_cycle_summary backend=metal_resident_fused_peak updates={} reported_budget={} component_budget={} stop_reason={:?} image_pixels={} has_mask={} mask_pixels={} cpu_reference_peak_abs={:.9e} cpu_reference_peak_x={} cpu_reference_peak_y={} peak_searches={} subtract_updates={} initial_peak_dispatches={} reduce_dispatches={} select_dispatches={} subtract_peak_dispatches={} command_buffers={} first_candidate_count={} candidate_bytes={} last_peak_abs={:.9e} last_peak_value={:.9e} last_peak_index={} setup_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_ms={:.3} cycle_wall_ms={:.3} cycle_gpu_ms={:.3} cycle_host_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
+            "standard_mfs_hogbom_minor_cycle_summary backend=metal_resident_fused_peak updates={} reported_budget={} component_budget={} stop_reason={:?} image_pixels={} has_mask={} mask_pixels={} mask_fingerprint={:016x} cpu_reference_peak_abs={:.9e} cpu_reference_peak_x={} cpu_reference_peak_y={} peak_searches={} subtract_updates={} initial_peak_dispatches={} reduce_dispatches={} select_dispatches={} subtract_peak_dispatches={} command_buffers={} first_candidate_count={} candidate_bytes={} last_peak_abs={:.9e} last_peak_value={:.9e} last_peak_index={} setup_ms={:.3} device_queue_ms={:.3} shader_compile_ms={:.3} pipeline_ms={:.3} buffer_ms={:.3} cycle_wall_ms={:.3} cycle_gpu_ms={:.3} cycle_host_wait_ms={:.3} readback_ms={:.3} total_ms={:.3}",
             cycle_component_updates,
             cycle_reported_niter,
             cycle_component_budget,
             stop_reason,
             cell_count,
-            request.clean_mask.is_some(),
-            clean_mask_pixels,
+            clean_mask.has_mask,
+            clean_mask.pixels,
+            clean_mask.fingerprint,
             cpu_reference_peak_abs,
             cpu_reference_peak_x,
             cpu_reference_peak_y,
@@ -14516,6 +14496,7 @@ fn hogbom_metal_run_resident_cycle(
     candidate_a: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
     candidate_b: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
     selected_peak_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    trace_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
     storage_options: objc2_metal::MTLResourceOptions,
     params: HogbomMetalCycleParams,
     first_candidate_count: usize,
@@ -14645,6 +14626,7 @@ fn hogbom_metal_run_resident_cycle(
             &state_buffer,
             model_buffer,
             &cycle_params_buffer,
+            trace_buffer,
         )?;
         select_dispatches = select_dispatches.saturating_add(1);
 
@@ -14700,6 +14682,7 @@ fn hogbom_metal_run_resident_cycle(
                 &state_buffer,
                 model_buffer,
                 &cycle_params_buffer,
+                trace_buffer,
             )?;
             select_dispatches = select_dispatches.saturating_add(1);
         }
@@ -14805,6 +14788,7 @@ fn hogbom_metal_encode_select_peak(
     state_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
     model_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
     cycle_params_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    trace_buffer: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>,
 ) -> Result<(), ImagingError> {
     use objc2_metal::{MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLSize};
 
@@ -14821,6 +14805,7 @@ fn hogbom_metal_encode_select_peak(
         select_encoder.setBuffer_offset_atIndex(Some(state_buffer), 0, 2);
         select_encoder.setBuffer_offset_atIndex(Some(model_buffer), 0, 3);
         select_encoder.setBuffer_offset_atIndex(Some(cycle_params_buffer), 0, 4);
+        select_encoder.setBuffer_offset_atIndex(Some(trace_buffer), 0, 5);
     }
     select_encoder.dispatchThreads_threadsPerThreadgroup(
         MTLSize {
@@ -14863,6 +14848,7 @@ fn hogbom_metal_threads_per_group(
 const MULTISCALE_MINOR_CYCLE_METAL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
+#pragma clang fp contract(off)
 
 struct HogbomPeakCandidate {
     float abs_value;
@@ -15269,13 +15255,15 @@ kernel void multiscale_subtract_and_find_next(
             kernel_x < int(params.nx) && kernel_y < int(params.ny)) {
             const uint kernel_index = uint(kernel_x) * params.ny + uint(kernel_y);
             if (mapped.scale_index == 0u) {
-                model[mapped.flat_index] += state->component *
-                    scale_kernels[selected_scale * params.cell_count + kernel_index];
+                const float model_delta =
+                    state->component * scale_kernels[selected_scale * params.cell_count + kernel_index];
+                model[mapped.flat_index] = model[mapped.flat_index] + model_delta;
             }
             const uint psf_index =
                 ((mapped.scale_index * params.scale_count + selected_scale) * params.cell_count) +
                 kernel_index;
-            dirty_scales[mapped.combined_index] -= state->component * psf_scales[psf_index];
+            const float dirty_delta = state->component * psf_scales[psf_index];
+            dirty_scales[mapped.combined_index] = dirty_scales[mapped.combined_index] - dirty_delta;
         }
     }
 
@@ -15304,6 +15292,7 @@ kernel void multiscale_subtract_and_find_next(
 const HOGBOM_MINOR_CYCLE_METAL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
+#pragma clang fp contract(off)
 
 struct HogbomPeakCandidate {
     float abs_value;
@@ -15330,7 +15319,8 @@ struct HogbomCycleParams {
     float threshold_jy_per_beam;
     float cycle_threshold_jy_per_beam;
     float nsigma_threshold_jy_per_beam;
-    uint2 _pad0;
+    uint trace_components;
+    uint _pad0;
 };
 
 struct HogbomCycleState {
@@ -15339,6 +15329,13 @@ struct HogbomCycleState {
     uint updates;
     uint stopped;
     uint stop_reason;
+};
+
+struct HogbomComponentTrace {
+    float value;
+    float component;
+    uint flat_index;
+    uint update_index;
 };
 
 static inline uint hogbom_order_key(uint flat_index, uint ny, uint nx) {
@@ -15483,6 +15480,7 @@ kernel void hogbom_select_peak_from_candidate(
     device HogbomCycleState *state [[buffer(2)]],
     device float *model [[buffer(3)]],
     constant HogbomCycleParams &params [[buffer(4)]],
+    device HogbomComponentTrace *component_trace [[buffer(5)]],
     uint thread_index [[thread_position_in_grid]]
 ) {
     if (thread_index != 0u || state->stopped != 0u) {
@@ -15504,7 +15502,14 @@ kernel void hogbom_select_peak_from_candidate(
     }
     const float component = params.gain * peak.value;
     state->component = component;
-    state->updates += 1u;
+    const uint update_index = state->updates;
+    if (params.trace_components != 0u && update_index < params.component_budget) {
+        component_trace[update_index].value = peak.value;
+        component_trace[update_index].component = component;
+        component_trace[update_index].flat_index = peak.flat_index;
+        component_trace[update_index].update_index = update_index;
+    }
+    state->updates = update_index + 1u;
     model[peak.flat_index] += component;
 }
 
@@ -15534,7 +15539,9 @@ kernel void hogbom_subtract_psf_and_find_next_peak(
             if (kernel_x >= 0 && kernel_y >= 0 &&
                 kernel_x < int(params.nx) && kernel_y < int(params.ny)) {
                 const uint kernel_index = uint(kernel_x) * params.ny + uint(kernel_y);
-                residual[thread_index] -= state->component * psf[kernel_index];
+                float delta = state->component * psf[kernel_index];
+                float updated = residual[thread_index] - delta;
+                residual[thread_index] = updated;
             }
         }
         if (params.has_mask == 0u || mask[thread_index] != 0u) {
@@ -15568,6 +15575,7 @@ kernel void hogbom_subtract_psf_and_find_next_peak(
 const CLARK_MINOR_CYCLE_METAL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
+#pragma clang fp contract(off)
 
 struct ClarkPeakCandidate {
     float abs_value;
@@ -15803,7 +15811,8 @@ kernel void clark_subtract_active_and_find_next_peak(
             if (patch_x >= 0 && patch_y >= 0 &&
                 patch_x < int(params.patch_nx) && patch_y < int(params.patch_ny)) {
                 const uint patch_index = uint(patch_x) * params.patch_ny + uint(patch_y);
-                active_values[active_index] -= state->component * patch[patch_index];
+                const float active_delta = state->component * patch[patch_index];
+                active_values[active_index] = active_values[active_index] - active_delta;
             }
             const float value = active_values[active_index];
             candidate.abs_value = fabs(value);
@@ -16379,15 +16388,7 @@ fn run_clark_minor_cycle_metal(
     let model_slice = unsafe {
         slice::from_raw_parts(model_buffer.contents().as_ptr().cast::<f32>(), cell_count)
     };
-    if let Some(target) = model.as_slice_memory_order_mut() {
-        target.copy_from_slice(model_slice);
-    } else {
-        for x in 0..nx {
-            for y in 0..ny {
-                model[(x, y)] = model_slice[x * ny + y];
-            }
-        }
-    }
+    copy_x_major_slice_to_array2(model, model_slice)?;
     readback_elapsed += readback_started.elapsed();
 
     let minor_elapsed = total_started.elapsed();
@@ -16926,208 +16927,6 @@ fn casa_clark_step_niter(cycle_reported_niter: usize) -> usize {
 
 const CASA_CLARK_MAX_MAJOR_CYCLES: usize = 10;
 
-#[allow(clippy::too_many_arguments)]
-fn run_multiscale_minor_cycle(
-    request: &ImagingRequest,
-    psf: &Array2<f32>,
-    multiscale_state: &mut MultiscaleState,
-    model: &mut Array2<f32>,
-    residual: &mut Array2<f32>,
-    cycle_reported_niter: usize,
-    cycle_threshold_jy_per_beam: f32,
-    nsigma_threshold_jy_per_beam: f32,
-    stage_timings: &mut ImagingStageTimings,
-) -> HogbomMinorCycleOutcome {
-    let full_window = ImageWindow::full(residual.dim());
-    let mut stats = MultiscaleMinorCycleStats::new(multiscale_state.dirty_conv_scales.len());
-    let mut peak_search_elapsed = Duration::ZERO;
-    let mut model_update_elapsed = Duration::ZERO;
-    let mut subtract_elapsed = Duration::ZERO;
-    let cycle_candidate_started = Instant::now();
-    let Some(cycle_candidate) =
-        select_multiscale_candidate(multiscale_state, request.clean_mask.as_ref(), full_window)
-    else {
-        peak_search_elapsed += cycle_candidate_started.elapsed();
-        stats.record_peak_search(full_window, residual.dim());
-        stats.add_to_stage_timings(stage_timings);
-        log_standard_mfs_multiscale_minor_cycle_summary(
-            "cpu",
-            0,
-            cycle_reported_niter,
-            Some(CleanStopReason::NoCleanablePixels),
-            &stats,
-            peak_search_elapsed,
-            model_update_elapsed,
-            subtract_elapsed,
-            Duration::ZERO,
-        );
-        return HogbomMinorCycleOutcome {
-            updated_model: false,
-            actual_updates: 0,
-            reported_updates: 0,
-            stop_reason: Some(CleanStopReason::NoCleanablePixels),
-            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
-            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
-        };
-    };
-    peak_search_elapsed += cycle_candidate_started.elapsed();
-    stats.record_peak_search(full_window, residual.dim());
-    let cycle_peak = peak_abs_value_masked(
-        &multiscale_state.dirty_conv_scales[0],
-        request.clean_mask.as_ref(),
-    );
-    let initial_cycle_component = cycle_candidate.strength.abs();
-    if let Some(reason) = minor_cycle_stop_reason(
-        cycle_peak,
-        request.clean.threshold_jy_per_beam,
-        cycle_threshold_jy_per_beam,
-        nsigma_threshold_jy_per_beam,
-    ) {
-        stats.add_to_stage_timings(stage_timings);
-        log_standard_mfs_multiscale_minor_cycle_summary(
-            "cpu",
-            0,
-            cycle_reported_niter,
-            Some(reason),
-            &stats,
-            peak_search_elapsed,
-            model_update_elapsed,
-            subtract_elapsed,
-            Duration::ZERO,
-        );
-        return HogbomMinorCycleOutcome {
-            updated_model: false,
-            actual_updates: 0,
-            reported_updates: 0,
-            stop_reason: Some(reason),
-            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
-            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
-        };
-    }
-
-    let mut cycle_component_updates = 0usize;
-    let mut updated_model = false;
-    let mut stop_reason = None;
-    let mut delta_model = Array2::<f32>::zeros(model.dim());
-    let mut dirty_window = full_window;
-    let minor_started = Instant::now();
-    while cycle_component_updates < cycle_reported_niter {
-        let candidate_started = Instant::now();
-        let Some(candidate) = select_multiscale_candidate(
-            multiscale_state,
-            request.clean_mask.as_ref(),
-            dirty_window,
-        ) else {
-            peak_search_elapsed += candidate_started.elapsed();
-            stats.record_peak_search(dirty_window, residual.dim());
-            stop_reason = Some(CleanStopReason::NoCleanablePixels);
-            break;
-        };
-        peak_search_elapsed += candidate_started.elapsed();
-        stats.record_peak_search(dirty_window, residual.dim());
-        let component_abs = candidate.strength.abs();
-        if let Some(reason) = minor_cycle_stop_reason(
-            component_abs,
-            request.clean.threshold_jy_per_beam,
-            cycle_threshold_jy_per_beam,
-            nsigma_threshold_jy_per_beam,
-        ) {
-            stop_reason = Some(reason);
-            break;
-        }
-        if let Some(reason) = casa_multiscale_divergence_stop_reason(
-            candidate,
-            multiscale_state.dirty_conv_scales.len(),
-            initial_cycle_component,
-            cycle_component_updates,
-        ) {
-            stop_reason = Some(reason);
-            break;
-        }
-
-        let component = request.clean.gain * candidate.strength;
-        let model_update_started = Instant::now();
-        add_shifted_kernel_with_support(
-            model,
-            &multiscale_state.scales[candidate.scale_index],
-            multiscale_state.scale_supports[candidate.scale_index],
-            candidate.position,
-            component,
-        );
-        model_update_elapsed += model_update_started.elapsed();
-        stats.record_component(
-            candidate.scale_index,
-            shifted_kernel_support_pixel_count(
-                residual.dim(),
-                &multiscale_state.scales[candidate.scale_index],
-                multiscale_state.scale_supports[candidate.scale_index],
-                candidate.position,
-            ),
-        );
-        add_shifted_kernel_with_support(
-            &mut delta_model,
-            &multiscale_state.scales[candidate.scale_index],
-            multiscale_state.scale_supports[candidate.scale_index],
-            candidate.position,
-            component,
-        );
-        let component_window =
-            ImageWindow::from_casa_shifted_support(residual.dim(), candidate.position);
-        let subtract_started = Instant::now();
-        subtract_multiscale_component(
-            multiscale_state,
-            candidate.scale_index,
-            candidate.position,
-            component,
-            component_window,
-        );
-        subtract_elapsed += subtract_started.elapsed();
-        stats.record_subtract(component_window, residual.dim());
-        dirty_window = component_window;
-        cycle_component_updates += 1;
-        updated_model = true;
-    }
-    if updated_model {
-        *residual = &*residual - &fft_convolve_real(psf, &delta_model);
-        refresh_multiscale_dirty_conv_scales(multiscale_state, residual);
-    }
-    let minor_elapsed = minor_started.elapsed();
-    stage_timings.minor_cycle += minor_elapsed;
-    stage_timings.minor_cycle_solve += minor_elapsed;
-    stage_timings.deconvolver_peak_search += peak_search_elapsed;
-    stage_timings.deconvolver_model_update += model_update_elapsed;
-    stage_timings.deconvolver_psf_subtract += subtract_elapsed;
-    stage_timings.deconvolver_model_updates = stage_timings
-        .deconvolver_model_updates
-        .saturating_add(cycle_component_updates as u64);
-    stats.add_to_stage_timings(stage_timings);
-    let reported_updates = casa_multiscale_reported_updates(
-        cycle_component_updates,
-        cycle_reported_niter,
-        stop_reason,
-        updated_model,
-    );
-    log_standard_mfs_multiscale_minor_cycle_summary(
-        "cpu",
-        cycle_component_updates,
-        cycle_reported_niter,
-        stop_reason,
-        &stats,
-        peak_search_elapsed,
-        model_update_elapsed,
-        subtract_elapsed,
-        minor_elapsed,
-    );
-    HogbomMinorCycleOutcome {
-        updated_model,
-        actual_updates: cycle_component_updates,
-        reported_updates,
-        stop_reason,
-        final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
-        final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
-    }
-}
-
 struct ClarkPsfPatch {
     patch: Array2<f32>,
     radius_x: usize,
@@ -17382,12 +17181,15 @@ fn run_clark_cotton_schwab(
             break;
         }
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
-        update_divergence_state(
+        if let Some(stop_reason) = update_divergence_state(
             warnings,
             &mut min_residual_peak_jy_per_beam,
             minor_peak,
             &mut divergence_warned,
-        );
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
         if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
@@ -17697,12 +17499,15 @@ fn run_multiscale_cotton_schwab(
         residual = multiscale_state.dirty_conv_scales[0].clone();
         residual_needs_refresh = true;
         let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
-        update_divergence_state(
+        if let Some(stop_reason) = update_divergence_state(
             warnings,
             &mut min_residual_peak_jy_per_beam,
             minor_peak,
             &mut divergence_warned,
-        );
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
         if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
@@ -26209,19 +26014,23 @@ fn update_divergence_state(
     min_residual_peak_jy_per_beam: &mut f32,
     current_peak: f32,
     divergence_warned: &mut bool,
-) {
+) -> Option<CleanStopReason> {
     if current_peak < *min_residual_peak_jy_per_beam {
         *min_residual_peak_jy_per_beam = current_peak;
+        return None;
     } else if *min_residual_peak_jy_per_beam > 0.0
         && (current_peak - *min_residual_peak_jy_per_beam) / *min_residual_peak_jy_per_beam > 0.1
-        && !*divergence_warned
     {
-        warnings.push(format!(
-            "minor-cycle divergence detected: residual peak {:.6} Jy/beam exceeded prior minimum {:.6} Jy/beam by more than 10%",
-            current_peak, *min_residual_peak_jy_per_beam
-        ));
-        *divergence_warned = true;
+        if !*divergence_warned {
+            warnings.push(format!(
+                "minor-cycle divergence detected: residual peak {:.6} Jy/beam exceeded prior minimum {:.6} Jy/beam by more than 10%",
+                current_peak, *min_residual_peak_jy_per_beam
+            ));
+            *divergence_warned = true;
+        }
+        return Some(CleanStopReason::DivergenceDetected);
     }
+    None
 }
 
 fn subtract_shifted_psf(
@@ -26287,10 +26096,13 @@ fn subtract_shifted_kernel_in_window(
         return;
     }
 
-    if let (Some(image_values), Some(kernel_values)) = (
-        image.as_slice_memory_order_mut(),
-        kernel.as_slice_memory_order(),
-    ) {
+    if image.is_standard_layout()
+        && kernel.is_standard_layout()
+        && let (Some(image_values), Some(kernel_values)) = (
+            image.as_slice_memory_order_mut(),
+            kernel.as_slice_memory_order(),
+        )
+    {
         let kernel_ny = kernel.shape()[1];
         for x in x0..=x1 {
             let image_row_offset = x * ny;
@@ -26474,7 +26286,7 @@ mod tests {
         cpp_convolve_gridder_predict_visibility_2d,
     };
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
-    use ndarray::{Array2, Array4, s};
+    use ndarray::{Array2, Array4, ShapeBuilder, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
     use std::time::Duration;
@@ -26875,6 +26687,106 @@ mod tests {
         assert!(
             max_residual_delta < 1.0e-5,
             "max residual delta {max_residual_delta}"
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn mosaic_metal_residual_matches_grouped_cpu_with_model_grid() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [4.0e-3, 4.0e-3],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let mut batch = point_source_visibilities(
+            &[
+                (12.25, -8.5, 0.0),
+                (12.25, -8.5, 0.0),
+                (-18.0, 10.0, 0.0),
+                (-18.0, 10.0, 0.0),
+                (6.0, 14.0, 0.0),
+            ],
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (42.0, 20.0),
+            1.0,
+        );
+        batch.weight = vec![2.0, 6.0, 1.5, 3.5, 4.0];
+        batch.sumwt_factor = vec![1.0, 1.0, 2.0, 2.0, 0.75];
+        batch.visibility[1] = Complex32::new(-2.0, 1.25);
+        batch.visibility[3] = Complex32::new(0.75, -0.5);
+        batch.visibility[4] = Complex32::new(1.5, -2.25);
+        let group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch,
+            sample_frequency_hz: Vec::new(),
+        };
+        let projector = super::build_mosaic_projector(
+            geometry,
+            &gridder,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            primary_beam_model,
+            1.4e9,
+            super::mosaic_projector_sampling(geometry),
+            2,
+            true,
+        )
+        .unwrap();
+        let prepared = super::collect_mosaic_metal_samples(&group, &projector, None).unwrap();
+        assert_eq!(prepared.gridded_samples, 5);
+        assert!(
+            prepared.samples.len() < prepared.gridded_samples,
+            "test should exercise grouped residual samples"
+        );
+
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut model_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        for x in 0..grid_nx {
+            for y in 0..grid_ny {
+                let re = ((x as f32 * 0.013).sin() + (y as f32 * 0.017).cos()) * 2.0e-3;
+                let im = ((x as f32 * 0.019).cos() - (y as f32 * 0.011).sin()) * 1.5e-3;
+                model_grid[(x, y)] = Complex32::new(re, im);
+            }
+        }
+
+        let mut cpu_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        super::accumulate_mosaic_grouped_residual_cpu(
+            &projector,
+            &prepared.samples,
+            Some(&model_grid),
+            &mut cpu_residual_grid,
+        );
+
+        let mut metal_psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        let mut metal_residual_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
+        super::accumulate_mosaic_grid_metal_samples(
+            &projector,
+            &prepared.samples,
+            Some(&model_grid),
+            &mut metal_psf_grid,
+            &mut metal_residual_grid,
+            super::MOSAIC_METAL_MODE_RESIDUAL,
+        )
+        .unwrap();
+
+        let max_residual_delta = metal_residual_grid
+            .iter()
+            .zip(cpu_residual_grid.iter())
+            .map(|(lhs, rhs)| (Complex64::new(lhs.re as f64, lhs.im as f64) - *rhs).norm())
+            .fold(0.0f64, f64::max);
+        assert!(
+            max_residual_delta < 1.0e-4,
+            "Metal mosaic residual refresh should match grouped CPU for a nonzero model grid: max delta {max_residual_delta}"
         );
     }
 
@@ -28441,6 +28353,7 @@ mod tests {
         streaming_request.visibility_batches.clear();
         let streaming = run_mosaic_mfs_from_single_plane_stream(
             streaming_request,
+            StandardMfsExecutionConfig::default(),
             WeightDensityMode::Combined,
             |_, consumer| {
                 consumer(SinglePlaneVisibilityBlock {
@@ -30694,7 +30607,7 @@ mod tests {
     }
 
     #[test]
-    fn clark_without_internal_cycle_threshold_uses_deep_clean_budget() {
+    fn clark_without_internal_cycle_threshold_reports_casa_divergence_priority() {
         let samples = vec![
             (-140.0, -110.0, 0.0),
             (-80.0, 60.0, 0.0),
@@ -30741,7 +30654,7 @@ mod tests {
 
         assert_eq!(
             result.diagnostics.clean_stop_reason,
-            Some(CleanStopReason::IterationLimitReached)
+            Some(CleanStopReason::DivergenceDetected)
         );
         assert_eq!(result.diagnostics.minor_iterations, 100);
         assert!(result.diagnostics.major_cycles > 0);
@@ -31749,6 +31662,120 @@ mod tests {
                 (cpu_value - metal_value).abs() < 2.0e-6,
                 "residual mismatch cpu={cpu_value} metal={metal_value}"
             );
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn hogbom_metal_minor_cycle_matches_cpu_with_masked_nonstandard_arrays() {
+        if !standard_mfs_metal_device_available() {
+            return;
+        }
+        let mut mask = Array2::<bool>::from_elem((8, 8).f(), false);
+        for x in 2..=5 {
+            for y in 3..=6 {
+                mask[(x, y)] = true;
+            }
+        }
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [8, 8],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.6,
+            clean: CleanConfig {
+                niter: 7,
+                gain: 0.2,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                minor_cycle_length: 7,
+                major_cycle_limit: None,
+                psf_cutoff: 0.35,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: Some(mask),
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let mut psf = Array2::<f32>::zeros((8, 8).f());
+        psf[(4, 4)] = 1.0;
+        psf[(3, 4)] = 0.2;
+        psf[(5, 4)] = 0.18;
+        psf[(4, 3)] = 0.16;
+        psf[(4, 5)] = 0.12;
+        psf[(3, 3)] = 0.04;
+        psf[(5, 5)] = 0.03;
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut cpu_model = Array2::<f32>::zeros((8, 8).f());
+        let mut metal_model = Array2::<f32>::zeros((8, 8).f());
+        let mut cpu_residual = Array2::<f32>::zeros((8, 8).f());
+        cpu_residual[(0, 0)] = 10.0;
+        cpu_residual[(2, 3)] = 1.2;
+        cpu_residual[(5, 6)] = -0.9;
+        cpu_residual[(4, 4)] = 0.7;
+        cpu_residual[(1, 6)] = -0.5;
+        let mut metal_residual = cpu_residual.clone();
+        let mut cpu_timings = ImagingStageTimings::default();
+        let mut metal_timings = ImagingStageTimings::default();
+        let cpu = run_hogbom_minor_cycle_cpu(
+            &request,
+            &psf_state,
+            &mut cpu_model,
+            &mut cpu_residual,
+            7,
+            0.0,
+            0.0,
+            &mut cpu_timings,
+        );
+        let metal = run_hogbom_minor_cycle_metal(
+            &request,
+            &psf_state,
+            &mut metal_model,
+            &mut metal_residual,
+            7,
+            0.0,
+            0.0,
+            &mut metal_timings,
+        )
+        .expect("run Metal Hogbom minor cycle");
+        assert_eq!(metal.actual_updates, cpu.actual_updates);
+        assert_eq!(metal.reported_updates, cpu.reported_updates);
+        assert_eq!(metal.stop_reason, cpu.stop_reason);
+        for x in 0..8 {
+            for y in 0..8 {
+                assert!(
+                    (cpu_model[(x, y)] - metal_model[(x, y)]).abs() < 2.0e-6,
+                    "model mismatch at ({x}, {y}): cpu={} metal={}",
+                    cpu_model[(x, y)],
+                    metal_model[(x, y)]
+                );
+                assert!(
+                    (cpu_residual[(x, y)] - metal_residual[(x, y)]).abs() < 2.0e-6,
+                    "residual mismatch at ({x}, {y}): cpu={} metal={}",
+                    cpu_residual[(x, y)],
+                    metal_residual[(x, y)]
+                );
+            }
         }
     }
 

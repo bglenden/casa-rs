@@ -767,8 +767,10 @@ def best_correctness_result(
             ranked.append((rank, result))
     if not ranked:
         return None
-    ranked.sort(key=lambda item: item[0])
-    return ranked[0][1]
+    best_rank = min(rank for rank, _ in ranked)
+    tied = [result for rank, result in ranked if rank == best_rank]
+    tied.sort(key=performance_preference_score, reverse=True)
+    return tied[0]
 
 
 def comparable_correctness_evidence(result: dict[str, Any], reference: dict[str, Any]) -> bool:

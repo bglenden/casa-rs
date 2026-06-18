@@ -2841,10 +2841,8 @@ fn apply_cube_per_plane_runtime_plan(
     plane_worker_count: usize,
 ) -> StandardMfsRuntimePlanGuard {
     let eligibility = plan_cube_per_plane_execution(config, output_planes, plane_worker_count);
-    let backend_command_target_ms = planned_backend_command_target_ms(
-        cube_slab_worker_plan_input(config, output_planes, eligibility.plane_worker_count),
-        eligibility.plane_worker_count,
-    );
+    let backend_command_target_ms =
+        cube_slab_backend_command_target_ms(config, output_planes, eligibility.plane_worker_count);
     let fallback_reasons = if eligibility.fallback_reasons.is_empty() {
         "none".to_string()
     } else {
@@ -3768,81 +3766,86 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(read_config);
-    let result =
-        run_mosaic_mfs_from_single_plane_stream(request, weight_density_mode, |pass, consumer| {
-        let replay_started = Instant::now();
-        let ordinal = replay_invocation;
-        replay_invocation += 1;
-        let load_visibility_values = pass.needs_visibility_values();
-        let mut block_count = 0usize;
-        let mut sample_count = 0usize;
-        for row_chunk in active_selected_rows.chunks(row_block_rows) {
-            let plane = prepare_mfs_mosaic_source_row_block_plane(
-                ms,
-                read_config,
-                data_column,
-                load_visibility_values,
-                &selection,
-                &table_values,
-                &ddid_info,
-                &spectral_window,
-                &polarization,
-                flag_row,
-                row_chunk,
-                derived_engine.as_ref(),
-                channel_read_range,
-                &geometry_columns,
-                prepare_started_at,
-                &mut prepare_stage_timings,
-                &mut accumulate_timings,
-            )
-            .map_err(ImagingError::InvalidRequest)?;
-            let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
-                return Err(ImagingError::InvalidRequest(
-                    "streaming MFS mosaic row block produced standard gridder metadata"
-                        .to_string(),
-                ));
-            };
-            for (batch, metadata) in plane
-                .batches
-                .into_iter()
-                .zip(mosaic.grouped_metadata_batches)
-            {
-                sample_count += batch.len();
-                consumer(SinglePlaneVisibilityBlock {
-                    visibility: batch,
-                    gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
-                })?;
+    let execution_config = standard_mfs_execution_config_with_plan(read_config, &strategy);
+    let result = run_mosaic_mfs_from_single_plane_stream(
+        request,
+        execution_config,
+        weight_density_mode,
+        |pass, consumer| {
+            let replay_started = Instant::now();
+            let ordinal = replay_invocation;
+            replay_invocation += 1;
+            let load_visibility_values = pass.needs_visibility_values();
+            let mut block_count = 0usize;
+            let mut sample_count = 0usize;
+            for row_chunk in active_selected_rows.chunks(row_block_rows) {
+                let plane = prepare_mfs_mosaic_source_row_block_plane(
+                    ms,
+                    read_config,
+                    data_column,
+                    load_visibility_values,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    &spectral_window,
+                    &polarization,
+                    flag_row,
+                    row_chunk,
+                    derived_engine.as_ref(),
+                    channel_read_range,
+                    &geometry_columns,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                )
+                .map_err(ImagingError::InvalidRequest)?;
+                let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
+                    return Err(ImagingError::InvalidRequest(
+                        "streaming MFS mosaic row block produced standard gridder metadata"
+                            .to_string(),
+                    ));
+                };
+                for (batch, metadata) in plane
+                    .batches
+                    .into_iter()
+                    .zip(mosaic.grouped_metadata_batches)
+                {
+                    sample_count += batch.len();
+                    consumer(SinglePlaneVisibilityBlock {
+                        visibility: batch,
+                        gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
+                    })?;
+                }
+                block_count += 1;
+                if frontend_progress_enabled() {
+                    eprintln!(
+                        "frontend stage=run_imaging/mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                        ordinal,
+                        pass,
+                        load_visibility_values,
+                        (block_count * row_block_rows).min(active_selected_rows.len()),
+                        active_selected_rows.len(),
+                        block_count,
+                        sample_count,
+                        replay_started.elapsed().as_secs_f64(),
+                    );
+                }
             }
-            block_count += 1;
-            if frontend_progress_enabled() {
+            if standard_mfs_profile_detail_enabled() {
                 eprintln!(
-                    "frontend stage=run_imaging/mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} elapsed_s={:.3}",
+                    "mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
                     ordinal,
                     pass,
                     load_visibility_values,
-                    (block_count * row_block_rows).min(active_selected_rows.len()),
-                    active_selected_rows.len(),
                     block_count,
                     sample_count,
-                    replay_started.elapsed().as_secs_f64(),
+                    duration_ms(replay_started.elapsed()),
                 );
             }
-        }
-        if standard_mfs_profile_detail_enabled() {
-            eprintln!(
-                "mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
-                ordinal,
-                pass,
-                load_visibility_values,
-                block_count,
-                sample_count,
-                duration_ms(replay_started.elapsed()),
-            );
-        }
-        Ok(())
-        })
-        .map_err(|error| error.to_string())?;
+            Ok(())
+        },
+    )
+    .map_err(|error| error.to_string())?;
     let run_imaging_time = run_started_at.elapsed();
     accumulate_timings.log(prepare_started_at.elapsed());
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
@@ -3983,8 +3986,12 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
     let run_started_at = Instant::now();
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(read_config);
-    let result =
-        run_mosaic_mfs_from_single_plane_stream(request, weight_density_mode, |pass, consumer| {
+    let execution_config = standard_mfs_execution_config(read_config);
+    let result = run_mosaic_mfs_from_single_plane_stream(
+        request,
+        execution_config,
+        weight_density_mode,
+        |pass, consumer| {
             let replay_started = Instant::now();
             let ordinal = replay_invocation;
             replay_invocation += 1;
@@ -4428,7 +4435,18 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         if slab_runtime_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
             slab_runtime_config.standard_mfs_grid_threads = Some("1".to_string());
         }
-        let _slab_runtime_plan = apply_standard_mfs_runtime_plan(&slab_runtime_config, false, 1);
+        let slab_output_planes = slab.plane_end.saturating_sub(slab.plane_start).max(1);
+        let backend_command_target_ms = cube_slab_backend_command_target_ms(
+            &slab_runtime_config,
+            slab_output_planes,
+            worker_count,
+        );
+        let _slab_runtime_plan = apply_standard_mfs_runtime_plan_with_backend_command_target(
+            &slab_runtime_config,
+            false,
+            1,
+            backend_command_target_ms,
+        );
         let tasks = (slab.plane_start..slab.plane_end)
             .map(|plane_index| PlaneTask {
                 plane_index,
@@ -5177,8 +5195,10 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     let mut replay_invocation = 0usize;
     let weight_density_mode = standard_mfs_streaming_weight_density_mode(config);
     let mut replay_probe_stop = None::<(SinglePlaneStreamPass, usize, usize, usize, usize)>;
+    let execution_config = standard_mfs_execution_config_with_plan(config, &strategy);
     let result = run_mosaic_mfs_from_single_plane_stream(
         request,
+        execution_config,
         weight_density_mode,
         |pass, consumer| {
             let replay_started = Instant::now();
@@ -15120,6 +15140,17 @@ fn cube_slab_worker_plan_input(
         parallelism: ImagingWorkerParallelism::PlaneParallel,
         backend: cube_slab_worker_backend(config),
     }
+}
+
+fn cube_slab_backend_command_target_ms(
+    config: &CliConfig,
+    output_planes: usize,
+    worker_count: usize,
+) -> Option<u64> {
+    planned_backend_command_target_ms(
+        cube_slab_worker_plan_input(config, output_planes, worker_count),
+        worker_count,
+    )
 }
 
 fn cube_slab_worker_backend(config: &CliConfig) -> ImagingWorkerBackend {
@@ -42671,6 +42702,48 @@ mod tests {
 
         assert_eq!(active_planes, 4);
         assert_eq!(worker_count, 4);
+    }
+
+    #[test]
+    fn mosaic_cube_multiscale_slab_has_planned_metal_command_target() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("example.ms"),
+            OsString::from("--imagename"),
+            OsString::from("target/example"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--start"),
+            OsString::from("0"),
+            OsString::from("--channel-count"),
+            OsString::from("64"),
+            OsString::from("--interpolation"),
+            OsString::from("nearest"),
+            OsString::from("--imsize"),
+            OsString::from("1024"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--field"),
+            OsString::from("0,1"),
+            OsString::from("--phasecenter-field"),
+            OsString::from("0"),
+            OsString::from("--deconvolver"),
+            OsString::from("multiscale"),
+            OsString::from("--scales"),
+            OsString::from("0,5,15"),
+            OsString::from("--standard-mfs-acceleration"),
+            OsString::from("metal"),
+            OsString::from("--niter"),
+            OsString::from("10000"),
+        ])
+        .expect("parse mosaic multiscale slab config");
+
+        let (_active_planes, worker_count) = mosaic_cube_slab_plane_worker_shape(&config, 64);
+        let target = cube_slab_backend_command_target_ms(&config, 64, worker_count);
+
+        assert!(target.is_some_and(|value| value >= 2_000));
     }
 
     #[test]

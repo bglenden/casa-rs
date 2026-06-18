@@ -75,7 +75,12 @@
     {
       "row_id": "standard_cube_clean_multiscale",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-metal-current/20260618T055106Z-wave4-standard-cube-line-medium-clean-multiscale-be031e76.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-metal-target-planner/20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76.json"
+    },
+    {
+      "row_id": "standard_cube_clean_multiscale",
+      "role": "correctness_current",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-current-compare-only/20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62.json"
     },
     {
       "row_id": "cubedata_dirty",
@@ -100,7 +105,7 @@
     {
       "row_id": "cubedata_clean_hogbom",
       "role": "serial_cpu",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium-serial/20260616T183621Z-wave4-standard-cubedata-line-medium-clean-hogbom-cab8bb3d.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-serial-workers1-current/20260618T093052Z-wave4-standard-cubedata-line-medium-clean-hogbom-e6b85f24.json"
     },
     {
       "row_id": "cubedata_clean_hogbom",
@@ -116,6 +121,11 @@
       "row_id": "cubedata_clean_hogbom",
       "role": "casa_cpp",
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-casa-current/20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad.json"
+    },
+    {
+      "row_id": "cubedata_clean_hogbom",
+      "role": "correctness_cpu_current",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-multicpu-vs-casa-compare-only/20260618T112413Z-wave4-standard-cubedata-line-medium-clean-hogbom-8491aa49.json"
     },
     {
       "row_id": "cubedata_clean_clark",
@@ -145,7 +155,7 @@
     {
       "row_id": "cubedata_clean_multiscale",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-real-cubedata-multiscale-medium64-metal/20260617T203931Z-wave4-standard-cubedata-line-medium-clean-multiscale-24b1f33b.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-metal-target-planner/20260618T120835Z-wave4-standard-cubedata-line-medium-clean-multiscale-c4bc0f0d.json"
     },
     {
       "row_id": "cubedata_clean_multiscale",
@@ -169,28 +179,73 @@
     },
     {
       "row_id": "mosaic_cube_clean_hogbom",
-      "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean/20260616T143339Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-dbb2bdd3.json"
+      "role": "serial_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-hogbom-small-niter1000-cpu-serial-gridthreads1/20260618T105412Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-c3bf5d61.json"
     },
     {
-      "row_id": "mosaic_cube_clean_clark",
+      "row_id": "mosaic_cube_clean_hogbom",
       "role": "multi_worker_cpu",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-small-clean-sharedctx/20260616T131829Z-wave4-mosaic-cube-alma-small-clean-correctness-cdb61e37.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-hogbom-small-niter1000-cpu-forced-lowmem/20260618T105119Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-03ec3fed.json"
     },
     {
-      "row_id": "mosaic_cube_clean_clark",
+      "row_id": "mosaic_cube_clean_hogbom",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean-auto-slabruntime/20260616T132458Z-wave4-mosaic-cube-alma-small-clean-correctness-7be34f88.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-current-metal-niter1000-with-casa-reuse-after-contract-off/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f.json"
     },
     {
-      "row_id": "mosaic_cube_clean_clark",
-      "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-medium-clean-clark-shared-columnar/20260618T085158Z-wave4-mosaic-cube-alma-medium-dirty-bounded-edb80b3f.json"
+      "row_id": "mosaic_cube_clean_hogbom",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-hogbom-niter1000-cpu-casa-after-controller-refactor/20260618T100107Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-64a0b86c.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_multiscale",
+      "role": "serial_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-cpu-serial-gridthreads1/20260618T105815Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-8ba11e4c.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_multiscale",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-cpu-multi-current/20260618T105904Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-0f3a8019.json"
     },
     {
       "row_id": "mosaic_cube_clean_multiscale",
       "role": "metal_default",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean/20260616T143414Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-5ac88e74.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-after-divergence/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_multiscale",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-after-divergence/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_multiscale",
+      "role": "correctness_cpu_current",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-cpu-vs-casa-compare-only/20260618T112409Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-5df5765b.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "serial_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-cpu-serial-gridthreads1/20260618T105620Z-wave4-mosaic-cube-alma-small-clean-correctness-26f83c3b.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "multi_worker_cpu",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-cpu-multi-current/20260618T105653Z-wave4-mosaic-cube-alma-small-clean-correctness-e56f4145.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "metal_default",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-after-divergence/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-after-divergence/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89.json"
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "role": "correctness_cpu_current",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-cpu-vs-casa-compare-only/20260618T112411Z-wave4-mosaic-cube-alma-small-clean-correctness-d9ab93ef.json"
     }
   ]
 }

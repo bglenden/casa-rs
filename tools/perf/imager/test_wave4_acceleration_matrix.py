@@ -361,6 +361,38 @@ class Wave4AccelerationMatrixTests(unittest.TestCase):
 
         self.assertIs(best, investigate)
 
+    def test_correctness_selection_prefers_newer_same_rank_evidence(self) -> None:
+        older = fake_result(
+            "standard_cube_clean_multiscale",
+            "casa_cpp",
+            rust_seconds=700.0,
+            casa_seconds=5300.0,
+            backend="wave3_metal_grouped",
+            workers=10,
+        )
+        older["completed_at"] = "2026-06-18T06:00:00Z"
+        older["results"]["product_comparison"] = {
+            "structured_difference_review": {"label": "bad"}
+        }
+        newer = fake_result(
+            "standard_cube_clean_multiscale",
+            "correctness_current",
+            rust_seconds=0.0,
+            casa_seconds=None,
+            backend="wave3_metal_grouped",
+            workers=10,
+        )
+        newer["completed_at"] = "2026-06-18T11:00:00Z"
+        newer["results"]["product_comparison"] = {
+            "structured_difference_review": {"label": "bad"}
+        }
+
+        best = wave4_acceleration_matrix.best_correctness_result(
+            {"casa_cpp": older, "correctness_current": newer}
+        )
+
+        self.assertIs(best, newer)
+
     def test_sumwt_only_stale_structure_flag_is_not_a_correctness_blocker(self) -> None:
         result = fake_result(
             "standard_cube_dirty",

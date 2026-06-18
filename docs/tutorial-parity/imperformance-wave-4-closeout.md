@@ -2,7 +2,7 @@
 
 Truth class: evidence log
 Last reality check: 2026-06-18
-Verification: benchmark JSONs listed below; `python3 -m unittest tools/perf/imager/test_wave4_acceleration_matrix.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `cargo fmt --all -- --check`; `cargo test -p casars-imager mosaic --lib -- --test-threads=1`; `cargo test -p casars-imager cube_per_plane_runtime_plan_selects_grouped_metal_for_single_channel_cube_clean --lib`; `cargo test -p casa-imaging --lib`; `docs/tutorial-parity/imperformance-wave-4-large-dirty-attempts.md`
+Verification: benchmark JSONs listed below; `python3 -m unittest tools/perf/imager/test_wave4_acceleration_matrix.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `cargo fmt --all -- --check`; `cargo test -p casars-imager imaging_worker_plan --lib`; `cargo test -p casars-imager mosaic_cube_multiscale_slab_has_planned_metal_command_target --lib`; `cargo test -p casars-imager multiscale_metal_runtime_planner_sets_default_minor_cycle_chunk --lib`; `cargo test -p casars-imager mosaic --lib -- --test-threads=1`; `cargo test -p casa-imaging multiscale_metal_auto_chunk_planner_uses_shape_scaled_adaptive_chunks --lib`; `cargo test -p casa-imaging --lib -- --test-threads=1`; `docs/tutorial-parity/imperformance-wave-4-large-dirty-attempts.md`
 
 ## Scope
 
@@ -35,15 +35,15 @@ GLENDENNING result paths for each row below.
 | Standard cube dirty | medium, 512 ch, 2048 | 316.815 | 154.741 | n/a | 1918.001 | 2.05x auto vs forced single-worker; 12.39x vs CASA | good | met | `20260616T173624Z-wave4-standard-cube-line-medium-905e11e5` |
 | Standard cube clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | 282.458 | 137.109 | 811.307 | 2.06x Metal vs CPU; 5.92x vs CASA | accepted by Brian on 2026-06-17 after regenerated panel review: restored `.image` edge artifact fixed; remaining `.model`/`.residual` component-order divergence acceptable for Wave 4 | missed-accepted-by-Brian: Metal-vs-CPU target met, CASA speed target missed | `20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a` plus unchanged CASA row `20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24`; regenerated panels under `20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa` |
 | Standard cube clean Clark | medium, 64 ch, 1024, niter=10000 | 160.122 | 36.607 | 32.429 | 409.289 | 4.37x multi-worker vs serial; Metal default is 1.13x vs multi-worker CPU and 12.62x vs CASA | accepted by Brian on 2026-06-17 after panel review: `.model`, `.psf`, `.sumwt` good; small structured `.image`/`.residual` differences acceptable for Wave 4 | missed-accepted-by-Brian: CASA speed target met, Metal-vs-CPU target missed | `20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b`; CASA timing from unchanged row `20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413` |
-| Standard cube clean multiscale | medium, 64 ch, 1024, niter=10000 | 784.810 | 744.336 | 741.694 | 5311.750 | 1.05x multi-worker vs serial; 1.00x Metal vs CPU; 7.16x vs CASA | bad deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T055106Z-wave4-standard-cube-line-medium-clean-multiscale-be031e76`; CASA row `20260618T061143Z-wave4-standard-cube-line-medium-clean-multiscale-e9c79944` |
+| Standard cube clean multiscale | medium, 64 ch, 1024, niter=10000 | 784.810 | 744.336 | 609.057 | 5311.750 | 1.05x multi-worker vs serial; 1.22x Metal vs CPU; 8.72x vs CASA | bad deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76`; correctness row `20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62`; CASA row `20260618T061143Z-wave4-standard-cube-line-medium-clean-multiscale-e9c79944` |
 | Cubedata dirty | medium, 512 ch, 2048 | 349.241 | 146.788 | n/a | 1887.410 | 2.38x auto vs forced single-worker; 12.86x vs CASA | good | met | `20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335` |
 | Cubedata clean Hogbom | medium, 64 ch, 1024, niter=10000 | n/a | 262.735 | 208.483 | 1121.845 | 1.26x Metal vs CPU; 5.38x vs CASA | bad deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad` |
 | Cubedata clean Clark | medium, 64 ch, 1024, niter=10000 | 159.595 | 43.880 | 39.625 | 632.483 | 3.64x multi-worker vs serial; 1.11x Metal vs CPU; 15.96x vs CASA | investigate deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T045233Z-wave4-standard-cubedata-line-medium-clean-clark-381407de` |
-| Cubedata clean multiscale | medium, 64 ch, 1024, niter=10000 | n/a | 817.799 | 810.204 | n/a | 1.01x Metal vs CPU | missing comparable deep CASA correctness | blocked | `20260617T203931Z-wave4-standard-cubedata-line-medium-clean-multiscale-24b1f33b` |
+| Cubedata clean multiscale | medium, 64 ch, 1024, niter=10000 | n/a | 817.799 | 567.588 | n/a | 1.44x Metal vs CPU | missing comparable deep CASA correctness | blocked | `20260618T120835Z-wave4-standard-cubedata-line-medium-clean-multiscale-c4bc0f0d` |
 | Mosaic cube dirty | large, 4 ch, 1024 | 79.572 | 45.486 | n/a | n/a | 1.75x vs single-plane stream | good on small CASA row | met | `20260616T130921Z-wave4-mosaic-cube-alma-large-dirty-turnaround-3f72240e` |
-| Mosaic cube clean Hogbom | small, 8 ch, 512 | n/a | n/a | 7.128 | 4.259 | 0.60x vs CASA | good | blocked | `20260616T143339Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-dbb2bdd3` |
-| Mosaic cube clean Clark | large MS, 8 ch, 2048, niter=1000 | n/a | n/a | 242.842 | n/a | improved 1.15x over previous shared-selection stream row, but no serial/CASA target comparison | missing comparable representative CASA comparison; small 512/niter=2 CASA row remains good | blocked | `20260618T085158Z-wave4-mosaic-cube-alma-medium-dirty-bounded-edb80b3f` |
-| Mosaic cube clean multiscale | small, 8 ch, 512 | n/a | n/a | 6.101 | 4.046 | 0.66x vs CASA | investigate; `.image` RMS is 1.7e-6 of CASA support RMS | blocked | `20260616T143414Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-5ac88e74` |
+| Mosaic cube clean Hogbom | small, 8 ch, 512, niter=1000 | 10.128 | 7.115 | 7.108 | 6.697 | 1.42x multi-worker vs serial; 1.00x Metal vs CPU; 0.94x vs CASA | investigate deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f` |
+| Mosaic cube clean Clark | small, 8 ch, 512, niter=1000 | 8.114 | 8.128 | 7.102 | 12.048 | 1.00x multi-worker vs serial; 1.14x Metal vs CPU; 1.70x vs CASA | bad deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89` |
+| Mosaic cube clean multiscale | small, 8 ch, 512, niter=1000 | 15.188 | 11.153 | 7.116 | 35.323 | 1.36x multi-worker vs serial; 1.57x Metal vs CPU; 4.96x vs CASA | bad deep CASA comparison; requires follow-up or Brian acceptance | blocked | `20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72` |
 
 Current review conclusion: standard cube dirty, cubedata dirty, and W4-19 mosaic
 dirty have met their matrix targets. The dirty standard cube and cubedata rows
@@ -81,20 +81,38 @@ component-order divergence for Wave 4. The row remains a missed target because
 the post-fix default row is only 5.92x faster than CASA rather than the 10x
 target.
 
+Standard cube and cubedata multiscale received one retained planning
+optimization on 2026-06-18: the shared imaging worker planner now computes an
+adaptive Metal multiscale command-buffer target from output shape, deconvolver
+iteration count, scale count, and worker count, and standard cube, cubedata,
+and mosaic cube slab paths all consume that common backend command target. For
+the current 64-channel, 1024-pixel, niter=10000 rows the selected target is
+`auto:10000`. This improved the standard cube multiscale Metal row to
+`609.057 s` and the cubedata multiscale Metal row to `567.588 s`, but both
+rows remain blocked: standard cube still has bad deep CASA correctness and
+cubedata still lacks a comparable deep CASA correctness row.
+
+The latest multiscale stage attribution shows why these rows are still
+performance-limited by the minor-cycle backend rather than source I/O or
+product writing. Standard cube multiscale spends about `5.0 s` in control
+source reads, `0.3 s` in product writing, and `5664.6` worker-seconds in the
+minor cycle, with 1096 Metal command buffers and p95 plane time `176.1 s`.
+Cubedata multiscale spends about `4.7 s` in control source reads, `0.3 s` in
+product writing, and `5306.3` worker-seconds in the minor cycle, with 1048
+Metal command buffers and p95 plane time `152.7 s`.
+
 W4-21 mosaic clean received one additional structural optimization on
 2026-06-18: mosaic cube slab workers now share a read-only columnar slab source
 instead of rebuilding the source stream independently inside each plane worker.
 On the representative large-MS, 8-channel, 2048-pixel Clark row this improved
-the auto/default runtime from `278.992 s` to `242.842 s` (`1.15x`). The small
-512-pixel CASA correctness row remains good after the change (`7.092 s`
-casa-rs, `6.207 s` CASA, all products good), but it is not a comparable
-performance/correctness row for the 2048/niter=1000 case. Stage logs show the
-remaining representative cost is not source I/O or product writing:
-shared-source reads total about `9.76 s`, product writing is about `4.38 s`,
-and the dominant work is still per-plane mosaic sample adaptation/PB-aware
-gridding (`~107-109 s` adapt time per first-slab plane). W4-21 therefore remains
-blocked pending a larger batched multi-plane mosaic backend or explicit Brian
-acceptance of the miss.
+the auto/default runtime from `278.992 s` to `242.842 s` (`1.15x`). The current
+review matrix now uses comparable small 512-pixel, niter=1000 rows for mosaic
+clean performance and correctness. Those rows show useful Metal speedup for
+multiscale (`1.57x` over multi-worker CPU) and CASA speedup for Clark and
+multiscale, but Hogbom is still slower than CASA and the deep mosaic clean
+correctness comparisons are investigate or bad. W4-21 therefore remains
+blocked pending further mosaic clean correctness/performance work or explicit
+Brian acceptance of the misses.
 
 ## Standard Cube / Cubedata Refactor Evidence
 
@@ -131,7 +149,7 @@ checked-in acceleration manifest uses the fresher conservative row above.
 | Cubedata dirty, medium forced single-worker #311 | 32 GB VLA medium | 512 ch, 2048 | 349.241 | n/a | n/a | slab-first / CPU slab | 11 / 47 / 1 | 47.252 | 30.072 | 17.180 | 7.973 | forced single-worker baseline with `standard_mfs_grid_threads=1`; CASA skipped by design | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-forced1-current/20260616T172921Z-wave4-standard-cubedata-line-medium-b38c7e90.json` |
 | Cubedata dirty, medium auto #311 | 32 GB VLA medium | 512 ch, 2048 | 146.788 | 1887.410 | 12.86x vs CASA; 2.38x vs forced single-worker | slab-first / CPU slab | 6 / 89 / 10 | 46.511 | 29.332 | 17.180 | 10.496 | correctness from comparable medium CASA row; `.sumwt` non-spatial false positive reclassified good; auto-vs-forced target met | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-auto-current2/20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335.json` |
 | Cubedata dirty, large bounded | 107 GB ALMA large | 256 ch, 4096 | 105.825 | n/a | n/a | slab-first / serial CPU plane backend | 7 / 40 / 10 | 38.643 | 4.283 | 34.360 | 13.515 | large CASA skipped; bounded large-dataset planner and I/O row | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T070401Z-wave4-standard-cubedata-line-large-bounded-bdb7948d.json` |
-| Cubedata clean Hogbom, medium Metal/default | 32 GB VLA medium | 512 ch, 1024, niter=2 | 255.725 | n/a | n/a | slab-first / grouped Wave 3 Metal | 13 / 40 / 10 | 38.958 | 28.764 | 8.590 | recorded in JSON | small all-channel CASA comparison good; medium run skipped CASA | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clean-medium/20260616T144357Z-wave4-standard-cubedata-line-medium-clean-hogbom-decc2963.json` |
+| Cubedata clean Hogbom, medium Metal/default | 32 GB VLA medium | 64 ch, 1024, niter=10000 | 208.483 | 1121.845 | 5.38x vs CASA; 1.26x vs multi-worker CPU | slab-first / grouped Wave 3 Metal with Metal Hogbom minor cycle | 2 / 34 / 8 | recorded in JSON | recorded in JSON | recorded in JSON | recorded in JSON | bad deep CASA comparison; requires follow-up or Brian acceptance | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-casa-current/20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad.json` |
 | Mosaic cube dirty, previous large turnaround | 107 GB ALMA large | 4 ch, 1024, 7 fields | 80.933 | n/a | n/a | slab-first / mosaic single-plane stream | 4 / 1 / 1 | partial | 0.400 | product-backed | 11.177 | superseded by W4-19 multi-plane evidence | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T053705Z-wave4-mosaic-cube-alma-large-dirty-turnaround-db1671a1.json` |
 | Mosaic cube dirty, W4-19 single-plane baseline | 107 GB ALMA large | 4 ch, 1024, 7 fields | 79.572 | n/a | n/a | slab-first / mosaic multi-plane stream forced to one worker | 1 / 1 / 1 | partial | 0.400 | product-backed | recorded in JSON | single-worker baseline for W4-19 | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-forced1-sharedctx/20260616T131206Z-wave4-mosaic-cube-alma-large-dirty-turnaround-b52e9a4d.json` |
 | Mosaic cube dirty, W4-19 multi-plane auto | 107 GB ALMA large | 4 ch, 1024, 7 fields | 45.486 | n/a | n/a | slab-first / mosaic multi-plane stream | 1 / 4 / 4 | partial | 0.400 | product-backed | recorded in JSON | 1.75x total speedup vs forced single-plane stream | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-sharedctx/20260616T130921Z-wave4-mosaic-cube-alma-large-dirty-turnaround-3f72240e.json` |
@@ -141,8 +159,12 @@ Mosaic cube correctness is covered by small CASA comparison bundles because the
 medium and large mosaic rows intentionally skip CASA:
 
 - Dirty: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T053451Z-wave4-mosaic-cube-alma-small-dirty-correctness-1f018d38.json`
-- Clean Clark after shared-columnar source refactor:
-  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-small-clean-clark-shared-columnar-correctness/20260618T085630Z-wave4-mosaic-cube-alma-small-clean-correctness-5aa05d9f.json`
+- Clean Hogbom current niter=1000:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-current-metal-niter1000-with-casa-reuse-after-contract-off/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f.json`
+- Clean Clark current niter=1000:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-after-divergence/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89.json`
+- Clean multiscale current niter=1000:
+  `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-after-divergence/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72.json`
 
 ## Clean Evidence
 
@@ -152,7 +174,8 @@ medium and large mosaic rows intentionally skip CASA:
 | Hogbom, deep closeout row | 64 ch, 1024, niter=10000 | 137.109 | 811.307 | 5.92x | grouped Wave 3 Metal with Metal Hogbom minor cycle; CASA-style FFT restoration | 2 / 34 / 10 | recorded in JSON | accepted by Brian on 2026-06-17 after regenerated panel review: restored `.image` edge artifact fixed; remaining `.model`/`.residual` differences are late component-order divergence after deep clean; Metal-vs-CPU target met, CASA speed target missed | Rust-only post-fix: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-metal-minor-cycle-casa/20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24.json`; regenerated panels: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa/panels` |
 | Clark, deep closeout row | 64 ch, 1024, niter=10000 | 32.429 | 409.289 | 12.62x | grouped Wave 3 Metal default with Metal Clark minor-cycle/peak-search and CPU initial dirty/residual refresh | 2 / 34 / 10 | recorded in JSON | accepted by Brian on 2026-06-17 after panel review: `.model`, `.psf`, and `.sumwt` good; small structured `.image` and `.residual` differences acceptable for Wave 4; CASA speed target met but Metal-vs-CPU target missed at 1.13x | Rust-only Metal minor-cycle row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json`; unchanged CASA comparison row: `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json` |
 | Clark, 8-channel clean-control probe | 8 ch, 1024, niter=10000 | 16.196 | 62.763 | 3.88x | grouped Wave 3 Metal residual refresh; one CASA cube minor-cycle pass per plane | 1 / 8 / 1 | 0.727 | `.model`, `.psf`, `.sumwt` good; `.image` and `.residual` investigate at 0.14% and 0.23% relative RMS after exact clean-control iteration parity | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-one-pass-control-probe/20260617T154447Z-wave4-standard-cube-line-medium-clean-clark-control-probe-de3e2664.json` |
-| Multiscale | 64 ch, 1024, niter=2 | 26.697 | 231.006 | 8.65x | grouped Wave 3 Metal | 2 / 34 / 10 | 4.925 | `.model`, `.residual`, `.psf`, `.sumwt` good; `.image` investigate with normalized RMS 3.11e-6 and accepted visual residual | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json` |
+| Multiscale, shallow historical row | 64 ch, 1024, niter=2 | 26.697 | 231.006 | 8.65x | grouped Wave 3 Metal | 2 / 34 / 10 | 4.925 | `.model`, `.residual`, `.psf`, `.sumwt` good; `.image` investigate with normalized RMS 3.11e-6 and accepted visual residual; not a valid deep-performance closeout row | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json` |
+| Multiscale, deep current row | 64 ch, 1024, niter=10000 | 609.057 | 5311.750 | 8.72x | grouped Wave 3 Metal with adaptive `auto:10000` command target | 2 / 34 / 10 | recorded in JSON | bad deep CASA comparison; blocked pending follow-up or Brian acceptance | `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-metal-target-planner/20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76.json`; correctness row `/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-current-compare-only/20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62.json` |
 
 Deep Clark diagnostics:
 
