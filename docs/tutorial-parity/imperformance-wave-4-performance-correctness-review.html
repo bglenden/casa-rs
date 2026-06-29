@@ -1,0 +1,1253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ImPerformance Wave 4 Performance and Correctness Review</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f4;
+      --fg: #1f2428;
+      --muted: #5f6b72;
+      --line: #cfd6d3;
+      --panel: #ffffff;
+      --accent: #006c67;
+      --warn: #8a5200;
+      --bad: #9d1c20;
+      --good: #177245;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #151715;
+        --fg: #e7e8e4;
+        --muted: #a9b0ac;
+        --line: #343a37;
+        --panel: #1d211f;
+        --accent: #4ab7ad;
+        --warn: #e0a33a;
+        --bad: #ff7b80;
+        --good: #6ed39a;
+      }
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.45;
+    }
+    header {
+      padding: 24px 28px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 680;
+      letter-spacing: 0;
+    }
+    .meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    main {
+      padding: 22px 28px 40px;
+    }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    nav a {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--fg);
+      padding: 5px 9px;
+      text-decoration: none;
+      font-size: 13px;
+      background: var(--bg);
+    }
+    nav a:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    section {
+      margin: 0 0 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: clip;
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    .summary {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .status.good {
+      color: var(--good);
+      border-color: color-mix(in srgb, var(--good), var(--line) 60%);
+    }
+    .status.investigate {
+      color: var(--warn);
+      border-color: color-mix(in srgb, var(--warn), var(--line) 60%);
+    }
+    .status.bad,
+    .status.missing {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad), var(--line) 60%);
+    }
+    .path {
+      margin-top: 8px;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 12px;
+      padding: 14px;
+    }
+    figure {
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg);
+      overflow: hidden;
+    }
+    figcaption {
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #fff;
+    }
+    .panel-image {
+      cursor: zoom-in;
+    }
+    .panel-button {
+      display: block;
+      width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: inherit;
+    }
+    .panel-button:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: -3px;
+    }
+    .missing-note {
+      padding: 14px 18px 18px;
+      color: var(--muted);
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .summary-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: var(--bg);
+    }
+    .summary-card strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.15;
+      font-variant-numeric: tabular-nums;
+    }
+    .summary-card span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .matrix {
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .matrix-row {
+      display: grid;
+      grid-template-columns: minmax(190px, 1.35fr) minmax(150px, 0.9fr) minmax(210px, 1.1fr) minmax(170px, 1fr) minmax(190px, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--bg);
+    }
+    .matrix-row.met {
+      border-left: 4px solid var(--good);
+    }
+    .matrix-row.accepted {
+      border-left: 4px solid var(--warn);
+    }
+    .matrix-row.blocked {
+      border-left: 4px solid var(--bad);
+    }
+    .matrix-title {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 680;
+    }
+    .matrix-subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .metric-group {
+      display: grid;
+      gap: 3px;
+      font-size: 12px;
+    }
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px dotted color-mix(in srgb, var(--line), transparent 35%);
+      padding-bottom: 2px;
+    }
+    .metric:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+    .metric span:first-child {
+      color: var(--muted);
+    }
+    .metric span:last-child {
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: flex-start;
+    }
+    .mini-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.25;
+      background: var(--panel);
+    }
+    .mini-pill.good {
+      color: var(--good);
+      border-color: color-mix(in srgb, var(--good), var(--line) 65%);
+    }
+    .mini-pill.warn {
+      color: var(--warn);
+      border-color: color-mix(in srgb, var(--warn), var(--line) 65%);
+    }
+    .mini-pill.bad {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad), var(--line) 65%);
+    }
+    details.matrix-details {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+    details.matrix-details summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-size: 12px;
+      width: max-content;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: minmax(130px, max-content) minmax(0, 1fr);
+      gap: 4px 10px;
+      margin-top: 8px;
+      font-size: 11px;
+    }
+    .detail-grid dt {
+      color: var(--muted);
+    }
+    .detail-grid dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .panel-preview {
+      margin-top: 10px;
+    }
+    .panel-preview-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .panel-preview-title {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .panel-preview a {
+      color: var(--accent);
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .panel-preview a:hover {
+      text-decoration: underline;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px;
+    }
+    .preview-grid figure {
+      border-radius: 5px;
+    }
+    .preview-grid figcaption {
+      padding: 5px 7px;
+      font-size: 11px;
+    }
+    .text-link-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .text-link-row a {
+      color: var(--accent);
+      overflow-wrap: anywhere;
+    }
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr);
+      background: color-mix(in srgb, #000, transparent 10%);
+      color: #fff;
+      padding: 14px;
+    }
+    .lightbox.open {
+      display: grid;
+    }
+    .lightbox-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 0 0 12px;
+    }
+    .lightbox-title {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+    }
+    .lightbox-close {
+      min-width: 34px;
+      min-height: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      cursor: pointer;
+      font-size: 22px;
+      line-height: 1;
+    }
+    .lightbox-close:hover,
+    .lightbox-close:focus-visible {
+      background: rgba(255, 255, 255, 0.22);
+    }
+    .lightbox-frame {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      overflow: auto;
+      border-radius: 8px;
+    }
+    .lightbox-frame img {
+      width: auto;
+      max-width: 100%;
+      max-height: 100%;
+      background: #fff;
+      cursor: zoom-out;
+      box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
+    }
+    @media (max-width: 980px) {
+      .matrix-row {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    @media (max-width: 640px) {
+      header {
+        position: static;
+      }
+      main {
+        padding: 16px 14px 28px;
+      }
+      .matrix-row {
+        grid-template-columns: 1fr;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ImPerformance Wave 4 Performance and Correctness Review</h1>
+    <p class="meta">
+      Current selected performance matrix rows and correctness panels for Wave
+      4 closeout review. Image sources are existing GLENDENNING temporary
+      benchmark artifacts; this file does not copy panel PNGs. Full-plane zoom
+      artifacts generated before the harness fix are hidden here unless the
+      zoom is for model-component support.
+    </p>
+    <nav id="toc" aria-label="Panel sections"></nav>
+  </header>
+  <main id="content"></main>
+
+  <script>
+    const standardDirty = [
+      "image.review.png",
+      "psf.review.png",
+      "residual.review.png",
+      "sumwt.review.png",
+    ];
+
+    const cleanProducts = [
+      "image.review.png",
+      "model.review.png",
+      "psf.review.png",
+      "residual.review.png",
+      "sumwt.review.png",
+    ];
+
+    const mosaicDirty = [
+      "image.review.png",
+      "image_pbcor.review.png",
+      "pb.review.png",
+      "psf.review.png",
+      "residual.review.png",
+      "sumwt.review.png",
+      "weight.review.png",
+    ];
+
+    const mosaicClean = [
+      "image.review.png",
+      "image_pbcor.review.png",
+      "model.review.png",
+      "pb.review.png",
+      "psf.review.png",
+      "residual.review.png",
+      "sumwt.review.png",
+      "weight.review.png",
+    ];
+
+    const performanceRows = [
+      {
+        mode: "Standard cube",
+        phase: "dirty",
+        deconvolver: "none",
+        tier: "medium",
+        shape: "512 ch, 2048",
+        niter: 0,
+        serial: 316.815,
+        cpu: 154.741,
+        metal: null,
+        casa: 1918.001,
+        cpuVsSerial: 2.047,
+        metalVsCpu: null,
+        casaSpeedup: 12.395,
+        workers: 10,
+        backend: "cpu_multi_plane_workers",
+        metalStatus: "rejected:dirty_control_uses_dirty_backend",
+        correctness: "good",
+        target: "met",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-auto-current2/20260616T173624Z-wave4-standard-cube-line-medium-905e11e5.json",
+      },
+      {
+        mode: "Standard cube",
+        phase: "clean",
+        deconvolver: "hogbom",
+        tier: "medium",
+        shape: "64 ch, 1024",
+        niter: 10000,
+        serial: null,
+        cpu: 282.458,
+        metal: 137.109,
+        casa: 811.307,
+        cpuVsSerial: null,
+        metalVsCpu: 2.060,
+        casaSpeedup: 5.917,
+        workers: 10,
+        backend: "wave3_metal_grouped",
+        metalStatus: "selected",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json",
+      },
+      {
+        mode: "Standard cube",
+        phase: "clean",
+        deconvolver: "clark",
+        tier: "medium",
+        shape: "64 ch, 1024",
+        niter: 10000,
+        serial: 160.122,
+        cpu: 36.607,
+        metal: 32.429,
+        casa: 409.289,
+        cpuVsSerial: 4.374,
+        metalVsCpu: 1.129,
+        casaSpeedup: 12.621,
+        workers: 10,
+        backend: "wave3_metal_grouped",
+        metalStatus: "selected",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json",
+      },
+      {
+        mode: "Standard cube",
+        phase: "clean",
+        deconvolver: "multiscale",
+        tier: "medium",
+        shape: "64 ch, 1024",
+        niter: 10000,
+        serial: 784.810,
+        cpu: 744.336,
+        metal: 609.057,
+        casa: 5311.750,
+        cpuVsSerial: 1.054,
+        metalVsCpu: 1.222,
+        casaSpeedup: 8.721,
+        workers: 10,
+        backend: "wave3_metal_grouped",
+        metalStatus: "selected",
+        correctness: "bad",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-metal-target-planner/20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76.json",
+      },
+      {
+        mode: "Cubedata",
+        phase: "dirty",
+        deconvolver: "none",
+        tier: "medium",
+        shape: "512 ch, 2048",
+        niter: 0,
+        serial: 349.241,
+        cpu: 146.788,
+        metal: null,
+        casa: 1887.410,
+        cpuVsSerial: 2.379,
+        metalVsCpu: null,
+        casaSpeedup: 12.858,
+        workers: 10,
+        backend: "cpu_multi_plane_workers",
+        metalStatus: "rejected:dirty_control_uses_dirty_backend",
+        correctness: "good",
+        target: "met",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-auto-current2/20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335.json",
+      },
+      {
+        mode: "Cubedata",
+        phase: "clean",
+        deconvolver: "hogbom",
+        tier: "medium",
+        shape: "64 ch, 1024",
+        niter: 10000,
+        serial: 1080.158,
+        cpu: 262.735,
+        metal: 208.483,
+        casa: 1121.845,
+        cpuVsSerial: 4.111,
+        metalVsCpu: 1.260,
+        casaSpeedup: 5.381,
+        workers: 8,
+        backend: "wave3_metal_grouped",
+        metalStatus: "selected",
+        correctness: "bad",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-casa-current/20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad.json",
+      },
+      {
+        mode: "Cubedata",
+        phase: "clean",
+        deconvolver: "clark",
+        tier: "medium",
+        shape: "64 ch, 1024",
+        niter: 10000,
+        serial: 159.595,
+        cpu: 43.880,
+        metal: 39.625,
+        casa: 632.483,
+        cpuVsSerial: 3.637,
+        metalVsCpu: 1.107,
+        casaSpeedup: 15.962,
+        workers: 8,
+        backend: "wave3_metal_grouped",
+        metalStatus: "selected",
+        correctness: "investigate",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clark-medium64-casa-current/20260618T045233Z-wave4-standard-cubedata-line-medium-clean-clark-381407de.json",
+      },
+      {
+        mode: "Cubedata",
+        phase: "clean",
+        deconvolver: "multiscale",
+        tier: "medium",
+        shape: "64 ch, 1024",
+        niter: 10000,
+        serial: null,
+        cpu: 817.799,
+        metal: 567.588,
+        casa: 4401.249,
+        cpuVsSerial: null,
+        metalVsCpu: 1.441,
+        casaSpeedup: 7.754,
+        workers: 10,
+        backend: "wave3_metal_grouped",
+        metalStatus: "selected",
+        correctness: "bad",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-metal-target-planner/20260618T120835Z-wave4-standard-cubedata-line-medium-clean-multiscale-c4bc0f0d.json",
+      },
+      {
+        mode: "Mosaic cube",
+        phase: "dirty",
+        deconvolver: "none",
+        tier: "large",
+        shape: "4 ch, 1024",
+        niter: 0,
+        serial: 79.572,
+        cpu: 45.486,
+        metal: null,
+        casa: 153.212,
+        cpuVsSerial: 1.749,
+        metalVsCpu: null,
+        casaSpeedup: 3.368,
+        workers: 4,
+        backend: "mosaic_multi_plane_stream",
+        metalStatus: "",
+        correctness: "good small; investigate large",
+        target: "met",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-sharedctx/20260616T130921Z-wave4-mosaic-cube-alma-large-dirty-turnaround-3f72240e.json",
+      },
+      {
+        mode: "Mosaic cube",
+        phase: "clean",
+        deconvolver: "hogbom",
+        tier: "small",
+        shape: "8 ch, 512",
+        niter: 1000,
+        serial: 10.128,
+        cpu: 7.115,
+        metal: 7.108,
+        casa: 6.697,
+        cpuVsSerial: 1.424,
+        metalVsCpu: 1.001,
+        casaSpeedup: 0.942,
+        workers: 6,
+        backend: "mosaic_multi_plane_stream",
+        metalStatus: "selected",
+        correctness: "investigate",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-current-metal-niter1000-with-casa-reuse-after-contract-off/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f.json",
+      },
+      {
+        mode: "Mosaic cube",
+        phase: "clean",
+        deconvolver: "clark",
+        tier: "small",
+        shape: "8 ch, 512",
+        niter: 1000,
+        serial: 8.114,
+        cpu: 8.128,
+        metal: 7.102,
+        casa: 12.048,
+        cpuVsSerial: 0.998,
+        metalVsCpu: 1.144,
+        casaSpeedup: 1.696,
+        workers: 6,
+        backend: "mosaic_multi_plane_stream",
+        metalStatus: "selected",
+        correctness: "bad",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-after-divergence/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89.json",
+      },
+      {
+        mode: "Mosaic cube",
+        phase: "clean",
+        deconvolver: "multiscale",
+        tier: "small",
+        shape: "8 ch, 512",
+        niter: 1000,
+        serial: 15.188,
+        cpu: 11.153,
+        metal: 7.116,
+        casa: 35.323,
+        cpuVsSerial: 1.362,
+        metalVsCpu: 1.567,
+        casaSpeedup: 4.964,
+        workers: 4,
+        backend: "mosaic_multi_plane_stream",
+        metalStatus: "selected",
+        correctness: "bad",
+        target: "blocked",
+        evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-after-divergence/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72.json",
+      },
+    ];
+
+    const sections = [
+      {
+        title: "Standard Cube Dirty",
+        status: "good",
+        summary: "Medium 512-channel, 2048-pixel CASA comparison regenerated after the panel display-stride fix. The metric sample stride is still cube-bounded, but review panels use a center-plane spatial display stride.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T182655Z-wave4-standard-cube-line-medium-647717fe/panels",
+        files: standardDirty,
+        note: "Regenerated CASA-only row: 1465.062s. Panel display stride is [3, 3, 1, 1]; old stale panels used the metric sample stride [47, 47, 1, 1].",
+      },
+      {
+        title: "Standard Cube Clean Hogbom",
+        status: "accepted",
+        summary: "Regenerated post-fix Rust-vs-unchanged-CASA panels accepted for Wave 4 review.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa-full-panel-fix/panels",
+        files: cleanProducts,
+      },
+      {
+        title: "Standard Cube Clean Clark",
+        status: "investigate",
+        summary: "Deep 64-channel, niter=10000 CASA comparison panels accepted for Wave 4 review.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413-full-panel-fix/panels",
+        files: cleanProducts,
+      },
+      {
+        title: "Standard Cube Clean Multiscale",
+        status: "bad",
+        summary: "Current deep compare-only correctness row; still blocked in the closeout matrix.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62-full-panel-fix/panels",
+        files: cleanProducts,
+      },
+      {
+        title: "Cubedata Dirty",
+        status: "good",
+        summary: "Medium 512-channel, 2048-pixel CASA comparison used by the closeout matrix. Zoom panels are shown first.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260616T043109Z-wave4-standard-cubedata-line-medium-97343406-full-panel-fix/panels",
+        files: standardDirty,
+      },
+      {
+        title: "Cubedata Clean Hogbom",
+        status: "bad",
+        summary: "Deep niter=10000 compare-only correctness row; still blocked in the closeout matrix.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T112413Z-wave4-standard-cubedata-line-medium-clean-hogbom-8491aa49-full-panel-fix/panels",
+        files: cleanProducts,
+      },
+      {
+        title: "Cubedata Clean Clark",
+        status: "investigate",
+        summary: "Deep niter=10000 CASA comparison panels from the current W4-20 cubedata Clark row.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T045233Z-wave4-standard-cubedata-line-medium-clean-clark-381407de-full-panel-fix/panels",
+        files: cleanProducts,
+      },
+      {
+        title: "Cubedata Clean Multiscale",
+        status: "bad",
+        summary: "Deep 64-channel niter=10000 CASA-only follow-up row reusing the existing Rust products.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T133611Z-wave4-standard-cubedata-line-medium-clean-multiscale-c0d6a582-full-panel-fix/panels",
+        files: cleanProducts,
+        note: "CASA timing: 4401.249s. Matrix speedup using the existing Rust Metal row: 7.75x vs CASA.",
+      },
+      {
+        title: "Mosaic Cube Dirty",
+        status: "investigate",
+        summary: "Large 4-channel, 1024-pixel CASA comparison bundle covering mosaic-specific PB and weight products. Zoom panels are shown first.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T153218Z-wave4-mosaic-cube-alma-large-dirty-turnaround-65f16f6d-full-panel-fix/panels",
+        files: mosaicDirty,
+        note: "CASA timing: 153.212s. Matrix speedup: 3.37x vs CASA. The earlier small mosaic dirty comparator remains good.",
+      },
+      {
+        title: "Mosaic Cube Clean Hogbom",
+        status: "investigate",
+        summary: "Current small niter=1000 correctness bundle for mosaic Hogbom.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f-full-panel-fix/panels",
+        files: mosaicClean,
+      },
+      {
+        title: "Mosaic Cube Clean Clark",
+        status: "bad",
+        summary: "Current small niter=1000 correctness bundle for mosaic Clark.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89-full-panel-fix/panels",
+        files: mosaicClean,
+      },
+      {
+        title: "Mosaic Cube Clean Multiscale",
+        status: "bad",
+        summary: "Current small niter=1000 correctness bundle for mosaic multiscale.",
+        base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72-full-panel-fix/panels",
+        files: mosaicClean,
+      },
+    ];
+
+    function slugify(value) {
+      return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    }
+
+    function statusClass(status) {
+      if (status === "accepted" || status === "stale") {
+        return "investigate";
+      }
+      return status;
+    }
+
+    const toc = document.getElementById("toc");
+    const content = document.getElementById("content");
+
+    function fmtSeconds(value) {
+      return value === null || value === undefined ? "" : value.toFixed(3);
+    }
+
+    function fmtRatio(value) {
+      return value === null || value === undefined ? "" : `${value.toFixed(2)}x`;
+    }
+
+    function fmtValue(value, formatter) {
+      return value === null || value === undefined ? "n/a" : formatter(value);
+    }
+
+    function targetClass(target) {
+      if (target === "met") {
+        return "met";
+      }
+      if (target.includes("accepted")) {
+        return "accepted";
+      }
+      return "blocked";
+    }
+
+    function pillClass(value) {
+      if (value === "met" || value === "good") {
+        return "good";
+      }
+      if (value.includes("accepted") || value.includes("investigate")) {
+        return "warn";
+      }
+      return "bad";
+    }
+
+    function appendMetric(group, label, value) {
+      const metric = document.createElement("div");
+      metric.className = "metric";
+      const key = document.createElement("span");
+      key.textContent = label;
+      const val = document.createElement("span");
+      val.textContent = value;
+      metric.append(key, val);
+      group.appendChild(metric);
+    }
+
+    function makePill(text, extraClass) {
+      const pill = document.createElement("span");
+      pill.className = `mini-pill ${extraClass || ""}`.trim();
+      pill.textContent = text;
+      return pill;
+    }
+
+    function fileUrl(path) {
+      if (path.startsWith("file://")) {
+        return path;
+      }
+      return `file://${path.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+    }
+
+    function openLightbox(src, title) {
+      const lightbox = document.getElementById("lightbox");
+      const image = document.getElementById("lightbox-image");
+      const caption = document.getElementById("lightbox-title");
+      image.src = src;
+      image.alt = title;
+      caption.textContent = title;
+      lightbox.classList.add("open");
+      lightbox.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      document.getElementById("lightbox-close").focus();
+    }
+
+    function closeLightbox() {
+      const lightbox = document.getElementById("lightbox");
+      const image = document.getElementById("lightbox-image");
+      lightbox.classList.remove("open");
+      lightbox.setAttribute("aria-hidden", "true");
+      image.removeAttribute("src");
+      document.body.style.overflow = "";
+    }
+
+    function makePanelFigure(sectionTitle, base, file) {
+      const figure = document.createElement("figure");
+      const caption = document.createElement("figcaption");
+      caption.textContent = file;
+      const button = document.createElement("button");
+      button.className = "panel-button";
+      button.type = "button";
+      button.setAttribute("aria-label", `Expand ${sectionTitle}: ${file}`);
+      const image = document.createElement("img");
+      image.className = "panel-image";
+      image.loading = "lazy";
+      image.src = fileUrl(`${base}/${file}`);
+      image.alt = `${sectionTitle}: ${file}`;
+      button.addEventListener("click", () => openLightbox(image.src, image.alt));
+      button.appendChild(image);
+      figure.append(caption, button);
+      return figure;
+    }
+
+    function panelTitleForRow(row) {
+      const phase = row.phase === "dirty"
+        ? "Dirty"
+        : `Clean ${row.deconvolver[0].toUpperCase()}${row.deconvolver.slice(1)}`;
+      return `${row.mode.replace("cube", "Cube")} ${phase}`;
+    }
+
+    function previewFilesFor(panelSection) {
+      const files = reviewFilesFor(panelSection);
+      const preferredOrder = [
+        "image.review.png",
+        "image.zoom.review.png",
+        "image_pbcor.review.png",
+        "image_pbcor.zoom.review.png",
+        "model.review.png",
+        "model.zoom.review.png",
+        "residual.review.png",
+        "residual.zoom.review.png",
+        "psf.review.png",
+        "psf.zoom.review.png",
+      ];
+      const preferred = [];
+      for (const file of preferredOrder) {
+        if (files.includes(file)) {
+          preferred.push(file);
+        }
+      }
+      return preferred.slice(0, 6);
+    }
+
+    function reviewFilesFor(panelSection) {
+      return panelSection.files.filter((file) => {
+        if (!file.endsWith(".zoom.review.png")) {
+          return true;
+        }
+        return file === "model.zoom.review.png";
+      });
+    }
+
+    function renderPanelPreview(container, row) {
+      const panelSection = sections.find((section) => section.title === panelTitleForRow(row));
+      if (!panelSection) {
+        return;
+      }
+
+      const panelPreview = document.createElement("div");
+      panelPreview.className = "panel-preview";
+      const previewHead = document.createElement("div");
+      previewHead.className = "panel-preview-head";
+      const previewTitle = document.createElement("p");
+      previewTitle.className = "panel-preview-title";
+      previewTitle.textContent = "Correctness panels";
+      const fullPanelLink = document.createElement("a");
+      fullPanelLink.href = `#${slugify(panelSection.title)}`;
+      fullPanelLink.textContent = "Full panel section";
+      previewHead.append(previewTitle, fullPanelLink);
+      panelPreview.appendChild(previewHead);
+
+      const previewGrid = document.createElement("div");
+      previewGrid.className = "preview-grid";
+      const previewFiles = previewFilesFor(panelSection);
+      if (!previewFiles.length) {
+        const missing = document.createElement("p");
+        missing.className = "missing-note";
+        missing.textContent = "No corrected panel preview is available for this row.";
+        panelPreview.appendChild(missing);
+        container.appendChild(panelPreview);
+        return;
+      }
+      for (const file of previewFiles) {
+        previewGrid.appendChild(makePanelFigure(panelSection.title, panelSection.base, file));
+      }
+      panelPreview.appendChild(previewGrid);
+      container.appendChild(panelPreview);
+    }
+
+    function renderPerformance() {
+      const link = document.createElement("a");
+      link.href = "#performance";
+      link.textContent = "Performance Matrix";
+      toc.appendChild(link);
+
+      const sectionElement = document.createElement("section");
+      sectionElement.id = "performance";
+
+      const head = document.createElement("div");
+      head.className = "section-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h2");
+      title.textContent = "Performance Matrix";
+      const summary = document.createElement("p");
+      summary.className = "summary";
+      summary.textContent = "Current Wave 4 acceleration matrix generated from tools/perf/imager/wave4_acceleration_evidence.json. Rows marked accepted or blocked still need final review disposition before Wave 4 closeout.";
+      const path = document.createElement("div");
+      path.className = "path";
+      path.textContent = "Verification: python3 tools/perf/imager/wave4_acceleration_matrix.py --evidence-list tools/perf/imager/wave4_acceleration_evidence.json --format markdown";
+      copy.append(title, summary, path);
+      const status = document.createElement("span");
+      status.className = "status investigate";
+      status.textContent = "review";
+      head.append(copy, status);
+      sectionElement.appendChild(head);
+
+      const metRows = performanceRows.filter((row) => row.target === "met").length;
+      const acceptedRows = performanceRows.filter((row) => row.target.includes("accepted")).length;
+      const blockedRows = performanceRows.filter((row) => row.target === "blocked").length;
+      const maxCasaSpeedup = Math.max(...performanceRows.map((row) => row.casaSpeedup || 0));
+      const summaryRow = document.createElement("div");
+      summaryRow.className = "summary-row";
+      for (const item of [
+        [`${performanceRows.length}`, "matrix rows"],
+        [`${metRows}`, "met target"],
+        [`${acceptedRows}`, "accepted misses"],
+        [`${blockedRows}`, "blocked rows"],
+        [`${maxCasaSpeedup.toFixed(2)}x`, "best CASA speedup"],
+      ]) {
+        const card = document.createElement("div");
+        card.className = "summary-card";
+        const strong = document.createElement("strong");
+        strong.textContent = item[0];
+        const span = document.createElement("span");
+        span.textContent = item[1];
+        card.append(strong, span);
+        summaryRow.appendChild(card);
+      }
+      sectionElement.appendChild(summaryRow);
+
+      const matrix = document.createElement("div");
+      matrix.className = "matrix";
+      for (const row of performanceRows) {
+        const rowElement = document.createElement("article");
+        rowElement.className = `matrix-row ${targetClass(row.target)}`;
+
+        const identity = document.createElement("div");
+        const rowTitle = document.createElement("p");
+        rowTitle.className = "matrix-title";
+        rowTitle.textContent = `${row.mode} ${row.phase}`;
+        const rowSubtitle = document.createElement("p");
+        rowSubtitle.className = "matrix-subtitle";
+        rowSubtitle.textContent = row.deconvolver === "none"
+          ? `${row.tier}, ${row.shape}`
+          : `${row.deconvolver}, ${row.tier}, ${row.shape}, niter=${row.niter}`;
+        identity.append(rowTitle, rowSubtitle);
+
+        const timings = document.createElement("div");
+        timings.className = "metric-group";
+        appendMetric(timings, "serial", fmtValue(row.serial, fmtSeconds));
+        appendMetric(timings, "CPU/auto", fmtValue(row.cpu, fmtSeconds));
+        appendMetric(timings, "Metal/default", fmtValue(row.metal, fmtSeconds));
+        appendMetric(timings, "CASA", fmtValue(row.casa, fmtSeconds));
+
+        const speedups = document.createElement("div");
+        speedups.className = "metric-group";
+        appendMetric(speedups, "CPU vs serial", fmtValue(row.cpuVsSerial, fmtRatio));
+        appendMetric(speedups, "Metal vs CPU", fmtValue(row.metalVsCpu, fmtRatio));
+        appendMetric(speedups, "default vs CASA", fmtValue(row.casaSpeedup, fmtRatio));
+        appendMetric(speedups, "workers", String(row.workers));
+
+        const statusPills = document.createElement("div");
+        statusPills.className = "pill-row";
+        statusPills.append(
+          makePill(row.target, pillClass(row.target)),
+          makePill(row.correctness, pillClass(row.correctness)),
+          makePill(row.metalStatus || "no Metal row", row.metalStatus === "selected" ? "good" : "warn"),
+        );
+
+        const backend = document.createElement("div");
+        backend.className = "metric-group";
+        appendMetric(backend, "backend", row.backend);
+        appendMetric(backend, "tier", row.tier);
+        appendMetric(backend, "shape", row.shape);
+
+        const details = document.createElement("details");
+        details.className = "matrix-details";
+        const detailsSummary = document.createElement("summary");
+        detailsSummary.textContent = "Panels and evidence";
+        details.appendChild(detailsSummary);
+        renderPanelPreview(details, row);
+        const linkRow = document.createElement("div");
+        linkRow.className = "text-link-row";
+        const textLink = document.createElement("a");
+        textLink.href = fileUrl(row.evidence);
+        textLink.textContent = "Open JSON/text evidence";
+        const textPath = document.createElement("span");
+        textPath.textContent = row.evidence;
+        linkRow.append(textLink, textPath);
+        details.appendChild(linkRow);
+        const detailGrid = document.createElement("dl");
+        detailGrid.className = "detail-grid";
+        for (const [label, value] of [
+          ["phase", row.phase],
+          ["deconvolver", row.deconvolver],
+          ["niter", String(row.niter)],
+          ["selected backend", row.backend],
+          ["metal status", row.metalStatus || "n/a"],
+          ["target status", row.target],
+          ["correctness status", row.correctness],
+          ["evidence", row.evidence],
+        ]) {
+          const dt = document.createElement("dt");
+          dt.textContent = label;
+          const dd = document.createElement("dd");
+          dd.textContent = value;
+          detailGrid.append(dt, dd);
+        }
+        details.appendChild(detailGrid);
+
+        rowElement.append(identity, timings, speedups, statusPills, backend, details);
+        matrix.appendChild(rowElement);
+      }
+      sectionElement.appendChild(matrix);
+      content.appendChild(sectionElement);
+    }
+
+    renderPerformance();
+
+    for (const section of sections) {
+      const id = slugify(section.title);
+      const link = document.createElement("a");
+      link.href = `#${id}`;
+      link.textContent = section.title;
+      toc.appendChild(link);
+
+      const sectionElement = document.createElement("section");
+      sectionElement.id = id;
+
+      const head = document.createElement("div");
+      head.className = "section-head";
+
+      const copy = document.createElement("div");
+      const title = document.createElement("h2");
+      title.textContent = section.title;
+      const summary = document.createElement("p");
+      summary.className = "summary";
+      summary.textContent = section.summary;
+      const path = document.createElement("div");
+      path.className = "path";
+      path.textContent = section.base;
+      copy.append(title, summary, path);
+      if (section.note) {
+        const note = document.createElement("div");
+        note.className = "path";
+        note.textContent = section.note;
+        copy.appendChild(note);
+      }
+
+      const status = document.createElement("span");
+      status.className = `status ${statusClass(section.status)}`;
+      status.textContent = section.status;
+      head.append(copy, status);
+      sectionElement.appendChild(head);
+
+      if (!section.files.length) {
+        const missing = document.createElement("p");
+        missing.className = "missing-note";
+        missing.textContent = "No panel PNGs were rendered for this artifact.";
+        sectionElement.appendChild(missing);
+      } else {
+        const grid = document.createElement("div");
+        grid.className = "grid";
+        for (const file of reviewFilesFor(section)) {
+          grid.appendChild(makePanelFigure(section.title, section.base, file));
+        }
+        sectionElement.appendChild(grid);
+      }
+      content.appendChild(sectionElement);
+    }
+
+    const lightbox = document.createElement("div");
+    lightbox.id = "lightbox";
+    lightbox.className = "lightbox";
+    lightbox.setAttribute("aria-hidden", "true");
+    lightbox.setAttribute("role", "dialog");
+    lightbox.setAttribute("aria-modal", "true");
+    lightbox.innerHTML = `
+      <div class="lightbox-bar">
+        <p id="lightbox-title" class="lightbox-title"></p>
+        <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Close expanded panel">&times;</button>
+      </div>
+      <div class="lightbox-frame">
+        <img id="lightbox-image" alt="">
+      </div>
+    `;
+    lightbox.addEventListener("click", (event) => {
+      if (event.target === lightbox || event.target.id === "lightbox-image") {
+        closeLightbox();
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && lightbox.classList.contains("open")) {
+        closeLightbox();
+      }
+    });
+    document.body.appendChild(lightbox);
+    document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+  </script>
+</body>
+</html>

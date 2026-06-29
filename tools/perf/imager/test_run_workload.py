@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 from unittest import mock
+import os
 from pathlib import Path
 import tempfile
 import sys
@@ -1485,6 +1486,75 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
             namespace["stride_for"]([1024, 1024, 1, 1], 1_000_000),
         )
 
+    def test_product_comparison_panels_use_spatial_display_stride(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        class FakeImageTool:
+            def __init__(self):
+                self.path = None
+
+            def open(self, path):
+                self.path = path
+
+            def shape(self):
+                return [2048, 2048, 1, 512]
+
+            def getchunk(self, blc, trc, inc, dropdeg, getmask):
+                shape = [
+                    ((trc_value - blc_value) // inc_value) + 1
+                    for blc_value, trc_value, inc_value in zip(blc, trc, inc)
+                ]
+                value = 2.0 if str(self.path).endswith("rust.image") else 1.0
+                return np.full(shape, value, dtype=np.float64)
+
+            def close(self):
+                return None
+
+        captured = {}
+
+        def fake_write_review_panel(
+            panel_dir,
+            suffix,
+            rust_data,
+            casa_data,
+            diff_data,
+            review=None,
+            display=None,
+        ):
+            captured["rust_data_shape"] = list(rust_data.shape)
+            captured["display_data_shape"] = list(display["rust_data"].shape)
+            captured["display_sample_stride"] = display["sample_stride"]
+            return {"status": "written", "path": "/tmp/image.review.png"}
+
+        namespace["image"] = FakeImageTool
+        namespace["write_review_panel"] = fake_write_review_panel
+        namespace["structured_difference_metrics"] = lambda **kwargs: {
+            "status": "computed",
+            "review": {"label": "good"},
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rust_path = os.path.join(temp_dir, "rust.image")
+            casa_path = os.path.join(temp_dir, "casa.image")
+            os.makedirs(rust_path)
+            os.makedirs(casa_path)
+            result = namespace["compare_one"](
+                rust_path,
+                casa_path,
+                1_000_000,
+                temp_dir,
+                ".image",
+                {"status": "unavailable"},
+            )
+
+        self.assertEqual("compared", result["status"])
+        self.assertEqual([47, 47, 1, 1], result["sample_stride"])
+        self.assertEqual([44, 44, 1, 512], captured["rust_data_shape"])
+        self.assertEqual([3, 3, 1, 1], captured["display_sample_stride"])
+        self.assertEqual([683, 683, 1, 1], captured["display_data_shape"])
+
     def test_product_comparison_reports_beam_normalized_structure_metrics(self) -> None:
         namespace: dict[str, object] = {"__name__": "product_comparison_test"}
         with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
@@ -1834,6 +1904,63 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         self.assertEqual("written", panel["status"])
         self.assertEqual("investigate", panel["structured_difference_label"])
         self.assertIn(".weight: investigate", panel["structured_difference_summary"])
+
+    def test_review_panel_skips_zoom_when_bounds_cover_full_plane(self) -> None:
+        namespace: dict[str, object] = {"__name__": "product_comparison_test"}
+        with mock.patch.dict("sys.modules", {"casatools": mock.MagicMock()}):
+            exec(run_workload.PRODUCT_COMPARISON_SCRIPT, namespace)
+
+        class FakeAxis:
+            def imshow(self, *args, **kwargs):
+                return object()
+
+            def set_title(self, *args, **kwargs):
+                return None
+
+            def set_aspect(self, *args, **kwargs):
+                return None
+
+            def set_box_aspect(self, *args, **kwargs):
+                return None
+
+            def set_xticks(self, *args, **kwargs):
+                return None
+
+            def set_yticks(self, *args, **kwargs):
+                return None
+
+        class FakeFigure:
+            def suptitle(self, *args, **kwargs):
+                return None
+
+            def colorbar(self, *args, **kwargs):
+                return None
+
+            def savefig(self, *args, **kwargs):
+                return None
+
+        class FakePlot:
+            def subplots(self, *args, **kwargs):
+                return FakeFigure(), [FakeAxis(), FakeAxis(), FakeAxis()]
+
+            def close(self, *args, **kwargs):
+                return None
+
+        namespace["plt"] = FakePlot()
+
+        rust = np.ones((64, 64), dtype=np.float64)
+        casa = np.ones((64, 64), dtype=np.float64) * 0.99
+        diff = rust - casa
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            panel = namespace["write_review_panel"](temp_dir, ".image", rust, casa, diff)
+
+        self.assertEqual("written", panel["status"])
+        self.assertEqual("skipped", panel["zoom_panel"]["status"])
+        self.assertEqual(
+            "zoom bounds cover the full review plane",
+            panel["zoom_panel"]["reason"],
+        )
 
     def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
         log = """Rust stage medians (milliseconds):

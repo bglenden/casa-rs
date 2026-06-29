@@ -2718,6 +2718,24 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info
         diff_data=diff_full,
         beam_info=beam_info,
     )
+    panel_display_data = panel_display
+    if panel_display_data is None:
+        rust_display = load_image_display_plane(rust_path, max_elements)
+        casa_display = load_image_display_plane(casa_path, max_elements)
+        panel_display_data = {
+            "status": "available",
+            "rust_data": rust_display["data"],
+            "casa_data": casa_display["data"],
+            "diff_data": rust_display["data"] - casa_display["data"],
+            "transform": "center_plane_full_spatial_display",
+            "description": (
+                "center display plane loaded with spatial-only stride; "
+                "non-spatial axes fixed at their center"
+            ),
+            "shape": rust_display["shape"],
+            "display_bounds": rust_display["display_bounds"],
+            "sample_stride": rust_display["sample_stride"],
+        }
     panel = write_review_panel(
         panel_dir=panel_dir,
         suffix=suffix,
@@ -2725,7 +2743,7 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info
         casa_data=casa_data,
         diff_data=diff_full,
         review=structure.get("review") if isinstance(structure, dict) else None,
-        display=panel_display,
+        display=panel_display_data,
     )
     return {
         "status": "compared",
@@ -3372,6 +3390,9 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
     display_transform = None
     display_description = None
     display_reason = None
+    display_shape = None
+    display_bounds = None
+    display_sample_stride = None
     product_label = suffix if suffix else ".image"
     value_label = product_value_label(suffix)
     panel_rust_data = rust_data
@@ -3387,6 +3408,9 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
             display_status = "derived"
             display_transform = display.get("transform")
             display_description = display.get("description")
+            display_shape = display.get("shape")
+            display_bounds = display.get("display_bounds")
+            display_sample_stride = display.get("sample_stride")
         else:
             display_status = display.get("status", "unavailable")
             display_reason = display.get("reason")
@@ -3444,6 +3468,9 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
         "display_transform": display_transform,
         "display_description": display_description,
         "display_reason": display_reason,
+        "display_shape": display_shape,
+        "display_bounds": display_bounds,
+        "display_sample_stride": display_sample_stride,
         "zoom_panel": zoom_panel,
     }
 
@@ -3462,6 +3489,12 @@ def write_zoom_review_panel(
     if bounds is None:
         return {"status": "skipped", "reason": "no finite nonzero support for zoom panel"}
     x0, x1, y0, y1 = bounds
+    if x0 == 0 and y0 == 0 and x1 == rust_plane.shape[0] and y1 == rust_plane.shape[1]:
+        return {
+            "status": "skipped",
+            "reason": "zoom bounds cover the full review plane",
+            "bounds": {"x_start": x0, "x_end": x1, "y_start": y0, "y_end": y1},
+        }
     rust_zoom = rust_plane[x0:x1, y0:y1]
     casa_zoom = casa_plane[x0:x1, y0:y1]
     diff_zoom = diff_plane[x0:x1, y0:y1]

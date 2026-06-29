@@ -160,7 +160,12 @@
     {
       "row_id": "cubedata_clean_multiscale",
       "role": "casa_cpp",
-      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-cubedata-multiscale-small-correctness-metal-planner/20260617T011222Z-wave4-standard-cubedata-line-small-clean-multiscale-correctness-0959f2e2.json"
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-casa-correctness-current/20260618T133611Z-wave4-standard-cubedata-line-medium-clean-multiscale-c0d6a582.json"
+    },
+    {
+      "row_id": "cubedata_clean_multiscale",
+      "role": "correctness_current",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-casa-correctness-current/20260618T133611Z-wave4-standard-cubedata-line-medium-clean-multiscale-c0d6a582.json"
     },
     {
       "row_id": "mosaic_cube_dirty",
@@ -175,6 +180,11 @@
     {
       "row_id": "mosaic_cube_dirty",
       "role": "casa_cpp",
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-large-casa-correctness-current/20260618T153218Z-wave4-mosaic-cube-alma-large-dirty-turnaround-65f16f6d.json"
+    },
+    {
+      "row_id": "mosaic_cube_dirty",
+      "role": "correctness_small",
       "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-small-sharedctx/20260616T130715Z-wave4-mosaic-cube-alma-small-dirty-correctness-71aca176.json"
     },
     {
