@@ -99,11 +99,17 @@ const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_B
 const STANDARD_MFS_INITIAL_DIRTY_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND";
 const STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK_ENV: &str =
     "CASA_RS_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK";
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const DEFAULT_STANDARD_MFS_METAL_MINOR_CYCLE_TARGET_MS: f64 = 2_000.0;
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_PIXELS: usize = 2048 * 2048;
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_SCALES: usize = 3;
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_REFERENCE_INITIAL_CHUNK: usize = 512;
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_MIN_AUTO_CHUNK: usize = 32;
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 const STANDARD_MFS_METAL_MINOR_CYCLE_MAX_AUTO_CHUNK: usize = 16_384;
 
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +139,7 @@ enum StandardMfsBackendSelection {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct HogbomMetalPeakCandidate {
     abs_value: f32,
@@ -142,6 +149,7 @@ struct HogbomMetalPeakCandidate {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct HogbomMetalReduceParams {
     candidate_count: u32,
@@ -151,6 +159,7 @@ struct HogbomMetalReduceParams {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct HogbomMetalCycleParams {
     cell_count: u32,
@@ -168,6 +177,7 @@ struct HogbomMetalCycleParams {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct HogbomMetalCycleState {
     peak: HogbomMetalPeakCandidate,
@@ -178,6 +188,7 @@ struct HogbomMetalCycleState {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct HogbomMetalComponentTrace {
     value: f32,
@@ -194,6 +205,7 @@ struct CleanMaskSummary {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct ClarkMetalSubcycleParams {
     active_count: u32,
@@ -217,6 +229,7 @@ struct ClarkMetalSubcycleParams {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct ClarkMetalSubcycleState {
     peak: HogbomMetalPeakCandidate,
@@ -229,6 +242,7 @@ struct ClarkMetalSubcycleState {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct MultiscaleMetalCycleParams {
     cell_count: u32,
@@ -247,6 +261,7 @@ struct MultiscaleMetalCycleParams {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct MultiscaleMetalReduceParams {
     candidate_count: u32,
@@ -259,6 +274,7 @@ struct MultiscaleMetalReduceParams {
 }
 
 #[repr(C)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 #[derive(Debug, Clone, Copy, Default)]
 struct MultiscaleMetalCycleState {
     peak: HogbomMetalPeakCandidate,
@@ -13731,10 +13747,13 @@ fn copy_x_major_slice_to_array2(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+type Array2FirstDiff = ((usize, usize), f32, f32);
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn array2_max_abs_diff_with_first(
     lhs: &Array2<f32>,
     rhs: &Array2<f32>,
-) -> (f32, Option<((usize, usize), f32, f32)>) {
+) -> (f32, Option<Array2FirstDiff>) {
     let (nx, ny) = lhs.dim();
     if rhs.dim() != (nx, ny) {
         return (f32::INFINITY, None);
@@ -14220,6 +14239,7 @@ fn hogbom_metal_params_buffer<T>(
     hogbom_metal_buffer_from_slice(device, std::slice::from_ref(params), storage_options, label)
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn hogbom_metal_stop_reason(code: u32) -> Option<CleanStopReason> {
     match code {
         0 => None,
@@ -14233,6 +14253,7 @@ fn hogbom_metal_stop_reason(code: u32) -> Option<CleanStopReason> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 enum StandardMfsMetalMinorCycleChunkKind {
     Full,
     Fixed,
@@ -14240,6 +14261,7 @@ enum StandardMfsMetalMinorCycleChunkKind {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 struct StandardMfsMetalMinorCycleChunkPlanner {
     kind: StandardMfsMetalMinorCycleChunkKind,
     next_chunk: usize,
@@ -14256,6 +14278,7 @@ struct StandardMfsMetalMinorCycleChunkPlanner {
     predicted_next_ms: Option<f64>,
 }
 
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 impl StandardMfsMetalMinorCycleChunkPlanner {
     fn next_chunk(&self, updates_remaining: usize) -> usize {
         self.next_chunk.max(1).min(updates_remaining.max(1))
@@ -14330,6 +14353,7 @@ impl StandardMfsMetalMinorCycleChunkPlanner {
     }
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn standard_mfs_metal_minor_cycle_chunk_planner(
     cycle_reported_niter: usize,
     cell_count: usize,
@@ -14344,6 +14368,7 @@ fn standard_mfs_metal_minor_cycle_chunk_planner(
     )
 }
 
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 fn standard_mfs_metal_minor_cycle_chunk_planner_from_value(
     value: Option<&str>,
     cycle_reported_niter: usize,
@@ -14447,6 +14472,7 @@ fn standard_mfs_metal_minor_cycle_chunk_planner_from_value(
     }
 }
 
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 fn parse_standard_mfs_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f64> {
     if value.eq_ignore_ascii_case("auto") {
         return Some(DEFAULT_STANDARD_MFS_METAL_MINOR_CYCLE_TARGET_MS);
@@ -14460,6 +14486,7 @@ fn parse_standard_mfs_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f6
         .filter(|value| *value > 0.0)
 }
 
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 fn standard_mfs_metal_minor_cycle_initial_auto_chunk(
     cycle_reported_niter: usize,
     cell_count: usize,

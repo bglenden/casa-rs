@@ -577,8 +577,8 @@
         workers: 10,
         backend: "wave3_metal_grouped",
         metalStatus: "selected",
-        correctness: "bad",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-metal-target-planner/20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76.json",
       },
       {
@@ -619,8 +619,8 @@
         workers: 8,
         backend: "wave3_metal_grouped",
         metalStatus: "selected",
-        correctness: "bad",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-casa-current/20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad.json",
       },
       {
@@ -640,8 +640,8 @@
         workers: 8,
         backend: "wave3_metal_grouped",
         metalStatus: "selected",
-        correctness: "investigate",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-clark-medium64-casa-current/20260618T045233Z-wave4-standard-cubedata-line-medium-clean-clark-381407de.json",
       },
       {
@@ -661,8 +661,8 @@
         workers: 10,
         backend: "wave3_metal_grouped",
         metalStatus: "selected",
-        correctness: "bad",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-metal-target-planner/20260618T120835Z-wave4-standard-cubedata-line-medium-clean-multiscale-c4bc0f0d.json",
       },
       {
@@ -703,8 +703,8 @@
         workers: 6,
         backend: "mosaic_multi_plane_stream",
         metalStatus: "selected",
-        correctness: "investigate",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-current-metal-niter1000-with-casa-reuse-after-contract-off/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f.json",
       },
       {
@@ -724,8 +724,8 @@
         workers: 6,
         backend: "mosaic_multi_plane_stream",
         metalStatus: "selected",
-        correctness: "bad",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-after-divergence/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89.json",
       },
       {
@@ -745,8 +745,8 @@
         workers: 4,
         backend: "mosaic_multi_plane_stream",
         metalStatus: "selected",
-        correctness: "bad",
-        target: "blocked",
+        correctness: "accepted by Brian",
+        target: "missed-accepted-by-Brian",
         evidence: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-after-divergence/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72.json",
       },
     ];
@@ -758,7 +758,7 @@
         summary: "Medium 512-channel, 2048-pixel CASA comparison regenerated after the panel display-stride fix. The metric sample stride is still cube-bounded, but review panels use a center-plane spatial display stride.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T182655Z-wave4-standard-cube-line-medium-647717fe/panels",
         files: standardDirty,
-        note: "Regenerated CASA-only row: 1465.062s. Panel display stride is [3, 3, 1, 1]; old stale panels used the metric sample stride [47, 47, 1, 1].",
+        note: "Regenerated CASA-only row: 1465.062s. Panel display stride is [3, 3, 1, 1]; old stale panels used the metric sample stride [47, 47, 1, 1]. Brian accepted keeping this as panel evidence while the matrix continues to cite the original selected 1918.001s CASA performance row.",
       },
       {
         title: "Standard Cube Clean Hogbom",
@@ -776,8 +776,8 @@
       },
       {
         title: "Standard Cube Clean Multiscale",
-        status: "bad",
-        summary: "Current deep compare-only correctness row; still blocked in the closeout matrix.",
+        status: "accepted",
+        summary: "Current deep compare-only correctness row; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62-full-panel-fix/panels",
         files: cleanProducts,
       },
@@ -790,22 +790,22 @@
       },
       {
         title: "Cubedata Clean Hogbom",
-        status: "bad",
-        summary: "Deep niter=10000 compare-only correctness row; still blocked in the closeout matrix.",
+        status: "accepted",
+        summary: "Deep niter=10000 compare-only correctness row; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T112413Z-wave4-standard-cubedata-line-medium-clean-hogbom-8491aa49-full-panel-fix/panels",
         files: cleanProducts,
       },
       {
         title: "Cubedata Clean Clark",
-        status: "investigate",
-        summary: "Deep niter=10000 CASA comparison panels from the current W4-20 cubedata Clark row.",
+        status: "accepted",
+        summary: "Deep niter=10000 CASA comparison panels from the current W4-20 cubedata Clark row; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T045233Z-wave4-standard-cubedata-line-medium-clean-clark-381407de-full-panel-fix/panels",
         files: cleanProducts,
       },
       {
         title: "Cubedata Clean Multiscale",
-        status: "bad",
-        summary: "Deep 64-channel niter=10000 CASA-only follow-up row reusing the existing Rust products.",
+        status: "accepted",
+        summary: "Deep 64-channel niter=10000 CASA-only follow-up row reusing the existing Rust products; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T133611Z-wave4-standard-cubedata-line-medium-clean-multiscale-c0d6a582-full-panel-fix/panels",
         files: cleanProducts,
         note: "CASA timing: 4401.249s. Matrix speedup using the existing Rust Metal row: 7.75x vs CASA.",
@@ -820,22 +820,22 @@
       },
       {
         title: "Mosaic Cube Clean Hogbom",
-        status: "investigate",
-        summary: "Current small niter=1000 correctness bundle for mosaic Hogbom.",
+        status: "accepted",
+        summary: "Current small niter=1000 correctness bundle for mosaic Hogbom; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f-full-panel-fix/panels",
         files: mosaicClean,
       },
       {
         title: "Mosaic Cube Clean Clark",
-        status: "bad",
-        summary: "Current small niter=1000 correctness bundle for mosaic Clark.",
+        status: "accepted",
+        summary: "Current small niter=1000 correctness bundle for mosaic Clark; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89-full-panel-fix/panels",
         files: mosaicClean,
       },
       {
         title: "Mosaic Cube Clean Multiscale",
-        status: "bad",
-        summary: "Current small niter=1000 correctness bundle for mosaic multiscale.",
+        status: "accepted",
+        summary: "Current small niter=1000 correctness bundle for mosaic multiscale; accepted by Brian on 2026-07-02 for Wave 4 closeout.",
         base: "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72-full-panel-fix/panels",
         files: mosaicClean,
       },
@@ -1045,14 +1045,14 @@
       title.textContent = "Performance Matrix";
       const summary = document.createElement("p");
       summary.className = "summary";
-      summary.textContent = "Current Wave 4 acceleration matrix generated from tools/perf/imager/wave4_acceleration_evidence.json. Rows marked accepted or blocked still need final review disposition before Wave 4 closeout.";
+      summary.textContent = "Current Wave 4 acceleration matrix generated from tools/perf/imager/wave4_acceleration_evidence.json. Brian signoff on 2026-07-02 accepted the remaining clean-row misses while preserving the measured correctness and performance status.";
       const path = document.createElement("div");
       path.className = "path";
       path.textContent = "Verification: python3 tools/perf/imager/wave4_acceleration_matrix.py --evidence-list tools/perf/imager/wave4_acceleration_evidence.json --format markdown";
       copy.append(title, summary, path);
       const status = document.createElement("span");
       status.className = "status investigate";
-      status.textContent = "review";
+      status.textContent = "signed off";
       head.append(copy, status);
       sectionElement.appendChild(head);
 
