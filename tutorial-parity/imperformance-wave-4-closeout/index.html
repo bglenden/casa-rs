@@ -1,0 +1,1599 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ImPerformance Wave 4 Closeout - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imperformance-wave-4-closeout" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ImPerformance Wave 4 Closeout
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#w4-18-acceleration-matrix-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W4-18 Acceleration Matrix Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#standard-cube-cubedata-refactor-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standard Cube / Cubedata Refactor Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#clean-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clean Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-and-plane-state-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory And Plane-State I/O
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#planner-calibration-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Planner Calibration Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rejected-or-parked-attempts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rejected Or Parked Attempts
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imperformance-wave-4-closeout">ImPerformance Wave 4 Closeout<a class="headerlink" href="#imperformance-wave-4-closeout" title="Permanent link">&para;</a></h1>
+<p>Truth class: evidence log
+Last reality check: 2026-07-02
+Verification: benchmark JSONs listed below; <code>python3 -m unittest tools/perf/imager/test_wave4_acceleration_matrix.py</code>; <code>python3 -m unittest tools/perf/imager/test_run_workload.py</code>; <code>cargo fmt --all -- --check</code>; <code>cargo clippy --workspace --all-targets -- -D warnings</code>; <code>cargo test -p casars-imager imaging_worker_plan --lib</code>; <code>cargo test -p casars-imager mosaic_cube_multiscale_slab_has_planned_metal_command_target --lib</code>; <code>cargo test -p casars-imager multiscale_metal_runtime_planner_sets_default_minor_cycle_chunk --lib</code>; <code>cargo test -p casars-imager mosaic --lib -- --test-threads=1</code>; <code>cargo test -p casa-imaging multiscale_metal_auto_chunk_planner_uses_shape_scaled_adaptive_chunks --lib</code>; <code>cargo test -p casa-imaging --lib -- --test-threads=1</code>; <code>docs/tutorial-parity/imperformance-wave-4-large-dirty-attempts.md</code></p>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<p>Wave 4 added bounded multi-plane spectral-line execution for standard cube,
+<code>cubedata</code>, and PB-aware mosaic cube paths. This closeout records the current
+evidence for W4-18 acceleration review. Brian reviewed the combined performance
+and correctness page on 2026-07-02 and accepted the remaining clean-row
+correctness/performance misses as Wave 4 residuals. The accepted misses remain
+visible in the matrix rather than changing thresholds or hiding the underlying
+measurements.</p>
+<p>All generated benchmark products and logs are under
+<code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete</code>, which is an
+explicitly temporary artifact root.</p>
+<h2 id="w4-18-acceleration-matrix-status">W4-18 Acceleration Matrix Status<a class="headerlink" href="#w4-18-acceleration-matrix-status" title="Permanent link">&para;</a></h2>
+<p>Generated with:</p>
+<div class="codehilite"><pre><span></span><code>python3<span class="w"> </span>tools/perf/imager/wave4_acceleration_matrix.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--evidence-list<span class="w"> </span>tools/perf/imager/wave4_acceleration_evidence.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--format<span class="w"> </span>markdown
+</code></pre></div>
+
+<p>The evidence manifest is checked in at
+<code>tools/perf/imager/wave4_acceleration_evidence.json</code>; it contains the absolute
+GLENDENNING result paths for each row below.</p>
+<p>The combined review page with this performance matrix and the selected
+correctness panels is
+<code>docs/tutorial-parity/imperformance-wave-4-performance-correctness-review.html</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Matrix row</th>
+<th>Tier / shape</th>
+<th style="text-align: right;">Serial or single-worker s</th>
+<th style="text-align: right;">Multi-worker CPU/auto s</th>
+<th style="text-align: right;">Metal/default s</th>
+<th style="text-align: right;">CASA s</th>
+<th style="text-align: right;">Key speedup</th>
+<th>Correctness</th>
+<th>Target status</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard cube dirty</td>
+<td>medium, 512 ch, 2048</td>
+<td style="text-align: right;">316.815</td>
+<td style="text-align: right;">154.741</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">1918.001</td>
+<td style="text-align: right;">2.05x auto vs forced single-worker; 12.39x vs CASA</td>
+<td>good; panels regenerated after display-stride fix in <code>20260618T182655Z-wave4-standard-cube-line-medium-647717fe</code></td>
+<td>met</td>
+<td><code>20260616T173624Z-wave4-standard-cube-line-medium-905e11e5</code></td>
+</tr>
+<tr>
+<td>Standard cube clean Hogbom</td>
+<td>medium, 64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">282.458</td>
+<td style="text-align: right;">137.109</td>
+<td style="text-align: right;">811.307</td>
+<td style="text-align: right;">2.06x Metal vs CPU; 5.92x vs CASA</td>
+<td>accepted by Brian on 2026-06-17 after regenerated panel review: restored <code>.image</code> edge artifact fixed; remaining <code>.model</code>/<code>.residual</code> component-order divergence acceptable for Wave 4</td>
+<td>missed-accepted-by-Brian: Metal-vs-CPU target met, CASA speed target missed</td>
+<td><code>20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a</code> plus unchanged CASA row <code>20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24</code>; regenerated panels under <code>20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa</code></td>
+</tr>
+<tr>
+<td>Standard cube clean Clark</td>
+<td>medium, 64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">160.122</td>
+<td style="text-align: right;">36.607</td>
+<td style="text-align: right;">32.429</td>
+<td style="text-align: right;">409.289</td>
+<td style="text-align: right;">4.37x multi-worker vs serial; Metal default is 1.13x vs multi-worker CPU and 12.62x vs CASA</td>
+<td>accepted by Brian on 2026-06-17 after panel review: <code>.model</code>, <code>.psf</code>, <code>.sumwt</code> good; small structured <code>.image</code>/<code>.residual</code> differences acceptable for Wave 4</td>
+<td>missed-accepted-by-Brian: CASA speed target met, Metal-vs-CPU target missed</td>
+<td><code>20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b</code>; CASA timing from unchanged row <code>20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413</code></td>
+</tr>
+<tr>
+<td>Standard cube clean multiscale</td>
+<td>medium, 64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">784.810</td>
+<td style="text-align: right;">744.336</td>
+<td style="text-align: right;">609.057</td>
+<td style="text-align: right;">5311.750</td>
+<td style="text-align: right;">1.05x multi-worker vs serial; 1.22x Metal vs CPU; 8.72x vs CASA</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76</code>; correctness row <code>20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62</code>; CASA row <code>20260618T061143Z-wave4-standard-cube-line-medium-clean-multiscale-e9c79944</code></td>
+</tr>
+<tr>
+<td>Cubedata dirty</td>
+<td>medium, 512 ch, 2048</td>
+<td style="text-align: right;">349.241</td>
+<td style="text-align: right;">146.788</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">1887.410</td>
+<td style="text-align: right;">2.38x auto vs forced single-worker; 12.86x vs CASA</td>
+<td>good</td>
+<td>met</td>
+<td><code>20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335</code></td>
+</tr>
+<tr>
+<td>Cubedata clean Hogbom</td>
+<td>medium, 64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">262.735</td>
+<td style="text-align: right;">208.483</td>
+<td style="text-align: right;">1121.845</td>
+<td style="text-align: right;">1.26x Metal vs CPU; 5.38x vs CASA</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad</code></td>
+</tr>
+<tr>
+<td>Cubedata clean Clark</td>
+<td>medium, 64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">159.595</td>
+<td style="text-align: right;">43.880</td>
+<td style="text-align: right;">39.625</td>
+<td style="text-align: right;">632.483</td>
+<td style="text-align: right;">3.64x multi-worker vs serial; 1.11x Metal vs CPU; 15.96x vs CASA</td>
+<td>investigate deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T045233Z-wave4-standard-cubedata-line-medium-clean-clark-381407de</code></td>
+</tr>
+<tr>
+<td>Cubedata clean multiscale</td>
+<td>medium, 64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">817.799</td>
+<td style="text-align: right;">567.588</td>
+<td style="text-align: right;">4401.249</td>
+<td style="text-align: right;">1.44x Metal vs CPU; 7.75x vs CASA</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T120835Z-wave4-standard-cubedata-line-medium-clean-multiscale-c4bc0f0d</code>; CASA/correctness row <code>20260618T133611Z-wave4-standard-cubedata-line-medium-clean-multiscale-c0d6a582</code></td>
+</tr>
+<tr>
+<td>Mosaic cube dirty</td>
+<td>large, 4 ch, 1024</td>
+<td style="text-align: right;">79.572</td>
+<td style="text-align: right;">45.486</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">153.212</td>
+<td style="text-align: right;">1.75x vs single-plane stream; 3.37x vs CASA</td>
+<td>good on small CASA row; large comparable CASA row is investigate for <code>.image</code>, <code>.residual</code>, and <code>.image.pbcor</code></td>
+<td>met</td>
+<td><code>20260616T130921Z-wave4-mosaic-cube-alma-large-dirty-turnaround-3f72240e</code>; CASA/correctness row <code>20260618T153218Z-wave4-mosaic-cube-alma-large-dirty-turnaround-65f16f6d</code></td>
+</tr>
+<tr>
+<td>Mosaic cube clean Hogbom</td>
+<td>small, 8 ch, 512, niter=1000</td>
+<td style="text-align: right;">10.128</td>
+<td style="text-align: right;">7.115</td>
+<td style="text-align: right;">7.108</td>
+<td style="text-align: right;">6.697</td>
+<td style="text-align: right;">1.42x multi-worker vs serial; 1.00x Metal vs CPU; 0.94x vs CASA</td>
+<td>investigate deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f</code></td>
+</tr>
+<tr>
+<td>Mosaic cube clean Clark</td>
+<td>small, 8 ch, 512, niter=1000</td>
+<td style="text-align: right;">8.114</td>
+<td style="text-align: right;">8.128</td>
+<td style="text-align: right;">7.102</td>
+<td style="text-align: right;">12.048</td>
+<td style="text-align: right;">1.00x multi-worker vs serial; 1.14x Metal vs CPU; 1.70x vs CASA</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89</code></td>
+</tr>
+<tr>
+<td>Mosaic cube clean multiscale</td>
+<td>small, 8 ch, 512, niter=1000</td>
+<td style="text-align: right;">15.188</td>
+<td style="text-align: right;">11.153</td>
+<td style="text-align: right;">7.116</td>
+<td style="text-align: right;">35.323</td>
+<td style="text-align: right;">1.36x multi-worker vs serial; 1.57x Metal vs CPU; 4.96x vs CASA</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>missed-accepted-by-Brian</td>
+<td><code>20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72</code></td>
+</tr>
+</tbody>
+</table>
+<p>Current review conclusion: standard cube dirty, cubedata dirty, and W4-19 mosaic
+dirty have met their matrix targets. The dirty standard cube and cubedata rows
+now use the same standard spectral cube slab infrastructure, with forced
+single-worker rows produced by <code>standard_mfs_grid_threads=1</code> and auto rows using
+10 plane workers. The 24 GB large row remains large-scale context rather than
+the medium speedup comparator. Cubedata dirty correctness is good, including the
+<code>.sumwt</code> non-spatial product reclassification, and its refreshed auto-vs-forced
+single-worker speedup is 2.38x against the 2.0x target.</p>
+<p>The standard cube dirty review panels were regenerated on 2026-06-18 after the
+comparison harness fix that separates numeric cube sampling from full-field
+center-plane panel display. The regenerated CASA-only row reused the existing
+casa-rs products, took <code>1465.062 s</code>, and writes panels under
+<code>20260618T182655Z-wave4-standard-cube-line-medium-647717fe</code>; the matrix
+continues to cite the original selected performance row above. Brian explicitly
+accepted living with this timing discrepancy on 2026-07-02, so the regenerated
+row remains panel evidence rather than replacing the selected performance row.</p>
+<p>Clean closeout rows that miss a required target or have bad/investigate
+correctness are now accepted Wave 4 residuals by Brian signoff on 2026-07-02.
+The matrix still requires clean correctness evidence to match the selected
+clean iteration depth, so shallow <code>niter=2</code> CASA rows do not satisfy the deep
+<code>niter=10000</code> multiscale or cubedata clean rows.
+Standard cube Clark's original comparable deep CASA row was blocked by
+over-cleaning. The 8-channel control probe matches CASA's cube clean-control
+iteration vector exactly, and the fresh 64-channel rerun fixes the model
+over-cleaning: <code>.model</code>, <code>.psf</code>, and <code>.sumwt</code> are good. <code>.image</code> and
+<code>.residual</code> remain investigate-level structured differences, which Brian
+reviewed visually and accepted for Wave 4 on 2026-06-17. The Clark Metal
+minor-cycle path clears the 10x CASA target at 12.62x, but only gives 1.13x
+over the current multi-worker CPU row, below the 1.5x Metal-vs-CPU target; this
+miss is accepted for standard cube Clark in the Wave 4 matrix.
+Hogbom has a comparable deep CASA row and now uses the actual Metal Hogbom
+minor-cycle backend by default. The CASA-style
+restored-model FFT convolution fix removes the visible <code>.image</code> edge artifact
+in the deep standard cube row: whole-cube <code>.image</code> RMS drops from <code>0.115015</code> to
+<code>0.029889</code>, edge16 RMS drops from <code>0.448945</code> to <code>0.032524</code>, and the worst old
+edge channel drops from <code>0.819604</code> to <code>0.062368</code>. Regenerated panels comparing
+the post-fix Rust products to the unchanged CASA products show <code>.image</code>
+<code>diff_rms=0.0306109</code>, <code>.residual</code> <code>diff_rms=0.0392355</code>, <code>.model</code>
+<code>diff_rms=0.0722170</code>, good <code>.psf</code>, and exact <code>.sumwt</code>. Brian reviewed those
+regenerated panels on 2026-06-17 and accepted the remaining late Hogbom
+component-order divergence for Wave 4. The row remains a missed target because
+the post-fix default row is only 5.92x faster than CASA rather than the 10x
+target.</p>
+<p>Standard cube and cubedata multiscale received one retained planning
+optimization on 2026-06-18: the shared imaging worker planner now computes an
+adaptive Metal multiscale command-buffer target from output shape, deconvolver
+iteration count, scale count, and worker count, and standard cube, cubedata,
+and mosaic cube slab paths all consume that common backend command target. For
+the current 64-channel, 1024-pixel, niter=10000 rows the selected target is
+<code>auto:10000</code>. This improved the standard cube multiscale Metal row to
+<code>609.057 s</code> and the cubedata multiscale Metal row to <code>567.588 s</code>, but both
+rows remain accepted misses because the deep CASA comparisons are bad.</p>
+<p>The latest multiscale stage attribution shows why these rows are still
+performance-limited by the minor-cycle backend rather than source I/O or
+product writing. Standard cube multiscale spends about <code>5.0 s</code> in control
+source reads, <code>0.3 s</code> in product writing, and <code>5664.6</code> worker-seconds in the
+minor cycle, with 1096 Metal command buffers and p95 plane time <code>176.1 s</code>.
+Cubedata multiscale spends about <code>4.7 s</code> in control source reads, <code>0.3 s</code> in
+product writing, and <code>5306.3</code> worker-seconds in the minor cycle, with 1048
+Metal command buffers and p95 plane time <code>152.7 s</code>. A CASA-only follow-up run
+reusing the existing Rust products generated comparable correctness data on
+2026-06-18: CASA took <code>4401.249 s</code>, the matrix speedup is now <code>7.75x</code>, and the
+structured review is bad for <code>.image</code>, <code>.model</code>, and <code>.residual</code> with good
+<code>.psf</code> and <code>.sumwt</code>.</p>
+<p>W4-19 mosaic dirty now also has a comparable large CASA timing row. The
+CASA-only run reused the existing large Rust products, took <code>153.212 s</code>, and
+puts the large-row casa-rs speedup at <code>3.37x</code> against CASA. The product review
+for that large comparison is investigate for <code>.image</code>, <code>.residual</code>, and
+<code>.image.pbcor</code>, with <code>.psf</code>, <code>.pb</code>, <code>.weight</code>, and <code>.sumwt</code> good; the matrix
+still retains the earlier small CASA row as the good correctness comparator.</p>
+<p>W4-21 mosaic clean received one additional structural optimization on
+2026-06-18: mosaic cube slab workers now share a read-only columnar slab source
+instead of rebuilding the source stream independently inside each plane worker.
+On the representative large-MS, 8-channel, 2048-pixel Clark row this improved
+the auto/default runtime from <code>278.992 s</code> to <code>242.842 s</code> (<code>1.15x</code>). The current
+review matrix now uses comparable small 512-pixel, niter=1000 rows for mosaic
+clean performance and correctness. Those rows show useful Metal speedup for
+multiscale (<code>1.57x</code> over multi-worker CPU) and CASA speedup for Clark and
+multiscale, but Hogbom is still slower than CASA and the deep mosaic clean
+correctness comparisons are investigate or bad. W4-21 is accepted for Wave 4
+closeout by Brian signoff on 2026-07-02, with the small-row mosaic clean
+correctness/performance misses left visible for follow-up work rather than
+hidden or thresholded away.</p>
+<h2 id="standard-cube-cubedata-refactor-evidence">Standard Cube / Cubedata Refactor Evidence<a class="headerlink" href="#standard-cube-cubedata-refactor-evidence" title="Permanent link">&para;</a></h2>
+<p>This refactor removes the internal split between standard cube and <code>cubedata</code>
+dirty execution. The public modes remain distinct, but their shared path is now
+the standard spectral cube slab runner plus an explicit spectral-axis policy.
+The table below uses the medium 512-channel, 2048-pixel workload and a 24 GB
+decimal memory cap. Current rows were run after the refactor on 2026-06-16; the
+fresh auto rows were captured with host load average around 5.3, so they are
+accepted as conservative current evidence rather than best-case timing.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th style="text-align: right;">Pre-refactor forced single-worker s</th>
+<th style="text-align: right;">Pre-refactor auto s</th>
+<th style="text-align: right;">Current forced single-worker s</th>
+<th style="text-align: right;">Current auto s</th>
+<th style="text-align: right;">Current auto speedup</th>
+<th style="text-align: right;">Current CASA speedup</th>
+<th>Current auto evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard cube dirty</td>
+<td style="text-align: right;">312.241</td>
+<td style="text-align: right;">111.665</td>
+<td style="text-align: right;">316.815</td>
+<td style="text-align: right;">154.741</td>
+<td style="text-align: right;">2.05x</td>
+<td style="text-align: right;">12.39x</td>
+<td><code>20260616T173624Z-wave4-standard-cube-line-medium-905e11e5</code></td>
+</tr>
+<tr>
+<td>Cubedata dirty</td>
+<td style="text-align: right;">298.058</td>
+<td style="text-align: right;">233.989</td>
+<td style="text-align: right;">349.241</td>
+<td style="text-align: right;">146.788</td>
+<td style="text-align: right;">2.38x</td>
+<td style="text-align: right;">12.86x</td>
+<td><code>20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335</code></td>
+</tr>
+</tbody>
+</table>
+<p>The important refactor outcome is that <code>cubedata</code> no longer misses the worker
+utilization class: in the current conservative rows it is slightly faster than
+the contemporaneous standard cube auto row, and the older pre-refactor 233.989 s
+blocked cubedata auto result is superseded. A faster post-refactor cubedata auto
+row also exists at 116.080 s
+(<code>20260616T165430Z-wave4-standard-cubedata-line-medium-d18dc8d2</code>), but the
+checked-in acceleration manifest uses the fresher conservative row above.</p>
+<h2 id="performance-evidence">Performance Evidence<a class="headerlink" href="#performance-evidence" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Mode row</th>
+<th>Dataset tier</th>
+<th>Shape</th>
+<th style="text-align: right;">casa-rs s</th>
+<th style="text-align: right;">CASA s</th>
+<th style="text-align: right;">Ratio</th>
+<th>Schedule / backend</th>
+<th>Slabs / active / workers</th>
+<th style="text-align: right;">Modeled I/O GB</th>
+<th style="text-align: right;">Source GB</th>
+<th style="text-align: right;">Product GB</th>
+<th style="text-align: right;">Peak RSS GB</th>
+<th>Correctness status</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard cube dirty, medium forced single-worker #311</td>
+<td>32 GB VLA medium</td>
+<td>512 ch, 2048</td>
+<td style="text-align: right;">316.815</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / CPU slab</td>
+<td>11 / 47 / 1</td>
+<td style="text-align: right;">47.252</td>
+<td style="text-align: right;">30.072</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">8.197</td>
+<td>forced single-worker baseline with <code>standard_mfs_grid_threads=1</code>; CASA skipped by design</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-forced1-current/20260616T172347Z-wave4-standard-cube-line-medium-682ac42a.json</code></td>
+</tr>
+<tr>
+<td>Standard cube dirty, medium auto #311</td>
+<td>32 GB VLA medium</td>
+<td>512 ch, 2048</td>
+<td style="text-align: right;">154.741</td>
+<td style="text-align: right;">1918.001</td>
+<td style="text-align: right;">12.39x vs CASA; 2.05x vs forced single-worker</td>
+<td>slab-first / CPU slab</td>
+<td>6 / 89 / 10</td>
+<td style="text-align: right;">46.511</td>
+<td style="text-align: right;">29.332</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">11.160</td>
+<td>correctness from comparable medium CASA row; <code>.sumwt</code> non-spatial false positive reclassified good</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-standard-auto-current2/20260616T173624Z-wave4-standard-cube-line-medium-905e11e5.json</code></td>
+</tr>
+<tr>
+<td>Standard cube dirty, previous best large baseline</td>
+<td>107 GB ALMA large</td>
+<td>1024 ch, 4096</td>
+<td style="text-align: right;">572.315</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / CPU slab</td>
+<td>3 / 347 / 10</td>
+<td style="text-align: right;">153.532</td>
+<td style="text-align: right;">16.093</td>
+<td style="text-align: right;">137.439</td>
+<td style="text-align: right;">17.250</td>
+<td>large CASA skipped; used as prior large backend/product baseline</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-large-recovery-large-dirty-unshifted-ifft/runs/20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03.json</code></td>
+</tr>
+<tr>
+<td>Standard cube dirty, regressed 30 GB plan</td>
+<td>107 GB ALMA large</td>
+<td>1024 ch, 4096</td>
+<td style="text-align: right;">923.208</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / CPU slab</td>
+<td>2 / 514 / 10</td>
+<td style="text-align: right;">153.490</td>
+<td style="text-align: right;">16.051</td>
+<td style="text-align: right;">137.439</td>
+<td style="text-align: right;">18.498</td>
+<td>superseded; too aggressive laptop memory target and worse backend timing</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-large-dirty-fast-single-sample-large/runs/20260615T042423Z-wave1-alma-mosaic-large-standard-cube-line-1727f925.json</code></td>
+</tr>
+<tr>
+<td>Standard cube dirty, current 24 GB large</td>
+<td>107 GB ALMA large</td>
+<td>1024 ch, 4096</td>
+<td style="text-align: right;">524.143</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / CPU slab</td>
+<td>9 / 120 / 10</td>
+<td style="text-align: right;">153.781</td>
+<td style="text-align: right;">16.030</td>
+<td style="text-align: right;">137.439</td>
+<td style="text-align: right;">14.170</td>
+<td>large CASA skipped; best large dirty row; modeled source is 16.342 GB and backend still dominates</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-standard-cube-large-24gb/20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480.json</code></td>
+</tr>
+<tr>
+<td>Cubedata dirty, medium forced single-worker #311</td>
+<td>32 GB VLA medium</td>
+<td>512 ch, 2048</td>
+<td style="text-align: right;">349.241</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / CPU slab</td>
+<td>11 / 47 / 1</td>
+<td style="text-align: right;">47.252</td>
+<td style="text-align: right;">30.072</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">7.973</td>
+<td>forced single-worker baseline with <code>standard_mfs_grid_threads=1</code>; CASA skipped by design</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-forced1-current/20260616T172921Z-wave4-standard-cubedata-line-medium-b38c7e90.json</code></td>
+</tr>
+<tr>
+<td>Cubedata dirty, medium auto #311</td>
+<td>32 GB VLA medium</td>
+<td>512 ch, 2048</td>
+<td style="text-align: right;">146.788</td>
+<td style="text-align: right;">1887.410</td>
+<td style="text-align: right;">12.86x vs CASA; 2.38x vs forced single-worker</td>
+<td>slab-first / CPU slab</td>
+<td>6 / 89 / 10</td>
+<td style="text-align: right;">46.511</td>
+<td style="text-align: right;">29.332</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">10.496</td>
+<td>correctness from comparable medium CASA row; <code>.sumwt</code> non-spatial false positive reclassified good; auto-vs-forced target met</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-311-medium-cubedata-auto-current2/20260616T172006Z-wave4-standard-cubedata-line-medium-1c103335.json</code></td>
+</tr>
+<tr>
+<td>Cubedata dirty, large bounded</td>
+<td>107 GB ALMA large</td>
+<td>256 ch, 4096</td>
+<td style="text-align: right;">105.825</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / serial CPU plane backend</td>
+<td>7 / 40 / 10</td>
+<td style="text-align: right;">38.643</td>
+<td style="text-align: right;">4.283</td>
+<td style="text-align: right;">34.360</td>
+<td style="text-align: right;">13.515</td>
+<td>large CASA skipped; bounded large-dataset planner and I/O row</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T070401Z-wave4-standard-cubedata-line-large-bounded-bdb7948d.json</code></td>
+</tr>
+<tr>
+<td>Cubedata clean Hogbom, medium Metal/default</td>
+<td>32 GB VLA medium</td>
+<td>64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">208.483</td>
+<td style="text-align: right;">1121.845</td>
+<td style="text-align: right;">5.38x vs CASA; 1.26x vs multi-worker CPU</td>
+<td>slab-first / grouped Wave 3 Metal with Metal Hogbom minor cycle</td>
+<td>2 / 34 / 8</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-hogbom-medium64-casa-current/20260618T051022Z-wave4-standard-cubedata-line-medium-clean-hogbom-c0c94fad.json</code></td>
+</tr>
+<tr>
+<td>Mosaic cube dirty, previous large turnaround</td>
+<td>107 GB ALMA large</td>
+<td>4 ch, 1024, 7 fields</td>
+<td style="text-align: right;">80.933</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / mosaic single-plane stream</td>
+<td>4 / 1 / 1</td>
+<td style="text-align: right;">partial</td>
+<td style="text-align: right;">0.400</td>
+<td style="text-align: right;">product-backed</td>
+<td style="text-align: right;">11.177</td>
+<td>superseded by W4-19 multi-plane evidence</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T053705Z-wave4-mosaic-cube-alma-large-dirty-turnaround-db1671a1.json</code></td>
+</tr>
+<tr>
+<td>Mosaic cube dirty, W4-19 single-plane baseline</td>
+<td>107 GB ALMA large</td>
+<td>4 ch, 1024, 7 fields</td>
+<td style="text-align: right;">79.572</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / mosaic multi-plane stream forced to one worker</td>
+<td>1 / 1 / 1</td>
+<td style="text-align: right;">partial</td>
+<td style="text-align: right;">0.400</td>
+<td style="text-align: right;">product-backed</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>single-worker baseline for W4-19</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-forced1-sharedctx/20260616T131206Z-wave4-mosaic-cube-alma-large-dirty-turnaround-b52e9a4d.json</code></td>
+</tr>
+<tr>
+<td>Mosaic cube dirty, W4-19 multi-plane auto</td>
+<td>107 GB ALMA large</td>
+<td>4 ch, 1024, 7 fields</td>
+<td style="text-align: right;">45.486</td>
+<td style="text-align: right;">153.212</td>
+<td style="text-align: right;">3.37x vs CASA; 1.75x total speedup vs forced single-plane stream</td>
+<td>slab-first / mosaic multi-plane stream</td>
+<td>1 / 4 / 4</td>
+<td style="text-align: right;">partial</td>
+<td style="text-align: right;">0.400</td>
+<td style="text-align: right;">product-backed</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>large CASA comparison investigate for <code>.image</code>, <code>.residual</code>, and <code>.image.pbcor</code>; small CASA comparison remains good</td>
+<td>Rust row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-sharedctx/20260616T130921Z-wave4-mosaic-cube-alma-large-dirty-turnaround-3f72240e.json</code>; CASA row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-large-casa-correctness-current/20260618T153218Z-wave4-mosaic-cube-alma-large-dirty-turnaround-65f16f6d.json</code></td>
+</tr>
+<tr>
+<td>Mosaic cube clean Clark, W4-21 shared-columnar source</td>
+<td>107 GB ALMA large</td>
+<td>8 ch, 2048, 7 fields, niter=1000</td>
+<td style="text-align: right;">242.842</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td>slab-first / mosaic multi-plane stream with shared read-only columnar slab source; Metal row-run grouped dirty/residual backends</td>
+<td>2 / 6 / 6</td>
+<td style="text-align: right;">partial</td>
+<td style="text-align: right;">0.970</td>
+<td style="text-align: right;">product-backed</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>representative performance row; CASA skipped; source read <code>9.76 s</code>, product write <code>4.38 s</code>, per-plane adaptation/PB gridding remains dominant</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-mosaic-medium-clean-clark-shared-columnar/20260618T085158Z-wave4-mosaic-cube-alma-medium-dirty-bounded-edb80b3f.json</code></td>
+</tr>
+</tbody>
+</table>
+<p>Mosaic cube correctness is covered by small CASA comparison bundles because the
+medium and large mosaic rows intentionally skip CASA:</p>
+<ul>
+<li>Dirty small good comparator: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T053451Z-wave4-mosaic-cube-alma-small-dirty-correctness-1f018d38.json</code></li>
+<li>Dirty large comparable CASA row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-19-mosaic-turnaround-large-casa-correctness-current/20260618T153218Z-wave4-mosaic-cube-alma-large-dirty-turnaround-65f16f6d.json</code></li>
+<li>Clean Hogbom current niter=1000:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-current-metal-niter1000-with-casa-reuse-after-contract-off/20260618T104849Z-wave4-mosaic-cube-alma-small-clean-hogbom-correctness-fe01c07f.json</code></li>
+<li>Clean Clark current niter=1000:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-clark-small-niter1000-after-divergence/20260618T113427Z-wave4-mosaic-cube-alma-small-clean-correctness-1be23e89.json</code></li>
+<li>Clean multiscale current niter=1000:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-21-multiscale-small-niter1000-after-divergence/20260618T113551Z-wave4-mosaic-cube-alma-small-clean-multiscale-correctness-e3f3ed72.json</code></li>
+</ul>
+<h2 id="clean-evidence">Clean Evidence<a class="headerlink" href="#clean-evidence" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Clean row</th>
+<th>Shape</th>
+<th style="text-align: right;">casa-rs s</th>
+<th style="text-align: right;">CASA s</th>
+<th style="text-align: right;">Ratio</th>
+<th>Backend</th>
+<th>Slabs / active / workers</th>
+<th style="text-align: right;">Modeled I/O GB</th>
+<th>Correctness status</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hogbom, CASA-compatible iteration/control</td>
+<td>512 ch, 2048, niter=100</td>
+<td style="text-align: right;">273.021</td>
+<td style="text-align: right;">3106.996</td>
+<td style="text-align: right;">11.38x</td>
+<td>grouped Wave 3 Metal</td>
+<td>13 / 40 / 8</td>
+<td style="text-align: right;">69.395</td>
+<td>accepted in W4-08 with model/image/residual/PSF panels; cleaned 186 planes and skipped 326 planes under cube-level controls</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-08-pending-skip/runs/20260616T025901Z-wave1-vla-single-medium-standard-cube-line-clean-hogbom-casa-final-1bc4f17b.json</code></td>
+</tr>
+<tr>
+<td>Hogbom, deep closeout row</td>
+<td>64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">137.109</td>
+<td style="text-align: right;">811.307</td>
+<td style="text-align: right;">5.92x</td>
+<td>grouped Wave 3 Metal with Metal Hogbom minor cycle; CASA-style FFT restoration</td>
+<td>2 / 34 / 10</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>accepted by Brian on 2026-06-17 after regenerated panel review: restored <code>.image</code> edge artifact fixed; remaining <code>.model</code>/<code>.residual</code> differences are late component-order divergence after deep clean; Metal-vs-CPU target met, CASA speed target missed</td>
+<td>Rust-only post-fix: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-edge-restore-confirm-rust-only/20260617T133112Z-wave4-standard-cube-line-medium-casa-phase-probe-cf20078a.json</code>; unchanged CASA comparison row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-closeout-standard-hogbom-medium64-auto-metal-minor-cycle-casa/20260617T022154Z-wave4-standard-cube-line-medium-casa-phase-probe-0cd0fb24.json</code>; regenerated panels: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa/panels</code></td>
+</tr>
+<tr>
+<td>Clark, deep closeout row</td>
+<td>64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">32.429</td>
+<td style="text-align: right;">409.289</td>
+<td style="text-align: right;">12.62x</td>
+<td>grouped Wave 3 Metal default with Metal Clark minor-cycle/peak-search and CPU initial dirty/residual refresh</td>
+<td>2 / 34 / 10</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>accepted by Brian on 2026-06-17 after panel review: <code>.model</code>, <code>.psf</code>, and <code>.sumwt</code> good; small structured <code>.image</code> and <code>.residual</code> differences acceptable for Wave 4; CASA speed target met but Metal-vs-CPU target missed at 1.13x</td>
+<td>Rust-only Metal minor-cycle row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json</code>; unchanged CASA comparison row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-medium64-after-control-fix-nophase/20260617T160130Z-wave4-standard-cube-line-medium-clean-clark-923a9413.json</code></td>
+</tr>
+<tr>
+<td>Clark, 8-channel clean-control probe</td>
+<td>8 ch, 1024, niter=10000</td>
+<td style="text-align: right;">16.196</td>
+<td style="text-align: right;">62.763</td>
+<td style="text-align: right;">3.88x</td>
+<td>grouped Wave 3 Metal residual refresh; one CASA cube minor-cycle pass per plane</td>
+<td>1 / 8 / 1</td>
+<td style="text-align: right;">0.727</td>
+<td><code>.model</code>, <code>.psf</code>, <code>.sumwt</code> good; <code>.image</code> and <code>.residual</code> investigate at 0.14% and 0.23% relative RMS after exact clean-control iteration parity</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-one-pass-control-probe/20260617T154447Z-wave4-standard-cube-line-medium-clean-clark-control-probe-de3e2664.json</code></td>
+</tr>
+<tr>
+<td>Multiscale, shallow historical row</td>
+<td>64 ch, 1024, niter=2</td>
+<td style="text-align: right;">26.697</td>
+<td style="text-align: right;">231.006</td>
+<td style="text-align: right;">8.65x</td>
+<td>grouped Wave 3 Metal</td>
+<td>2 / 34 / 10</td>
+<td style="text-align: right;">4.925</td>
+<td><code>.model</code>, <code>.residual</code>, <code>.psf</code>, <code>.sumwt</code> good; <code>.image</code> investigate with normalized RMS 3.11e-6 and accepted visual residual; not a valid deep-performance closeout row</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T062145Z-wave4-standard-cube-line-medium-clean-multiscale-fec0a306.json</code></td>
+</tr>
+<tr>
+<td>Multiscale, deep current standard cube row</td>
+<td>64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">609.057</td>
+<td style="text-align: right;">5311.750</td>
+<td style="text-align: right;">8.72x</td>
+<td>grouped Wave 3 Metal with adaptive <code>auto:10000</code> command target</td>
+<td>2 / 34 / 10</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-metal-target-planner/20260618T115505Z-wave4-standard-cube-line-medium-clean-multiscale-dc600b76.json</code>; correctness row <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-18-standard-multiscale-medium64-current-compare-only/20260618T111701Z-wave4-standard-cube-line-medium-clean-multiscale-2a286d62.json</code></td>
+</tr>
+<tr>
+<td>Multiscale, deep current cubedata row</td>
+<td>64 ch, 1024, niter=10000</td>
+<td style="text-align: right;">567.588</td>
+<td style="text-align: right;">4401.249</td>
+<td style="text-align: right;">7.75x</td>
+<td>grouped Wave 3 Metal with adaptive <code>auto:10000</code> command target</td>
+<td>2 / 34 / 10</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td>bad deep CASA comparison; accepted by Brian on 2026-07-02 for Wave 4 closeout</td>
+<td>Rust performance row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-metal-target-planner/20260618T120835Z-wave4-standard-cubedata-line-medium-clean-multiscale-c4bc0f0d.json</code>; CASA/correctness row: <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-20-cubedata-multiscale-medium64-casa-correctness-current/20260618T133611Z-wave4-standard-cubedata-line-medium-clean-multiscale-c0d6a582.json</code></td>
+</tr>
+</tbody>
+</table>
+<p>Deep Clark diagnostics:</p>
+<ul>
+<li>Current 64-channel Metal minor-cycle rerun: casa-rs <code>32.429 s</code>, CASA
+  <code>409.289 s</code>; default-vs-CASA speedup is <code>12.62x</code>. The completed bundle is
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-metal-minor-cycle-medium64-metal-cpuresid/20260617T171149Z-wave4-standard-cube-line-medium-clean-clark-metal-ea3ec28b.json</code>.</li>
+<li>The current row uses <code>cube_per_plane_workers=10</code>,
+  <code>cube_per_plane_backend=wave3_metal_grouped</code>, Metal Clark minor-cycle
+  peak-search/subtraction, and CPU initial dirty/residual refresh. There are no
+  backend fallback reasons. The CPU residual choice is intentional: the
+  measured grouped Metal residual row was slower on this workload.</li>
+<li>Current Metal-vs-CPU evidence: multi-worker CPU is <code>36.607 s</code>; Metal minor
+  cycle plus CPU residual is <code>32.429 s</code> (<code>1.13x</code>). An intermediate row using
+  Metal minor cycle plus grouped Metal residual was <code>33.451 s</code> (<code>1.09x</code> vs the
+  same CPU row). A pre-chunk Metal command-buffer attempt was rejected because
+  no-op command encoding made the 8-channel probe slower (<code>25.275 s</code> vs
+  <code>16.215 s</code> CPU/auto); chunking the command stream restored the 8-channel
+  probe to <code>16.212 s</code> while reducing peak-search worker time to milliseconds.</li>
+<li>Product comparison after the cube clean-control fix: <code>.model</code>, <code>.psf</code>, and
+  <code>.sumwt</code> are good. <code>.image</code> is investigate with <code>diff_rms=0.00907558</code>,
+  <code>diff_rms_over_casa_rms=0.00164630</code>, and <code>diff_abs_max=2.83636</code>.
+  <code>.residual</code> is investigate with <code>diff_rms=0.00981412</code>,
+  <code>diff_rms_over_casa_rms=0.00246270</code>, and <code>diff_abs_max=1.40268</code>.
+  Brian reviewed the <code>.image</code>, <code>.residual</code>, restored <code>.model</code>, <code>.psf</code>, and
+  <code>.sumwt</code> panels on 2026-06-17 and accepted this standard cube Clark
+  correctness status for Wave 4.</li>
+<li>In the original 64-channel cube row, casa-rs model occupancy is <code>522391</code>
+  pixels above <code>1e-7</code>; CASA model
+  occupancy is <code>94845</code>.</li>
+<li>casa-rs model sum-abs is <code>873793.3 Jy</code>; CASA model sum-abs is
+  <code>323323.0 Jy</code>.</li>
+<li>casa-rs residual RMS is <code>0.986</code>; CASA residual RMS is <code>3.990</code>.</li>
+<li>The original cube row reported <code>cycle_threshold=0</code> and
+  <code>IterationLimitReached</code> for all planes, but follow-up diagnostics found two
+  separate issues:</li>
+<li>The Clark controller now refreshes residuals and continues after an
+    internal <code>CycleThresholdReached</code> stop when a subcycle updated the model,
+    matching the Hogbom/multiscale controller pattern.</li>
+<li>CASA's active <code>SDAlgorithmClarkClean2</code> path calls
+    <code>ClarkCleanLatModel</code> with <code>MaxNumberMajorCycles=10</code> and a capped
+    <code>takeOneStep</code> request of <code>2000</code> when <code>cycleniter &gt;= 5000</code>. The Rust Clark
+    path now mirrors those limits, and the resident cube executor now finishes
+    one CASA cube minor-cycle pass per plane instead of privately running a
+    full single-plane Cotton-Schwab loop.</li>
+<li>Post-fix control-probe cube row:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-one-pass-control-probe/20260617T154447Z-wave4-standard-cube-line-medium-clean-clark-control-probe-de3e2664.json</code>.
+  CASA and casa-rs both clean exactly <code>11755</code> components across the 8 planes,
+  with per-plane iteration vector <code>[1479, 1480, 1464, 1488, 1452, 1464, 1474,
+  1454]</code>. <code>.model</code>, <code>.psf</code>, and <code>.sumwt</code> are good; <code>.image</code> and <code>.residual</code>
+  remain investigate-level with relative RMS <code>0.00139</code> and <code>0.00230</code>.</li>
+<li>Control-probe cube row before the controller fix:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-active-fix-casa/20260617T143127Z-wave4-standard-cube-line-medium-clean-clark-control-probe-4bd6eeda.json</code>.
+  CASA cleaned 11755 components across 8 planes, while casa-rs cleaned 12696
+  and produced structured <code>.image</code>, <code>.model</code>, and <code>.residual</code> differences.</li>
+<li>Single-channel MFS first-cycle diagnostic with natural weighting:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-single-channel-mfs-trace-natural/residual-divergence-summary.json</code>.
+  The first 50 Clark components agree with CASA to float precision, including
+  the initial peak <code>532.455566 Jy</code>, confirming the dirty image, PSF, weighting,
+  absolute-peak selection, and early component selection are aligned.</li>
+<li>Single-channel MFS deep-cycle diagnostic after the controller refresh fix:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-single-channel-deep-cycle-after-refresh/residual-divergence-summary.json</code>.
+  casa-rs and CASA both reach <code>iterdone=2000</code>, but casa-rs still differs in
+  <code>.image</code>, <code>.model</code>, and <code>.residual</code>, proving controller refresh was necessary
+  but not sufficient.</li>
+<li>Single-channel MFS forced first-cycle depth diagnostic:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/w4-clark-single-channel-cycle1479/residual-divergence-summary.json</code>.
+  Both implementations stop at <code>1479</code> components, yet <code>.image</code> RMS is
+  <code>6.3069</code>, <code>.residual</code> RMS is <code>7.3869</code>, and <code>.model</code> correlation is <code>0.3450</code>.
+  This isolates the remaining difference to the Clark minor-cycle local
+  active-pixel subtraction sequence after the first roughly 15-20 matching
+  components.</li>
+<li>Rejected candidate: changing the exterior-PSF/sidelobe measurement to an
+  inclusive distance-boundary interpretation of CASA's <code>absMaxBeyondDist</code>
+  worsened the single-channel deep diagnostic
+  (<code>w4-clark-single-channel-deep-cycle-after-extpsf</code>) and was reverted. The
+  previous <code>max_abs_outside_patch</code> behavior remains.</li>
+</ul>
+<p>Post-fix restore diagnostics for the deep Hogbom row:</p>
+<ul>
+<li>Old Rust vs CASA <code>.image</code>: RMS <code>0.115015</code>, max abs <code>29.262769</code>,
+  edge16 RMS <code>0.448945</code>, interior RMS <code>0.029709</code>.</li>
+<li>New Rust vs unchanged CASA <code>.image</code>: RMS <code>0.029889</code>, max abs <code>0.821905</code>,
+  edge16 RMS <code>0.032524</code>, interior RMS <code>0.029709</code>.</li>
+<li>Regenerated post-fix review panels compare the Rust-only post-fix products
+  against the unchanged CASA products:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/comparisons/20260617T133112Z-hogbom-postfix-rust-vs-20260617T022154Z-casa/panels</code>.
+  The comparison metrics are <code>.image</code> <code>diff_rms=0.0306109</code>,
+  <code>.residual</code> <code>diff_rms=0.0392355</code>, <code>.model</code> <code>diff_rms=0.0722170</code>,
+  <code>.psf</code> good at <code>1.16e-9</code>, and exact <code>.sumwt</code>.</li>
+<li>Brian reviewed the regenerated <code>.image</code>, <code>.residual</code>, <code>.model</code>, <code>.psf</code>, and
+  <code>.sumwt</code> panels on 2026-06-17 and accepted the remaining Hogbom correctness
+  residuals for Wave 4.</li>
+<li>Worst old edge channel was channel 2: edge RMS <code>0.819604</code> before and
+  <code>0.062368</code> after.</li>
+<li>New Rust vs old Rust changed only <code>.image</code>; <code>.residual</code>, <code>.model</code>, <code>.psf</code>,
+  and <code>.sumwt</code> were bitwise unchanged in the confirmation comparison.</li>
+<li>Bottom-edge visual panel:
+  <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/edge-restore-panels/old_new_bottom_edge_diff_ch2.png</code>.</li>
+</ul>
+<p>CASA phase attribution is available for the medium 64-channel clean probe:</p>
+<ul>
+<li><code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/imager/runs/20260616T055224Z-wave4-standard-cube-line-medium-casa-phase-probe-479fa5f6.json</code></li>
+<li>CASA medians: <code>make_psf=52.755 s</code>, <code>calcres_major_cycle=53.850 s</code>,
+  <code>minor_cycle=2.828 s</code>, <code>clean_major_cycle=102.024 s</code>.</li>
+</ul>
+<h2 id="memory-and-plane-state-io">Memory And Plane-State I/O<a class="headerlink" href="#memory-and-plane-state-io" title="Permanent link">&para;</a></h2>
+<p>The common planner is source/output-shape driven and compares source-first,
+slab-first, and hybrid candidates by modeled I/O under the memory target. The
+current slab executor capabilities still restrict standard cube and cubedata
+execution to slab-first, but that limitation is logged as an executor capability
+instead of a continuum/spectral rule.</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th style="text-align: right;">Target GB</th>
+<th style="text-align: right;">Planned active GB</th>
+<th style="text-align: right;">Peak RSS GB</th>
+<th style="text-align: right;">Visibility/source-side buffers</th>
+<th style="text-align: right;">Plane/product-side buffers</th>
+<th style="text-align: right;">Plane-state read GB</th>
+<th style="text-align: right;">Plane-state write GB</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard cube medium dirty auto #311</td>
+<td style="text-align: right;">24.000</td>
+<td style="text-align: right;">24.000</td>
+<td style="text-align: right;">11.160</td>
+<td style="text-align: right;">2.758 GB live prepared visibility/source-side buffer, no full visibility cache; 29.332 GB modeled source reads</td>
+<td style="text-align: right;">17.180 GB modeled product write</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">product-backed</td>
+<td>Current medium auto-vs-forced-single-worker comparator; 6 slabs, 89 active planes, 10 workers.</td>
+</tr>
+<tr>
+<td>Standard cube large dirty, 24 GB cap</td>
+<td style="text-align: right;">24.000</td>
+<td style="text-align: right;">24.000</td>
+<td style="text-align: right;">14.170</td>
+<td style="text-align: right;">7.858 GB source stream buffer, no full visibility cache</td>
+<td style="text-align: right;">14.205 GB product scratch, 137.439 GB modeled product writes</td>
+<td style="text-align: right;">0.000</td>
+<td style="text-align: right;">137.439</td>
+<td>Best large dirty row: 524.143 s total, 37.337 s source read, 481.638 s backend, 58.435 s product write.</td>
+</tr>
+<tr>
+<td>Cubedata medium dirty auto #311</td>
+<td style="text-align: right;">24.000</td>
+<td style="text-align: right;">24.000</td>
+<td style="text-align: right;">10.496</td>
+<td style="text-align: right;">2.763 GB live prepared visibility/source-side buffer, no full visibility cache; 29.332 GB modeled source reads</td>
+<td style="text-align: right;">17.180 GB modeled product write</td>
+<td style="text-align: right;">0.000</td>
+<td style="text-align: right;">17.180</td>
+<td>Correctness good; current 10-worker auto gives 2.38x over forced single-worker and supersedes the pre-refactor blocked row.</td>
+</tr>
+<tr>
+<td>Cubedata large bounded</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">13.515</td>
+<td style="text-align: right;">3.775 GB source stream buffer, no full visibility cache</td>
+<td style="text-align: right;">11.474 GB product scratch, 34.360 GB modeled product writes</td>
+<td style="text-align: right;">0.000</td>
+<td style="text-align: right;">34.360</td>
+<td>New W4-14 large row; 7 product-backed store groups, 13.341 s store time.</td>
+</tr>
+<tr>
+<td>Mosaic clean Clark medium-output bounded</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">4.856 to 6.020 per slab</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td style="text-align: right;">4.588 GB source stream buffer for the 6-channel slab, then 1.824 GB for the 2-channel slab; shared read-only columnar slab source, no per-plane source rebuild</td>
+<td style="text-align: right;">product-backed write-through</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">product-backed</td>
+<td>Current W4-21 shared-source row: <code>mosaic_multi_plane_stream</code>, 2 slabs, active planes 6 then 2, 6 workers. This fixed redundant source preparation but did not fix the dominant per-plane adaptation/PB gridding cost.</td>
+</tr>
+<tr>
+<td>Mosaic large turnaround</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">1.167</td>
+<td style="text-align: right;">11.177</td>
+<td style="text-align: right;">1.133 GB source stream buffer</td>
+<td style="text-align: right;">product-backed write-through</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">product-backed</td>
+<td>Bounded large-MS turnaround row; not a parallel mosaic optimization claim.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="planner-calibration-decisions">Planner Calibration Decisions<a class="headerlink" href="#planner-calibration-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Keep the common cost-model planner. Continuum and spectral cube remain the
+  same source/output-shape problem; continuum is the one-plane degenerate case.</li>
+<li>Do not make slab-first a semantic default. It is the selected candidate for
+  the current executable standard cube/cubedata paths because modeled output
+  spill dominates source rereads under the executor constraints.</li>
+<li>Keep source-first and hybrid candidates in the planner. They remain important
+  when all output state fits or when full/partial visibility caching wins the
+  modeled I/O comparison.</li>
+<li>Do not spend more W4-14 time on slab-first versus source-first for large dirty
+  standard cube unless source reads become dominant. Current large source reads
+  are 37.337 s out of 524.143 s, so they are not the current limiter.</li>
+<li>Keep whole-plane product tiles and zero-copy direct writes. The 24 GB large
+  standard cube row writes 137.439 GB of products in 58.435 s, with no LRU
+  readback, zero-fill, or C-order conversion.</li>
+<li>Use grouped Metal by default only where measured eligibility supports it.
+  Hogbom and multiscale medium rows use the shared per-plane Wave 3 Metal
+  backend when eligible. Clark Auto now selects the grouped Metal plan for the
+  minor-cycle peak-search/subtraction work, but forces CPU initial dirty and
+  residual refresh because the grouped Metal residual-refresh path was measured
+  slower on the 64-channel deep row.</li>
+<li>Keep mosaic cube executor capabilities visible. W4-19 now reports
+  <code>mosaic_multi_plane_stream</code>, <code>active_planes &gt; 1</code>, and <code>worker_count &gt; 1</code> for
+  representative dirty rows; clean rows now also use a shared read-only
+  columnar slab source, but still miss the performance targets because
+  per-plane mosaic sample adaptation/PB-aware gridding dominates.</li>
+<li>Treat TB-scale as final confirmation only. A future source-major or batched
+  backend may still be useful for the remaining large-dirty lower bound, but
+  Wave 4 does not need another TB row before that architectural work exists.</li>
+</ul>
+<h2 id="rejected-or-parked-attempts">Rejected Or Parked Attempts<a class="headerlink" href="#rejected-or-parked-attempts" title="Permanent link">&para;</a></h2>
+<p>Detailed attempt evidence is in
+<code>docs/tutorial-parity/imperformance-wave-4-large-dirty-attempts.md</code>.</p>
+<p>Retained:</p>
+<ul>
+<li>Whole-plane product tile layout.</li>
+<li>Zero-copy direct whole-plane Fortran writes.</li>
+<li>Centered-IFFT checkerboard shift removal.</li>
+<li>Direct dirty replay instrumentation and the narrow single-contribution fast
+  path where it remains part of the shared implementation.</li>
+<li>Mosaic clean shared read-only columnar slab sources. This replaced redundant
+  per-plane source-stream rebuilds and improved the representative W4-21 Clark
+  row by <code>1.15x</code>, but remaining time is dominated by per-plane mosaic
+  adaptation/PB-aware gridding.</li>
+</ul>
+<p>Rejected as default or reverted:</p>
+<ul>
+<li>Direct full physical tile overwrite.</li>
+<li>Deep product tile batching.</li>
+<li>Row-tile product layout as the default.</li>
+<li>Blocked-transpose inverse FFT around the scalar <code>rustfft</code> path.</li>
+<li>Unmerged whole-plane product groups.</li>
+<li>Temporary f32 routed dirty grids.</li>
+<li>Per-plane precomputed spectral assignment lookup. The retained refactor still
+  uses compact row bindings and grid-assignment indices to avoid per-row
+  <code>HashMap</code> lookup and <code>Arc</code> cloning in the shared cube/cubedata path.</li>
+</ul>
+<p>Closeout decision for #311:</p>
+<ul>
+<li>
+<h1 id="311-is-closed-by-the-shared-standard-spectral-cube-dirty-execution-refactor">311 is closed by the shared standard spectral cube dirty execution refactor<a class="headerlink" href="#311-is-closed-by-the-shared-standard-spectral-cube-dirty-execution-refactor" title="Permanent link">&para;</a></h1>
+  and refreshed medium evidence. Cubedata dirty now shares the standard cube
+  worker/planner path, reaches 2.38x over forced single-worker, and is 12.86x
+  faster than CASA on the medium row. A future source-major or batched backend
+  remains a plausible architecture direction for the large-dirty lower bound,
+  but Brian accepted the current standard/cubedata agreement as sufficient for
+  this ticket.</li>
+</ul>
+<p>Closeout decision for #317:</p>
+<ul>
+<li>
+<h1 id="317-is-closed-by-the-w4-19-mosaic-dirty-multi-plane-executor-evidence-the">317 is closed by the W4-19 mosaic dirty multi-plane executor evidence. The<a class="headerlink" href="#317-is-closed-by-the-w4-19-mosaic-dirty-multi-plane-executor-evidence-the" title="Permanent link">&para;</a></h1>
+  representative large-turnaround mosaic cube dirty row no longer reports
+  <code>mosaic_single_plane_stream</code>; auto uses <code>mosaic_multi_plane_stream</code> with
+  <code>active_planes=4</code> and <code>worker_count=4</code>, improving total time from 79.572 s
+  forced single-plane to 45.486 s auto, or 1.75x. Small CASA comparison bundles
+  cover dirty mosaic products, including <code>.image</code>, <code>.residual</code>, <code>.psf</code>,
+  <code>.sumwt</code>, <code>.weight</code>, <code>.pb</code>, and <code>.image.pbcor</code>. Brian approved closing #317
+  on 2026-06-16 with the explicit scope split that mosaic clean/deconvolution
+  acceleration remains open under #316 and W4-18.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

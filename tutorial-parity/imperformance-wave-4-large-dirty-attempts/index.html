@@ -1,0 +1,1421 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ImPerformance Wave 4 Large Dirty Attempts - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imperformance-wave-4-large-dirty-attempts" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ImPerformance Wave 4 Large Dirty Attempts
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Baseline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closeout-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closeout Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attempts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attempts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Attempts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#direct-full-physical-tile-overwrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct full physical tile overwrite
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deep-product-tile-batching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deep product tile batching
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#row-tile-direct-product-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Row-tile direct product writes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#planned-sample-compact-tap-payload-and-stage-split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Planned-sample compact tap payload and stage split
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage-order-product-planes-and-direct-fortran-tiled-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage-order product planes and direct Fortran tiled writes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dirty-only-cube-products" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dirty-only cube products
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#centered-ifft-checkerboard-shift-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Centered-IFFT checkerboard shift removal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whole-plane-product-tiles-without-multi-plane-result-grouping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Whole-plane product tiles without multi-plane result grouping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whole-plane-fortran-zero-copy-direct-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Whole-plane Fortran zero-copy direct writes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blocked-transpose-inverse-fft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blocked-transpose inverse FFT
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unmerged-whole-plane-product-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unmerged whole-plane product groups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#f32-routed-dirty-grids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        F32 routed dirty grids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#direct-dirty-replay-split-instrumentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct dirty replay split instrumentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-plane-precomputed-spectral-assignment-lookup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-plane precomputed spectral assignment lookup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fast-single-contribution-direct-dirty-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fast single-contribution direct dirty replay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-gb-decimal-memory-cap-retest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        24 GB decimal memory cap retest
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imperformance-wave-4-large-dirty-attempts">ImPerformance Wave 4 Large Dirty Attempts<a class="headerlink" href="#imperformance-wave-4-large-dirty-attempts" title="Permanent link">&para;</a></h1>
+<p>Truth class: evidence log
+Last reality check: 2026-06-16
+Verification: Wave 4 benchmark JSONs under <code>/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete</code></p>
+<h2 id="baseline">Baseline<a class="headerlink" href="#baseline" title="Permanent link">&para;</a></h2>
+<p>Current best large dirty spectral cube run:</p>
+<ul>
+<li>Run: <code>20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480</code></li>
+<li>Runtime: 524.143 s</li>
+<li>Plan: slab-first, 120 active planes, 9 slabs, 308525 row block rows, 10 workers</li>
+<li>Memory target: 24.000 GB decimal, with 7.858 GB visibility/source-side buffers and 14.205 GB slab/product-side scratch</li>
+<li>Modeled I/O: 153.781 GB total, 16.342 GB source read, 137.439 GB product write</li>
+<li>Measured stages: 37.337 s source read, 481.638 s backend, 58.435 s product write</li>
+<li>Plane timing: 4.782 s median, 6.115 s p95</li>
+<li>Peak RSS: 14.170 GB</li>
+</ul>
+<h2 id="closeout-evidence">Closeout Evidence<a class="headerlink" href="#closeout-evidence" title="Permanent link">&para;</a></h2>
+<p>The 24 GB decimal memory-cap run fixes the previous large regression and is now
+the best large dirty cube row. Whole-plane product writes are active and
+efficient at the storage boundary. The run is still dominated by the per-plane
+backend path, especially the scalar FFT pair.</p>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Run</th>
+<th style="text-align: right;">Rust s</th>
+<th style="text-align: right;">CASA s</th>
+<th style="text-align: right;">Speedup</th>
+<th style="text-align: right;">Source read s</th>
+<th style="text-align: right;">Backend s</th>
+<th style="text-align: right;">Product write s</th>
+<th style="text-align: right;">Source read GB</th>
+<th style="text-align: right;">Product GB</th>
+<th style="text-align: right;">Modeled I/O GB</th>
+<th>Schedule</th>
+<th style="text-align: right;">Slabs</th>
+<th style="text-align: right;">Active planes</th>
+<th style="text-align: right;">Workers</th>
+<th style="text-align: right;">Visibility-side GB</th>
+<th style="text-align: right;">Slab/product GB</th>
+<th style="text-align: right;">Plane median / p95 s</th>
+<th style="text-align: right;">Peak RSS GB</th>
+<th>Product tile counters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Large previous best</td>
+<td><code>20260614T215220Z-wave1-alma-mosaic-large-standard-cube-line-de8dae03</code></td>
+<td style="text-align: right;">572.315</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">34.293</td>
+<td style="text-align: right;">533.973</td>
+<td style="text-align: right;">172.592</td>
+<td style="text-align: right;">15.989</td>
+<td style="text-align: right;">137.439</td>
+<td style="text-align: right;">153.532</td>
+<td>slab-first</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">347</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">18.233</td>
+<td style="text-align: right;">11.771</td>
+<td style="text-align: right;">5.203 / 6.423</td>
+<td style="text-align: right;">17.250</td>
+<td>older log shape; no direct counters</td>
+</tr>
+<tr>
+<td>Large regressed 30 GB plan</td>
+<td><code>20260615T042423Z-wave1-alma-mosaic-large-standard-cube-line-1727f925</code></td>
+<td style="text-align: right;">923.208</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">34.194</td>
+<td style="text-align: right;">883.179</td>
+<td style="text-align: right;">118.526</td>
+<td style="text-align: right;">15.982</td>
+<td style="text-align: right;">137.439</td>
+<td style="text-align: right;">153.490</td>
+<td>slab-first</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">514</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">20.165</td>
+<td style="text-align: right;">9.839</td>
+<td style="text-align: right;">8.808 / 9.716</td>
+<td style="text-align: right;">18.498</td>
+<td>2048 full-plane direct writes, 2048 direct tiles, 1024 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill</td>
+</tr>
+<tr>
+<td>Large current 24 GB cap</td>
+<td><code>20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480</code></td>
+<td style="text-align: right;">524.143</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">37.337</td>
+<td style="text-align: right;">481.638</td>
+<td style="text-align: right;">58.435</td>
+<td style="text-align: right;">16.030</td>
+<td style="text-align: right;">137.439</td>
+<td style="text-align: right;">153.781</td>
+<td>slab-first</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">120</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">7.858</td>
+<td style="text-align: right;">14.205</td>
+<td style="text-align: right;">4.782 / 6.115</td>
+<td style="text-align: right;">14.170</td>
+<td>2048 full-plane direct writes, 2048 direct tiles, 1024 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill</td>
+</tr>
+<tr>
+<td>Medium current</td>
+<td><code>20260615T044356Z-wave1-vla-single-medium-standard-cube-line-f77694da</code></td>
+<td style="text-align: right;">165.212</td>
+<td style="text-align: right;">1918.001</td>
+<td style="text-align: right;">11.609x</td>
+<td style="text-align: right;">43.234</td>
+<td style="text-align: right;">110.209</td>
+<td style="text-align: right;">7.164</td>
+<td style="text-align: right;">28.492</td>
+<td style="text-align: right;">17.180</td>
+<td style="text-align: right;">45.919</td>
+<td>slab-first</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">256</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td style="text-align: right;">recorded in JSON</td>
+<td style="text-align: right;">2.064 / 3.201</td>
+<td style="text-align: right;">18.581</td>
+<td>1024 full-plane direct writes, 1024 direct tiles, 512 Fortran calls, 0 C-order calls, 0 LRU reads, 0 zero-fill</td>
+</tr>
+</tbody>
+</table>
+<p>Medium correctness from the closeout bundle:</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th>Structured label</th>
+<th>Difference summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.image</code></td>
+<td>good</td>
+<td>RMS difference is 6.82e-7 of CASA RMS; correlation is effectively 1.0.</td>
+</tr>
+<tr>
+<td><code>.residual</code></td>
+<td>good</td>
+<td>RMS difference is 6.82e-7 of CASA RMS; correlation is effectively 1.0.</td>
+</tr>
+<tr>
+<td><code>.psf</code></td>
+<td>good</td>
+<td>RMS difference is 5.94e-6 of CASA RMS; correlation is effectively 1.0.</td>
+</tr>
+<tr>
+<td><code>.sumwt</code></td>
+<td>investigate</td>
+<td>Absolute differences are tiny, with RMS difference 1.01e-8 of CASA RMS and max difference 8.10e-8 of CASA peak; the structured checker flags it for review because the product is low dimensional and highly uniform.</td>
+</tr>
+</tbody>
+</table>
+<p>Closeout decision:</p>
+<ul>
+<li>Keep the 24 GB decimal memory cap as the current laptop-safe large-row target. It lowered peak RSS to 14.170 GB and improved wall time to 524.143 s, better than both the 923.208 s regressed run and the previous 572.315 s best baseline.</li>
+<li>Do not spend more W4-14 time on slab-first versus source-first for large dirty unless source reads become dominant. The current source-read bucket is 37.337 s out of 524.143 s, about 7% of wall time.</li>
+<li>Keep whole-plane product tiles and the zero-copy direct write path. Product write is now 58.435 s for 137.439 GB, with direct full-plane writes and no readback, zero-fill, or C-order conversion.</li>
+<li>Treat the remaining large dirty cost as a per-plane backend problem. Median plane time is 4.782 s and median core time is 4.172 s; the median FFT pair is 2.977 s, larger than replay, grid update, and normalization/correction combined.</li>
+<li>The next distinct architectural bet remains source-major or batched plane execution: one pass over shared source blocks should feed multiple plane grids, with shared geometry/tap work and batched FFT/backend execution where possible. Continuing isolated scalar plane workers is unlikely to recover the next factor. #311 is no longer the owner for that future work; it was closed by the standard cube/cubedata shared dirty execution refactor and refreshed medium evidence accepted on 2026-06-16.</li>
+</ul>
+<h2 id="attempts">Attempts<a class="headerlink" href="#attempts" title="Permanent link">&para;</a></h2>
+<h3 id="direct-full-physical-tile-overwrite">Direct full physical tile overwrite<a class="headerlink" href="#direct-full-physical-tile-overwrite" title="Permanent link">&para;</a></h3>
+<p>Status: rejected</p>
+<p>Hypothesis: for full-plane product writes, skipping LRU tile read or zero-fill before complete physical tile overwrite would reduce product write time.</p>
+<p>Implementation tested: fresh LRU slots could be marked dirty without read or zero-fill when a write covered the full physical tile.</p>
+<p>Evidence:</p>
+<ul>
+<li>Run: <code>20260614T221210Z-wave1-alma-mosaic-large-standard-cube-line-cfb34597</code></li>
+<li>Runtime worsened from 572.315 s to 761.280 s.</li>
+<li>Source read worsened from 34.293 s to 82.477 s in this noisy sample.</li>
+<li>Backend worsened from 533.973 s to 672.478 s.</li>
+<li>Product write worsened from 172.592 s to 182.785 s.</li>
+<li>Plane median worsened from 5.203 s to 6.539 s; p95 worsened from 6.423 s to 9.101 s.</li>
+<li>Peak RSS increased from 17.250 GB to 18.212 GB.</li>
+</ul>
+<p>Decision: do not keep this path. Product write did not improve, total wall time regressed materially, and worker timing regressed. The code change was reverted.</p>
+<h3 id="deep-product-tile-batching">Deep product tile batching<a class="headerlink" href="#deep-product-tile-batching" title="Permanent link">&para;</a></h3>
+<p>Status: rejected</p>
+<p>Hypothesis: use multi-plane product tiles and hold product results in batches so <code>.image</code> and <code>.residual</code> writes coalesce fewer, deeper tile flushes.</p>
+<p>Implementation tested: planner modeled a product group overhead term and selected <code>product_batch_planes=10</code> for the large dirty cube. The product tile shape depth became 10 planes for image-like products.</p>
+<p>Evidence:</p>
+<ul>
+<li>Run: <code>20260614T224929Z-wave1-alma-mosaic-large-standard-cube-line-54221e5e</code></li>
+<li>Status: failed, <code>scripts/bench-imager-vs-casa.sh</code> reported <code>Killed: 9</code>; the benchmark JSON recorded Rust status <code>not_run</code>.</li>
+<li>The run only completed unique planes 0 through 228 of slab 0 before termination.</li>
+<li>Plan shifted from 347 active planes, 3 slabs, 11.771 GB product scratch to 258 active planes, 4 slabs, 16.336 GB product scratch.</li>
+<li>Slab 0 source read was 4.030 GB in 38.617 s; extrapolated source time would no longer be negligible.</li>
+<li>Partial plane median worsened from 5.203 s to 5.963 s; partial p95 worsened from 6.423 s to 9.009 s.</li>
+<li>Partial average per-plane FFT buckets were 1.746 s PSF FFT and 1.843 s residual FFT.</li>
+</ul>
+<p>Decision: do not keep this planner/writer path. The deep product batch consumed too much scratch, reduced active-plane residency, increased slab count, worsened observed per-plane timing, and failed before a complete large run. Future product write work should avoid holding many full plane results pending and should instead target true bulk/tile write APIs or lower-copy direct tile overwrites with bounded memory.</p>
+<h3 id="row-tile-direct-product-writes">Row-tile direct product writes<a class="headerlink" href="#row-tile-direct-product-writes" title="Permanent link">&para;</a></h3>
+<p>Status: rejected as default; keep the product-write evidence</p>
+<p>Hypothesis: choose image product tiles shaped as full rows, <code>[1, ny, 1, 1]</code>, so each C-order plane is tile-contiguous and the direct tiled writer can avoid per-128x128-tile transpose work.</p>
+<p>Implementation tested: full-plane product writes used <code>TiledFileIO::put_aligned_c_order_tiles</code>, which writes complete tile-aligned planes directly to the tiled data file and records direct-write counters. The row-tile shape made each plane copy contiguous before the direct file write.</p>
+<p>Evidence:</p>
+<ul>
+<li>Medium probe run: <code>20260614T231356Z-wave1-vla-single-medium-standard-cube-line-f18b845b</code></li>
+<li>Medium product write improved to 8.925 s for 17.180 GB, versus 23.072 s with the 128x128 direct-tile probe.</li>
+<li>Medium total runtime was not useful evidence because the source-read bucket spiked in that sample.</li>
+<li>Large run: <code>20260614T231826Z-wave1-alma-mosaic-large-standard-cube-line-961420d9</code></li>
+<li>Runtime worsened from 572.315 s to 677.660 s.</li>
+<li>Product write improved from 172.592 s to 74.770 s for the same 137.439 GB.</li>
+<li>Direct writes covered 137.439 GB through 2048 direct write calls and 8388608 row tiles.</li>
+<li>Peak RSS increased from 17.250 GB to 18.005 GB.</li>
+<li>Slab plane execution regressed: slab wall times were 210.667 s, 197.270 s, and 229.136 s, with a late-run slowdown where many planes rose above 8-12 s.</li>
+</ul>
+<p>Decision: do not keep row-tile product layout as the default. It gives a real product-write improvement but regresses the large dirty wall clock by about 105 s, so the backend/cache side effect is larger than the write gain. Restore the prior bounded spatial tile shape for default cube products. Future product-write work should preserve backend layout behavior and isolate direct writes behind a path that does not increase per-plane FFT/grid/correction cost.</p>
+<h3 id="planned-sample-compact-tap-payload-and-stage-split">Planned-sample compact tap payload and stage split<a class="headerlink" href="#planned-sample-compact-tap-payload-and-stage-split" title="Permanent link">&para;</a></h3>
+<p>Status: pending evidence</p>
+<p>Hypothesis: planned scalar samples should carry the compact prolate-spheroidal tap identity needed by the scalar grid-update loop. Recomputing compact taps from <code>(u,v)</code> inside each worker is redundant per-sample backend work and hides inside the broad grid bucket.</p>
+<p>Implementation under test:</p>
+<ul>
+<li><code>StandardMfsPlannedWeightedSample</code> now carries <code>x_start</code>, <code>y_start</code>, <code>x_weight_index</code>, and <code>y_weight_index</code>.</li>
+<li><code>StandardMfsPlannedSampleBuilder::plan_sample</code> computes the compact tap identity once while constructing the planned sample.</li>
+<li>The scalar planned-sample PSF, dirty residual, and residual-refresh loops consume those compact tap fields directly.</li>
+<li>Core diagnostics now split <code>planned_sample_replay</code> from <code>grid_update</code>, while preserving the existing aggregate <code>psf_grid</code> and <code>residual_degrid_grid</code> timers.</li>
+</ul>
+<p>Verification so far:</p>
+<ul>
+<li><code>cargo test -p casa-imaging fft --lib</code></li>
+<li><code>cargo test -p casa-imaging gridder --lib</code></li>
+<li><code>cargo test -p casars-imager managed_output --lib</code></li>
+<li><code>cargo test -p casa-images put_slice_view_direct_writes_aligned_tiled_plane --lib</code></li>
+<li><code>python3 -m pytest tools/perf/imager/test_run_workload.py -q</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Timing status: diagnostic only, not acceptance evidence. At 2026-06-14 17:59 local time, <code>uptime</code> reported load averages <code>10.58 7.73 8.98</code>; <code>spotlightknowledged</code>, <code>backupd</code>, Codex helper processes, and <code>syspolicyd</code> were consuming substantial CPU. A medium dirty diagnostic was still run to validate counters:</p>
+<ul>
+<li>Run: <code>20260615T000217Z-wave1-vla-single-medium-standard-cube-line-5dce0de2</code></li>
+<li>Runtime: 202.640 s.</li>
+<li>Source read: 76.183 s, versus 42.154 s in the earlier medium direct-tile probe.</li>
+<li>Product write: 31.268 s, versus 23.072 s in the earlier medium direct-tile probe.</li>
+<li>Product bytes: 17.180 GB through 1024 direct-write calls and 262144 direct tiles.</li>
+<li>Plane median/p95: 2.052 s / 3.113 s.</li>
+<li>Median per-plane core split: total 1.988 s, sample replay 0.729 s, grid update 0.572 s, PSF FFT 0.267 s, residual FFT 0.284 s.</li>
+<li>Peak RSS: 19.161 GB.</li>
+</ul>
+<p>Decision: do not classify this total runtime as performance evidence because the source and product buckets were materially slower than prior medium probes under a known noisy system load. Keep the counter split. It shows sample replay/build and grid update are both material per-plane backend costs, and it gives a concrete target for a shared planned-sample or batched-plane backend optimization.</p>
+<h3 id="storage-order-product-planes-and-direct-fortran-tiled-writes">Storage-order product planes and direct Fortran tiled writes<a class="headerlink" href="#storage-order-product-planes-and-direct-fortran-tiled-writes" title="Permanent link">&para;</a></h3>
+<p>Status: pending timing evidence</p>
+<p>Hypothesis: the default 128x128 product tile shape is better for the rest of the imaging run than row tiles, but serial product writing still pays a costly C-order plane to Fortran-order tile transpose. If final plane products are expanded into Fortran-memory-order arrays inside the existing plane workers, the writer can pack product tiles with contiguous row copies instead of a per-element serial transpose. This should preserve CASA-visible shape and tile layout while moving unavoidable layout work out of the serial product writer.</p>
+<p>Implementation under test:</p>
+<ul>
+<li><code>expand_plane</code> now creates <code>(nx, ny, 1, 1)</code> product arrays in Fortran memory order.</li>
+<li><code>PagedImage::put_slice_view</code> detects Fortran-contiguous full-plane views and routes them to a direct tiled writer path before the C-order fallback.</li>
+<li><code>TiledFileIO::put_aligned_fortran_order_tiles</code> writes full tile-aligned spatial planes directly to the TSM file.</li>
+<li>Direct tiled writer diagnostics now split <code>tiled_direct_pack_ns</code>, <code>tiled_direct_swap_ns</code>, and <code>tiled_direct_write_ns</code>, while keeping direct write call/tile/byte counters.</li>
+</ul>
+<p>Verification so far:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo test -p casa-images put_slice_view_direct_writes --lib</code></li>
+<li><code>cargo test -p casa-imaging gridder --lib</code></li>
+<li><code>cargo test -p casa-tables direct --lib</code></li>
+<li><code>cargo test -p casars-imager cube_dirty_multi_channel_slab_runner_writes_casa_products --lib</code></li>
+<li><code>python3 -m pytest tools/perf/imager/test_run_workload.py -q</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Timing status: medium diagnostic complete, large run in progress. At 2026-06-14 18:23 local time, <code>spotlightknowledged</code> was still near one full core and <code>backupd</code> was consuming substantial CPU, so the medium dirty run below is diagnostic for total wall time, but useful for the product writer counters.</p>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T002513Z-wave1-vla-single-medium-standard-cube-line-ca211e53</code></li>
+<li>Runtime: 206.750 s.</li>
+<li>Source read: 77.348 s, versus 42.154 s in the earlier medium direct-tile probe and 76.183 s in the noisy compact-tap probe.</li>
+<li>Product write: 13.996 s for 17.180 GB, versus 23.072 s in the earlier 128x128 direct-tile probe and 31.268 s in the noisy compact-tap probe.</li>
+<li>Direct write split: 5.470 s pack, 0.000 s swap, 8.138 s physical write.</li>
+<li>Direct write coverage: 17.180 GB through 1024 direct write calls and 262144 direct tiles.</li>
+<li>Product writer no longer used the C-order direct path: <code>tiled_c_order_calls=0</code>.</li>
+<li>Plane median/p95: 2.275 s / 2.918 s.</li>
+<li>Median per-plane core split: total 1.991 s, sample replay 0.727 s, grid update 0.560 s, PSF FFT 0.236 s, residual FFT 0.255 s.</li>
+<li>Peak RSS: 18.903 GB.</li>
+</ul>
+<p>Interim decision: keep this change for large evidence. It preserves the default 128x128 spatial product tile shape, removes the C-order serial transpose path from image-like dirty products, and improves the medium product-write bucket by about 9.1 s relative to the earlier comparable 128x128 direct-tile probe. Do not use the medium total wall time as acceptance evidence until the host is less noisy.</p>
+<h3 id="dirty-only-cube-products">Dirty-only cube products<a class="headerlink" href="#dirty-only-cube-products" title="Permanent link">&para;</a></h3>
+<p>Status: keep as a structural product-write change; total timing evidence is contaminated</p>
+<p>Hypothesis: dirty cube imaging should not materialize or write clean-only image products. For <code>niter=0</code>, <code>.image</code> is a CASA-compatible alias of <code>.residual</code>, and <code>.model</code> is empty. Removing those arrays from the dirty worker result and product writer should cut dirty product traffic and serial product work without changing <code>.psf</code>, <code>.residual</code>, <code>.sumwt</code>, or the <code>.image</code> alias.</p>
+<p>Implementation under test:</p>
+<ul>
+<li>Dirty shared cube planes now return <code>DirtyImagingResult</code>, carrying only <code>.psf</code>, <code>.residual</code>, <code>.sumwt</code>, beam metadata, and diagnostics.</li>
+<li>Dirty cube slab publishing writes only <code>.psf</code>, <code>.residual</code>, and <code>.sumwt</code>; it keeps the existing <code>.image</code> hard-link alias to <code>.residual</code> at finish time and removes <code>.model</code>.</li>
+<li>Product memory planning charges dirty plane result scratch for two image-like planes instead of the clean four-image-product result.</li>
+<li>The existing shared read-only slab source and one-worker-per-plane execution path are unchanged.</li>
+</ul>
+<p>Verification so far:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo test -p casa-images put_slice_view_direct_writes --lib</code></li>
+<li><code>cargo test -p casa-imaging gridder --lib</code></li>
+<li><code>cargo test -p casa-tables direct --lib</code></li>
+<li><code>cargo test -p casars-imager cube_dirty_multi_channel_slab_runner_writes_casa_products --lib</code></li>
+<li><code>python3 -m pytest tools/perf/imager/test_run_workload.py -q</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T005443Z-wave1-vla-single-medium-standard-cube-line-45018408</code></li>
+<li>Runtime: 286.244 s. Do not use this as acceptance evidence: during follow-up inspection, <code>tmutil status</code> reported Time Machine <code>backupd</code> actively copying a 443 GB backup with roughly 8201 s remaining, and <code>ps</code> showed substantial unrelated CPU load.</li>
+<li>Source read: 80.094 s, versus 42.154 s in the earlier medium direct-tile probe.</li>
+<li>Product write: 15.323 s for 17.180 GB, with only dirty <code>.psf</code> and <code>.residual</code> image-like products written.</li>
+<li>Direct write split: 6.828 s pack, 0.000 s swap, 8.263 s physical write.</li>
+<li>Direct write coverage: 17.180 GB through 1024 direct write calls and 262144 direct tiles.</li>
+<li>Product writer did not use the C-order direct path: <code>tiled_c_order_calls=0</code>, <code>tiled_fortran_calls=512</code>.</li>
+<li>Plane median/p95: 3.915 s / 4.644 s, contaminated in the same direction as source read and FFT/gridding buckets.</li>
+<li>Median per-plane core split: total 3.720 s, sample replay 1.338 s, grid update 1.050 s, PSF FFT 0.433 s, residual FFT 0.469 s.</li>
+<li>Peak RSS: 18.567 GB.</li>
+</ul>
+<p>Decision: keep this code path as a product-write and architecture cleanup, but do not claim a total-wall performance win from the contaminated medium run. The useful product-write result is that dirty product bytes are now the two image-like products that are actually needed. The next clean-host large run should test whether large dirty product write drops from the old 137.439 GB / 172.592 s bucket to roughly the expected 34.36 GB scale before further product batching work is considered.</p>
+<h3 id="centered-ifft-checkerboard-shift-removal">Centered-IFFT checkerboard shift removal<a class="headerlink" href="#centered-ifft-checkerboard-shift-removal" title="Permanent link">&para;</a></h3>
+<p>Status: keep; large dirty timing still backend-bound</p>
+<p>Hypothesis: the large dirty per-plane FFT bucket includes avoidable full-grid quadrant swaps. For even grid shapes, <code>ifft(ifftshift(F))</code> is equivalent to <code>ifft(F)</code> followed by a checkerboard sign. Applying the sign during the existing FFT scale pass should remove one full-grid <code>ifftshift</code> per PSF and residual FFT without changing the centered image semantics.</p>
+<p>Implementation under test:</p>
+<ul>
+<li><code>centered_ifft2_f64_owned_unshifted_even</code> now detects even contiguous grids and runs the inverse FFT directly on the centered-frequency grid.</li>
+<li>The previous pre-FFT quadrant swap is replaced by <code>(-1)^(x+y)</code> folded into the inverse-FFT scale pass.</li>
+<li>The fallback path for odd or non-contiguous grids is unchanged.</li>
+</ul>
+<p>Verification so far:</p>
+<ul>
+<li><code>cargo test -p casa-imaging fft --lib</code></li>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo test -p casars-imager spectral_slab --lib</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T021214Z-wave1-vla-single-medium-standard-cube-line-e00aaf6d</code></li>
+<li>Runtime: 165.103 s.</li>
+<li>Product write: 8.596 s for 17.180 GB through 1024 full-plane direct write calls.</li>
+<li>Plane median/p95: 1.750 s / 4.343 s.</li>
+<li>Median per-plane core split: total 1.686 s, FFT 0.440 s, grid 1.115 s.</li>
+<li>Peak RSS: 18.408 GB.</li>
+<li>Large run: <code>20260615T021534Z-wave1-alma-mosaic-large-standard-cube-line-d6e03f00</code></li>
+<li>Runtime: 636.612 s, worse than the 572.315 s baseline but better than grouped whole-plane's 679.452 s.</li>
+<li>Product write: 158.687 s for 137.439 GB through 2048 full-plane direct write calls.</li>
+<li>Product write split: 18.412 s pack, 0.000 s swap, 140.137 s physical write.</li>
+<li>Plane median/p95: 5.541 s / 6.930 s.</li>
+<li>Median per-plane core split: total 4.958 s, FFT 3.358 s, grid 0.773 s.</li>
+<li>Peak RSS: 18.035 GB.</li>
+</ul>
+<p>Decision: keep the centered-IFFT change and whole-plane product tile layout for now, but treat the large result as evidence that product-result dataflow still is not exploiting whole-plane writes well enough. The large run remains dominated by per-plane backend work and full-plane physical write bandwidth; more slab/source scheduling work is not indicated.</p>
+<h3 id="whole-plane-product-tiles-without-multi-plane-result-grouping">Whole-plane product tiles without multi-plane result grouping<a class="headerlink" href="#whole-plane-product-tiles-without-multi-plane-result-grouping" title="Permanent link">&para;</a></h3>
+<p>Status: keep as the current default; do not re-enable multi-plane product grouping without a lower-copy executor path</p>
+<p>Hypothesis: whole-plane product tiles are still the right product layout, but the previous grouped whole-plane run regressed because it merged many plane results into new <code>Array4</code> product groups before writing. Keep whole-plane physical product tiles while publishing and writing one plane at a time.</p>
+<p>Implementation tested:</p>
+<ul>
+<li><code>ExecutorScratchShape::max_product_batch_planes</code> now returns <code>1</code>.</li>
+<li>Product tiles remain full-plane tiles.</li>
+<li>The executor still writes through the direct Fortran full-plane path.</li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T021214Z-wave1-vla-single-medium-standard-cube-line-e00aaf6d</code></li>
+<li>Runtime: 165.103 s, slower than grouped whole-plane's 150.2 s but faster than the pre-batch 181.8 s reference.</li>
+<li>Product write: 8.596 s, with 512 product groups and 1024 full-plane direct writes.</li>
+<li>Large run: <code>20260615T021534Z-wave1-alma-mosaic-large-standard-cube-line-d6e03f00</code></li>
+<li>Runtime: 636.612 s, better than grouped whole-plane's 679.452 s but still worse than the 572.315 s baseline.</li>
+<li>Product write: 158.687 s, with 1024 product groups and 2048 full-plane direct writes.</li>
+<li>Grouped whole-plane had product write around 92.6 s, but total wall worsened to 679.5 s and product/result consume was 115.5 s. One-plane whole-plane removes the merge-batch memory pressure but exposes the same backend lower bound.</li>
+</ul>
+<p>Decision: do not abandon whole-plane product tiles. The failed strategy is multi-plane product-result grouping in the current executor, not the whole-plane tile shape. The next product-write attempt should preserve whole-plane tiles and remove the serial dataflow limits, for example by writing whole-plane products directly from plane workers to deterministic non-overlapping plane regions or by adding a real bulk tiled cube write API that accepts a plane slab without constructing merged intermediate arrays.</p>
+<h3 id="whole-plane-fortran-zero-copy-direct-writes">Whole-plane Fortran zero-copy direct writes<a class="headerlink" href="#whole-plane-fortran-zero-copy-direct-writes" title="Permanent link">&para;</a></h3>
+<p>Status: keep for the product writer; total runtime is backend-regressed</p>
+<p>Hypothesis: with whole-plane product tiles, the Fortran-order plane array already has the same element order as one physical tile. The writer was still copying the whole plane into <code>direct_write_buffer</code> before writing it. Removing that copy should preserve the whole-plane tile strategy while proving whether the remaining product bucket is physical write bandwidth or dataflow overhead.</p>
+<p>Implementation tested:</p>
+<ul>
+<li><code>TiledFileIO::put_aligned_fortran_order_tiles</code> now writes the caller's Fortran-order slice directly when the spatial tile is the whole plane and no byte swap is required.</li>
+<li>Partial/spatial-tiled writes and byte-swapped writes keep the existing pack-buffer path.</li>
+<li><code>PagedImage::put_slice_view</code> still routes Fortran-contiguous product arrays through the direct tiled path before the older fallbacks.</li>
+<li>Added <code>put_slice_view_direct_writes_fortran_whole_plane_without_pack_copy</code> to assert that the whole-plane direct path writes one physical tile with zero pack time and round-trips the pixels.</li>
+</ul>
+<p>Verification:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo test -p casa-images put_slice_view_direct_writes_fortran_whole_plane_without_pack_copy --lib -- --nocapture</code></li>
+<li><code>cargo test -p casa-images put_slice_view_direct_writes_fortran_aligned_tiled_plane --lib</code></li>
+<li><code>cargo test -p casars-imager cube_dirty_multi_channel_slab_runner_writes_casa_products --lib</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Medium evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T030452Z-wave1-vla-single-medium-standard-cube-line-62d23440</code></li>
+<li>Product write: 7.279 s for 17.180 GB, with 1024 full-plane direct writes across the two dirty image-like products.</li>
+<li>Direct write split: 0.000 s pack, 0.000 s swap, about 6.999 s physical write.</li>
+<li>Product writer path: <code>tiled_fortran_calls=512</code>, <code>tiled_c_order_calls=0</code>, <code>tiled_direct_write_tiles=1024</code>.</li>
+<li>Previous comparable one-plane whole-plane medium reference: 8.596 s product write for 17.180 GB in <code>20260615T021214Z-wave1-vla-single-medium-standard-cube-line-e00aaf6d</code>.</li>
+<li>Total runtime was 196.661 s versus 165.103 s in the previous reference. Do not treat this as a total-wall win; slab 1 compute/source-read buckets were materially slower in this sample.</li>
+</ul>
+<p>Large evidence:</p>
+<ul>
+<li>Large run: <code>20260615T031133Z-wave1-alma-mosaic-large-standard-cube-line-ed98d543</code></li>
+<li>Runtime: 747.728 s versus 636.612 s in the previous one-plane whole-plane reference and 572.315 s in the earlier best large dirty baseline.</li>
+<li>Source read: 33.013 s total across both slabs, consistent with the previous large shape not being source-read dominated.</li>
+<li>Backend execution: 709.358 s total across both slabs, versus 533.973 s in the earlier best large dirty baseline.</li>
+<li>Product write: 101.156 s for 137.439 GB, versus 158.687 s in the previous one-plane whole-plane reference and 172.592 s in the earlier best baseline.</li>
+<li>Product write split: 0.000 s pack, 0.000 s swap, 100.508 s direct physical write.</li>
+<li>Direct write coverage: 137.439 GB through 2048 full-plane direct write calls and 2048 full-plane direct tiles.</li>
+<li>Product writer path: <code>tiled_fortran_calls=1024</code>, <code>tiled_c_order_calls=0</code>.</li>
+<li>Peak RSS: 18.831 GB.</li>
+</ul>
+<p>Decision: keep the zero-copy whole-plane direct write path. It removes real redundant memory traffic from the storage boundary and materially improves the large product-write bucket without changing the whole-plane tile layout. Do not claim a total-wall win: the large run regressed because per-plane backend execution ballooned. Product writing is now mostly physical write bandwidth; the next optimization should focus on the plane backend and the dataflow feeding FFT/grid work, not abandoning whole-plane product tiles.</p>
+<h3 id="blocked-transpose-inverse-fft">Blocked-transpose inverse FFT<a class="headerlink" href="#blocked-transpose-inverse-fft" title="Permanent link">&para;</a></h3>
+<p>Status: rejected before large run</p>
+<p>Hypothesis: the large dirty median plane spends about 3.36 s in the two inverse FFTs. Replacing the strided column FFT pass with blocked transposes plus contiguous row FFTs might cut the FFT bucket enough to produce a material large-wall win.</p>
+<p>Implementation tested:</p>
+<ul>
+<li>For large contiguous even-centered inverse FFTs, row FFTs were followed by a blocked transpose, row FFTs on the transposed grid, and a blocked transpose back with the checkerboard scale.</li>
+<li>The memory planner was temporarily updated to charge one extra complex grid of worker scratch for the transpose buffer.</li>
+</ul>
+<p>Verification:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo test -p casa-imaging fft --lib</code></li>
+<li><code>cargo test -p casars-imager cube_slab_executor_scratch_includes_standard_mfs_workspace --lib</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T023252Z-wave1-vla-single-medium-standard-cube-line-ca46cc13</code></li>
+<li>Runtime regressed to 204.415 s versus the current medium reference of 165.103 s.</li>
+<li>Slab backend elapsed regressed to 140.730 s total.</li>
+<li>Product write stayed small at 10.252 s for 17.180 GB, so the regression was backend-side.</li>
+<li>Median/p95 plane time regressed to 2.298 s / 5.231 s.</li>
+<li>Median per-plane core split: total 2.179 s, FFT 0.537 s, grid 1.477 s.</li>
+<li>Peak RSS rose to 18.976 GB.</li>
+</ul>
+<p>Decision: reverted. The added transpose buffer and data movement worsened medium, violating the preserve-medium rule. No large run was justified. Future FFT work should use a real batched/vectorized/Metal FFT backend or a layout that avoids extra full-grid copies, not blocked transpose around the existing scalar <code>rustfft</code> path.</p>
+<h3 id="unmerged-whole-plane-product-groups">Unmerged whole-plane product groups<a class="headerlink" href="#unmerged-whole-plane-product-groups" title="Permanent link">&para;</a></h3>
+<p>Status: rejected after medium run</p>
+<p>Hypothesis: the previous grouped whole-plane writer regressed because it merged individual plane results into new grouped <code>Array4</code> products before writing. A no-merge writer could keep the full-plane tile shape and write a product group from separate per-plane Fortran-order views directly into the tiled writer's direct buffer, reducing physical write calls without the merged intermediate arrays.</p>
+<p>Implementation tested:</p>
+<ul>
+<li>Added a temporary <code>PagedImage</code>/<code>TiledFileIO</code> path that packs separate Fortran-order plane slices into one direct full-plane group write.</li>
+<li>Re-enabled planner-selected product batches from modeled product batch and pending-result bytes.</li>
+<li>Dirty cube product publication used the unmerged path for one-plane dirty results.</li>
+</ul>
+<p>Verification:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo test -p casa-images put_slice_view_direct_writes_fortran_aligned_tiled_plane_group --lib</code></li>
+<li><code>cargo test -p casa-images put_plane_group_views_direct_writes_fortran_aligned_tiled_planes --lib</code></li>
+<li><code>cargo test -p casars-imager plane_group_publisher_is_result_type_generic --lib</code></li>
+<li><code>cargo test -p casars-imager independent_plane_streaming_consumer_receives_completion_order --lib</code></li>
+<li><code>cargo test -p casars-imager memory_planner_batches_large_dirty_cube_product_writes_within_budget --lib</code></li>
+<li><code>cargo test -p casars-imager cube_dirty_multi_channel_slab_runner_writes_casa_products --lib</code></li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T024746Z-wave1-vla-single-medium-standard-cube-line-29445f3b</code></li>
+<li>Runtime: 164.624 s versus 165.103 s for the current one-plane whole-plane reference.</li>
+<li>Planner selected <code>product_batch_planes=64</code>.</li>
+<li>Product write regressed to 15.406 s for 17.180 GB, versus 8.596 s in the current one-plane whole-plane reference.</li>
+<li>Direct image writes dropped from 1024 to 20, but direct pack/write time still totaled about 7.7 s and product publication/consume remained about 15.6 s.</li>
+<li>First slab product summary: 8.215 s product write, 10 direct image writes, 8.590 GB.</li>
+<li>Second slab product summary: 7.079 s product write, 10 direct image writes, 8.590 GB.</li>
+<li>Peak RSS: 18.465 GB.</li>
+</ul>
+<p>Decision: revert. The no-merge path reduced direct write call count but did not improve total wall time and made product write worse on the medium evidence row. Whole-plane tile shape remains the current direction; planner-selected product grouping is not keepable until the writer can reduce actual physical write time or avoid blocking plane consumption.</p>
+<h3 id="f32-routed-dirty-grids">F32 routed dirty grids<a class="headerlink" href="#f32-routed-dirty-grids" title="Permanent link">&para;</a></h3>
+<p>Status: rejected after medium run</p>
+<p>Hypothesis: the per-plane backend bucket was dominated by grid and FFT memory bandwidth. Holding the routed dirty PSF and residual grids as <code>Complex32</code> instead of <code>Complex64</code> would halve grid memory traffic and reduce inverse FFT cost, while final image products remain <code>f32</code>.</p>
+<p>Implementation tested:</p>
+<ul>
+<li>Added a temporary f32 routed-dirty tile store and f32 gridding helpers for the initial dirty cube path.</li>
+<li>Added a temporary f32 unshifted centered inverse FFT finalizer.</li>
+<li>Left the whole-plane direct product writer in place, so the test isolated the dirty-grid precision/backend route rather than product tiling.</li>
+</ul>
+<p>Verification:</p>
+<ul>
+<li><code>cargo test -p casa-imaging standard_mfs_dirty --lib -- --nocapture</code></li>
+<li><code>cargo test -p casars-imager cube_dirty_multi_channel_slab_runner_writes_casa_products --lib -- --nocapture</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium run: <code>20260615T033935Z-wave1-vla-single-medium-standard-cube-line-ddd53e0b</code></li>
+<li>Runtime: 206.913 s, worse than the latest accepted whole-plane zero-copy medium evidence at 196.661 s and the earlier one-plane whole-plane reference at 165.103 s.</li>
+<li>Source read: 49.134 s total across two slabs.</li>
+<li>Backend execution: 145.716 s total across two slabs.</li>
+<li>Product write: 7.625 s for 17.180 GB, with whole-plane direct writes still active and zero pack time.</li>
+<li>Slab product write remained healthy: 3.460 s and 3.921 s.</li>
+<li>Slab backend buckets regressed to 60.473 s and 85.243 s.</li>
+</ul>
+<p>Decision: revert. The f32 route did make the FFT component cheaper, but total runtime regressed because the plane feed/replay/grid-update path became the effective bottleneck. Do not revisit this version. The useful learning is that whole-plane product storage is not the problem exposed by this attempt; the planes are being fed and manipulated inefficiently before product write.</p>
+<h3 id="direct-dirty-replay-split-instrumentation">Direct dirty replay split instrumentation<a class="headerlink" href="#direct-dirty-replay-split-instrumentation" title="Permanent link">&para;</a></h3>
+<p>Status: keep</p>
+<p>Hypothesis: the remaining medium/large dirty runtime is dominated by how each plane is fed from the shared slab source, not by whole-plane product writes. Add low-overhead counters around the direct dirty replay path so each plane reports row scan, planned-sample construction, and grid-consume time separately.</p>
+<p>Implementation kept:</p>
+<ul>
+<li><code>DirtyCubeImagingResult</code> carries <code>DirectDirtyCubePlaneReplayTimings</code>.</li>
+<li>The direct dirty slab worker logs <code>cube_shared_direct_plane_replay</code> with blocks, rows seen, rows flagged, missing/empty assignments, rejected samples, planned samples, <code>build_planned_ms</code>, and <code>consume_ms</code>.</li>
+<li>The counter is per block/plane, not per sample, so it is acceptable for medium/large diagnostics.</li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium diagnostic run: <code>20260615T035513Z-wave1-vla-single-medium-standard-cube-line-c3f26bc5</code></li>
+<li>Runtime: 241.139 s with CASA skipped; use this as diagnostic attribution, not acceptance evidence.</li>
+<li>Slab 0 product write: 3.524 s for 8.590 GB.</li>
+<li>Slab 1 product write: 4.701 s for 8.590 GB.</li>
+<li>Slab 0 backend wall: 63.404 s; slab 1 backend wall: 115.619 s.</li>
+<li>Each plane scanned roughly 3,086,235 rows and planned roughly 3.07-3.09 million samples.</li>
+<li>Early slab-0 planes showed <code>build_planned_ms</code> around 0.67-0.80 s and <code>consume_ms</code> around 0.39-0.47 s.</li>
+<li>Later planes and slab 1 rose substantially; many slab-1 planes showed <code>build_planned_ms</code> around 1.6-2.6 s and <code>consume_ms</code> around 1.2-2.0 s.</li>
+</ul>
+<p>Decision: keep the instrumentation. It confirms that whole-plane product writes are no longer the primary medium bottleneck: product write is only 8.494 s total for 17.180 GB in this diagnostic, while backend/replay dominates. The next real optimization must change the source-to-plane feed or gridding dataflow rather than the product tile shape.</p>
+<h3 id="per-plane-precomputed-spectral-assignment-lookup">Per-plane precomputed spectral assignment lookup<a class="headerlink" href="#per-plane-precomputed-spectral-assignment-lookup" title="Permanent link">&para;</a></h3>
+<p>Status: rejected before completing the medium run</p>
+<p>Hypothesis: the direct dirty replay path was wasting time by linearly searching <code>grid_channel_contributions</code> for every row and every plane. Building a reusable output-channel-to-grid-assignment index once per spectral-plan entry should reduce <code>build_planned_ms</code>.</p>
+<p>Implementation tested and reverted:</p>
+<ul>
+<li>Added a <code>grid_assignment_indexes</code> map to <code>CubeRowSpectralReusablePlan</code>.</li>
+<li>Built a <code>Vec&lt;u32&gt;</code> output-channel index for each row spectral contribution entry.</li>
+<li>Routed direct dirty replay through the keyed index instead of <code>assignment_for_output</code> linear search.</li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Interrupted medium diagnostic: <code>20260615T040533Z-wave1-vla-single-medium-standard-cube-line-d43ae43d</code></li>
+<li>The run was stopped after the first ~100 slab-0 planes because it was already failing the target metric.</li>
+<li>Reusable plan build cost increased to 10.316 s for slab 0.</li>
+<li>Slab 0 source read was also noisy at 45.395 s, so total wall time is not usable.</li>
+<li>The targeted replay metric did not improve: early planes reported <code>build_planned_ms</code> around 1.7-1.9 s, and planes 80-99 were still roughly 1.18-1.64 s.</li>
+<li>By contrast, the previous direct replay diagnostic had many early slab-0 planes around 0.67-1.1 s.</li>
+</ul>
+<p>Decision: revert. The index increased resident plan work and did not improve the measured planned-sample build bucket. The assignment lookup is not the dominant replay cost in this path; the next attempt should target repeated per-plane row scanning, sample construction, tap planning, or a source-major/slab-major fanout that avoids rebuilding nearly identical per-row geometry for every plane.</p>
+<p>This rejected attempt is distinct from the later standard cube/cubedata refactor,
+which retained compact row bindings and grid-assignment indices only to remove
+per-row <code>HashMap</code> lookup and <code>Arc</code> cloning from the shared slab source path.</p>
+<h3 id="fast-single-contribution-direct-dirty-replay">Fast single-contribution direct dirty replay<a class="headerlink" href="#fast-single-contribution-direct-dirty-replay" title="Permanent link">&para;</a></h3>
+<p>Status: keep as a narrow feed-path improvement; rejected as the large dirty win</p>
+<p>Hypothesis: the direct dirty replay path was still paying generic extraction overhead for the common cube case where each output plane receives one source-channel contribution from <code>Complex32</code> DATA, <code>Float32</code> WEIGHT, and no WEIGHT_SPECTRUM. Whole-plane product writes are now efficient enough that removing per-sample enum matching, contribution-loop overhead, and paired-correlation helper calls should reduce the source-to-plane feed cost without changing the product layout.</p>
+<p>Implementation kept at the time, then removed by the later shared-source simplification:</p>
+<ul>
+<li>Added a typed read-only fast block accessor over <code>VisibilityBuffer</code> DATA/FLAG/WEIGHT.</li>
+<li>Routed single-contribution explicit and collapsed-pair dirty samples through direct <code>Complex32</code>/<code>Float32</code> slice access.</li>
+<li>Preserved the generic helper path for multiple contributions, Complex64, Float64, WEIGHT_SPECTRUM, and other uncommon cases.</li>
+<li>Added fast/fallback sample counters to <code>cube_shared_direct_plane_replay</code> so medium/large runs showed whether the hot path was active.</li>
+</ul>
+<p>Verification:</p>
+<ul>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo check -p casars-imager</code></li>
+<li><code>cargo test -p casars-imager cube_dirty_multi_channel_slab_runner_writes_casa_products --lib -- --nocapture</code></li>
+<li><code>cargo build --release -p casars-imager</code></li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Medium diagnostic run: <code>20260615T041840Z-wave1-vla-single-medium-standard-cube-line-e89c1271</code></li>
+<li>Runtime: 207.791 s with CASA skipped; diagnostic attribution only, not acceptance evidence.</li>
+<li>Previous comparable direct replay diagnostic: 241.139 s in <code>20260615T035513Z-wave1-vla-single-medium-standard-cube-line-c3f26bc5</code>.</li>
+<li>Product write stayed small: 8.069 s total for 17.180 GB, with slab product writes of 3.591 s and 4.236 s.</li>
+<li>Source read was 20.981 s for slab 0 and 29.303 s for slab 1.</li>
+<li>Slab backend wall was 52.601 s for slab 0 and 92.380 s for slab 1.</li>
+<li>Peak RSS: 18.749 GB.</li>
+<li>The fast path covered the hot case: sampled planes reported <code>fallback_samples=0</code> and <code>fast_samples</code> equal to accepted planned samples.</li>
+<li>Slab 0 first-batch planes reported <code>build_planned_ms</code> around 0.70-0.80 s, matching or modestly improving the best previous early-slab replay timings. Later slab-1 planes still rose to about 1.1-1.7 s <code>build_planned_ms</code>, and grid consume/FFT/correction were comparable or larger.</li>
+<li>Large run: <code>20260615T042423Z-wave1-alma-mosaic-large-standard-cube-line-1727f925</code></li>
+<li>Runtime regressed to 923.208 s versus the 572.315 s best large dirty baseline.</li>
+<li>Source read remained small after de-duplicating repeated log records: about 34.2 s for 31.963 GB across the two slab reads.</li>
+<li>Backend execution regressed to 883.179 s across the two slabs, versus 533.973 s in the best large dirty baseline.</li>
+<li>Product write improved versus the best baseline but not enough: 118.526 s for 137.439 GB, versus 172.592 s in the best baseline.</li>
+<li>Whole-plane direct writes were active: 137.439 GB through 2048 direct write calls and 2048 full-plane direct tiles.</li>
+<li>Product writer counters showed no tile readback or zero-fill, <code>tiled_c_order_calls=0</code>, and <code>tiled_fortran_calls=1024</code>.</li>
+<li>Slab product write was uneven: slab 0 wrote 68.988 GB in 36.356 s, while slab 1 wrote 68.451 GB in 82.171 s.</li>
+<li>The fast path covered the large hot case too: streamed plane logs reported <code>fallback_samples=0</code> and <code>fast_samples=866313</code> for the representative full-sample planes.</li>
+<li>Peak RSS: 18.498 GB.</li>
+</ul>
+<p>Decision: keep the fast single-contribution path and its counters because it removes real generic feed-path overhead and improves the current medium diagnostic relative to the previous replay-instrumented run. Reject it as the large dirty performance solution: large total wall time regressed badly because per-plane backend execution ballooned, even though product writes used whole-plane direct tiles with no readback, zero-fill, or C-order conversion. Whole-plane product tiles remain the right product layout; this evidence points to changing the plane feed/grid/FFT execution model rather than backing away from whole-plane writes.</p>
+<h3 id="24-gb-decimal-memory-cap-retest">24 GB decimal memory cap retest<a class="headerlink" href="#24-gb-decimal-memory-cap-retest" title="Permanent link">&para;</a></h3>
+<p>Status: keep as current large dirty evidence</p>
+<p>Hypothesis: the 923.208 s large regression may have come from planning against a
+30.065 GB target on a 32 GiB laptop. A stricter 24 GB decimal cap should reduce
+resident pressure and avoid the high-active-plane plan without losing product
+write efficiency.</p>
+<p>Implementation tested:</p>
+<ul>
+<li><code>imaging_memory_target_mb=22888</code>, which is 23,999,807,488 bytes and therefore
+  just under 24 GB decimal.</li>
+<li>Same large standard cube dirty workload, CASA skipped, profile skipped.</li>
+<li>Same whole-plane direct product writer and shared read-only slab source path.</li>
+</ul>
+<p>Evidence:</p>
+<ul>
+<li>Run: <code>20260616T150436Z-wave1-alma-mosaic-large-standard-cube-line-0531c480</code></li>
+<li>Runtime improved to 524.143 s, versus 923.208 s for the regressed 30 GB plan
+  and 572.315 s for the previous best large baseline.</li>
+<li>Plan changed to 120 active planes, 9 slabs, 308525 row block rows, 10 workers.</li>
+<li>Planned active memory was 24.000 GB, with 7.858 GB visibility/source-side
+  buffers and 14.205 GB slab/product-side scratch.</li>
+<li>Peak RSS was 14.170 GB, below the 24 GB decimal target and below both previous
+  large rows.</li>
+<li>Source read was 37.337 s for 16.030 GB measured source bytes.</li>
+<li>Backend execution was 481.638 s, still the dominant bucket.</li>
+<li>Product write was 58.435 s for 137.439 GB, with 2048 full-plane direct writes,
+  1024 Fortran-order full-plane calls, no C-order calls, no LRU reads, and no
+  zero-fill.</li>
+<li>Plane timing improved to 4.782 s median and 6.115 s p95.</li>
+<li>Median per-plane core split: 4.172 s core total, 2.977 s FFT pair, 0.160 s
+  sample replay, 0.396 s grid update, 0.280 s PSF grid, 0.280 s residual grid,
+  and 0.233 s combined correction/normalization.</li>
+</ul>
+<p>Decision: keep the 24 GB decimal cap as the current laptop-safe large dirty
+target. This alone fixes the large regression and improves over the previous
+best large row. It does not remove the remaining backend lower bound: FFTs and
+per-plane backend work are now the next optimization target.</p>
+<h2 id="current-direction">Current Direction<a class="headerlink" href="#current-direction" title="Permanent link">&para;</a></h2>
+<p>Do not spend more time on slab-first/source-first while source reads remain below 15% of total wall time. The credible levers are:</p>
+<ul>
+<li>Memory target: use 24 GB decimal for laptop large-dirty evidence. The 30.065 GB plan is preserved only as a rejected/regressed row.</li>
+<li>Product write: keep whole-plane tiles and the zero-copy direct writer. Do not abandon whole-plane layout; current product write is 58.435 s for 137.439 GB with no readback or zero-fill.</li>
+<li>Per-plane backend: target the feed/replay/grid-update/FFT path before more product-layout changes. The failed f32 and indexed-assignment runs showed that cheaper FFTs or faster assignment lookup alone do not help if each plane still scans the same rows and rebuilds scalar planned samples independently. The 24 GB run shows the FFT pair is now the largest median core bucket. The next material step likely needs source-major fanout, batched plane kernels, or a batched FFT/backend so one pass over the shared source feeds multiple plane grids without treating each plane as an isolated scalar unit.</li>
+<li>Batched execution: group planes only where it reduces source replay, grid layout/allocation cost, FFT setup, or enables true bulk tiled writes. Plane grouping that merely holds many complete plane results is rejected.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

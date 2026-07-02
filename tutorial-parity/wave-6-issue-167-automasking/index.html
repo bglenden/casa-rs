@@ -613,7 +613,7 @@ Registry key: <code>alma/automasking</code></p>
 <li><code>--no-fastnoise</code></li>
 <li>canonical JSON task request fields <code>use_mask</code> and <code>auto_mask</code></li>
 <li>Python <code>casars.tasks.imager.mfs(..., use_mask=..., auto_mask=...)</code></li>
-<li>CASA-style cube clean masks in <code>CubeImagingRequest</code> with shape <code>(nx, ny, 1, nchan)</code>, so generated or supplied masks can differ by output channel</li>
+<li>CASA-style cube clean masks with shape <code>(nx, ny, 1, nchan)</code>, so generated or supplied masks can differ by output channel</li>
 <li><code>.mask</code> product writing for effective clean masks, including channel-specific cube masks</li>
 </ul>
 <p>The native cube controller now owns standard-gridder <code>auto-multithresh</code> updates across major cycles. Initial masks use CASA's no-growth <code>iterdone == 0</code> path; later major-cycle residual refreshes may grow existing positive masks and stop channels that remain empty under a noise threshold.</p>
