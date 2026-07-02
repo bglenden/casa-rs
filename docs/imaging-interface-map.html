@@ -1,0 +1,2608 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>casa-rs Imaging Interface Map</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5b6670;
+      --page: #f7f9fb;
+      --panel: #ffffff;
+      --line: #cdd6df;
+      --blue: #2f6fb3;
+      --blue-soft: #e5f0fb;
+      --green: #317a53;
+      --green-soft: #e4f4ea;
+      --amber: #9a6400;
+      --amber-soft: #fff0d2;
+      --red: #ad3d4b;
+      --red-soft: #fbe4e8;
+      --violet: #6c4bb0;
+      --violet-soft: #eee8fb;
+      --gray-soft: #eef2f5;
+      --code: #24313c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 36px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    header {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(30px, 4vw, 46px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    a {
+      color: #164f8d;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
+    code {
+      color: var(--code);
+      background: #edf1f4;
+      border: 1px solid #d9e0e7;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.93em;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin: 18px 0;
+    }
+
+    .lede {
+      max-width: 900px;
+      color: #2d3b45;
+      font-size: 17px;
+    }
+
+    .stamp {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 14px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 16px 0 6px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      padding: 14px;
+      min-height: 104px;
+    }
+
+    .card strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1.1;
+      margin-bottom: 5px;
+    }
+
+    .card span {
+      color: var(--muted);
+      display: block;
+    }
+
+    .callout {
+      border-left: 5px solid var(--red);
+      background: var(--red-soft);
+      padding: 14px 16px;
+      margin: 14px 0;
+      border-radius: 6px;
+    }
+
+    .note {
+      border-left: 5px solid var(--blue);
+      background: var(--blue-soft);
+      padding: 14px 16px;
+      margin: 14px 0;
+      border-radius: 6px;
+    }
+
+    .grid-two {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    .diagram {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      padding: 10px;
+      margin: 12px 0 4px;
+    }
+
+    svg {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin: 12px 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 880px;
+      background: #fff;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      padding: 10px 11px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #edf2f6;
+      color: #23303a;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    td:last-child,
+    th:last-child {
+      border-right: 0;
+    }
+
+    ul,
+    ol {
+      margin: 8px 0 12px 22px;
+      padding: 0;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .tag.keep {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: #b7dac5;
+    }
+
+    .tag.move {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-color: #e9c47c;
+    }
+
+    .tag.hot {
+      background: var(--red-soft);
+      color: var(--red);
+      border-color: #e6a9b2;
+    }
+
+    .tag.plan {
+      background: var(--violet-soft);
+      color: var(--violet);
+      border-color: #ccbde9;
+    }
+
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .refs {
+      columns: 2;
+      column-gap: 28px;
+    }
+
+    .refs li {
+      break-inside: avoid;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      padding: 10px 12px;
+      margin: 10px 0;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    @media (max-width: 860px) {
+      main {
+        width: min(100vw - 24px, 1180px);
+      }
+
+      header,
+      section {
+        padding: 18px;
+      }
+
+      .cards,
+      .grid-two {
+        grid-template-columns: 1fr;
+      }
+
+      .refs {
+        columns: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>casa-rs Imaging Interface Map</h1>
+    <p class="lede">
+      A "now vs target" map of public and private imaging interfaces. The goal
+      is to expose where similar operations are split across app, MS, and core
+      imaging layers, then give a conservative path to simplify without losing
+      CASA semantics or performance.
+    </p>
+    <p class="stamp">
+      Snapshot date: 2026-07-02. Evidence paths are relative to the casa-rs
+      repository root.
+    </p>
+  </header>
+
+  <section>
+    <h2>Executive Read</h2>
+    <div class="callout">
+      The application crate is doing more than UI, task parameters, and output
+      orchestration. It contains private computation paths for MS selection,
+      channel planning, density accumulation, spectral interpolation, cube slab
+      scheduling, primary-beam products, masks, and product assembly. Those are
+      the highest-value migration candidates.
+    </div>
+    <p>
+      The existing intended boundary is still good: keep <code>casa-imaging</code>
+      as the prepared-batch imaging core, keep <code>casa-ms</code> as the
+      MeasurementSet and spectral-selection owner, and make
+      <code>casars-imager</code> an application/runtime shell. The work is not
+      "collapse everything into one function." It is to move domain computation
+      out of the app crate behind a smaller set of library-owned plans.
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <strong>54,814</strong>
+        <span><code>crates/casars-imager/src/lib.rs</code> lines</span>
+      </div>
+      <div class="card">
+        <strong>32,582</strong>
+        <span><code>crates/casa-imaging/src/lib.rs</code> lines</span>
+      </div>
+      <div class="card">
+        <strong>20,404</strong>
+        <span><code>crates/casa-imaging/src/execution.rs</code> lines</span>
+      </div>
+      <div class="card">
+        <strong>5,726</strong>
+        <span><code>casa-ms</code> visibility buffer plus spectral selection lines</span>
+      </div>
+    </div>
+    <p class="stamp">
+      Line count is not a quality metric by itself. Here it is useful because
+      the app crate is larger than the core imaging crate and contains
+      computation-heavy private functions.
+    </p>
+  </section>
+
+  <section>
+    <h2>CASA Mode Frame</h2>
+    <p>
+      CASA imaging is naturally multi-axis: data selection and visibility
+      buffering, spectral shape, gridder/projection family, weighting,
+      major/minor-cycle control, deconvolver, execution backend, and product
+      persistence all vary independently. RadioAstronomyOracle hits from CASA
+      workshop material line up with this view: joint mosaic imaging in
+      <code>tclean</code> uses Cotton-Schwab major/minor cycles with deconvolver
+      choices such as Hogbom, Clark, and multiscale; wideband imaging material
+      lists Standard gridding, W-projection, wideband A-projection, joint
+      mosaics, parallelization, cube, MFS, MT-MFS, faceting, Stokes, and
+      multi-field as separate axes.
+    </p>
+    <div class="note">
+      In the current Rust code, AW-style task aliases are accepted at the edge
+      but map to W-projection behavior or reject unsupported combinations. No
+      current W-stacking implementation was found. Treat W-stacking as a future
+      W-term execution strategy sibling to W-projection, not as a special case
+      in product writing or CLI dispatch.
+    </div>
+  </section>
+
+  <section>
+    <h2>Current Architecture</h2>
+    <p>
+      Today the imaging path is a hybrid: <code>casars-imager</code> is both
+      the task/runtime adapter and a substantial preparation/execution
+      coordinator, while <code>casa-imaging</code> owns most pure image-domain
+      and grid-domain computation once visibility data has been shaped into its
+      expected batches. This is why the system works, but also why similar
+      operations appear in multiple forms.
+    </p>
+    <p>
+      The practical current architecture is therefore not just
+      "app calls library." It is "app parses and routes, app reads and shapes
+      MS data, app chooses one of several mode-specific preparation paths, core
+      imaging executes the hottest shared work, and app assembles persisted
+      products."
+    </p>
+
+    <div class="diagram" aria-label="Current detailed architecture flow">
+      <svg viewBox="0 0 1120 500" role="img">
+        <defs>
+          <marker id="arrow-current-flow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#44515c"></path>
+          </marker>
+          <style>
+            .curbox { stroke-width: 1.2; rx: 6; }
+            .curapp { fill: #fbe4e8; stroke: #ad3d4b; }
+            .curms { fill: #e5f0fb; stroke: #2f6fb3; }
+            .curcore { fill: #e4f4ea; stroke: #317a53; }
+            .curprod { fill: #fff0d2; stroke: #9a6400; }
+            .curtext { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #26333e; }
+            .curtitle { font: 700 13px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .curline { stroke: #44515c; stroke-width: 1.5; marker-end: url(#arrow-current-flow); fill: none; }
+          </style>
+        </defs>
+
+        <rect class="curbox curapp" x="34" y="38" width="165" height="58"></rect>
+        <text class="curtitle" x="52" y="61">task surfaces</text>
+        <text class="curtext" x="52" y="79">CLI, JSON, Python</text>
+
+        <rect class="curbox curapp" x="232" y="38" width="180" height="58"></rect>
+        <text class="curtitle" x="250" y="61">run_from_config</text>
+        <text class="curtext" x="250" y="79">validation and routing</text>
+
+        <rect class="curbox curapp" x="445" y="38" width="185" height="58"></rect>
+        <text class="curtitle" x="463" y="61">capability gates</text>
+        <text class="curtext" x="463" y="79">MFS, cube, mosaic</text>
+
+        <rect class="curbox curapp" x="663" y="38" width="195" height="58"></rect>
+        <text class="curtitle" x="681" y="61">mode-specific prep</text>
+        <text class="curtext" x="681" y="79">row blocks, slabs, masks</text>
+
+        <rect class="curbox curprod" x="891" y="38" width="185" height="58"></rect>
+        <text class="curtitle" x="909" y="61">product writing</text>
+        <text class="curtext" x="909" y="79">images, PB, previews</text>
+
+        <rect class="curbox curms" x="146" y="160" width="170" height="58"></rect>
+        <text class="curtitle" x="164" y="183">MS selection</text>
+        <text class="curtext" x="164" y="201">app plus casa-ms</text>
+
+        <rect class="curbox curms" x="355" y="160" width="190" height="58"></rect>
+        <text class="curtitle" x="373" y="183">visibility columns</text>
+        <text class="curtext" x="373" y="201">buffer or app readers</text>
+
+        <rect class="curbox curms" x="584" y="160" width="190" height="58"></rect>
+        <text class="curtitle" x="602" y="183">spectral setup</text>
+        <text class="curtext" x="602" y="201">cube maps plus helpers</text>
+
+        <rect class="curbox curapp" x="813" y="160" width="180" height="58"></rect>
+        <text class="curtitle" x="831" y="183">prepared sources</text>
+        <text class="curtext" x="831" y="201">several app shapes</text>
+
+        <rect class="curbox curcore" x="146" y="288" width="170" height="58"></rect>
+        <text class="curtitle" x="164" y="311">weighting</text>
+        <text class="curtext" x="164" y="329">density and sumwt</text>
+
+        <rect class="curbox curcore" x="355" y="288" width="170" height="58"></rect>
+        <text class="curtitle" x="373" y="311">projection/grid</text>
+        <text class="curtext" x="373" y="329">standard, W, mosaic</text>
+
+        <rect class="curbox curcore" x="564" y="288" width="170" height="58"></rect>
+        <text class="curtitle" x="582" y="311">FFT/normalize</text>
+        <text class="curtext" x="582" y="329">image products</text>
+
+        <rect class="curbox curcore" x="773" y="288" width="170" height="58"></rect>
+        <text class="curtitle" x="791" y="311">clean loop</text>
+        <text class="curtext" x="791" y="329">Hogbom, Clark, MS</text>
+
+        <rect class="curbox curcore" x="355" y="406" width="190" height="48"></rect>
+        <text class="curtitle" x="373" y="426">execution variants</text>
+        <text class="curtext" x="373" y="444">serial, worker, Metal</text>
+
+        <rect class="curbox curapp" x="604" y="406" width="220" height="48"></rect>
+        <text class="curtitle" x="622" y="426">frontend diagnostics</text>
+        <text class="curtext" x="622" y="444">timings, traces, summaries</text>
+
+        <path class="curline" d="M199 67 H229"></path>
+        <path class="curline" d="M412 67 H442"></path>
+        <path class="curline" d="M630 67 H660"></path>
+        <path class="curline" d="M858 67 H888"></path>
+        <path class="curline" d="M322 96 C290 122 250 132 231 157"></path>
+        <path class="curline" d="M316 189 H352"></path>
+        <path class="curline" d="M545 189 H581"></path>
+        <path class="curline" d="M774 189 H810"></path>
+        <path class="curline" d="M903 218 C850 248 785 260 735 288"></path>
+        <path class="curline" d="M316 317 H352"></path>
+        <path class="curline" d="M525 317 H561"></path>
+        <path class="curline" d="M734 317 H770"></path>
+        <path class="curline" d="M858 288 C900 236 950 154 983 99"></path>
+        <path class="curline" d="M440 346 V403"></path>
+        <path class="curline" d="M714 346 V403"></path>
+      </svg>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Current area</th>
+            <th>What happens today</th>
+            <th>Architectural consequence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Task and mode routing</td>
+            <td>
+              <code>casars-imager</code> parses user options, maps gridder
+              aliases, rejects unsupported combinations, and dispatches to
+              separate MFS, cube, mosaic, MT-MFS, dirty, and clean paths.
+            </td>
+            <td>
+              User compatibility is protected at the edge, but routing logic
+              also knows too much about source shape, product shape, and
+              backend eligibility.
+            </td>
+          </tr>
+          <tr>
+            <td>Visibility I/O</td>
+            <td>
+              <code>casa-ms</code> has visibility-buffer and spectral-selection
+              APIs, but the app still contains row selection, channel-window,
+              column-read, and prepared-source helpers.
+            </td>
+            <td>
+              Similar channel and row decisions can drift between generic MS
+              APIs and imager-private readers.
+            </td>
+          </tr>
+          <tr>
+            <td>Prepared sample shapes</td>
+            <td>
+              Core imaging accepts prepared batches, planned samples, routed
+              visibility runs, single-plane streams, and MT-MFS-specific inputs.
+            </td>
+            <td>
+              The core is fast and reusable in places, but the public surface
+              exposes several nearly equivalent ways to say "stream bounded
+              visibilities into an imaging stage."
+            </td>
+          </tr>
+          <tr>
+            <td>Gridding and projection</td>
+            <td>
+              <code>GridderMode</code> distinguishes standard and mosaic;
+              <code>WTermMode</code> distinguishes none, direct, and WProject;
+              AW aliases are still mostly edge semantics.
+            </td>
+            <td>
+              Projection semantics are split between task input, core modes,
+              and backend code, which will make AW or W-stacking harder unless
+              a projection plan boundary is introduced first.
+            </td>
+          </tr>
+          <tr>
+            <td>Major/minor cycle</td>
+            <td>
+              Standard Cotton-Schwab control is partly shared in
+              <code>casa-imaging</code>, while MT-MFS and some outlier/joint
+              clean behavior remain separate.
+            </td>
+            <td>
+              Deconvolver choice is not yet cleanly separated from mode routing
+              and product/result assembly.
+            </td>
+          </tr>
+          <tr>
+            <td>Products</td>
+            <td>
+              <code>casars-imager</code> assembles image, residual, model, PSF,
+              weight, PB, pbcor, mask, preview, sumwt, cube, and Taylor
+              products through branch-heavy output code.
+            </td>
+            <td>
+              Product correctness is centralized, but mode execution details
+              leak into output writing.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>LibRA Interface Ideas</h2>
+    <p>
+      LibRA is useful here because it deliberately tries to expose radio
+      astronomy algorithms through a shallower stack. Its README states the
+      goal as direct access to core RA image-reconstruction algorithms with a
+      simple interface and small dependency graph, and separates scientific
+      code, standalone applications, and workflow scripts. The lesson for
+      <code>casa-rs</code> is not to copy LibRA's shell/parfile surfaces, but
+      to preserve its more explicit stage vocabulary and backend boundaries in
+      typed Rust interfaces.
+    </p>
+
+    <div class="diagram" aria-label="LibRA ideas mapped to casa-rs targets">
+      <svg viewBox="0 0 1120 440" role="img">
+        <defs>
+          <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#44515c"></path>
+          </marker>
+          <style>
+            .liblane { fill: #ffffff; stroke: #cdd6df; stroke-width: 1.2; }
+            .libtitle { font: 700 16px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .libsmall { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .libtiny { font: 11px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .libbox { stroke-width: 1.2; rx: 6; }
+            .libra { fill: #eee8fb; stroke: #6c4bb0; }
+            .target { fill: #e4f4ea; stroke: #317a53; }
+            .warn { fill: #fbe4e8; stroke: #ad3d4b; }
+            .edge3 { stroke: #44515c; stroke-width: 1.5; marker-end: url(#arrow3); fill: none; }
+          </style>
+        </defs>
+        <rect class="liblane" x="24" y="24" width="1072" height="392" rx="8"></rect>
+        <text class="libtitle" x="52" y="58">LibRA pattern to adopt</text>
+        <text class="libtitle" x="610" y="58">casa-rs target</text>
+
+        <rect class="libbox libra" x="52" y="82" width="185" height="48"></rect>
+        <text class="libsmall" x="68" y="102">stage vocabulary</text>
+        <text class="libtiny" x="68" y="118">weight, psf, residual, model</text>
+
+        <rect class="libbox target" x="610" y="82" width="210" height="48"></rect>
+        <text class="libsmall" x="626" y="102">StagePlan</text>
+        <text class="libtiny" x="626" y="118">typed products and dependencies</text>
+
+        <rect class="libbox libra" x="52" y="150" width="185" height="48"></rect>
+        <text class="libsmall" x="68" y="170">VI2 / VB2 split</text>
+        <text class="libtiny" x="68" y="186">iterator owns traversal</text>
+
+        <rect class="libbox target" x="610" y="150" width="210" height="48"></rect>
+        <text class="libsmall" x="626" y="170">VisibilityStream</text>
+        <text class="libtiny" x="626" y="186">bounded VisibilityBatch output</text>
+
+        <rect class="libbox libra" x="52" y="218" width="185" height="48"></rect>
+        <text class="libsmall" x="68" y="238">resampler boundary</text>
+        <text class="libtiny" x="68" y="254">DataToGrid, GridToData</text>
+
+        <rect class="libbox target" x="610" y="218" width="210" height="48"></rect>
+        <text class="libsmall" x="626" y="238">VisibilityResampler</text>
+        <text class="libtiny" x="626" y="254">CPU, worker, Metal backends</text>
+
+        <rect class="libbox libra" x="52" y="286" width="185" height="48"></rect>
+        <text class="libsmall" x="68" y="306">major/minor ownership</text>
+        <text class="libtiny" x="68" y="322">imager vs deconvolver</text>
+
+        <rect class="libbox target" x="610" y="286" width="210" height="48"></rect>
+        <text class="libsmall" x="626" y="306">MajorCycleExecutor</text>
+        <text class="libtiny" x="626" y="322">plus MinorCycleController</text>
+
+        <rect class="libbox warn" x="52" y="354" width="185" height="34"></rect>
+        <text class="libsmall" x="68" y="376">avoid fragile surfaces</text>
+
+        <rect class="libbox target" x="610" y="354" width="210" height="34"></rect>
+        <text class="libsmall" x="626" y="376">typed plans and events</text>
+
+        <path class="edge3" d="M237 106 H607"></path>
+        <path class="edge3" d="M237 174 H607"></path>
+        <path class="edge3" d="M237 242 H607"></path>
+        <path class="edge3" d="M237 310 H607"></path>
+        <path class="edge3" d="M237 371 H607"></path>
+      </svg>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>LibRA observation</th>
+            <th>Adopt</th>
+            <th>Avoid</th>
+            <th>casa-rs implication</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              The repository is organized around algorithm code, standalone
+              applications, and workflow scripts; apps such as
+              <code>roadrunner</code>, <code>dale</code>, <code>chip</code>,
+              and <code>hummbee</code> are composed by higher-level workflows.
+            </td>
+            <td>
+              Keep algorithms reachable as library components and let apps
+              configure and invoke them.
+            </td>
+            <td>
+              Replacing in-process APIs with shell commands, mutable parameter
+              files, or suffix-driven product inference.
+            </td>
+            <td>
+              <code>casars-imager</code> should become a typed runtime shell
+              over library-owned plans, not the owner of imaging computation.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>jobmode</code> is a stage algebra: <code>MAKEPSF</code> is
+              <code>WEIGHT | PSF</code>, <code>RUNMODELCYCLE</code> is
+              <code>MODEL | NORMALIZE</code>, and workflow schedulers reuse
+              those names.
+            </td>
+            <td>
+              A durable stage vocabulary: weight, PSF, dirty/residual, model,
+              gather, normalize, restore, PB, and writeback.
+            </td>
+            <td>
+              Baking the full mode combination into one runner per mode.
+            </td>
+            <td>
+              Add <code>StagePlan</code> and <code>StageProductSet</code> to
+              the target design so mode runners compose stages instead of
+              duplicating stage logic.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              The VI2/VB2 split separates traversal from the batch contract:
+              the iterator owns chunks, sort order, time interval, frequency
+              selection, and lookahead; the buffer owns row metadata and data
+              cubes.
+            </td>
+            <td>
+              <code>VisibilityReadPlan -> VisibilityStream ->
+              VisibilityBatch</code>, with row budget, selected channels,
+              SPW/DDID/field keys, and owned or borrowed array views.
+            </td>
+            <td>
+              A public mutable <code>DataBase</code>-style object that mixes
+              selection planning, MS opening, iterator construction, and raw
+              state exposure.
+            </td>
+            <td>
+              Move app-private row selection and channel read helpers into
+              <code>casa-ms</code> behind a bounded stream API.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>Algorithm</code> defines a small executor contract:
+              <code>get()</code>, <code>task()</code>, signal done, then
+              <code>put()</code>.
+            </td>
+            <td>
+              Separate stage input acquisition, computation, and result
+              emission.
+            </td>
+            <td>
+              A single app function that reads MS columns, prepares samples,
+              grids, deconvolves, writes products, and reports output.
+            </td>
+            <td>
+              Use a Rust <code>StageExecutor</code>-style internal contract:
+              prepare input, execute pure stage work, emit typed products and
+              timing events.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>FTMachine</code> is powerful but too broad; the clearer
+              boundary is <code>VisibilityResamplerBase</code>, where params,
+              maps, CF maps, <code>DataToGrid</code>, <code>GridToData</code>,
+              residuals, buffer init, and gather are explicit.
+            </td>
+            <td>
+              Narrow traits for <code>ProjectionKernel</code>,
+              <code>VisibilityResampler</code>, <code>TransformMachine</code>,
+              <code>Deconvolver</code>, and major/minor cycle controllers.
+            </td>
+            <td>
+              One <code>FTMachine</code>-sized Rust trait that owns projection,
+              FFT, normalization, CF cache, residuals, spectral maps, and
+              threading.
+            </td>
+            <td>
+              Keep backend isolation below projection semantics: CPU, worker,
+              and Metal implement the same bounded-batch resampler contract.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Multi-threaded resampling clones resamplers, allocates per-worker
+              grids/sumweights, scatters work, runs worklets, then gathers
+              outputs. HPG keeps the resampler boundary while adding device
+              transfer and CF lookahead.
+            </td>
+            <td>
+              Explicit worker buffers, gather products, cache affinity, and
+              bounded producer/consumer state.
+            </td>
+            <td>
+              Environment-variable-only backend behavior or public boolean
+              coordinators with ad hoc cancellation/error handling.
+            </td>
+            <td>
+              Make <code>ExecutionPlan</code> carry worker count, memory
+              residency, device eligibility, cache state, cancellation, and
+              error propagation.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Newer deconvolution boundaries are cleaner than old
+              <code>SkyModel</code>: a deconvolver owns minor-cycle
+              initialization/execution and delegates algorithm-specific steps.
+            </td>
+            <td>
+              Keep major-cycle MS streaming and residual/model refresh separate
+              from minor-cycle image-domain model/mask/residual updates.
+            </td>
+            <td>
+              Let deconvolution know about CF caches, MS traversal, or GPU input
+              staging.
+            </td>
+            <td>
+              <code>MajorCycleExecutor</code> streams MS and refreshes products;
+              <code>MinorCycleController</code> consumes image products and
+              stop criteria.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Proposed Architecture</h2>
+    <p>
+      The proposed shape is a layered dataflow and stage graph. The application
+      crate remains responsible for user-facing contracts: task parameters,
+      aliases, defaults, validation messages, progress, summaries, and output
+      policy. The library crates own the computations: visibility selection and
+      bounded reads in <code>casa-ms</code>; mode planning, weighting,
+      gridding, projection, FFT, major/minor-cycle control, deconvolution, and
+      backend selection in <code>casa-imaging</code>; and a narrow product
+      writer consumes typed products without knowing how they were computed.
+    </p>
+    <p>
+      This is the main simplification: preserve the independent CASA imaging
+      axes, but stop encoding each full combination as a separate app path.
+      Instead, build a plan once, execute stages through a small number of
+      library-owned contracts, and keep CPU, multi-worker, and Metal differences
+      behind execution strategies.
+    </p>
+    <div class="note">
+      Oracle refinement: the canonical replacement must not flatten everything
+      to one owned <code>VisibilityBatch</code>. The target public surface is a
+      neutral, bounded, replay-capable visibility source. Replayable row blocks,
+      routed runs, fixed-tile payloads, and Metal grouped-input cache payloads
+      can remain as private backend IR because they preserve performance
+      properties that the current public variants were created to protect.
+    </div>
+
+    <div class="diagram" aria-label="Proposed imaging architecture flow">
+      <svg viewBox="0 0 1120 560" role="img">
+        <defs>
+          <marker id="arrow-proposed-flow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#44515c"></path>
+          </marker>
+          <style>
+            .proplane { fill: #ffffff; stroke: #cdd6df; stroke-width: 1.2; }
+            .propbox { stroke-width: 1.2; rx: 6; }
+            .propedge { stroke: #44515c; stroke-width: 1.5; marker-end: url(#arrow-proposed-flow); fill: none; }
+            .proptitle { font: 700 14px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .proptext { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #26333e; }
+            .propsmall { font: 11px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .propapp { fill: #eee8fb; stroke: #6c4bb0; }
+            .propms { fill: #e5f0fb; stroke: #2f6fb3; }
+            .propcore { fill: #e4f4ea; stroke: #317a53; }
+            .propprod { fill: #fff0d2; stroke: #9a6400; }
+          </style>
+        </defs>
+
+        <rect class="proplane" x="24" y="24" width="1072" height="88" rx="8"></rect>
+        <rect class="proplane" x="24" y="132" width="1072" height="100" rx="8"></rect>
+        <rect class="proplane" x="24" y="252" width="1072" height="188" rx="8"></rect>
+        <rect class="proplane" x="24" y="460" width="1072" height="70" rx="8"></rect>
+
+        <text class="proptitle" x="44" y="54">edge: casars-imager</text>
+        <text class="proptitle" x="44" y="162">data access: casa-ms</text>
+        <text class="proptitle" x="44" y="282">planning and execution: casa-imaging</text>
+        <text class="proptitle" x="44" y="490">persistence boundary</text>
+
+        <rect class="propbox propapp" x="230" y="48" width="175" height="42"></rect>
+        <text class="proptext" x="248" y="66">ImagingJobRequest</text>
+        <text class="propsmall" x="248" y="82">task schema and defaults</text>
+
+        <rect class="propbox propapp" x="438" y="48" width="160" height="42"></rect>
+        <text class="proptext" x="456" y="66">TaskValidation</text>
+        <text class="propsmall" x="456" y="82">aliases and diagnostics</text>
+
+        <rect class="propbox propapp" x="631" y="48" width="150" height="42"></rect>
+        <text class="proptext" x="649" y="66">ProgressSink</text>
+        <text class="propsmall" x="649" y="82">events, timings</text>
+
+        <rect class="propbox propms" x="230" y="164" width="175" height="42"></rect>
+        <text class="proptext" x="248" y="182">VisibilityReadPlan</text>
+        <text class="propsmall" x="248" y="198">rows, DDIDs, fields</text>
+
+        <rect class="propbox propms" x="438" y="164" width="180" height="42"></rect>
+        <text class="proptext" x="456" y="182">SpectralChannelPlan</text>
+        <text class="propsmall" x="456" y="198">MFS, cube, MT-MFS maps</text>
+
+        <rect class="propbox propms" x="651" y="164" width="160" height="42"></rect>
+        <text class="proptext" x="669" y="182">VisibilityStream</text>
+        <text class="propsmall" x="669" y="198">bounded batches</text>
+
+        <rect class="propbox propcore" x="190" y="304" width="155" height="44"></rect>
+        <text class="proptext" x="208" y="322">ImagingPlan</text>
+        <text class="propsmall" x="208" y="338">mode axes resolved</text>
+
+        <rect class="propbox propcore" x="372" y="304" width="155" height="44"></rect>
+        <text class="proptext" x="390" y="322">StagePlan</text>
+        <text class="propsmall" x="390" y="338">weight, PSF, residual</text>
+
+        <rect class="propbox propcore" x="554" y="304" width="155" height="44"></rect>
+        <text class="proptext" x="572" y="322">ProjectionPlan</text>
+        <text class="propsmall" x="572" y="338">standard, W, AW, mosaic</text>
+
+        <rect class="propbox propcore" x="736" y="304" width="155" height="44"></rect>
+        <text class="proptext" x="754" y="322">ExecutionPlan</text>
+        <text class="propsmall" x="754" y="338">CPU, workers, Metal</text>
+
+        <rect class="propbox propcore" x="190" y="374" width="155" height="44"></rect>
+        <text class="proptext" x="208" y="392">VisibilityResampler</text>
+        <text class="propsmall" x="208" y="408">grid and degrid</text>
+
+        <rect class="propbox propcore" x="372" y="374" width="155" height="44"></rect>
+        <text class="proptext" x="390" y="392">MajorCycleExecutor</text>
+        <text class="propsmall" x="390" y="408">refresh products</text>
+
+        <rect class="propbox propcore" x="554" y="374" width="155" height="44"></rect>
+        <text class="proptext" x="572" y="392">MinorCycleController</text>
+        <text class="propsmall" x="572" y="408">Hogbom, Clark, MS</text>
+
+        <rect class="propbox propcore" x="736" y="374" width="155" height="44"></rect>
+        <text class="proptext" x="754" y="392">ImageProductSet</text>
+        <text class="propsmall" x="754" y="408">image, PSF, PB, sumwt</text>
+
+        <rect class="propbox propprod" x="736" y="480" width="185" height="32"></rect>
+        <text class="proptext" x="754" y="501">ImageTableWriter</text>
+
+        <path class="propedge" d="M405 69 H435"></path>
+        <path class="propedge" d="M598 69 H628"></path>
+        <path class="propedge" d="M317 90 V161"></path>
+        <path class="propedge" d="M405 185 H435"></path>
+        <path class="propedge" d="M618 185 H648"></path>
+        <path class="propedge" d="M731 206 C731 250 267 250 267 301"></path>
+        <path class="propedge" d="M345 326 H369"></path>
+        <path class="propedge" d="M527 326 H551"></path>
+        <path class="propedge" d="M709 326 H733"></path>
+        <path class="propedge" d="M267 348 V371"></path>
+        <path class="propedge" d="M449 348 V371"></path>
+        <path class="propedge" d="M631 348 V371"></path>
+        <path class="propedge" d="M709 396 H733"></path>
+        <path class="propedge" d="M828 418 V477"></path>
+      </svg>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Target layer</th>
+            <th>Owns</th>
+            <th>Must not own</th>
+            <th>Public/private signal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>casars-imager</code></td>
+            <td>
+              Task schema, parameter aliases, user defaults, validation
+              messages, progress sinks, output naming, run summaries.
+            </td>
+            <td>
+              Density accumulation, spectral interpolation, gridding,
+              deconvolution loops, PB math, backend scheduling, or MS column
+              traversal.
+            </td>
+            <td>
+              Public surface stays user-facing; private functions should be
+              thin adapters. Large numeric or sample-shaping helpers are
+              migration candidates.
+            </td>
+          </tr>
+          <tr>
+            <td><code>casa-ms</code></td>
+            <td>
+              MeasurementSet selection, source partitions, DDID/SPW/field
+              interpretation, spectral channel plans, bounded visibility
+              streams, column read granularity.
+            </td>
+            <td>
+              Image products, deconvolver policy, projection kernels, FFT
+              layout, or task-specific output behavior.
+            </td>
+            <td>
+              Public types should describe what visibility data will be read,
+              not how an imaging mode will use the resulting pixels.
+            </td>
+          </tr>
+          <tr>
+            <td><code>casa-imaging</code> planning</td>
+            <td>
+              Mode axes, stage graph, projection plan, clean plan, execution
+              plan, product expectations, capability checks.
+            </td>
+            <td>
+              CLI aliases, JSON schema compatibility, table-writing details,
+              or hidden environment-only execution policy.
+            </td>
+            <td>
+              Public plans should be stable enough for tests and apps; backend
+              internals remain private strategies.
+            </td>
+          </tr>
+          <tr>
+            <td><code>casa-imaging</code> execution</td>
+            <td>
+              Weighting, gridding/degridding, W/AW/mosaic projection,
+              FFT/normalization, major-cycle refresh, minor-cycle algorithms,
+              CPU/worker/Metal backends.
+            </td>
+            <td>
+              File naming, output replacement policy, UI progress formatting,
+              or direct MeasurementSet table ownership.
+            </td>
+            <td>
+              Public entrypoints should accept plans and streams; worker
+              queues, Metal caches, replay buffers, and tile schedulers stay
+              private.
+            </td>
+          </tr>
+          <tr>
+            <td>product writer</td>
+            <td>
+              Serializing supplied <code>ImageProductSet</code> members and
+              <code>ImageProductMetadata</code> to CASA-compatible image tables,
+              previews, masks, history records, and replacement policy.
+            </td>
+            <td>
+              Computing residuals, choosing clean components, deriving
+              coordinate axes, reading MS rows, deciding projection kernels, or
+              constructing PB/PB-corrected products.
+            </td>
+            <td>
+              Public contract is product data plus metadata, not the mode branch
+              that produced it. The writer encodes metadata; it does not derive
+              image coordinates.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Architecture Delta</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Current pattern</th>
+            <th>Target pattern</th>
+            <th>Why this reduces similar paths</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Mode dispatch branches in the app call separate runners.</td>
+            <td>A single <code>ImagingPlan</code> resolves axes into stages.</td>
+            <td>
+              New modes add or combine stages instead of copying end-to-end
+              control flow.
+            </td>
+          </tr>
+          <tr>
+            <td>App-private MS row and channel readers coexist with <code>casa-ms</code>.</td>
+            <td><code>VisibilityReadPlan</code> and <code>VisibilityStream</code> own bounded reads.</td>
+            <td>
+              Channel selection, row filtering, and buffer sizing become one
+              reusable data-access contract.
+            </td>
+          </tr>
+          <tr>
+            <td>Several public standard-MFS streaming entrypoints expose backend differences.</td>
+            <td>One run plan selects private CPU, worker, or Metal strategies.</td>
+            <td>
+              Performance choices remain explicit without multiplying public
+              APIs for each backend.
+            </td>
+          </tr>
+          <tr>
+            <td><code>GridderMode</code>, <code>WTermMode</code>, and edge aliases split projection semantics.</td>
+            <td><code>ProjectionPlan</code> names standard, W, AW, mosaic, and future W-stacking behavior.</td>
+            <td>
+              Projection capability becomes a library contract rather than a
+              CLI translation artifact.
+            </td>
+          </tr>
+          <tr>
+            <td>App product writing discovers mode behavior through branches.</td>
+            <td><code>ImageProductSet</code> records explicit products and metadata.</td>
+            <td>
+              Output code writes what it is given; execution code decides what
+              products exist.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Current Ownership</h2>
+    <p>
+      The current shape has a clean core boundary, but the app/runtime layer is
+      broad. The private app layer owns many operations that look like library
+      responsibilities.
+    </p>
+    <div class="diagram" aria-label="Current imaging ownership diagram">
+      <svg viewBox="0 0 1120 470" role="img">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#44515c"></path>
+          </marker>
+          <style>
+            .lane { fill: #ffffff; stroke: #cdd6df; stroke-width: 1.2; }
+            .label { font: 700 16px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .small { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .tiny { font: 11px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .box { stroke-width: 1.2; rx: 6; }
+            .app { fill: #fbe4e8; stroke: #ad3d4b; }
+            .ms { fill: #e5f0fb; stroke: #2f6fb3; }
+            .core { fill: #e4f4ea; stroke: #317a53; }
+            .prod { fill: #fff0d2; stroke: #9a6400; }
+            .edge { stroke: #44515c; stroke-width: 1.5; marker-end: url(#arrow); fill: none; }
+          </style>
+        </defs>
+        <rect class="lane" x="20" y="30" width="1080" height="92" rx="8"></rect>
+        <rect class="lane" x="20" y="142" width="1080" height="108" rx="8"></rect>
+        <rect class="lane" x="20" y="270" width="1080" height="82" rx="8"></rect>
+        <rect class="lane" x="20" y="372" width="1080" height="64" rx="8"></rect>
+
+        <text class="label" x="38" y="58">casars-imager app/runtime</text>
+        <text class="label" x="38" y="170">casa-ms</text>
+        <text class="label" x="38" y="298">casa-imaging</text>
+        <text class="label" x="38" y="400">image/product persistence</text>
+
+        <rect class="box app" x="200" y="50" width="115" height="46"></rect>
+        <text class="small" x="217" y="70">CLI/task</text>
+        <text class="tiny" x="218" y="86">config</text>
+
+        <rect class="box app" x="335" y="50" width="140" height="46"></rect>
+        <text class="small" x="348" y="70">mode dispatch</text>
+        <text class="tiny" x="348" y="86">MFS/cube/mosaic</text>
+
+        <rect class="box app" x="495" y="50" width="150" height="46"></rect>
+        <text class="small" x="508" y="70">channel reads</text>
+        <text class="tiny" x="508" y="86">private helpers</text>
+
+        <rect class="box app" x="665" y="50" width="165" height="46"></rect>
+        <text class="small" x="678" y="70">density/spectral</text>
+        <text class="tiny" x="678" y="86">prep and interpolation</text>
+
+        <rect class="box app" x="850" y="50" width="190" height="46"></rect>
+        <text class="small" x="862" y="70">PB/masks/products</text>
+        <text class="tiny" x="862" y="86">coordinate and output work</text>
+
+        <rect class="box ms" x="335" y="184" width="160" height="46"></rect>
+        <text class="small" x="349" y="204">visibility buffer</text>
+        <text class="tiny" x="349" y="220">public source API</text>
+
+        <rect class="box ms" x="520" y="184" width="160" height="46"></rect>
+        <text class="small" x="535" y="204">spectral setup</text>
+        <text class="tiny" x="535" y="220">cube channel map</text>
+
+        <rect class="box core" x="520" y="306" width="150" height="34"></rect>
+        <text class="small" x="537" y="328">gridding/FFT</text>
+
+        <rect class="box core" x="690" y="306" width="150" height="34"></rect>
+        <text class="small" x="703" y="328">major/minor</text>
+
+        <rect class="box core" x="860" y="306" width="160" height="34"></rect>
+        <text class="small" x="875" y="328">CPU/Metal paths</text>
+
+        <rect class="box prod" x="850" y="390" width="190" height="34"></rect>
+        <text class="small" x="864" y="412">image tables/previews</text>
+
+        <path class="edge" d="M315 73 H332"></path>
+        <path class="edge" d="M475 73 H492"></path>
+        <path class="edge" d="M645 73 H662"></path>
+        <path class="edge" d="M830 73 H847"></path>
+        <path class="edge" d="M570 96 C570 130 425 144 415 181"></path>
+        <path class="edge" d="M600 230 C600 260 595 278 595 303"></path>
+        <path class="edge" d="M680 323 H687"></path>
+        <path class="edge" d="M840 323 H857"></path>
+        <path class="edge" d="M945 340 V387"></path>
+      </svg>
+    </div>
+    <div class="legend">
+      <span class="tag hot">red: app-owned domain work</span>
+      <span class="tag keep">green: core imaging computation</span>
+      <span class="tag move">amber: persistence/product work</span>
+      <span class="tag plan">blue: MS/spectral I/O</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Target Ownership</h2>
+    <p>
+      The target is a narrower app surface and a stronger plan boundary. The
+      app builds a request, the MS layer prepares bounded visibility sources,
+      the imaging layer owns mode execution, and a product layer writes the
+      resulting image set.
+    </p>
+    <div class="diagram" aria-label="Target imaging ownership diagram">
+      <svg viewBox="0 0 1120 420" role="img">
+        <defs>
+          <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#44515c"></path>
+          </marker>
+          <style>
+            .lane2 { fill: #ffffff; stroke: #cdd6df; stroke-width: 1.2; }
+            .label2 { font: 700 16px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .small2 { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .tiny2 { font: 11px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .box2 { stroke-width: 1.2; rx: 6; }
+            .app2 { fill: #f7edf5; stroke: #6c4bb0; }
+            .ms2 { fill: #e5f0fb; stroke: #2f6fb3; }
+            .core2 { fill: #e4f4ea; stroke: #317a53; }
+            .prod2 { fill: #fff0d2; stroke: #9a6400; }
+            .edge2 { stroke: #44515c; stroke-width: 1.5; marker-end: url(#arrow2); fill: none; }
+          </style>
+        </defs>
+        <rect class="lane2" x="20" y="30" width="1080" height="72" rx="8"></rect>
+        <rect class="lane2" x="20" y="122" width="1080" height="82" rx="8"></rect>
+        <rect class="lane2" x="20" y="224" width="1080" height="92" rx="8"></rect>
+        <rect class="lane2" x="20" y="336" width="1080" height="56" rx="8"></rect>
+
+        <text class="label2" x="38" y="58">casars-imager</text>
+        <text class="label2" x="38" y="150">casa-ms</text>
+        <text class="label2" x="38" y="252">casa-imaging</text>
+        <text class="label2" x="38" y="364">product writer</text>
+
+        <rect class="box2 app2" x="230" y="50" width="170" height="34"></rect>
+        <text class="small2" x="246" y="72">ImagingJobRequest</text>
+
+        <rect class="box2 app2" x="430" y="50" width="170" height="34"></rect>
+        <text class="small2" x="450" y="72">progress/summary</text>
+
+        <rect class="box2 ms2" x="230" y="146" width="170" height="34"></rect>
+        <text class="small2" x="246" y="168">VisibilityReadPlan</text>
+
+        <rect class="box2 ms2" x="430" y="146" width="190" height="34"></rect>
+        <text class="small2" x="448" y="168">SpectralChannelPlan</text>
+
+        <rect class="box2 core2" x="230" y="250" width="170" height="40"></rect>
+        <text class="small2" x="248" y="266">VisibilityStream</text>
+        <text class="tiny2" x="248" y="282">bounded streaming</text>
+
+        <rect class="box2 core2" x="430" y="250" width="170" height="40"></rect>
+        <text class="small2" x="450" y="266">ProjectionPlan</text>
+        <text class="tiny2" x="450" y="282">standard/W/AW/mosaic</text>
+
+        <rect class="box2 core2" x="630" y="250" width="170" height="40"></rect>
+        <text class="small2" x="650" y="266">CleanPlan</text>
+        <text class="tiny2" x="650" y="282">major/minor policy</text>
+
+        <rect class="box2 core2" x="830" y="250" width="170" height="40"></rect>
+        <text class="small2" x="848" y="266">ExecutionPlan</text>
+        <text class="tiny2" x="848" y="282">CPU/worker/Metal</text>
+
+        <rect class="box2 prod2" x="830" y="350" width="170" height="28"></rect>
+        <text class="small2" x="848" y="369">ImageProductSet</text>
+
+        <path class="edge2" d="M400 67 H427"></path>
+        <path class="edge2" d="M315 84 V143"></path>
+        <path class="edge2" d="M400 163 H427"></path>
+        <path class="edge2" d="M525 180 C525 215 315 215 315 247"></path>
+        <path class="edge2" d="M400 270 H427"></path>
+        <path class="edge2" d="M600 270 H627"></path>
+        <path class="edge2" d="M800 270 H827"></path>
+        <path class="edge2" d="M915 290 V347"></path>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>Interface Ledger: Now vs Target</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Public now</th>
+            <th>Private now</th>
+            <th>Target public surface</th>
+            <th>Target private surface</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>casars-imager</code></td>
+            <td>
+              User/runtime boundary: <code>SpectralMode</code>,
+              <code>GridderRequest</code>, <code>CliConfig</code>,
+              <code>run_from_config</code>, task contract, managed-output, oracle,
+              and run-summary types.
+            </td>
+            <td>
+              Mode dispatch plus heavy helpers for row selection, channel reads,
+              row-block prep, density, cube interpolation, PB/mask construction,
+              coordinate building, output writing, and outlier clean control.
+            </td>
+            <td>
+              <code>ImagingJobRequest</code>, <code>run_from_config</code>,
+              task-schema bindings, progress callbacks, and run summaries.
+            </td>
+            <td>
+              Parse/validate config, map task aliases, choose default policies,
+              invoke library plans, report diagnostics. No gridding math, density
+              math, deconvolution loops, PB math, or spectral interpolation.
+            </td>
+          </tr>
+          <tr>
+            <td><code>casa-ms</code></td>
+            <td>
+              <code>VisibilityBufferRequest</code>, <code>SourcePartition</code>,
+              <code>VisibilityBuffer</code>,
+              <code>VisibilityChannelReadGranularity</code>,
+              <code>CubeSpectralSetup</code>, channel selection and frame
+              conversion functions.
+            </td>
+            <td>
+              Column readers, source partition validation, scalar/channel
+              shape checks, spectral contribution builders, CASA-like
+              channel map helpers.
+            </td>
+            <td>
+              <code>VisibilityReadPlan</code>, <code>SourcePartitionPlan</code>,
+              <code>SpectralChannelPlan</code>, bounded source stream factories.
+            </td>
+            <td>
+              Storage-manager details, parallel column reads, channel
+              granularity selection, DDID/SPW/POL table interpretation.
+            </td>
+          </tr>
+          <tr>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Concept APIs and types: <code>ImagingRequest</code>,
+              <code>VisibilityBatch</code>, <code>ColumnarVisibilitySourceRef</code>,
+              <code>GridderMode</code>, <code>WTermMode</code>,
+              <code>Deconvolver</code>, <code>run_imaging</code>,
+              <code>run_mosaic_mfs_from_single_plane_stream</code>,
+              <code>run_mtmfs</code>, and several standard-MFS streaming
+              variants.
+            </td>
+            <td>
+              Mostly correct: fixed-tile planning, CPU/Metal executors,
+              replay plans, W-project and mosaic backend details are largely
+              <code>pub(crate)</code>.
+            </td>
+            <td>
+              One canonical plan-based imaging entrypoint, optional session
+              entrypoint, <code>ImagingPlan</code>,
+              <code>VisibilitySource</code>, <code>VisibilityBlockStream</code>,
+              <code>ProjectionPlan</code>, <code>CleanPlan</code>,
+              <code>ExecutionPlan</code>, <code>ExecutionCapabilities</code>,
+              <code>ImageProductSet</code>, and
+              <code>ImageProductMetadata</code>. Temporary wrappers must carry
+              explicit deletion phases.
+            </td>
+            <td>
+              Standard/W/AW/mosaic projectors, worker scheduling, Metal cache,
+              FFT staging, weighting density, residual refresh, minor-cycle
+              implementations, per-mode normalization, and all
+              <code>StandardMfs*</code> payload/run-block backend IR.
+            </td>
+          </tr>
+          <tr>
+            <td>Product layer</td>
+            <td>
+              Currently mostly reached through <code>casars-imager</code>
+              output functions and image table helpers.
+            </td>
+            <td>
+              Product branch logic in <code>write_products</code>,
+              coordinate-system construction, PB-corrected image assembly,
+              previews, masks, and beam metadata.
+            </td>
+            <td>
+              <code>ImageTableWriter</code> or equivalent writer that serializes
+              explicit products and metadata: image, residual, model, psf, pb,
+              weight, sumwt, pbcor, mask, Taylor terms, coordinates, beams, and
+              history.
+            </td>
+            <td>
+              Image table format details, preview encoding, metadata
+              serialization, existing-output replacement policy. Coordinate
+              metadata derivation stays in <code>casa-imaging</code>.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Private App Computation Audit</h2>
+    <p>
+      These are private functions in <code>casars-imager</code> that are useful
+      signs of app-layer leakage. Some are necessary adapters today, but the
+      target owner should be a library layer.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Function family</th>
+            <th>Examples</th>
+            <th>Why it is suspicious in the app</th>
+            <th>Likely target</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>MS row and visibility source preparation</td>
+            <td>
+              <code>select_main_rows</code>,
+              <code>read_visibility_source_columns</code>,
+              <code>read_columnar_prepared_source</code>
+            </td>
+            <td>
+              This is not UI behavior. It defines what data enters imaging and
+              should share the same source partition and bounded-read semantics
+              as other MS consumers.
+            </td>
+            <td><span class="tag plan">move to casa-ms plan</span></td>
+          </tr>
+          <tr>
+            <td>Row-block and spectral preparation</td>
+            <td>
+              <code>prepare_source_row_block_plane_inner</code>,
+              <code>collapse_paired_visibility</code>,
+              <code>interpolate_explicit_cube_output_sample</code>
+            </td>
+            <td>
+              These functions shape samples for the core. If every mode shapes
+              them privately in the app, MFS, cube, mosaic, and MT-MFS drift.
+            </td>
+            <td><span class="tag move">split between casa-ms and casa-imaging</span></td>
+          </tr>
+          <tr>
+            <td>Weight-density accumulation</td>
+            <td>
+              <code>accumulate_standard_mfs_density_rows_without_data_parallel</code>,
+              <code>accumulate_standard_mfs_density_essentials_rows</code>,
+              <code>accumulate_standard_mfs_density_row</code>
+            </td>
+            <td>
+              Density is imaging math and a performance hotspot. It should be
+              controlled by the same execution and weighting plan as gridding.
+            </td>
+            <td><span class="tag hot">move to casa-imaging</span></td>
+          </tr>
+          <tr>
+            <td>Outlier and joint minor-cycle control</td>
+            <td>
+              <code>run_joint_outlier_hogbom</code>,
+              <code>run_joint_hogbom_minor_cycle</code>
+            </td>
+            <td>
+              Major/minor-cycle policy belongs beside Hogbom, Clark, multiscale,
+              and residual refresh, not in task dispatch.
+            </td>
+            <td><span class="tag hot">move to casa-imaging clean control</span></td>
+          </tr>
+          <tr>
+            <td>Primary beam, masks, and product assembly</td>
+            <td>
+              <code>write_products</code>, <code>build_coordinate_system</code>,
+              <code>robust_plane_stats</code>,
+              <code>build_auto_multithresh_cube_clean_mask</code>
+            </td>
+            <td>
+              Product correctness is mode-sensitive, but it should consume an
+              explicit product set instead of discovering mode details through
+              branch-heavy app code.
+            </td>
+            <td><span class="tag move">product layer plus casa-imaging</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Similar Path Pressure</h2>
+    <p>
+      Similar operations are not automatically a bug. They become a problem
+      when they share data shape and semantics but differ only by routing,
+      backend, or product branch. This matrix shows where the current split
+      pressure looks highest.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Stage</th>
+            <th>Current split</th>
+            <th>Pressure</th>
+            <th>Collapse handle</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Visibility I/O and selection</td>
+            <td>
+              Generic <code>casa-ms</code> selection/buffer APIs coexist with
+              imager-private row selection and channel read helpers.
+            </td>
+            <td><span class="tag hot">high</span></td>
+            <td><code>VisibilityReadPlan</code> owned by <code>casa-ms</code></td>
+          </tr>
+          <tr>
+            <td>Spectral/cube channel routing</td>
+            <td>
+              <code>CubeSpectralSetup</code> exists, but app functions still
+              perform cube output interpolation and per-row contribution logic.
+            </td>
+            <td><span class="tag hot">high</span></td>
+            <td>
+              <code>casa-ms</code> physical channel plan plus
+              <code>casa-imaging</code> spectral route plan.
+            </td>
+          </tr>
+          <tr>
+            <td>Standard-MFS streaming variants</td>
+            <td>
+              Public APIs expose weighted streaming, planned run blocks,
+              planned source blocks, routed visibility runs, dirty accumulator,
+              and Metal-cache-specific entrypoints.
+            </td>
+            <td><span class="tag move">medium-high</span></td>
+            <td>
+              Public bounded <code>VisibilitySource</code> plus private
+              <code>StandardMfs*</code> backend IR.
+            </td>
+          </tr>
+          <tr>
+            <td>Projection modes</td>
+            <td>
+              <code>GridderMode</code> covers Standard and Mosaic while
+              <code>WTermMode</code> carries none/direct/WProject. AW aliases
+              are edge semantics today.
+            </td>
+            <td><span class="tag move">medium</span></td>
+            <td><code>ProjectionPlan</code> naming standard, W, AW, mosaic, and future W-stacking</td>
+          </tr>
+          <tr>
+            <td>Major/minor cycle</td>
+            <td>
+              Standard clean dispatch is shared, but MT-MFS and app-owned
+              outlier clean control are separate paths.
+            </td>
+            <td><span class="tag move">medium</span></td>
+            <td><code>CleanPlan</code> with deconvolver-specific private policies</td>
+          </tr>
+          <tr>
+            <td>Products and PB handling</td>
+            <td>
+              MFS, MT-MFS, cube, mosaic, PB, pbcor, preview, and mask products
+              are assembled in a branch-heavy app path.
+            </td>
+            <td><span class="tag hot">high</span></td>
+            <td><code>ImageProductSet</code> and a focused writer boundary</td>
+          </tr>
+          <tr>
+            <td>CPU worker and Metal execution</td>
+            <td>
+              Core execution internals are mostly private, but app policy and
+              cache-oriented public entrypoints still leak backend details.
+            </td>
+            <td><span class="tag move">medium</span></td>
+            <td><code>ExecutionPlan</code> plus public capability query</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Oracle Iteration Refinements</h2>
+    <p>
+      The Oracle review agreed that the layering direction is right, but pushed
+      the plan to be stricter. The central correction is that the refactor must
+      reduce public and app-private surface without erasing internal
+      performance shapes.
+    </p>
+    <div class="note">
+      Do not flatten to owned batches. The new public API must preserve bounded
+      replay, fixed-tile scheduling, cube-compatible clean-plane execution, and
+      Metal grouped-input staging. Those shapes can remain as private backend
+      IR; they should not remain public API.
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Oracle point</th>
+            <th>Plan update</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Deletion must be first-class.</td>
+            <td>
+              Add a deletion ledger with current symbol, target owner,
+              replacement, removal phase, and parity/performance gate.
+            </td>
+          </tr>
+          <tr>
+            <td><code>StagePlan</code> is too broad if it becomes a workflow engine.</td>
+            <td>
+              Treat stages as a closed typed vocabulary. Keep executable graph
+              mechanics private until reused by multiple modes.
+            </td>
+          </tr>
+          <tr>
+            <td><code>VisibilityResampler</code> risks becoming a Rust <code>FTMachine</code>.</td>
+            <td>
+              Keep it narrow: bounded grid/degrid work only. Projection caches,
+              FFT, normalization, worker reduction, Metal transfer, and clean
+              control stay in separate private strategies.
+            </td>
+          </tr>
+          <tr>
+            <td>Product writing was too broad.</td>
+            <td>
+              Split computed products and metadata from persistence:
+              <code>ImageProductSet</code> and
+              <code>ImageProductMetadata</code> in <code>casa-imaging</code>,
+              table encoding in a writer, and naming/replacement policy in the
+              app.
+            </td>
+          </tr>
+          <tr>
+            <td>AW aliases should not silently mean W-projection.</td>
+            <td>
+              Once <code>ProjectionPlan</code> exists, unsupported AW should
+              validate as unsupported or experimental rather than masquerading
+              as <code>WProject</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>Backend fallback must be explicit.</td>
+            <td>
+              Add <code>ExecutionCapabilities</code> with selected backend,
+              rejection reasons, worker count, device details, and explicit
+              fallback policy. Replace boolean probes such as
+              <code>standard_mfs_metal_device_available()</code>.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Issue #319 Implementation Snapshot</h2>
+    <p>
+      The standard-MFS route-specific public function matrix has been replaced
+      by a smaller plan/session facade. The app now calls
+      <code>run_standard_mfs_plan</code>,
+      <code>run_standard_mfs_dirty_plan</code>, and
+      <code>StandardMfsCleanSession</code>; the former weighted, planned,
+      routed, and prepared-clean runners are private implementation functions.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <strong>10 -> 0</strong>
+        <span>old route-specific public standard-MFS runners/free functions</span>
+      </div>
+      <div class="card">
+        <strong>170 -> 160</strong>
+        <span>public symbols in the measured issue files</span>
+      </div>
+      <div class="card">
+        <strong>14 -> 11</strong>
+        <span>public <code>StandardMfs*</code> backend payload subset</span>
+      </div>
+      <div class="card">
+        <strong>-54</strong>
+        <span>Rust lines across the issue files after facade consolidation</span>
+      </div>
+    </div>
+    <div class="diagram" aria-label="Issue 319 standard-MFS facade before and after">
+      <svg viewBox="0 0 1120 350" role="img">
+        <defs>
+          <marker id="arrow-319" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#44515c"></path>
+          </marker>
+          <style>
+            .i319box { stroke-width: 1.2; rx: 6; }
+            .i319edge { stroke: #44515c; stroke-width: 1.5; marker-end: url(#arrow-319); fill: none; }
+            .i319title { font: 700 14px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .i319text { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #26333e; }
+            .i319small { font: 11px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #33414c; }
+            .i319app { fill: #eee8fb; stroke: #6c4bb0; }
+            .i319old { fill: #fbe4e8; stroke: #ad3d4b; }
+            .i319new { fill: #e4f4ea; stroke: #317a53; }
+            .i319ir { fill: #fff0d2; stroke: #9a6400; }
+          </style>
+        </defs>
+        <text class="i319title" x="34" y="34">Before #319: public route-specific runners</text>
+        <rect class="i319box i319app" x="34" y="58" width="150" height="44"></rect>
+        <text class="i319text" x="54" y="76">casars-imager</text>
+        <text class="i319small" x="54" y="92">mode orchestration</text>
+        <rect class="i319box i319old" x="245" y="30" width="230" height="36"></rect>
+        <text class="i319text" x="262" y="53">weighted streaming runner</text>
+        <rect class="i319box i319old" x="245" y="80" width="230" height="36"></rect>
+        <text class="i319text" x="262" y="103">planned run-block runner</text>
+        <rect class="i319box i319old" x="245" y="130" width="230" height="36"></rect>
+        <text class="i319text" x="262" y="153">routed visibility runner</text>
+        <rect class="i319box i319old" x="245" y="180" width="230" height="36"></rect>
+        <text class="i319text" x="262" y="203">prepared clean free functions</text>
+        <path class="i319edge" d="M 184 80 C 214 80, 214 48, 245 48"></path>
+        <path class="i319edge" d="M 184 80 C 214 80, 214 98, 245 98"></path>
+        <path class="i319edge" d="M 184 80 C 214 80, 214 148, 245 148"></path>
+        <path class="i319edge" d="M 184 80 C 214 80, 214 198, 245 198"></path>
+
+        <text class="i319title" x="610" y="34">After #319: public plan/session facade</text>
+        <rect class="i319box i319app" x="610" y="58" width="150" height="44"></rect>
+        <text class="i319text" x="630" y="76">casars-imager</text>
+        <text class="i319small" x="630" y="92">same task surface</text>
+        <rect class="i319box i319new" x="815" y="38" width="230" height="44"></rect>
+        <text class="i319text" x="832" y="56">StandardMfsPlan</text>
+        <text class="i319small" x="832" y="72">weighted, planned, routed</text>
+        <rect class="i319box i319new" x="815" y="98" width="230" height="44"></rect>
+        <text class="i319text" x="832" y="116">StandardMfsDirtyPlan</text>
+        <text class="i319small" x="832" y="132">dirty planned blocks</text>
+        <rect class="i319box i319new" x="815" y="158" width="230" height="44"></rect>
+        <text class="i319text" x="832" y="176">StandardMfsCleanSession</text>
+        <text class="i319small" x="832" y="192">prepare, skip, finish</text>
+        <rect class="i319box i319ir" x="815" y="238" width="230" height="50"></rect>
+        <text class="i319text" x="832" y="256">private backend IR</text>
+        <text class="i319small" x="832" y="272">bounded replay, fixed tiles, Metal cache</text>
+        <path class="i319edge" d="M 760 80 C 786 80, 786 60, 815 60"></path>
+        <path class="i319edge" d="M 760 80 C 786 80, 786 120, 815 120"></path>
+        <path class="i319edge" d="M 760 80 C 786 80, 786 180, 815 180"></path>
+        <path class="i319edge" d="M 930 202 L 930 238"></path>
+        <path class="i319edge" d="M 930 142 L 930 238"></path>
+        <path class="i319edge" d="M 930 82 L 930 238"></path>
+      </svg>
+    </div>
+    <div class="note">
+      Remaining transition point: the app still constructs some
+      <code>StandardMfsWeightedSample</code>,
+      <code>StandardMfsPlannedWeightedSampleRunBlock</code>,
+      <code>StandardMfsRoutedVisibilityRun*</code>, and Metal grouped-input
+      payloads directly. Demoting those types cleanly requires the broader
+      neutral bounded-source boundary described below, not a flattening pass.
+    </div>
+  </section>
+
+  <section>
+    <h2>Bounded Stream Contract</h2>
+    <p>
+      The target stream boundary has three layers. This is the key to reducing
+      public surface area without losing current performance work.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Surface</th>
+            <th>Purpose</th>
+            <th>Visibility target</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Public semantic source</td>
+            <td>
+              <code>VisibilitySource</code>,
+              <code>VisibilityBlockStream</code>,
+              <code>VisibilityBlockView</code>,
+              <code>ReplayCapability</code>,
+              <code>VisibilityStreamBounds</code>.
+            </td>
+            <td>
+              Expose selected rows/channels/correlations, stable order,
+              bounded block sizes, replay capability, and memory budgets without
+              exposing standard-MFS routing internals.
+            </td>
+            <td><span class="tag keep">public</span></td>
+          </tr>
+          <tr>
+            <td>Imaging adapter</td>
+            <td>
+              <code>ImagingSourceBlockView</code>,
+              <code>SpectralRoutePlan</code>,
+              <code>SourceChannelRoute</code>,
+              <code>OutputPlaneContribution</code>.
+            </td>
+            <td>
+              Map neutral source blocks into MFS samples, cube planes, MT-MFS
+              Taylor terms, facets, mosaic fields, and product contribution
+              semantics.
+            </td>
+            <td><span class="tag move">mostly pub(crate)</span></td>
+          </tr>
+          <tr>
+            <td>Backend IR</td>
+            <td>
+              <code>StandardMfsWeightedSample</code>,
+              <code>StandardMfsRoutedVisibilityRun</code>,
+              <code>StandardMfsPlannedWeightedSampleRunBlock</code>,
+              fixed-tile blocks, Metal grouped-input cache payloads.
+            </td>
+            <td>
+              Preserve bounded replay, tile ownership, worker-local density,
+              and Metal staging without publishing every backend shape.
+            </td>
+            <td><span class="tag hot">demote to pub(crate)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      Bounded streaming invariant: streams expose row/channel/correlation and
+      byte budgets; batches are reusable or bounded views; no path materializes
+      the selected MeasurementSet; telemetry records maximum resident visibility
+      bytes and maximum resident routed/planned samples.
+    </div>
+  </section>
+
+  <section>
+    <h2>Spectral Boundary</h2>
+    <p>
+      The Oracle follow-up sharpened the split between physical channel
+      selection and image-domain spectral contribution. This should replace any
+      vague statement that a single spectral plan owns both.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Concept</th>
+            <th>Owner</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>SpectralChannelPlan</code></td>
+            <td><code>casa-ms</code></td>
+            <td>
+              Physical source-channel selection, channel availability,
+              frequencies, frame conversion, and per-row/channel read metadata.
+            </td>
+          </tr>
+          <tr>
+            <td><code>SpectralRoutePlan</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Contribution of selected source channels to MFS samples, cube
+              output planes, MT-MFS Taylor terms, facets, and image products.
+            </td>
+          </tr>
+          <tr>
+            <td><code>CubeSpectralSetup</code> / <code>CubeChannelContribution</code></td>
+            <td><code>casa-ms</code> unless image-plane semantics are present</td>
+            <td>
+              Keep physical cube-axis and frequency conversion metadata near MS
+              selection, but move output-plane interpolation semantics into
+              <code>casa-imaging</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>OutputPlaneContribution</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Output planes are image-domain semantics, not MS data-access
+              semantics.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Mode Lattice</h2>
+    <p>
+      A simpler architecture should avoid one function per full mode combination.
+      Instead, keep independent axes explicit and compose them into a run plan.
+    </p>
+    <div class="diagram" aria-label="Mode lattice diagram">
+      <svg viewBox="0 0 1120 360" role="img">
+        <defs>
+          <style>
+            .axis { fill: #ffffff; stroke: #cdd6df; stroke-width: 1.2; }
+            .chip { stroke-width: 1.1; rx: 6; }
+            .txt { font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #26333e; }
+            .axislabel { font: 700 14px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; fill: #172026; }
+            .bluechip { fill: #e5f0fb; stroke: #2f6fb3; }
+            .greenchip { fill: #e4f4ea; stroke: #317a53; }
+            .amberchip { fill: #fff0d2; stroke: #9a6400; }
+            .violetchip { fill: #eee8fb; stroke: #6c4bb0; }
+            .redchip { fill: #fbe4e8; stroke: #ad3d4b; }
+          </style>
+        </defs>
+        <rect class="axis" x="24" y="24" width="1072" height="312" rx="8"></rect>
+        <text class="axislabel" x="52" y="58">Visibility source</text>
+        <rect class="chip bluechip" x="52" y="76" width="120" height="30"></rect>
+        <text class="txt" x="72" y="96">MS rows</text>
+        <rect class="chip bluechip" x="182" y="76" width="150" height="30"></rect>
+        <text class="txt" x="202" y="96">source partitions</text>
+        <rect class="chip bluechip" x="342" y="76" width="150" height="30"></rect>
+        <text class="txt" x="362" y="96">bounded buffers</text>
+
+        <text class="axislabel" x="52" y="140">Spectral shape</text>
+        <rect class="chip violetchip" x="52" y="158" width="90" height="30"></rect>
+        <text class="txt" x="78" y="178">MFS</text>
+        <rect class="chip violetchip" x="152" y="158" width="110" height="30"></rect>
+        <text class="txt" x="175" y="178">cube</text>
+        <rect class="chip violetchip" x="272" y="158" width="120" height="30"></rect>
+        <text class="txt" x="296" y="178">cubedata</text>
+        <rect class="chip violetchip" x="402" y="158" width="110" height="30"></rect>
+        <text class="txt" x="426" y="178">MT-MFS</text>
+
+        <text class="axislabel" x="52" y="222">Projection and gridder</text>
+        <rect class="chip greenchip" x="52" y="240" width="110" height="30"></rect>
+        <text class="txt" x="78" y="260">standard</text>
+        <rect class="chip greenchip" x="172" y="240" width="110" height="30"></rect>
+        <text class="txt" x="204" y="260">mosaic</text>
+        <rect class="chip greenchip" x="292" y="240" width="110" height="30"></rect>
+        <text class="txt" x="314" y="260">WProject</text>
+        <rect class="chip amberchip" x="412" y="240" width="110" height="30"></rect>
+        <text class="txt" x="439" y="260">AW next</text>
+        <rect class="chip amberchip" x="532" y="240" width="120" height="30"></rect>
+        <text class="txt" x="553" y="260">W-stacking</text>
+
+        <text class="axislabel" x="690" y="58">Clean control</text>
+        <rect class="chip redchip" x="690" y="76" width="105" height="30"></rect>
+        <text class="txt" x="718" y="96">Hogbom</text>
+        <rect class="chip redchip" x="805" y="76" width="90" height="30"></rect>
+        <text class="txt" x="833" y="96">Clark</text>
+        <rect class="chip redchip" x="905" y="76" width="120" height="30"></rect>
+        <text class="txt" x="929" y="96">multiscale</text>
+
+        <text class="axislabel" x="690" y="140">Execution</text>
+        <rect class="chip greenchip" x="690" y="158" width="90" height="30"></rect>
+        <text class="txt" x="718" y="178">serial</text>
+        <rect class="chip greenchip" x="790" y="158" width="120" height="30"></rect>
+        <text class="txt" x="813" y="178">multi-worker</text>
+        <rect class="chip greenchip" x="920" y="158" width="90" height="30"></rect>
+        <text class="txt" x="946" y="178">Metal</text>
+
+        <text class="axislabel" x="690" y="222">Products</text>
+        <rect class="chip amberchip" x="690" y="240" width="90" height="30"></rect>
+        <text class="txt" x="718" y="260">image</text>
+        <rect class="chip amberchip" x="790" y="240" width="100" height="30"></rect>
+        <text class="txt" x="812" y="260">residual</text>
+        <rect class="chip amberchip" x="900" y="240" width="75" height="30"></rect>
+        <text class="txt" x="923" y="260">PB</text>
+        <rect class="chip amberchip" x="985" y="240" width="80" height="30"></rect>
+        <text class="txt" x="1002" y="260">pbcor</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>Deletion Ledger</h2>
+    <p>
+      This ledger turns "simplify later" into a concrete refactor contract. A
+      phase does not count as consolidation if it adds new plan types while
+      leaving the old public and app-private routes in place indefinitely.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Current surface</th>
+            <th>Target owner</th>
+            <th>Replacement</th>
+            <th>Removal phase</th>
+            <th>Gate</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              Public standard-MFS route-specific runners:
+              <code>run_standard_mfs_weighted_streaming_with_execution_config</code>,
+              planned-sample runners, routed-visibility-run runner, and Metal
+              grouped-input runner.
+            </td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Implemented in #319 with <code>run_standard_mfs_plan</code>,
+              <code>run_standard_mfs_dirty_plan</code>, and
+              <code>StandardMfsCleanSession</code>. Route-specific machinery
+              is now private implementation code.
+            </td>
+            <td>#319 complete for function boundary</td>
+            <td>API shrink, standard-MFS tests, internal-shape preservation.</td>
+          </tr>
+          <tr>
+            <td>
+              Public <code>StandardMfs*</code> sample, run, run-block, routed,
+              planned, and Metal cache payloads.
+            </td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Partially reduced in #319: source traits, routed-sample IR, and
+              prepared clean state are crate-private. Weighted, planned,
+              routed-visibility, and Metal cache payloads remain transitional
+              public API until a neutral bounded source contract moves app
+              construction out of the boundary.
+            </td>
+            <td>Next source-boundary wave</td>
+            <td>Bounded streaming, tile occupancy, Metal cache bytes, allocations.</td>
+          </tr>
+          <tr>
+            <td>
+              App MS readers:
+              <code>select_main_rows</code>,
+              <code>read_visibility_source_columns</code>,
+              <code>read_columnar_prepared_source</code>.
+            </td>
+            <td><code>casa-ms</code></td>
+            <td>
+              <code>VisibilityReadPlan</code>, source partitions, and bounded
+              stream factories.
+            </td>
+            <td>Phase 3</td>
+            <td>Selected rows/DDIDs/SPWs/fields/channels match current behavior.</td>
+          </tr>
+          <tr>
+            <td>
+              App spectral/sample shapers:
+              <code>prepare_source_row_block_plane_inner</code>,
+              <code>collapse_paired_visibility</code>,
+              <code>interpolate_explicit_cube_output_sample</code>.
+            </td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              <code>ImagingSourceBlockView</code>,
+              <code>SpectralRoutePlan</code>,
+              <code>OutputPlaneContribution</code>.
+            </td>
+            <td>Phase 4</td>
+            <td>MFS/cube/MT-MFS route parity and plane-coordinate parity.</td>
+          </tr>
+          <tr>
+            <td>App density helpers: <code>accumulate_standard_mfs_density_*</code>.</td>
+            <td><code>casa-imaging</code></td>
+            <td><code>WeightingPlan</code> plus private executor strategy.</td>
+            <td>Phase 5</td>
+            <td>Density grid, Briggs/uniform weights, sumwt, stage timing.</td>
+          </tr>
+          <tr>
+            <td>
+              App product assembly:
+              <code>write_products</code>, <code>build_coordinate_system</code>,
+              <code>robust_plane_stats</code>, PB/pbcor/mask branch logic.
+            </td>
+            <td><code>casa-imaging</code> plus writer</td>
+            <td>
+              <code>ImageProductSet</code>,
+              <code>ImageProductMetadata</code>,
+              <code>ImageTableWriter</code>.
+            </td>
+            <td>Phase 6</td>
+            <td>Product metadata parity and CASA table serialization parity.</td>
+          </tr>
+          <tr>
+            <td>
+              App clean control:
+              <code>run_joint_outlier_hogbom</code>,
+              <code>run_joint_hogbom_minor_cycle</code>, MT-MFS island runner.
+            </td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Plane-keyed clean session, <code>CleanPlan</code>,
+              major/minor-cycle engines.
+            </td>
+            <td>Phase 7</td>
+            <td>Prepare/skip/one-major-cycle/finish equivalence and stop reasons.</td>
+          </tr>
+          <tr>
+            <td><code>standard_mfs_metal_device_available()</code>.</td>
+            <td><code>casa-imaging</code></td>
+            <td><code>ExecutionCapabilities</code> with structured reasons.</td>
+            <td>Phase 2</td>
+            <td>Backend capability and no-silent-fallback gate.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Feature Axis Ownership</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature axis</th>
+            <th>Target home</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>W-projection</td>
+            <td><code>ProjectionPlan</code> plus private projector/resampler</td>
+            <td>Collapse current <code>WTermMode</code> into a typed W-term plan.</td>
+          </tr>
+          <tr>
+            <td>W-stacking</td>
+            <td><code>ProjectionPlan</code> plus <code>ExecutionPlan</code></td>
+            <td>
+              Affects image/grid stack scheduling, FFT/normalization, memory
+              residency, and tile layout. It is not just a kernel choice.
+            </td>
+          </tr>
+          <tr>
+            <td>AW projection</td>
+            <td>
+              <code>ProjectionPlan</code>, <code>AtermPlan</code>,
+              <code>ConvolutionFunctionPlan</code>, <code>PrimaryBeamPlan</code>
+            </td>
+            <td>
+              <code>casa-ms</code> exposes feed/antenna/pointing metadata;
+              <code>casa-imaging</code> computes A-term/PB/CF behavior.
+            </td>
+          </tr>
+          <tr>
+            <td>Mosaic</td>
+            <td><code>MosaicPlan</code>, <code>FieldPlan</code>, product PB metadata</td>
+            <td>Do not model mosaic as a separate long-term public runner.</td>
+          </tr>
+          <tr>
+            <td>Multi-field, outliers, facets</td>
+            <td><code>FieldPlan</code>, <code>FacetPlan</code>, private gather/reduce</td>
+            <td>
+              <code>casa-ms</code> selects fields; <code>casa-imaging</code>
+              owns image geometry, phase centers, facet grids, and joint
+              residual gathering.
+            </td>
+          </tr>
+          <tr>
+            <td>Cube and cubedata</td>
+            <td><code>SpectralImagePlan</code> backed by <code>SpectralChannelPlan</code></td>
+            <td>
+              MS layer maps input channels and frames; imaging maps selected
+              channels to output planes and slab execution.
+            </td>
+          </tr>
+          <tr>
+            <td>MT-MFS</td>
+            <td><code>SpectralBasisPlan</code>, <code>TaylorTermPlan</code>, <code>CleanPlan</code></td>
+            <td>
+              Taylor PSFs, Taylor residuals, and MT-MFS deconvolution are
+              imaging responsibilities.
+            </td>
+          </tr>
+          <tr>
+            <td>CPU workers and Metal</td>
+            <td><code>ExecutionPlan</code>, <code>ExecutionCapabilities</code>, private backend IR</td>
+            <td>
+              No public Metal-specific imaging runner; no silent fallback.
+              Capability checks return structured reasons.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Proposed Target Interfaces</h2>
+    <p>
+      These names are design handles, not an implementation mandate. The
+      important property is that they make the current duplicate axes explicit.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Interface</th>
+            <th>Owner</th>
+            <th>Responsibilities</th>
+            <th>Should hide</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ImagingJobRequest</code></td>
+            <td><code>casars-imager</code></td>
+            <td>User-visible task options, aliases, defaults, progress policy, output naming.</td>
+            <td>MS column layout, sample routing, gridding backend details.</td>
+          </tr>
+          <tr>
+            <td><code>ImagingPlan</code> / <code>StagePlan</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              A typed plan with a closed public stage vocabulary: weight, PSF,
+              dirty, residual, major cycle, minor cycle, restore, primary beam,
+              normalize, and product emission. Executable graph mechanics stay
+              private until reused by multiple modes.
+            </td>
+            <td>
+              Filename suffix inference, shell-level job modes, and mode-specific
+              app branches that duplicate the same stage sequence. It must not
+              become an arbitrary workflow engine.
+            </td>
+          </tr>
+          <tr>
+            <td><code>VisibilityReadPlan</code></td>
+            <td><code>casa-ms</code></td>
+            <td>Rows, DDIDs, SPWs, channels, correlations, selected columns, source partitions, bounded streaming.</td>
+            <td>Task syntax and imaging product decisions.</td>
+          </tr>
+          <tr>
+            <td><code>SpectralChannelPlan</code></td>
+            <td><code>casa-ms</code></td>
+            <td>
+              Selected physical source channels, channel availability,
+              frequencies, frames, interpolation inputs, and per-row/channel
+              read metadata.
+            </td>
+            <td>
+              Image-plane, cube-plane, Taylor-term, facet, and product
+              contribution semantics.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>VisibilitySource</code> /
+              <code>VisibilityBlockStream</code> /
+              <code>VisibilityBlockView</code>
+            </td>
+            <td><code>casa-ms</code> and <code>casa-imaging</code></td>
+            <td>
+              Neutral bounded source contract with stable ordering, replay
+              capability, row/channel/correlation keys, and memory budgets.
+            </td>
+            <td>
+              Standard-MFS weighted/routed/planned payloads, fixed-tile
+              scheduling, Metal grouped input cache details, and task parsing.
+            </td>
+          </tr>
+          <tr>
+            <td><code>VisibilityResampler</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Narrow private backend contract for bounded grid/degrid work over
+              prepared blocks.
+            </td>
+            <td>
+              A single oversized transform trait that also owns projection
+              caches, FFT, normalization, worker reduction, Metal transfer,
+              task parsing, MS traversal, product persistence, or
+              deconvolution.
+            </td>
+          </tr>
+          <tr>
+            <td><code>ProjectionPlan</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>Standard, W-term, AW-term, mosaic, and future W-stacking strategy selection.</td>
+            <td>CLI aliases and per-backend implementation classes.</td>
+          </tr>
+          <tr>
+            <td><code>CleanPlan</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>Cotton-Schwab policy, residual refresh, deconvolver selection, stop reasons, traces.</td>
+            <td>Output filenames and task-level parameter parsing.</td>
+          </tr>
+          <tr>
+            <td><code>MajorCycleExecutor</code> / <code>MinorCycleController</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Major cycle streams MS data and refreshes PSF/residual/model
+              visibilities; minor cycle owns image-domain model, mask,
+              residual, PSF, and stop criteria.
+            </td>
+            <td>
+              Deconvolution code that knows about CF caches, MS source
+              streaming, or GPU staging details.
+            </td>
+          </tr>
+          <tr>
+            <td><code>ExecutionPlan</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>Serial, multi-worker, tile, GPU/Metal, cache, and bounded residency strategy.</td>
+            <td>Environment-variable-only behavior and app-specific fast paths.</td>
+          </tr>
+          <tr>
+            <td><code>ExecutionCapabilities</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Selected backend, worker count, Metal device/capability, tile and
+              cache budgets, ineligibility reasons, upload/download counters,
+              and explicit fallback policy.
+            </td>
+            <td>
+              Boolean-only backend probes and silent CPU fallback from Metal.
+            </td>
+          </tr>
+          <tr>
+            <td><code>ImagingSession</code> / <code>PreparedPlaneHandle</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Plane-keyed standard-MFS clean-plane lifecycle: prepare, skip,
+              one-major-cycle finish, full finish, and final product gathering.
+              Cube can reuse the lifecycle later without keeping public
+              prepare/skip/finish free functions.
+            </td>
+            <td>
+              Mode-specific app clean control and public standard-MFS
+              run-block entrypoints.
+            </td>
+          </tr>
+          <tr>
+            <td><code>ImageProductSet</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>Computed product arrays: image, residual, model, psf, pb, weight, sumwt, pbcor, mask, restored images, cube planes, Taylor terms.</td>
+            <td>How a mode happened to compute them internally.</td>
+          </tr>
+          <tr>
+            <td><code>ImageProductMetadata</code></td>
+            <td><code>casa-imaging</code></td>
+            <td>
+              Direction, spectral, Stokes, beam/restoring-beam, unit,
+              product-shape, PB, sumwt, Taylor-term, and history metadata.
+            </td>
+            <td>
+              CASA table serialization details and output filenames.
+            </td>
+          </tr>
+          <tr>
+            <td><code>ImageTableWriter</code></td>
+            <td>product writer</td>
+            <td>
+              Encode supplied product data and metadata into CASA-compatible
+              image tables, masks, previews, and history records.
+            </td>
+            <td>
+              Scientific product computation and coordinate derivation.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>API Budget And Gates</h2>
+    <div class="grid-two">
+      <div>
+        <h3>Public API Budget</h3>
+        <ul>
+          <li>One canonical run entrypoint: <code>run_imaging_plan</code>.</li>
+          <li>Optional session entrypoint for stepped/plane-keyed execution.</li>
+          <li>One visibility source contract with bounded replay semantics.</li>
+          <li>Plan, capability, product, and metadata types needed by apps and tests.</li>
+          <li>No public standard-MFS backend payloads unless a real external consumer is identified.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>No Silent Fallback</h3>
+        <ul>
+          <li>Backend capability checks return structured reasons.</li>
+          <li>Fallback from Metal or multi-worker to CPU is explicit policy.</li>
+          <li>Environment variables may aid diagnostics but do not own user-facing behavior.</li>
+          <li>Backend logs include selected backend, worker count, tile shape, cache budget, and transfer bytes.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Gate</th>
+            <th>Required evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>API shrink</td>
+            <td>
+              Public symbols added/removed/demoted, app-private helpers
+              deleted, wrappers remaining, and explicit removal phase for every
+              wrapper.
+            </td>
+          </tr>
+          <tr>
+            <td>Bounded streaming</td>
+            <td>
+              Max rows/channels/correlations per block, max resident visibility
+              bytes, max resident routed/planned samples, concurrently retained
+              blocks, replay mode, and confirmation that no full selected-MS
+              materialization occurs.
+            </td>
+          </tr>
+          <tr>
+            <td>Internal-shape preservation</td>
+            <td>
+              Weighted sample count, routed row/run count, planned run-block
+              count, tile occupancy, per-block allocations, Metal grouped cache
+              entries/bytes/hit rate, worker gather/reduction bytes.
+            </td>
+          </tr>
+          <tr>
+            <td>CASA parity</td>
+            <td>
+              Selected rows, DDIDs/SPWs/fields/channels, frequency conversion,
+              flags, weights/sigma, density grid, sumwt, PSF, dirty image,
+              residual/model/restored image, cube coordinates, Taylor products,
+              PB/pbcor, beam metadata, coordinate metadata, and history.
+            </td>
+          </tr>
+          <tr>
+            <td>Clean session</td>
+            <td>
+              Prepare-plane, skip threshold, one-major-cycle, finish, minor
+              stop reason, model update, and residual update equivalence.
+            </td>
+          </tr>
+          <tr>
+            <td>Product metadata</td>
+            <td>
+              Semantic metadata equality plus serialized CASA coordinate-system
+              equality: direction, spectral, Stokes, units, beam/restoring beam,
+              mask metadata, PB/pbcor metadata, Taylor-term names and axes.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Migration Sequence</h2>
+    <ol>
+      <li>
+        Freeze gates and the deletion ledger. Every new abstraction must name
+        the old public or private surface it will delete or demote, plus the
+        parity and performance gate that permits removal.
+      </li>
+      <li>
+        Introduce the neutral visibility source contract:
+        <code>VisibilitySource</code>, <code>VisibilityBlockStream</code>,
+        <code>VisibilityBlockView</code>, replay capability, and stream bounds.
+        Do not flatten specialized routes to owned batches.
+      </li>
+      <li>
+        Collapse public standard-MFS entrypoints behind a canonical run/session
+        boundary. The first vertical slice is standard MFS dirty/PSF/clean plus
+        the prepared-clean-plane lifecycle, not full cube. Keep planned
+        run-block, fixed-tile, and Metal grouping internals private.
+      </li>
+      <li>
+        Move MS selection and channel-read helpers into <code>casa-ms</code>:
+        row selection, source partitions, selected physical channels, column
+        read granularity, and bounded stream factories.
+      </li>
+      <li>
+        Move app spectral/sample shaping into <code>casa-imaging</code> using
+        the route vocabulary: <code>ImagingSourceBlockView</code>,
+        <code>SpectralRoutePlan</code>, <code>SourceChannelRoute</code>, and
+        <code>OutputPlaneContribution</code>.
+      </li>
+      <li>
+        Move weighting and density accumulation into <code>casa-imaging</code>
+        under <code>WeightingPlan</code> and <code>ExecutionPlan</code>.
+      </li>
+      <li>
+        Split products and persistence: <code>ImageProductSet</code> and
+        <code>ImageProductMetadata</code> in <code>casa-imaging</code>,
+        <code>ImageTableWriter</code> for serialization, app for naming and
+        replacement policy.
+      </li>
+      <li>
+        Unify clean control, including outliers and MT-MFS. Treat
+        <code>run_mtmfs</code> as a transitional island with an explicit
+        deletion phase until it becomes a spectral-basis/deconvolution
+        configuration of the same session architecture.
+      </li>
+      <li>
+        Expand projection families after the stream, spectral-route, product,
+        and clean boundaries are stable. Add W-stacking and AW as projection
+        strategies, not app-level runners or aliases that silently route through
+        W-projection.
+      </li>
+    </ol>
+    <div class="note">
+      Performance guardrail: every phase must preserve bounded streaming,
+      stage timings, backend-plan logging, internal standard-MFS route shapes,
+      and product metadata parity. Avoid moving code in a way that reintroduces
+      full visibility materialization or makes CPU/Metal timings less
+      attributable.
+    </div>
+  </section>
+
+  <section>
+    <h2>Source References</h2>
+    <ul class="refs">
+      <li>
+        Current app public entrypoints:
+        <a href="../crates/casars-imager/src/lib.rs#L239"><code>SpectralMode</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L257"><code>GridderRequest</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L2252"><code>run_from_config</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L15463"><code>CliConfig</code></a>.
+      </li>
+      <li>
+        App private computation examples:
+        <a href="../crates/casars-imager/src/lib.rs#L3336"><code>prepare_source_row_block_plane_inner</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L13252"><code>run_joint_outlier_hogbom</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L18058"><code>read_columnar_prepared_source</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L20903"><code>read_visibility_source_columns</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L22384"><code>select_main_rows</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L35765"><code>write_products</code></a>.
+      </li>
+      <li>
+        App private imaging math examples:
+        <a href="../crates/casars-imager/src/lib.rs#L23215"><code>accumulate_standard_mfs_density_rows_without_data_parallel</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L40040"><code>collapse_paired_visibility</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L40268"><code>interpolate_explicit_cube_output_sample</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs#L37364"><code>robust_plane_stats</code></a>.
+      </li>
+      <li>
+        Core imaging types:
+        <a href="../crates/casa-imaging/src/types.rs#L98"><code>GridderMode</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L451"><code>Deconvolver</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L473"><code>WTermMode</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L618"><code>ColumnarVisibilitySourceRef</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L852"><code>VisibilityBatch</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L1548"><code>ImagingRequest</code></a>.
+      </li>
+      <li>
+        Core public execution APIs:
+        <a href="../crates/casa-imaging/src/lib.rs#L722"><code>run_standard_mfs_plan</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs#L784"><code>run_standard_mfs_dirty_plan</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs#L859"><code>StandardMfsCleanSession</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs#L1231"><code>run_imaging</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs#L1964"><code>run_mosaic_mfs_from_single_plane_stream</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs#L5859"><code>run_mtmfs</code></a>.
+      </li>
+      <li>
+        MS visibility and spectral APIs:
+        <a href="../crates/casa-ms/src/visibility_buffer.rs#L24"><code>VisibilityBufferRequest</code></a>,
+        <a href="../crates/casa-ms/src/visibility_buffer.rs#L124"><code>SourcePartition</code></a>,
+        <a href="../crates/casa-ms/src/visibility_buffer.rs#L166"><code>VisibilityBuffer</code></a>,
+        <a href="../crates/casa-ms/src/spectral_selection.rs#L212"><code>CubeSpectralSetup</code></a>,
+        <a href="../crates/casa-ms/src/spectral_selection.rs#L657"><code>resolve_contiguous_channel_selection</code></a>.
+      </li>
+      <li>
+        Existing architecture docs:
+        <a href="imaging-dataflow-comparison.md"><code>docs/imaging-dataflow-comparison.md</code></a>,
+        <a href="imaging-public-api-consolidation-inventory.md"><code>docs/imaging-public-api-consolidation-inventory.md</code></a>.
+      </li>
+      <li>
+        LibRA high-level interface references:
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/README.md#L9"><code>libRA/README.md</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/README.md#L5"><code>frameworks/htcimager/README.md</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/jobmode.py#L27"><code>jobmode.py</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/libra_cl_imager.py#L60"><code>libra_cl_imager.py</code></a>.
+      </li>
+      <li>
+        LibRA core interface references:
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/Parallel/Algorithm.h#L88"><code>Algorithm.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/FTMachine.h#L120"><code>FTMachine.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/VisibilityResamplerBase.h#L72"><code>VisibilityResamplerBase.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.h#L48"><code>MultiThreadedVisResampler.h</code></a>.
+      </li>
+      <li>
+        LibRA visibility and app-function references:
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/DataIterations.h#L114"><code>DataIterations.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/DataBase.h#L56"><code>DataBase.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/rWeightor.h#L59"><code>rWeightor.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/apps/src/RoadRunner/roadrunner.h#L201"><code>roadrunner.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/apps/src/Hummbee/hummbee.h#L81"><code>hummbee.h</code></a>.
+      </li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

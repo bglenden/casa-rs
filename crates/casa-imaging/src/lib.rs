@@ -313,10 +313,10 @@ pub use types::{
     PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics, ResidualSampleDiagnostics,
     RestoringBeamMode, SourceChannelRoute, SpectralRoutePlan, StandardMfsPairCollapseTransform,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow,
-    StandardMfsRoutedVisibilityRun, StandardMfsRoutedVisibilityRunBlock,
-    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
+    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
+    VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
     WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
     WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingRoutePlan,
     WeightingSampleDiagnostics,
@@ -349,7 +349,7 @@ pub struct StandardMfsPlannedSampleBuilder {
 /// identities however it chooses, but it must be able to replay the same
 /// bounded blocks for the initial dirty/PSF pass and every exact residual
 /// refresh pass.
-pub trait StandardMfsPlannedSampleBlockSource {
+pub(crate) trait StandardMfsPlannedSampleBlockSource {
     /// Replay planned samples in stable input order.
     fn replay_planned_sample_blocks(
         &mut self,
@@ -377,7 +377,7 @@ pub trait StandardMfsPlannedSampleBlockSource {
 /// This is the preferred fixed-tile multi-worker boundary: the producer routes
 /// row/channel spans to standard-gridder centers, while tile workers perform
 /// lane-level flag, visibility, final weighting, and tap application work.
-pub trait StandardMfsRoutedVisibilityRunBlockSource {
+pub(crate) trait StandardMfsRoutedVisibilityRunBlockSource {
     /// Replay routed row/channel runs in stable input order.
     fn replay_routed_visibility_run_blocks(
         &mut self,
@@ -390,7 +390,7 @@ pub trait StandardMfsRoutedVisibilityRunBlockSource {
 /// Unlike [`StandardMfsRoutedVisibilityRunBlockSource`], this boundary publishes
 /// each row/channel run as soon as it is routed, so the fixed-tile scheduler can
 /// enqueue tile work without waiting for a frontend row-block staging vector.
-pub trait StandardMfsRoutedVisibilityRunSource {
+pub(crate) trait StandardMfsRoutedVisibilityRunSource {
     /// Replay routed row/channel runs in stable input order.
     fn replay_routed_visibility_runs(
         &mut self,
@@ -482,47 +482,6 @@ impl StandardMfsPlannedSampleBuilder {
             flags,
             tap_count: (STANDARD_GRIDDER_TAP_COUNT * STANDARD_GRIDDER_TAP_COUNT) as u8,
             grid_weight,
-            w_lambda: sample.w_lambda,
-            visibility: sample.visibility,
-        }))
-    }
-
-    /// Route one natural-weighted sample, returning `None` when it does not grid.
-    #[inline]
-    pub fn route_sample(
-        &self,
-        sample: StandardMfsRoutableSample,
-    ) -> Result<Option<StandardMfsRoutedSample>, ImagingError> {
-        if !sample.gridable {
-            return Ok(None);
-        }
-        if !(sample.natural_weight.is_finite()
-            && sample.natural_weight > 0.0
-            && sample.sumwt_factor.is_finite()
-            && sample.sumwt_factor > 0.0)
-        {
-            return Ok(None);
-        }
-        let Some(center) = self
-            .gridder
-            .locate_positive_tap_center(sample.u_lambda, sample.v_lambda)
-        else {
-            return Ok(None);
-        };
-        let flags = if finite_visibility(sample.visibility) {
-            StandardMfsRoutedSample::FINITE_VISIBILITY
-        } else {
-            StandardMfsRoutedSample::PSF_ONLY
-        };
-        Ok(Some(StandardMfsRoutedSample {
-            u_lambda: sample.u_lambda,
-            v_lambda: sample.v_lambda,
-            center_x: center[0] as u32,
-            center_y: center[1] as u32,
-            flags,
-            tap_count: (STANDARD_GRIDDER_TAP_COUNT * STANDARD_GRIDDER_TAP_COUNT) as u8,
-            natural_weight: sample.natural_weight,
-            sumwt_factor: sample.sumwt_factor,
             w_lambda: sample.w_lambda,
             visibility: sample.visibility,
         }))
@@ -651,6 +610,322 @@ pub struct StandardMfsExecutionConfig {
     /// instead of replaying and materializing every weighted visibility block
     /// once solely for a metadata scan.
     pub w_project_max_abs_w_lambda: Option<f64>,
+}
+
+type StandardMfsWeightedBatchReplay<'a> = dyn FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>
+    + 'a;
+type StandardMfsPlannedSampleReplay<'a> = dyn FnMut(
+        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>
+    + 'a;
+type StandardMfsPlannedRunReplay<'a> = dyn FnMut(
+        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>
+    + 'a;
+type StandardMfsRoutedVisibilityRunReplay<'a> = dyn FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>
+    + 'a;
+
+struct StandardMfsRoutedVisibilityRunsPlan<'a> {
+    weighting_plan: &'a StandardMfsStreamingWeightingPlan,
+    replay: Box<StandardMfsRoutedVisibilityRunReplay<'a>>,
+    metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
+}
+
+enum StandardMfsPlanSource<'a> {
+    WeightedBatches(Box<StandardMfsWeightedBatchReplay<'a>>),
+    PlannedRuns(Box<StandardMfsPlannedRunReplay<'a>>),
+    RoutedVisibilityRuns(Box<StandardMfsRoutedVisibilityRunsPlan<'a>>),
+}
+
+/// Canonical standard-MFS execution request.
+///
+/// This is the public entrypoint shape for bounded, replayable standard-MFS
+/// dirty/PSF/CLEAN execution. Source variants preserve the existing internal
+/// weighted-batch, planned-run, routed-run, fixed-tile, and Metal cache
+/// performance paths while callers drive them through one plan boundary.
+pub struct StandardMfsPlan<'a> {
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    source: StandardMfsPlanSource<'a>,
+}
+
+impl<'a> StandardMfsPlan<'a> {
+    /// Build a plan from replayable weighted visibility batches.
+    pub fn weighted_batches<F>(
+        request: ImagingRequest,
+        execution_config: StandardMfsExecutionConfig,
+        replay: F,
+    ) -> Self
+    where
+        F: FnMut(
+                &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+            ) -> Result<(), ImagingError>
+            + 'a,
+    {
+        Self {
+            request,
+            execution_config,
+            source: StandardMfsPlanSource::WeightedBatches(Box::new(replay)),
+        }
+    }
+
+    /// Build a plan from replayable planned sample run blocks.
+    pub fn planned_sample_run_blocks<F>(
+        request: ImagingRequest,
+        execution_config: StandardMfsExecutionConfig,
+        replay: F,
+    ) -> Self
+    where
+        F: FnMut(
+                &mut dyn FnMut(
+                    &StandardMfsPlannedWeightedSampleRunBlock,
+                ) -> Result<(), ImagingError>,
+            ) -> Result<(), ImagingError>
+            + 'a,
+    {
+        Self {
+            request,
+            execution_config,
+            source: StandardMfsPlanSource::PlannedRuns(Box::new(replay)),
+        }
+    }
+
+    /// Build a plan from replayable routed visibility runs.
+    pub fn routed_visibility_runs<F>(
+        request: ImagingRequest,
+        execution_config: StandardMfsExecutionConfig,
+        weighting_plan: &'a StandardMfsStreamingWeightingPlan,
+        replay: F,
+        metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
+    ) -> Self
+    where
+        F: FnMut(
+                &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+            ) -> Result<(), ImagingError>
+            + 'a,
+    {
+        Self {
+            request,
+            execution_config,
+            source: StandardMfsPlanSource::RoutedVisibilityRuns(Box::new(
+                StandardMfsRoutedVisibilityRunsPlan {
+                    weighting_plan,
+                    replay: Box::new(replay),
+                    metal_grouped_input_cache,
+                },
+            )),
+        }
+    }
+}
+
+/// Run a canonical standard-MFS plan.
+pub fn run_standard_mfs_plan(plan: StandardMfsPlan<'_>) -> Result<ImagingResult, ImagingError> {
+    match plan.source {
+        StandardMfsPlanSource::WeightedBatches(replay) => {
+            run_standard_mfs_weighted_streaming_with_execution_config(
+                plan.request,
+                plan.execution_config,
+                replay,
+            )
+        }
+        StandardMfsPlanSource::PlannedRuns(replay) => {
+            run_standard_mfs_planned_sample_run_block_streaming_with_execution_config(
+                plan.request,
+                plan.execution_config,
+                replay,
+            )
+        }
+        StandardMfsPlanSource::RoutedVisibilityRuns(source) => {
+            let StandardMfsRoutedVisibilityRunsPlan {
+                weighting_plan,
+                replay,
+                metal_grouped_input_cache,
+            } = *source;
+            run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache(
+                plan.request,
+                plan.execution_config,
+                weighting_plan,
+                replay,
+                metal_grouped_input_cache,
+            )
+        }
+    }
+}
+
+/// Canonical standard-MFS dirty-only execution request.
+///
+/// Dirty-only cube and diagnostic paths use this plan when they need the same
+/// bounded planned-sample replay contract without running a minor cycle.
+pub struct StandardMfsDirtyPlan<'a> {
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    replay: Box<StandardMfsPlannedSampleReplay<'a>>,
+}
+
+impl<'a> StandardMfsDirtyPlan<'a> {
+    /// Build a dirty-only plan from replayable planned sample blocks.
+    pub fn planned_sample_blocks<F>(
+        request: ImagingRequest,
+        execution_config: StandardMfsExecutionConfig,
+        replay: F,
+    ) -> Self
+    where
+        F: FnMut(
+                &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+            ) -> Result<(), ImagingError>
+            + 'a,
+    {
+        Self {
+            request,
+            execution_config,
+            replay: Box::new(replay),
+        }
+    }
+}
+
+/// Run a canonical standard-MFS dirty-only plan.
+pub fn run_standard_mfs_dirty_plan(
+    mut plan: StandardMfsDirtyPlan<'_>,
+) -> Result<DirtyImagingResult, ImagingError> {
+    run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config(
+        plan.request,
+        plan.execution_config,
+        &mut plan.replay,
+    )
+}
+
+/// Canonical prepare request for one resident standard-MFS CLEAN plane.
+pub struct StandardMfsCleanPlan<'a> {
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    replay: Box<StandardMfsPlannedRunReplay<'a>>,
+}
+
+impl<'a> StandardMfsCleanPlan<'a> {
+    /// Build a prepare plan from replayable planned sample run blocks.
+    pub fn planned_sample_run_blocks<F>(
+        request: ImagingRequest,
+        execution_config: StandardMfsExecutionConfig,
+        replay: F,
+    ) -> Self
+    where
+        F: FnMut(
+                &mut dyn FnMut(
+                    &StandardMfsPlannedWeightedSampleRunBlock,
+                ) -> Result<(), ImagingError>,
+            ) -> Result<(), ImagingError>
+            + 'a,
+    {
+        Self {
+            request,
+            execution_config,
+            replay: Box::new(replay),
+        }
+    }
+}
+
+/// Canonical finish request for one resident standard-MFS CLEAN plane.
+pub struct StandardMfsCleanFinishPlan<'a> {
+    execution_config: StandardMfsExecutionConfig,
+    cube_cycle_threshold_jy_per_beam: Option<f32>,
+    replay: Box<StandardMfsPlannedRunReplay<'a>>,
+}
+
+impl<'a> StandardMfsCleanFinishPlan<'a> {
+    /// Build a finish plan from replayable planned sample run blocks.
+    pub fn planned_sample_run_blocks<F>(
+        execution_config: StandardMfsExecutionConfig,
+        cube_cycle_threshold_jy_per_beam: Option<f32>,
+        replay: F,
+    ) -> Self
+    where
+        F: FnMut(
+                &mut dyn FnMut(
+                    &StandardMfsPlannedWeightedSampleRunBlock,
+                ) -> Result<(), ImagingError>,
+            ) -> Result<(), ImagingError>
+            + 'a,
+    {
+        Self {
+            execution_config,
+            cube_cycle_threshold_jy_per_beam,
+            replay: Box::new(replay),
+        }
+    }
+}
+
+/// Resident standard-MFS CLEAN plane session.
+///
+/// A session owns prepared dirty/PSF/residual state for one image plane. The
+/// caller can inspect clean-control stats, publish a skipped plane, or finish
+/// one/full minor-cycle pass using the same bounded replay source shape.
+pub struct StandardMfsCleanSession {
+    prepared: StandardMfsPreparedCleanPlane,
+}
+
+impl StandardMfsCleanSession {
+    /// Prepare one resident standard-MFS CLEAN plane.
+    pub fn prepare(plan: StandardMfsCleanPlan<'_>) -> Result<Self, ImagingError> {
+        let prepared =
+            prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config(
+                plan.request,
+                plan.execution_config,
+                plan.replay,
+            )?;
+        Ok(Self { prepared })
+    }
+
+    /// Return the plane-local scalar values needed by a cube controller.
+    pub fn clean_control_stats(&self) -> StandardMfsCleanControlStats {
+        self.prepared.clean_control_stats()
+    }
+
+    /// Publish this prepared plane without running a minor cycle.
+    pub fn skip_with_cycle_threshold(
+        self,
+        cube_cycle_threshold_jy_per_beam: f32,
+    ) -> Result<ImagingResult, ImagingError> {
+        skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
+            self.prepared,
+            cube_cycle_threshold_jy_per_beam,
+        )
+    }
+
+    /// Finish this prepared plane with the normal standard-MFS CLEAN loop.
+    pub fn finish(
+        self,
+        plan: StandardMfsCleanFinishPlan<'_>,
+    ) -> Result<ImagingResult, ImagingError> {
+        finish_standard_mfs_clean_session(self.prepared, plan, false)
+    }
+
+    /// Finish this prepared plane with one CASA cube-style major-cycle pass.
+    pub fn finish_one_major_cycle(
+        self,
+        plan: StandardMfsCleanFinishPlan<'_>,
+    ) -> Result<ImagingResult, ImagingError> {
+        finish_standard_mfs_clean_session(self.prepared, plan, true)
+    }
+}
+
+fn finish_standard_mfs_clean_session(
+    mut prepared: StandardMfsPreparedCleanPlane,
+    plan: StandardMfsCleanFinishPlan<'_>,
+    one_major_cycle: bool,
+) -> Result<ImagingResult, ImagingError> {
+    if one_major_cycle {
+        prepared.request.clean.major_cycle_limit = Some(1);
+    }
+    finish_standard_mfs_prepared_clean_plane_with_execution_config(
+        prepared,
+        plan.execution_config,
+        plan.cube_cycle_threshold_jy_per_beam,
+        plan.replay,
+    )
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -1358,7 +1633,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
 /// each exact residual-refresh pass. Each invocation must stream batches in a
 /// stable MeasurementSet order and pass ownership of each bounded row block to
 /// the supplied consumer.
-pub fn run_standard_mfs_weighted_streaming_with_execution_config<F>(
+fn run_standard_mfs_weighted_streaming_with_execution_config<F>(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     mut replay_weighted_batches: F,
@@ -2797,7 +3072,7 @@ where
 ///
 /// This keeps row/channel run boundaries available to fixed-tile backends while
 /// retaining the scalar planned-sample payload used by the existing gridders.
-pub fn run_standard_mfs_planned_sample_run_block_streaming_with_execution_config<F>(
+fn run_standard_mfs_planned_sample_run_block_streaming_with_execution_config<F>(
     request: ImagingRequest,
     mut execution_config: StandardMfsExecutionConfig,
     replay_planned_runs: F,
@@ -2863,7 +3138,7 @@ pub struct StandardMfsCleanControlStats {
 /// Cube-like frontends use this to build dirty/PSF plane state, reduce
 /// cube-level CLEAN controls across planes, and then run minor cycles without
 /// rereading the MeasurementSet or recomputing the initial dirty/PSF products.
-pub struct StandardMfsPreparedCleanPlane {
+pub(crate) struct StandardMfsPreparedCleanPlane {
     request: ImagingRequest,
     psf_state: PsfState,
     residual: Array2<f32>,
@@ -2888,7 +3163,7 @@ impl StandardMfsPreparedCleanPlane {
 }
 
 /// Run only the dirty/PSF construction phase for a replayable planned-run plane.
-pub fn prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config<F>(
+fn prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config<F>(
     request: ImagingRequest,
     mut execution_config: StandardMfsExecutionConfig,
     replay_planned_runs: F,
@@ -2939,7 +3214,7 @@ where
 }
 
 /// Run only the dirty/PSF construction phase for a replayable planned-sample plane.
-pub fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_config(
+fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_config(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
@@ -3036,7 +3311,7 @@ pub fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_executi
 /// prepared plane is already below the shared cycle threshold. The dirty/PSF
 /// state that was already computed is preserved, the component model is left
 /// unchanged, and no CPU or Metal deconvolver work is run.
-pub fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
+fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
     prepared: StandardMfsPreparedCleanPlane,
     cube_cycle_threshold_jy_per_beam: f32,
 ) -> Result<ImagingResult, ImagingError> {
@@ -3142,7 +3417,7 @@ pub fn skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
 }
 
 /// Finish a resident standard-gridder CLEAN plane with an optional cube threshold.
-pub fn finish_standard_mfs_prepared_clean_plane_with_execution_config<F>(
+fn finish_standard_mfs_prepared_clean_plane_with_execution_config<F>(
     prepared: StandardMfsPreparedCleanPlane,
     mut execution_config: StandardMfsExecutionConfig,
     cube_cycle_threshold_jy_per_beam: Option<f32>,
@@ -3191,32 +3466,6 @@ where
         execution_config,
         cube_cycle_threshold_jy_per_beam,
         &mut source,
-    )
-}
-
-/// Finish a resident standard-gridder CLEAN plane for one CASA cube minor-cycle pass.
-///
-/// CASA cube deconvolution runs a controller-owned minor-cycle pass over each
-/// plane during a major cycle. The caller is responsible for reducing cube-level
-/// control values before dispatch; this helper prevents a resident plane worker
-/// from privately running a full single-plane Cotton-Schwab loop.
-pub fn finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config<F>(
-    mut prepared: StandardMfsPreparedCleanPlane,
-    execution_config: StandardMfsExecutionConfig,
-    cube_cycle_threshold_jy_per_beam: Option<f32>,
-    replay_planned_runs: F,
-) -> Result<ImagingResult, ImagingError>
-where
-    F: FnMut(
-        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
-    ) -> Result<(), ImagingError>,
-{
-    prepared.request.clean.major_cycle_limit = Some(1);
-    finish_standard_mfs_prepared_clean_plane_with_execution_config(
-        prepared,
-        execution_config,
-        cube_cycle_threshold_jy_per_beam,
-        replay_planned_runs,
     )
 }
 
@@ -3366,7 +3615,7 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
 
 /// Run standard-MFS CLEAN from directly replayable routed visibility runs and
 /// an optional prebuilt Metal grouped input cache.
-pub fn run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache<
+fn run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache<
     F,
 >(
     request: ImagingRequest,
@@ -3412,7 +3661,7 @@ where
 }
 
 /// Run standard-MFS CLEAN from a replayable planned-sample block source.
-pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
@@ -3604,7 +3853,7 @@ pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_con
 }
 
 /// Run standard-MFS dirty imaging from a replayable planned-sample block source.
-pub fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config(
+fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,

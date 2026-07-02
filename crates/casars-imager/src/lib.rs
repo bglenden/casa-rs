@@ -40,29 +40,20 @@ use casa_imaging::{
     ImagingSourcePartition, ImagingSourcePartitionId, ImagingSourceShape, ImagingStageTimings,
     MinorCycleTrace, ModelRoutePlan, MosaicGridderConfig, ParallelHandBatch, PlaneStokes,
     PolarizationRoutePlan, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
-    SourceChannelRoute, SpectralRoutePlan, StandardMfsDirtyAccumulator,
-    StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsMetalGroupedInputCachePrefill, StandardMfsMinorCycleBackend,
-    StandardMfsModelPredictor, StandardMfsPairCollapseTransform,
-    StandardMfsPlannedSampleBlockSource, StandardMfsPlannedSampleBuilder,
-    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsPreparedCleanPlane, StandardMfsRoutableSample, StandardMfsRoutedSample,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
-    WeightingMode, WeightingRoutePlan, estimate_psf_sidelobe_from_psf,
-    finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config,
-    prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
-    primary_beam_voltage_pattern, restore_standard_mfs_model, run_imaging,
-    run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
-    run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config,
-    run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
-    run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache,
-    run_standard_mfs_weighted_streaming_with_execution_config,
-    skip_standard_mfs_prepared_clean_plane_with_cycle_threshold,
-    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_w_project_plan,
+    SourceChannelRoute, SpectralRoutePlan, StandardMfsCleanFinishPlan, StandardMfsCleanPlan,
+    StandardMfsCleanSession, StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
+    StandardMfsDirtyPlan, StandardMfsExecutionConfig, StandardMfsMetalGroupedInputCachePrefill,
+    StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPairCollapseTransform,
+    StandardMfsPlan, StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
+    StandardMfsVisibilityPolarization, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics, WProjectSkipReason,
+    WTermMode, WeightDensityMode, WeightingMode, WeightingRoutePlan,
+    estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
+    run_imaging, run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_plan,
+    run_standard_mfs_plan, trace_cube_channel_residual_refresh,
+    trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
 };
 use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneStreamPass, SinglePlaneVisibilityBlock};
 use casa_ms::MeasurementSet;
@@ -6201,13 +6192,13 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 }
                 Ok(())
             };
-            run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache(
+            run_standard_mfs_plan(StandardMfsPlan::routed_visibility_runs(
                 request,
                 execution_config,
                 &weighting_plan,
                 &mut replay_routed_runs,
                 prebuilt_metal_grouped_input_cache.take(),
-            )
+            ))
         } else {
             let mut replay_weighted_samples =
                 |consumer: &mut dyn FnMut(
@@ -6261,11 +6252,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         .map(|_| ())
                         .map_err(ImagingError::InvalidRequest)
                 };
-            run_standard_mfs_planned_sample_run_block_streaming_with_execution_config(
+            run_standard_mfs_plan(StandardMfsPlan::planned_sample_run_blocks(
                 request,
                 execution_config,
                 &mut replay_weighted_samples,
-            )
+            ))
         }
     } else {
         let mut replay_invocation = 0usize;
@@ -6343,11 +6334,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 .map(|_| ())
                 .map_err(ImagingError::InvalidRequest)
         };
-        run_standard_mfs_weighted_streaming_with_execution_config(
+        run_standard_mfs_plan(StandardMfsPlan::weighted_batches(
             request,
             execution_config,
             &mut replay_weighted_batches,
-        )
+        ))
     }
     .map_err(|error| error.to_string())?;
     let run_imaging_time = run_started_at.elapsed();
@@ -9994,30 +9985,29 @@ fn run_direct_dirty_cube_plane_from_shared_source(
         )
         .map_err(ImagingError::InvalidRequest)
     };
-    let plane_result =
-        run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config(
-            ImagingRequest {
-                geometry,
-                visibility_batches: Vec::new(),
-                gridder_mode: GridderMode::Standard,
-                plane_stokes,
-                weighting,
-                reffreq_hz: channel_frequency_hz,
-                selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
-                deconvolver,
-                multiscale_scales,
-                small_scale_bias,
-                clean,
-                clean_mask: None,
-                initial_model: None,
-                w_term_mode: WTermMode::None,
-                w_project_planes: None,
-                compatibility: CompatibilityMode::CasaStandardMfs,
-            },
-            execution_config,
-            &mut replay as &mut dyn StandardMfsPlannedSampleBlockSource,
-        )
-        .map_err(|error| error.to_string())?;
+    let plane_result = run_standard_mfs_dirty_plan(StandardMfsDirtyPlan::planned_sample_blocks(
+        ImagingRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes,
+            weighting,
+            reffreq_hz: channel_frequency_hz,
+            selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+            deconvolver,
+            multiscale_scales,
+            small_scale_bias,
+            clean,
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        },
+        execution_config,
+        &mut replay,
+    ))
+    .map_err(|error| error.to_string())?;
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
             "cube_shared_direct_dirty_exit output_channel={} blocks={} planned_samples={}",
@@ -10046,13 +10036,7 @@ fn prepare_direct_clean_cube_plane_from_shared_source(
     channel_frequency_hz: f64,
     spectral_plan: &CubeRowSpectralReusablePlan,
     corr_types: &[i32],
-) -> Result<
-    (
-        StandardMfsPreparedCleanPlane,
-        DirectDirtyCubePlaneReplayTimings,
-    ),
-    String,
-> {
+) -> Result<(StandardMfsCleanSession, DirectDirtyCubePlaneReplayTimings), String> {
     let polarization = direct_cube_plane_polarization(plane_stokes, corr_types)?;
     let mut weighting_plan = StandardMfsStreamingWeightingPlan::new_with_density_mode(
         geometry,
@@ -10094,30 +10078,31 @@ fn prepare_direct_clean_cube_plane_from_shared_source(
         )
         .map_err(ImagingError::InvalidRequest)
     };
-    let prepared = prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config(
-        ImagingRequest {
-            geometry,
-            visibility_batches: Vec::new(),
-            gridder_mode: GridderMode::Standard,
-            plane_stokes,
-            weighting,
-            reffreq_hz: channel_frequency_hz,
-            selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
-            deconvolver,
-            multiscale_scales,
-            small_scale_bias,
-            clean,
-            clean_mask: None,
-            initial_model: None,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        },
-        execution_config,
-        &mut replay,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok((prepared, replay_timings))
+    let session =
+        StandardMfsCleanSession::prepare(StandardMfsCleanPlan::planned_sample_run_blocks(
+            ImagingRequest {
+                geometry,
+                visibility_batches: Vec::new(),
+                gridder_mode: GridderMode::Standard,
+                plane_stokes,
+                weighting,
+                reffreq_hz: channel_frequency_hz,
+                selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+                deconvolver,
+                multiscale_scales,
+                small_scale_bias,
+                clean,
+                clean_mask: None,
+                initial_model: None,
+                w_term_mode: WTermMode::None,
+                w_project_planes: None,
+                compatibility: CompatibilityMode::CasaStandardMfs,
+            },
+            execution_config,
+            &mut replay,
+        ))
+        .map_err(|error| error.to_string())?;
+    Ok((session, replay_timings))
 }
 
 fn finish_direct_clean_cube_plane_from_resident_state(
@@ -10165,13 +10150,13 @@ fn finish_direct_clean_cube_plane_from_resident_state(
         )
         .map_err(ImagingError::InvalidRequest)
     };
-    let plane_result =
-        finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config(
-            state.prepared,
+    let plane_result = state
+        .prepared
+        .finish_one_major_cycle(StandardMfsCleanFinishPlan::planned_sample_run_blocks(
             execution_config,
             Some(cube_cycle_threshold_jy_per_beam),
             &mut planned_replay,
-        )
+        ))
         .map_err(|error| error.to_string())?;
     Ok((
         single_plane_imaging_result_to_cube_result(channel_frequency_hz, plane_result),
@@ -10188,11 +10173,9 @@ fn skip_direct_clean_cube_plane_from_resident_state(
         prepared,
         ..
     } = state;
-    let plane_result = skip_standard_mfs_prepared_clean_plane_with_cycle_threshold(
-        prepared,
-        cube_cycle_threshold_jy_per_beam,
-    )
-    .map_err(|error| error.to_string())?;
+    let plane_result = prepared
+        .skip_with_cycle_threshold(cube_cycle_threshold_jy_per_beam)
+        .map_err(|error| error.to_string())?;
     Ok(single_plane_imaging_result_to_cube_result(
         channel_frequency_hz,
         plane_result,
@@ -10222,7 +10205,7 @@ struct ResidentCleanCubePlaneState {
     polarization: DirectCubePlanePolarization,
     spectral_plan: Arc<CubeRowSpectralReusablePlan>,
     shared_source: Arc<SharedColumnarCubeSlabSource>,
-    prepared: StandardMfsPreparedCleanPlane,
+    prepared: StandardMfsCleanSession,
     direct_replay_timings: DirectDirtyCubePlaneReplayTimings,
     prepare_elapsed: Duration,
     visibility_batches: usize,
@@ -33972,260 +33955,6 @@ impl PreparedSelection {
             _ => {
                 return Err(
                     "internal error: MS essentials standard MFS preparation requires MFS state"
-                        .to_string(),
-                );
-            }
-        }
-        Ok(counts)
-    }
-
-    #[allow(dead_code)]
-    fn stream_standard_mfs_routed_essentials_row_samples(
-        &mut self,
-        selected_row: &SelectedMainRow,
-        row: &MsImagingEssentials,
-        derived_engine: Option<&MsCalEngine>,
-        planned_sample_builder: &StandardMfsPlannedSampleBuilder,
-        consume: &mut dyn FnMut(StandardMfsRoutedSample) -> Result<(), ImagingError>,
-    ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
-        if self.mfs_output_frequency_edge_range_hz.is_none() {
-            self.mfs_output_frequency_edge_range_hz =
-                Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
-        }
-        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
-        let mut counts = StandardMfsPlannedRowSampleCounts::default();
-        let collect_detail = standard_mfs_profile_line_detail_enabled();
-        macro_rules! detail_time {
-            ($field:ident, $expr:expr) => {{
-                if collect_detail {
-                    let started = Instant::now();
-                    let value = $expr;
-                    counts.detail.$field += started.elapsed();
-                    value
-                } else {
-                    $expr
-                }
-            }};
-        }
-        match &self.state {
-            PreparedState::ExplicitMfs { corr_index, .. } => {
-                let channel_invariant_weight =
-                    if row.weight_spectrum.is_none() {
-                        Some(*row.weight.get(*corr_index).ok_or_else(|| {
-                            format!("WEIGHT correlation {corr_index} out of bounds")
-                        })?)
-                    } else {
-                        None
-                    };
-                for (channel_index, frequency_hz) in self
-                    .source_channel_indices
-                    .iter()
-                    .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
-                {
-                    let local_channel = detail_time!(
-                        local_channel,
-                        local_channel_index(channel_index, row.channel_origin, row.data.shape()[1])
-                    )?;
-                    if detail_time!(
-                        flag_lookup,
-                        *row.flag.get((*corr_index, local_channel)).ok_or_else(|| {
-                            format!("FLAG index [{corr_index}, {channel_index}] out of bounds")
-                        })?
-                    ) {
-                        continue;
-                    }
-                    let visibility = detail_time!(
-                        visibility_lookup,
-                        phase_rotate_visibility(
-                            *row.data.get((*corr_index, local_channel)).ok_or_else(|| {
-                                format!("DATA index [{corr_index}, {channel_index}] out of bounds")
-                            })?,
-                            0.0,
-                            frequency_hz * mfs_frequency_scale,
-                        )
-                    );
-                    let natural_weight = detail_time!(
-                        weight_lookup,
-                        if let Some(weight) = channel_invariant_weight {
-                            weight
-                        } else if let Some(weight_spectrum) = &row.weight_spectrum {
-                            *weight_spectrum
-                                .get((*corr_index, local_channel))
-                                .ok_or_else(|| {
-                                    format!(
-                                        "WEIGHT_SPECTRUM index [{corr_index}, {channel_index}] out of bounds"
-                                    )
-                                })?
-                        } else {
-                            *row.weight.get(*corr_index).ok_or_else(|| {
-                                format!("WEIGHT correlation {corr_index} out of bounds")
-                            })?
-                        }
-                    );
-                    if !(natural_weight.is_finite() && natural_weight > 0.0) {
-                        continue;
-                    }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    counts.candidate_samples += 1;
-                    let sample = StandardMfsRoutableSample {
-                        u_lambda: row.u_m * lambda_scale,
-                        v_lambda: row.v_m * lambda_scale,
-                        w_lambda: row.w_m * lambda_scale,
-                        natural_weight,
-                        sumwt_factor: 1.0,
-                        gridable: row.gridable,
-                        visibility,
-                    };
-                    if let Some(routed_sample) =
-                        detail_time!(plan_sample, planned_sample_builder.route_sample(sample))
-                            .map_err(|error| error.to_string())?
-                    {
-                        detail_time!(consume, consume(routed_sample))
-                            .map_err(|error| error.to_string())?;
-                        counts.planned_samples += 1;
-                    }
-                }
-            }
-            PreparedState::CollapsedMfs {
-                plane_stokes,
-                transform: pair_transform,
-                pair,
-                ..
-            } => {
-                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
-                let channel_invariant_pair_weights = if row.weight_spectrum.is_none() {
-                    Some((
-                        *row.weight.get(pair.0).ok_or_else(|| {
-                            format!("WEIGHT correlation {} out of bounds", pair.0)
-                        })?,
-                        *row.weight.get(pair.1).ok_or_else(|| {
-                            format!("WEIGHT correlation {} out of bounds", pair.1)
-                        })?,
-                    ))
-                } else {
-                    None
-                };
-                for (channel_index, frequency_hz) in self
-                    .source_channel_indices
-                    .iter()
-                    .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
-                {
-                    let local_channel = detail_time!(
-                        local_channel,
-                        local_channel_index(channel_index, row.channel_origin, row.data.shape()[1])
-                    )?;
-                    if detail_time!(
-                        flag_lookup,
-                        *row.flag.get((pair.0, local_channel)).ok_or_else(|| {
-                            format!("FLAG index [{}, {channel_index}] out of bounds", pair.0)
-                        })? || *row.flag.get((pair.1, local_channel)).ok_or_else(|| {
-                            format!("FLAG index [{}, {channel_index}] out of bounds", pair.1)
-                        })?
-                    ) {
-                        continue;
-                    }
-                    let (first_visibility, second_visibility) = detail_time!(
-                        visibility_lookup,
-                        (
-                            *row.data.get((pair.0, local_channel)).ok_or_else(|| {
-                                format!("DATA index [{}, {channel_index}] out of bounds", pair.0)
-                            })?,
-                            *row.data.get((pair.1, local_channel)).ok_or_else(|| {
-                                format!("DATA index [{}, {channel_index}] out of bounds", pair.1)
-                            })?,
-                        )
-                    );
-                    let (first_weight, second_weight) = detail_time!(
-                        weight_lookup,
-                        if let Some(weights) = channel_invariant_pair_weights {
-                            weights
-                        } else if let Some(weight_spectrum) = &row.weight_spectrum {
-                            (
-                                *weight_spectrum
-                                    .get((pair.0, local_channel))
-                                    .ok_or_else(|| {
-                                        format!(
-                                            "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
-                                            pair.0
-                                        )
-                                    })?,
-                                *weight_spectrum
-                                    .get((pair.1, local_channel))
-                                    .ok_or_else(|| {
-                                        format!(
-                                            "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
-                                            pair.1
-                                        )
-                                    })?,
-                            )
-                        } else {
-                            (
-                                *row.weight.get(pair.0).ok_or_else(|| {
-                                    format!("WEIGHT correlation {} out of bounds", pair.0)
-                                })?,
-                                *row.weight.get(pair.1).ok_or_else(|| {
-                                    format!("WEIGHT correlation {} out of bounds", pair.1)
-                                })?,
-                            )
-                        }
-                    );
-                    if !(first_weight.is_finite()
-                        && first_weight > 0.0
-                        && second_weight.is_finite()
-                        && second_weight > 0.0)
-                    {
-                        continue;
-                    }
-                    let natural_weight = 0.5 * (first_weight + second_weight);
-                    if !(natural_weight.is_finite() && natural_weight > 0.0) {
-                        continue;
-                    }
-                    let visibility = detail_time!(
-                        visibility_lookup,
-                        phase_rotate_visibility(
-                            collapse_paired_visibility(
-                                first_visibility,
-                                second_visibility,
-                                *pair_transform,
-                            ),
-                            0.0,
-                            frequency_hz * mfs_frequency_scale,
-                        )
-                    );
-                    if detail_time!(
-                        finite_check,
-                        !(visibility.re.is_finite() && visibility.im.is_finite())
-                    ) {
-                        continue;
-                    }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    counts.candidate_samples += 1;
-                    let sample = StandardMfsRoutableSample {
-                        u_lambda: row.u_m * lambda_scale,
-                        v_lambda: row.v_m * lambda_scale,
-                        w_lambda: row.w_m * lambda_scale,
-                        natural_weight,
-                        sumwt_factor,
-                        gridable: row.gridable,
-                        visibility,
-                    };
-                    if let Some(routed_sample) =
-                        detail_time!(plan_sample, planned_sample_builder.route_sample(sample))
-                            .map_err(|error| error.to_string())?
-                    {
-                        detail_time!(consume, consume(routed_sample))
-                            .map_err(|error| error.to_string())?;
-                        counts.planned_samples += 1;
-                    }
-                }
-            }
-            _ => {
-                return Err(
-                    "internal error: MS essentials standard MFS routing requires MFS state"
                         .to_string(),
                 );
             }

@@ -901,37 +901,13 @@ pub struct StandardMfsWeightedSample {
     pub visibility: Complex32,
 }
 
-/// Natural-weighted scalar standard-MFS sample ready for tile routing.
-///
-/// This is the producer-side handoff before final Uniform/Briggs weighting.
-/// It carries enough information to choose an owner tile from the standard
-/// gridder center convention while leaving final density-dependent weighting
-/// to the worker that applies the convolution taps.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StandardMfsRoutableSample {
-    /// Baseline `u` coordinate in wavelengths.
-    pub u_lambda: f64,
-    /// Baseline `v` coordinate in wavelengths.
-    pub v_lambda: f64,
-    /// Baseline `w` coordinate in wavelengths.
-    pub w_lambda: f64,
-    /// Natural input weight before Uniform/Briggs reweighting.
-    pub natural_weight: f32,
-    /// Logical multiplicity factor for CASA-style reported `sumwt`.
-    pub sumwt_factor: f32,
-    /// Whether this sample participates in image/PSF gridding.
-    pub gridable: bool,
-    /// Complex scalar visibility.
-    pub visibility: Complex32,
-}
-
 /// Tile-routed standard-MFS sample before final density-dependent weighting.
 ///
 /// Fixed-tile workers use this payload to compute final weights and taps close
 /// to the resident tile buffer. The producer computes only the deterministic
 /// owner-tile center needed for routing.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StandardMfsRoutedSample {
+pub(crate) struct StandardMfsRoutedSample {
     /// Baseline `u` coordinate in wavelengths.
     pub u_lambda: f64,
     /// Baseline `v` coordinate in wavelengths.
@@ -940,7 +916,7 @@ pub struct StandardMfsRoutedSample {
     pub center_x: u32,
     /// Positive-tap center y cell in the padded standard grid.
     pub center_y: u32,
-    /// Routed-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
+    /// Routed-sample flags; use [`Self::finite_visibility`].
     pub flags: u16,
     /// Number of 2-D tap visits expected for work attribution.
     pub tap_count: u8,
@@ -957,17 +933,9 @@ pub struct StandardMfsRoutedSample {
 impl StandardMfsRoutedSample {
     /// Visibility is finite and contributes to dirty/residual grids.
     pub const FINITE_VISIBILITY: u16 = 1 << 0;
-    /// Visibility is nonfinite and contributes only to the PSF.
-    pub const PSF_ONLY: u16 = 1 << 1;
-
     /// Returns true when the sample visibility can contribute to dirty/residual grids.
     pub fn finite_visibility(self) -> bool {
         self.flags & Self::FINITE_VISIBILITY != 0
-    }
-
-    /// Returns true when the sample should contribute to the PSF only.
-    pub fn psf_only(self) -> bool {
-        self.flags & Self::PSF_ONLY != 0
     }
 }
 
@@ -1243,7 +1211,7 @@ impl StandardMfsPlannedWeightedSampleRunBlock {
 /// samples are already routed to standard-gridder centers, but their
 /// Uniform/Briggs weights are applied by the tile workers.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct StandardMfsRoutedSampleRunBlock {
+pub(crate) struct StandardMfsRoutedSampleRunBlock {
     samples: Vec<StandardMfsRoutedSample>,
     runs: Vec<Range<usize>>,
 }

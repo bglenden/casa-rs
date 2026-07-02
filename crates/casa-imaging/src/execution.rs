@@ -20,14 +20,14 @@ use num_complex::{Complex32, Complex64};
 use crate::{
     ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsPairCollapseTransform,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
     StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization, VisibilityBatch,
     gridder::{
         PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
         StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
     },
     profile,
-    types::StandardMfsRoutedSampleRunBlock,
+    types::{StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock},
 };
 #[cfg(all(target_os = "macos", not(coverage)))]
 use crate::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
