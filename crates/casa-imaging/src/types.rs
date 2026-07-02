@@ -4,7 +4,7 @@
 use std::{ops::Range, sync::Arc, time::Duration};
 
 use ndarray::{Array2, Array4};
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
 use crate::{ImagingError, gridder::STANDARD_GRIDDER_TAP_COUNT};
 
@@ -389,20 +389,6 @@ pub enum UvTaperSize {
     BaselineHwhmLambda(f64),
 }
 
-impl UvTaperSize {
-    fn validate(self, axis: &str) -> Result<(), ImagingError> {
-        let value = match self {
-            Self::ImageFwhmRad(value) | Self::BaselineHwhmLambda(value) => value,
-        };
-        if !(value.is_finite() && value > 0.0) {
-            return Err(ImagingError::InvalidRequest(format!(
-                "{axis} UV taper size must be finite and > 0"
-            )));
-        }
-        Ok(())
-    }
-}
-
 /// CASA-style Gaussian UV taper applied after imaging-weight calculation.
 ///
 /// This follows `casa::VisImagingWeight::setFilter()` / `filter()`: the taper
@@ -417,19 +403,6 @@ pub struct GaussianUvTaper {
     pub minor: UvTaperSize,
     /// Position angle in radians, zero along +y and increasing toward -x.
     pub position_angle_rad: f64,
-}
-
-impl GaussianUvTaper {
-    pub(crate) fn validate(self) -> Result<(), ImagingError> {
-        self.major.validate("major")?;
-        self.minor.validate("minor")?;
-        if !self.position_angle_rad.is_finite() {
-            return Err(ImagingError::InvalidRequest(
-                "UV taper position angle must be finite".to_string(),
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Compatibility target for the first imaging wave.
@@ -467,82 +440,6 @@ pub struct CubeModelInterpolationBatch {
     /// Model-channel contributions for each scalar sample in the paired
     /// visibility batch.
     pub sample_contributions: Vec<Vec<CubeModelChannelContribution>>,
-}
-
-/// One spectral plane of a cube-imaging request.
-///
-/// Each entry carries the already-selected scalar visibility batches for one
-/// output spectral plane, along with the cube-model interpolation state needed
-/// by the CASA-style major cycle when predicting visibilities for that plane.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CubeChannelRequest {
-    /// World frequency in Hz for this output spectral plane.
-    pub channel_frequency_hz: f64,
-    /// Chunked scalar visibility samples for this spectral plane.
-    pub visibility_batches: Vec<VisibilityBatch>,
-    /// Optional source-channel samples used only to build per-plane cube
-    /// weighting density.
-    pub density_batches: Vec<VisibilityBatch>,
-    /// Per-sample model-channel interpolation state used during cube
-    /// prediction and residual refresh.
-    pub model_interpolation_batches: Vec<CubeModelInterpolationBatch>,
-}
-
-impl CubeChannelRequest {
-    pub(crate) fn validate(&self, require_model_interpolation: bool) -> Result<(), ImagingError> {
-        if !(self.channel_frequency_hz.is_finite() && self.channel_frequency_hz > 0.0) {
-            return Err(ImagingError::InvalidRequest(
-                "cube channel frequencies must be finite positive Hz".to_string(),
-            ));
-        }
-        if self.visibility_batches.is_empty() {
-            return Err(ImagingError::InvalidRequest(
-                "each cube channel requires at least one visibility batch".to_string(),
-            ));
-        }
-        for batch in &self.density_batches {
-            batch.validate()?;
-        }
-        for batch in &self.visibility_batches {
-            batch.validate()?;
-        }
-        if self.model_interpolation_batches.is_empty() && !require_model_interpolation {
-            return Ok(());
-        }
-        if self.model_interpolation_batches.len() != self.visibility_batches.len() {
-            return Err(ImagingError::InvalidRequest(format!(
-                "cube model interpolation batch count {} does not match visibility batch count {}",
-                self.model_interpolation_batches.len(),
-                self.visibility_batches.len()
-            )));
-        }
-        for (batch_index, (batch, interpolation)) in self
-            .visibility_batches
-            .iter()
-            .zip(self.model_interpolation_batches.iter())
-            .enumerate()
-        {
-            if interpolation.sample_contributions.len() != batch.len() {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "cube model interpolation batch {batch_index} length {} does not match visibility batch length {}",
-                    interpolation.sample_contributions.len(),
-                    batch.len()
-                )));
-            }
-            for (sample_index, sample_contributions) in
-                interpolation.sample_contributions.iter().enumerate()
-            {
-                for contribution in sample_contributions {
-                    if !(contribution.factor.is_finite() && contribution.factor >= 0.0) {
-                        return Err(ImagingError::InvalidRequest(format!(
-                            "cube model interpolation factor at batch {batch_index} sample {sample_index} must be finite and >= 0"
-                        )));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Minor-cycle deconvolver requested for the Cotton-Schwab controller.
@@ -630,6 +527,317 @@ impl ImageGeometry {
             return Err(ImagingError::InvalidRequest(
                 "cell sizes must be finite positive radians".to_string(),
             ));
+        }
+        Ok(())
+    }
+}
+
+/// Stable identity for one homogeneous visibility source partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImagingSourcePartitionId(pub usize);
+
+/// Shape invariant for one homogeneous visibility source partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImagingSourceShape {
+    /// Number of source channels in the partition.
+    pub channel_count: usize,
+    /// Number of correlations in each source row/channel sample.
+    pub correlation_count: usize,
+}
+
+/// Source identity and shape visible to the pure imaging core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImagingSourcePartition {
+    /// Frontend-owned source partition id.
+    pub id: ImagingSourcePartitionId,
+    /// Frontend-owned MeasurementSet/source id.
+    pub ms_id: usize,
+    /// Main-table data-description id.
+    pub data_desc_id: i32,
+    /// Spectral-window id.
+    pub spectral_window_id: i32,
+    /// Polarization id.
+    pub polarization_id: i32,
+    /// Homogeneous source shape.
+    pub shape: ImagingSourceShape,
+}
+
+/// Borrowed complex sample storage for columnar source visibility data.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnarComplexSamplesRef<'a> {
+    /// Native Complex32 samples.
+    Complex32(&'a [Complex32]),
+    /// Native Complex64 samples.
+    Complex64(&'a [Complex64]),
+}
+
+impl ColumnarComplexSamplesRef<'_> {
+    /// Number of complex values in the borrowed storage.
+    pub fn len(self) -> usize {
+        match self {
+            Self::Complex32(values) => values.len(),
+            Self::Complex64(values) => values.len(),
+        }
+    }
+
+    /// Returns true when the borrowed storage is empty.
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Borrowed real sample storage for columnar source weights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnarFloatSamplesRef<'a> {
+    /// Native Float32 samples.
+    Float32(&'a [f32]),
+    /// Native Float64 samples.
+    Float64(&'a [f64]),
+}
+
+impl ColumnarFloatSamplesRef<'_> {
+    /// Number of real values in the borrowed storage.
+    pub fn len(self) -> usize {
+        match self {
+            Self::Float32(values) => values.len(),
+            Self::Float64(values) => values.len(),
+        }
+    }
+
+    /// Returns true when the borrowed storage is empty.
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Borrowed homogeneous columnar source block.
+///
+/// Channelized arrays use `[channel][row][correlation]` layout. Row sidecars use
+/// `[row]`, and UVW uses `[row][axis]` with three axes per row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColumnarVisibilitySourceRef<'a> {
+    /// Homogeneous partition identity and shape.
+    pub partition: ImagingSourcePartition,
+    /// Original source row indices in stable processing order.
+    pub row_indices: &'a [usize],
+    /// First source channel represented in channelized arrays.
+    pub channel_start: usize,
+    /// Number of source channels represented in channelized arrays.
+    pub channel_count: usize,
+    /// Complex visibility samples.
+    pub data: Option<ColumnarComplexSamplesRef<'a>>,
+    /// Channel flags.
+    pub flags: Option<&'a [bool]>,
+    /// Per-row weights.
+    pub weights: Option<ColumnarFloatSamplesRef<'a>>,
+    /// Per-channel weights.
+    pub weight_spectrum: Option<ColumnarFloatSamplesRef<'a>>,
+    /// UVW coordinates.
+    pub uvw_m: Option<&'a [f64]>,
+    /// Row flags.
+    pub flag_row: Option<&'a [bool]>,
+    /// Antenna1 ids.
+    pub antenna1: Option<&'a [i32]>,
+    /// Antenna2 ids.
+    pub antenna2: Option<&'a [i32]>,
+    /// Field ids.
+    pub field_ids: Option<&'a [i32]>,
+    /// Time values.
+    pub time: Option<&'a [f64]>,
+}
+
+impl ColumnarVisibilitySourceRef<'_> {
+    /// Number of rows represented by this source block.
+    pub fn row_count(self) -> usize {
+        self.row_indices.len()
+    }
+
+    /// Source-channel range represented by this source block.
+    pub fn channel_range(self) -> Range<usize> {
+        self.channel_start..self.channel_start.saturating_add(self.channel_count)
+    }
+
+    /// Index into `[channel][row][correlation]` sample arrays.
+    pub fn channel_row_corr_index(
+        self,
+        channel_slot: usize,
+        row_slot: usize,
+        corr_slot: usize,
+    ) -> usize {
+        (channel_slot * self.row_count() + row_slot) * self.partition.shape.correlation_count
+            + corr_slot
+    }
+
+    /// Validate shape consistency for the borrowed block.
+    pub fn validate(self) -> Result<(), ImagingError> {
+        if self.channel_count == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "source block channel_count must be greater than zero".to_string(),
+            ));
+        }
+        let end = self
+            .channel_start
+            .checked_add(self.channel_count)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest("source block channel range overflow".to_string())
+            })?;
+        if end > self.partition.shape.channel_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "source block channel range {}..{} exceeds partition channel count {}",
+                self.channel_start, end, self.partition.shape.channel_count
+            )));
+        }
+        let sample_count = self
+            .row_count()
+            .saturating_mul(self.channel_count)
+            .saturating_mul(self.partition.shape.correlation_count);
+        if let Some(data) = self.data {
+            validate_len("source data", data.len(), sample_count)?;
+        }
+        if let Some(flags) = self.flags {
+            validate_len("source flags", flags.len(), sample_count)?;
+        }
+        if let Some(weights) = self.weights {
+            validate_len(
+                "source weights",
+                weights.len(),
+                self.row_count()
+                    .saturating_mul(self.partition.shape.correlation_count),
+            )?;
+        }
+        if let Some(weight_spectrum) = self.weight_spectrum {
+            validate_len(
+                "source weight_spectrum",
+                weight_spectrum.len(),
+                sample_count,
+            )?;
+        }
+        if let Some(uvw_m) = self.uvw_m {
+            validate_len(
+                "source uvw",
+                uvw_m.len(),
+                self.row_count().saturating_mul(3),
+            )?;
+        }
+        validate_optional_row_len("source flag_row", self.flag_row, self.row_count())?;
+        validate_optional_row_len("source antenna1", self.antenna1, self.row_count())?;
+        validate_optional_row_len("source antenna2", self.antenna2, self.row_count())?;
+        validate_optional_row_len("source field_ids", self.field_ids, self.row_count())?;
+        validate_optional_row_len("source time", self.time, self.row_count())?;
+        Ok(())
+    }
+}
+
+fn validate_len(name: &str, actual: usize, expected: usize) -> Result<(), ImagingError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ImagingError::InvalidRequest(format!(
+            "{name} length {actual} does not match expected {expected}"
+        )))
+    }
+}
+
+fn validate_optional_row_len<T>(
+    name: &str,
+    values: Option<&[T]>,
+    expected: usize,
+) -> Result<(), ImagingError> {
+    match values {
+        Some(values) => validate_len(name, values.len(), expected),
+        None => Ok(()),
+    }
+}
+
+/// Compact spectral routing state for a borrowed source block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpectralRoutePlan {
+    /// Source-channel to output-plane mapping.
+    pub channel_routes: Vec<SourceChannelRoute>,
+}
+
+/// Mapping for one represented source channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceChannelRoute {
+    /// Source channel index.
+    pub source_channel: usize,
+    /// Output planes receiving this source channel.
+    pub output_planes: Vec<OutputPlaneContribution>,
+}
+
+/// Contribution of one source channel to one output plane.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutputPlaneContribution {
+    /// Output plane index.
+    pub plane_index: usize,
+    /// Linear contribution factor.
+    pub factor: f32,
+}
+
+/// Compact Stokes/correlation routing state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolarizationRoutePlan {
+    /// Output Stokes plane represented by this route.
+    pub output_stokes: PlaneStokes,
+}
+
+/// Compact geometric routing state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeometryRoutePlan {
+    /// Image-plane geometry for routed samples.
+    pub geometry: ImageGeometry,
+}
+
+/// Compact weighting route state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeightingRoutePlan {
+    /// Weighting mode for this route.
+    pub weighting: WeightingMode,
+}
+
+/// Compact gridder route state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridderRoutePlan {
+    /// Gridder mode for this route.
+    pub gridder_mode: GridderMode,
+}
+
+/// Compact model routing state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelRoutePlan {
+    /// Output-model planes available for prediction.
+    pub model_plane_count: usize,
+}
+
+/// Borrowed source block plus compact route state consumed by imaging stages.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImagingSourceBlockView<'a> {
+    /// Borrowed source samples and row sidecars.
+    pub source: ColumnarVisibilitySourceRef<'a>,
+    /// Spectral routing plan.
+    pub spectral: &'a SpectralRoutePlan,
+    /// Polarization routing plan.
+    pub polarization: &'a PolarizationRoutePlan,
+    /// Geometry routing plan.
+    pub geometry: &'a GeometryRoutePlan,
+    /// Weighting routing plan.
+    pub weighting: &'a WeightingRoutePlan,
+    /// Gridder routing plan.
+    pub gridder: &'a GridderRoutePlan,
+    /// Optional model routing plan.
+    pub model: Option<&'a ModelRoutePlan>,
+}
+
+impl ImagingSourceBlockView<'_> {
+    /// Validate borrowed source and route-level shape consistency.
+    pub fn validate(self) -> Result<(), ImagingError> {
+        self.source.validate()?;
+        if self.spectral.channel_routes.len() != self.source.channel_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "spectral route count {} does not match source block channel count {}",
+                self.spectral.channel_routes.len(),
+                self.source.channel_count
+            )));
         }
         Ok(())
     }
@@ -916,7 +1124,7 @@ impl StandardMfsRoutedVisibilityRunBlock {
 /// This is the bounded row-block handoff used by streaming frontends that want
 /// to route samples to fixed tiles without retaining full visibility batches.
 /// It stores the deterministic positive-tap center for tile ownership, while
-/// core workers re-plan the prolate-spheroidal taps immediately before gridding.
+/// core workers consume the precomputed compact tap identity directly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StandardMfsPlannedWeightedSample {
     /// Baseline `u` coordinate in wavelengths.
@@ -927,6 +1135,14 @@ pub struct StandardMfsPlannedWeightedSample {
     pub center_x: u32,
     /// Positive-tap center y cell in the padded standard grid.
     pub center_y: u32,
+    /// First x cell touched by the compact positive-tap stencil.
+    pub x_start: u32,
+    /// First y cell touched by the compact positive-tap stencil.
+    pub y_start: u32,
+    /// Compact x-axis prolate-spheroidal weight table index.
+    pub x_weight_index: u32,
+    /// Compact y-axis prolate-spheroidal weight table index.
+    pub y_weight_index: u32,
     /// Planned-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
     pub flags: u16,
     /// Number of 2-D tap visits expected for work attribution.
@@ -1498,142 +1714,6 @@ impl Default for CubeAutoMultiThresholdConfig {
     }
 }
 
-/// Top-level request consumed by the pure imaging engine for spectral cubes.
-///
-/// Each output spectral plane is imaged independently through the same core
-/// controller used for MFS imaging and then stacked on a real spectral axis in
-/// CASA ordering. This cleaned-cube wave intentionally stays narrow: runtime
-/// Doppler/frame correction is still handled in the frontend adapter, and
-/// deconvolution support is currently limited to the point-source
-/// deconvolvers Hogbom and Clark.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CubeImagingRequest {
-    /// Requested two-dimensional geometry shared by every spectral plane.
-    pub geometry: ImageGeometry,
-    /// Ordered spectral planes to image. Their order is preserved in the
-    /// output cube's spectral axis.
-    pub channels: Vec<CubeChannelRequest>,
-    /// Scalar Stokes plane to produce.
-    pub plane_stokes: PlaneStokes,
-    /// Weighting policy applied independently to each channel plane.
-    pub weighting: WeightingMode,
-    /// Whether uniform/Briggs density estimates are shared or per plane.
-    pub weight_density_mode: WeightDensityMode,
-    /// Optional CASA-style Gaussian UV taper applied after weighting.
-    pub uv_taper: Option<GaussianUvTaper>,
-    /// Restoring-beam policy for the restored cube products.
-    pub restoring_beam_mode: RestoringBeamMode,
-    /// Requested minor-cycle deconvolver.
-    pub deconvolver: Deconvolver,
-    /// Requested multiscale kernel sizes in pixels.
-    ///
-    /// This is ignored by point-source deconvolvers. Under
-    /// [`Deconvolver::Multiscale`], an empty list defaults internally to the
-    /// CASA-style single point scale `[0]`.
-    pub multiscale_scales: Vec<f32>,
-    /// CASA-style multiscale selection bias shared by every plane.
-    ///
-    /// This follows the same semantics as [`ImagingRequest::small_scale_bias`].
-    pub small_scale_bias: f32,
-    /// Deconvolver-independent CLEAN and major/minor-cycle controls applied to
-    /// each spectral plane.
-    pub clean: CleanConfig,
-    /// Optional image-plane clean mask shared by every spectral plane. `true`
-    /// pixels are eligible for component picks.
-    pub clean_mask: Option<Array2<bool>>,
-    /// Optional CASA-style cube clean mask with shape `(nx, ny, 1, nchan)`.
-    ///
-    /// This represents masks that differ by output spectral channel, matching
-    /// CASA image-mask semantics. When both [`Self::clean_mask`] and this
-    /// field are present, a pixel must be true in both masks to be eligible.
-    pub channel_clean_mask: Option<Array4<bool>>,
-    /// Optional CASA `auto-multithresh` mask updates run inside the cube CLEAN
-    /// controller.
-    ///
-    /// The initial mask is generated from the first residual before any minor
-    /// iterations. Later major-cycle residual refreshes update the positive
-    /// mask and may grow existing mask regions, matching CASA's
-    /// `iterdone > 0` growth gate.
-    pub auto_mask: Option<CubeAutoMultiThresholdConfig>,
-    /// Restoring-beam fit cutoff used for each channel PSF.
-    pub psf_cutoff: f32,
-    /// Requested `w`-term handling mode.
-    pub w_term_mode: WTermMode,
-    /// Optional explicit `wproject` plane budget shared by every plane.
-    ///
-    /// Ignored unless [`Self::w_term_mode`] is [`WTermMode::WProject`].
-    pub w_project_planes: Option<usize>,
-    /// Declared compatibility target for the run.
-    pub compatibility: CompatibilityMode,
-}
-
-impl CubeImagingRequest {
-    pub(crate) fn validate(&self) -> Result<(), ImagingError> {
-        self.geometry.validate()?;
-        self.weighting.validate()?;
-        if let Some(taper) = self.uv_taper {
-            taper.validate()?;
-        }
-        self.clean.validate()?;
-        if !(self.psf_cutoff.is_finite() && (0.0..1.0).contains(&self.psf_cutoff)) {
-            return Err(ImagingError::InvalidRequest(
-                "psf_cutoff must be finite and in the interval [0, 1)".to_string(),
-            ));
-        }
-        for scale in &self.multiscale_scales {
-            if !(scale.is_finite() && *scale >= 0.0) {
-                return Err(ImagingError::InvalidRequest(
-                    "multiscale scales must be finite and >= 0 pixels".to_string(),
-                ));
-            }
-        }
-        if !(self.small_scale_bias.is_finite() && (-1.0..=1.0).contains(&self.small_scale_bias)) {
-            return Err(ImagingError::InvalidRequest(
-                "small_scale_bias must be finite and in the interval [-1, 1]".to_string(),
-            ));
-        }
-        if let Some(mask) = &self.clean_mask {
-            if mask.dim() != (self.geometry.nx(), self.geometry.ny()) {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "clean mask shape {:?} does not match image shape {:?}",
-                    mask.dim(),
-                    (self.geometry.nx(), self.geometry.ny())
-                )));
-            }
-        }
-        if let Some(mask) = &self.channel_clean_mask {
-            let expected = (
-                self.geometry.nx(),
-                self.geometry.ny(),
-                1,
-                self.channels.len(),
-            );
-            if mask.dim() != expected {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "channel clean mask shape {:?} does not match cube image shape {:?}",
-                    mask.dim(),
-                    expected
-                )));
-            }
-        }
-        if matches!(self.w_project_planes, Some(0)) {
-            return Err(ImagingError::InvalidRequest(
-                "w_project_planes must be >= 1 when provided".to_string(),
-            ));
-        }
-        if self.channels.is_empty() {
-            return Err(ImagingError::InvalidRequest(
-                "cube imaging requires at least one spectral plane".to_string(),
-            ));
-        }
-        let require_model_interpolation = self.clean.niter > 0;
-        for channel in &self.channels {
-            channel.validate(require_model_interpolation)?;
-        }
-        Ok(())
-    }
-}
-
 /// Restoring-beam parameters derived from the PSF main lobe.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BeamFit {
@@ -1666,8 +1746,10 @@ pub struct MinorCycleTrace {
     pub actual_updates: usize,
     /// Peak absolute residual at the start of the block.
     pub start_peak_residual_jy_per_beam: f32,
-    /// Peak absolute residual immediately after the block, before any exact
-    /// major-cycle residual refresh.
+    /// Peak absolute residual immediately after the block. Deconvolvers that
+    /// maintain an approximate residual report that value before the exact
+    /// major-cycle refresh; CASA-style Clark reports after the boundary refresh
+    /// because its minor cycle only updates active pixels and the delta model.
     pub end_peak_residual_jy_per_beam: f32,
     /// CASA-style `cyclethreshold` supplied to this block.
     pub cycle_threshold_jy_per_beam: f32,
@@ -1699,6 +1781,12 @@ pub struct ImagingDiagnostics {
     pub gridded_samples: usize,
     /// Number of scalar samples dropped during gridding setup.
     pub skipped_samples: usize,
+    /// Sum of weighted-sample contributions used for FFT/image normalization.
+    pub normalization_sumwt: f32,
+    /// CASA-style reported `sumwt` persisted for the primary output plane.
+    pub reported_sumwt: f32,
+    /// PSF peak measured after `normalization_sumwt` scaling and before unit-peak normalization.
+    pub psf_peak_normalization: f32,
     /// CASA-style major-cycle count for this plane.
     ///
     /// When CLEAN is requested, this follows CASA's external `nmajordone`
@@ -1796,18 +1884,35 @@ pub struct ImagingStageTimings {
     pub controller_overhead: Duration,
     /// Time spent applying geometry-dependent imaging weights and tapers.
     pub weighting: Duration,
+    /// Time spent building backend executor state, including reusable sample
+    /// plans and grid workspaces.
+    pub executor_build: Duration,
+    /// Time spent allocating and zero-initializing PSF grids.
+    pub psf_grid_alloc: Duration,
+    /// Time spent replaying/building planned scalar samples before grid updates.
+    pub planned_sample_replay: Duration,
+    /// Time spent in scalar grid-update loops after planned samples exist.
+    pub grid_update: Duration,
     /// Time spent gridding PSF/sample weights.
     pub psf_grid: Duration,
     /// Time spent FFTing the PSF grid.
     pub psf_fft: Duration,
+    /// Time spent copying/correcting the PSF image after FFT and before scalar
+    /// normalization.
+    pub psf_image_correction: Duration,
     /// Time spent applying PSF correction and normalization.
     pub psf_normalize: Duration,
     /// Time spent FFTing model images before degridding.
     pub model_fft: Duration,
+    /// Time spent allocating and zero-initializing residual grids.
+    pub residual_grid_alloc: Duration,
     /// Time spent degridding/gridding residual visibilities.
     pub residual_degrid_grid: Duration,
     /// Time spent FFTing residual grids back to image space.
     pub residual_fft: Duration,
+    /// Time spent copying/correcting the residual image after FFT and before
+    /// scalar normalization.
+    pub residual_image_correction: Duration,
     /// Time spent applying residual correction and normalization.
     pub residual_normalize: Duration,
     /// Time spent preparing CLEAN cycle thresholds, peaks, and candidates.
@@ -1818,6 +1923,44 @@ pub struct ImagingStageTimings {
     pub minor_cycle: Duration,
     /// Time spent inside the solver-specific minor-cycle loop.
     pub minor_cycle_solve: Duration,
+    /// Time spent searching for CLEAN components inside solver-specific minor
+    /// cycles.
+    pub deconvolver_peak_search: Duration,
+    /// Time spent collecting or rebuilding deconvolver-specific active sets.
+    pub deconvolver_active_set_build: Duration,
+    /// Time spent adding chosen components to model images.
+    pub deconvolver_model_update: Duration,
+    /// Time spent subtracting chosen components from residual-like solver
+    /// state.
+    pub deconvolver_psf_subtract: Duration,
+    /// Time spent replaying accumulated components into refreshed residual
+    /// state.
+    pub deconvolver_residual_replay: Duration,
+    /// Time spent in deconvolver-local convolution work.
+    pub deconvolver_fft_convolve: Duration,
+    /// Number of component-search operations performed inside deconvolvers.
+    pub deconvolver_peak_searches: u64,
+    /// Number of component/model updates performed inside deconvolvers.
+    pub deconvolver_model_updates: u64,
+    /// Number of residual-like subtraction updates performed inside
+    /// deconvolvers.
+    pub deconvolver_subtract_updates: u64,
+    /// Estimated scalar image pixels examined by deconvolver peak searches.
+    pub deconvolver_pixels_searched: u64,
+    /// Estimated scalar image pixels touched by deconvolver component updates.
+    pub deconvolver_pixels_touched: u64,
+    /// Number of deconvolver peak-search operations that covered the full
+    /// image extent.
+    pub deconvolver_full_window_peak_searches: u64,
+    /// Number of deconvolver subtraction operations that covered the full image
+    /// extent.
+    pub deconvolver_full_window_subtract_updates: u64,
+    /// Largest scalar image area examined by a single deconvolver peak-search
+    /// operation.
+    pub deconvolver_peak_search_window_pixels_max: u64,
+    /// Largest scalar image area touched by a single deconvolver subtraction
+    /// operation.
+    pub deconvolver_subtract_window_pixels_max: u64,
     /// Time spent recomputing the image residual during major-cycle refreshes.
     ///
     /// This is the aggregate wall time for each residual refresh and therefore
@@ -1843,17 +1986,39 @@ impl Default for ImagingStageTimings {
         Self {
             controller_overhead: Duration::ZERO,
             weighting: Duration::ZERO,
+            executor_build: Duration::ZERO,
+            psf_grid_alloc: Duration::ZERO,
+            planned_sample_replay: Duration::ZERO,
+            grid_update: Duration::ZERO,
             psf_grid: Duration::ZERO,
             psf_fft: Duration::ZERO,
+            psf_image_correction: Duration::ZERO,
             psf_normalize: Duration::ZERO,
             model_fft: Duration::ZERO,
+            residual_grid_alloc: Duration::ZERO,
             residual_degrid_grid: Duration::ZERO,
             residual_fft: Duration::ZERO,
+            residual_image_correction: Duration::ZERO,
             residual_normalize: Duration::ZERO,
             clean_cycle_setup: Duration::ZERO,
             deconvolver_setup: Duration::ZERO,
             minor_cycle: Duration::ZERO,
             minor_cycle_solve: Duration::ZERO,
+            deconvolver_peak_search: Duration::ZERO,
+            deconvolver_active_set_build: Duration::ZERO,
+            deconvolver_model_update: Duration::ZERO,
+            deconvolver_psf_subtract: Duration::ZERO,
+            deconvolver_residual_replay: Duration::ZERO,
+            deconvolver_fft_convolve: Duration::ZERO,
+            deconvolver_peak_searches: 0,
+            deconvolver_model_updates: 0,
+            deconvolver_subtract_updates: 0,
+            deconvolver_pixels_searched: 0,
+            deconvolver_pixels_touched: 0,
+            deconvolver_full_window_peak_searches: 0,
+            deconvolver_full_window_subtract_updates: 0,
+            deconvolver_peak_search_window_pixels_max: 0,
+            deconvolver_subtract_window_pixels_max: 0,
             major_cycle_refresh: Duration::ZERO,
             residual_refresh_overhead: Duration::ZERO,
             multiscale_scale_refresh: Duration::ZERO,
@@ -1901,6 +2066,23 @@ pub struct ImagingResult {
     /// Restoring beam fitted from the PSF, when the fit succeeds.
     pub beam: Option<BeamFit>,
     /// Diagnostics collected while building the products.
+    pub diagnostics: ImagingDiagnostics,
+    /// Declared metadata contract for downstream persistence.
+    pub compatibility: CompatibilityMetadata,
+}
+
+/// Result of a dirty-only imaging run that does not materialize clean products.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirtyImagingResult {
+    /// Normalized PSF cube with degenerate Stokes/Frequency axes.
+    pub psf: Array4<f32>,
+    /// Dirty residual cube with degenerate Stokes/Frequency axes.
+    pub residual: Array4<f32>,
+    /// CASA-style `sumwt` product stored as a single degenerate pixel.
+    pub sumwt: Array4<f32>,
+    /// Restoring beam fitted from the PSF, when the fit succeeds.
+    pub beam: Option<BeamFit>,
+    /// Diagnostics collected while building the dirty products.
     pub diagnostics: ImagingDiagnostics,
     /// Declared metadata contract for downstream persistence.
     pub compatibility: CompatibilityMetadata,
@@ -2315,4 +2497,161 @@ pub struct CubeImagingResult {
     pub diagnostics: CubeImagingDiagnostics,
     /// Declared metadata contract for downstream persistence.
     pub compatibility: CompatibilityMetadata,
+}
+
+#[cfg(test)]
+mod source_view_tests {
+    use super::*;
+
+    #[test]
+    fn columnar_source_view_validates_shape_and_routes() {
+        let partition = ImagingSourcePartition {
+            id: ImagingSourcePartitionId(0),
+            ms_id: 0,
+            data_desc_id: 3,
+            spectral_window_id: 4,
+            polarization_id: 5,
+            shape: ImagingSourceShape {
+                channel_count: 4,
+                correlation_count: 2,
+            },
+        };
+        let row_indices = [10usize, 11];
+        let data = vec![Complex32::new(1.0, 0.0); 8];
+        let flags = vec![false; 8];
+        let weights = vec![1.0f32; 4];
+        let uvw = vec![0.0f64; 6];
+        let flag_row = [false, true];
+        let source = ColumnarVisibilitySourceRef {
+            partition,
+            row_indices: &row_indices,
+            channel_start: 1,
+            channel_count: 2,
+            data: Some(ColumnarComplexSamplesRef::Complex32(&data)),
+            flags: Some(&flags),
+            weights: Some(ColumnarFloatSamplesRef::Float32(&weights)),
+            weight_spectrum: None,
+            uvw_m: Some(&uvw),
+            flag_row: Some(&flag_row),
+            antenna1: None,
+            antenna2: None,
+            field_ids: None,
+            time: None,
+        };
+        let spectral = SpectralRoutePlan {
+            channel_routes: vec![
+                SourceChannelRoute {
+                    source_channel: 1,
+                    output_planes: vec![OutputPlaneContribution {
+                        plane_index: 0,
+                        factor: 1.0,
+                    }],
+                },
+                SourceChannelRoute {
+                    source_channel: 2,
+                    output_planes: vec![OutputPlaneContribution {
+                        plane_index: 1,
+                        factor: 1.0,
+                    }],
+                },
+            ],
+        };
+        let polarization = PolarizationRoutePlan {
+            output_stokes: PlaneStokes::I,
+        };
+        let geometry = GeometryRoutePlan {
+            geometry: ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            },
+        };
+        let weighting = WeightingRoutePlan {
+            weighting: WeightingMode::Natural,
+        };
+        let gridder = GridderRoutePlan {
+            gridder_mode: GridderMode::Standard,
+        };
+        let view = ImagingSourceBlockView {
+            source,
+            spectral: &spectral,
+            polarization: &polarization,
+            geometry: &geometry,
+            weighting: &weighting,
+            gridder: &gridder,
+            model: None,
+        };
+
+        view.validate().unwrap();
+        assert_eq!(view.source.channel_range(), 1..3);
+        assert_eq!(view.source.channel_row_corr_index(1, 1, 1), 7);
+    }
+
+    #[test]
+    fn columnar_source_view_rejects_route_channel_mismatch() {
+        let partition = ImagingSourcePartition {
+            id: ImagingSourcePartitionId(0),
+            ms_id: 0,
+            data_desc_id: 3,
+            spectral_window_id: 4,
+            polarization_id: 5,
+            shape: ImagingSourceShape {
+                channel_count: 4,
+                correlation_count: 1,
+            },
+        };
+        let row_indices = [10usize];
+        let data = vec![Complex32::new(1.0, 0.0); 2];
+        let source = ColumnarVisibilitySourceRef {
+            partition,
+            row_indices: &row_indices,
+            channel_start: 0,
+            channel_count: 2,
+            data: Some(ColumnarComplexSamplesRef::Complex32(&data)),
+            flags: None,
+            weights: None,
+            weight_spectrum: None,
+            uvw_m: None,
+            flag_row: None,
+            antenna1: None,
+            antenna2: None,
+            field_ids: None,
+            time: None,
+        };
+        let spectral = SpectralRoutePlan {
+            channel_routes: vec![SourceChannelRoute {
+                source_channel: 0,
+                output_planes: Vec::new(),
+            }],
+        };
+        let polarization = PolarizationRoutePlan {
+            output_stokes: PlaneStokes::I,
+        };
+        let geometry = GeometryRoutePlan {
+            geometry: ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            },
+        };
+        let weighting = WeightingRoutePlan {
+            weighting: WeightingMode::Natural,
+        };
+        let gridder = GridderRoutePlan {
+            gridder_mode: GridderMode::Standard,
+        };
+        let view = ImagingSourceBlockView {
+            source,
+            spectral: &spectral,
+            polarization: &polarization,
+            geometry: &geometry,
+            weighting: &weighting,
+            gridder: &gridder,
+            model: None,
+        };
+
+        let error = view.validate().unwrap_err();
+        assert!(
+            error.to_string().contains("spectral route count"),
+            "{error}"
+        );
+    }
 }

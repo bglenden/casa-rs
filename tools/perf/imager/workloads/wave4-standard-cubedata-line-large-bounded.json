@@ -1,0 +1,50 @@
+{
+  "id": "wave4-standard-cubedata-line-large-bounded",
+  "mode_id": "standard-cubedata-line",
+  "description": "Wave 4 W4-14 large-MS standard-gridder cubedata dirty cube bounded row using the shared ALMA large dataset for planner and I/O calibration evidence.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "cubedata",
+    "gridder": "standard",
+    "interpolation": "nearest",
+    "field": "0",
+    "phasecenter_field": null,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 256,
+    "start": "0",
+    "width": "1",
+    "imsize": 4096,
+    "cell_arcsec": 0.08,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": false,
+    "deconvolver": "hogbom",
+    "nterms": 1,
+    "scales": "",
+    "niter": 0,
+    "minor_cycle_length": 2,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "w4-14-large-cubedata-bounded",
+    "storage_label": "external-ssd-wave1-large",
+    "ms_staging": "direct",
+    "skip_casa": "1",
+    "skip_profile": "1",
+    "stream_log": true,
+    "env": {
+      "CASA_RS_IMAGING_PROGRESS": "1"
+    }
+  },
+  "comparison": {
+    "products": [".image", ".residual", ".psf", ".sumwt"],
+    "max_elements_per_product": 1000000
+  }
+}

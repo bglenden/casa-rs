@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "wave_issue": 295,
+  "review_contract": {
+    "required_reviewer": "Brian",
+    "review_required_before_pr_ready": 314,
+    "required_evidence_roles": [
+      "serial_cpu",
+      "multi_worker_cpu",
+      "metal_default",
+      "casa_cpp",
+      "single_plane_stream_baseline",
+      "large_baseline"
+    ],
+    "allowed_target_statuses": [
+      "met",
+      "missed-accepted-by-Brian",
+      "not-applicable-accepted-by-Brian",
+      "blocked"
+    ],
+    "blocking_statuses": [
+      "blocked"
+    ]
+  },
+  "performance_targets": {
+    "multi_worker_speedup_vs_serial": 2.0,
+    "metal_speedup_vs_multi_worker_cpu": 1.5,
+    "desired_metal_speedup_vs_multi_worker_cpu": 2.0,
+    "default_speedup_vs_casa_for_medium_deconvolution": 10.0,
+    "dirty_backend_reduction_fraction": 0.25,
+    "mosaic_total_speedup_vs_single_plane_stream": 1.5
+  },
+  "closeout_table_columns": [
+    "mode_family",
+    "phase",
+    "deconvolver",
+    "dataset_tier",
+    "shape",
+    "niter",
+    "serial_single_worker_s",
+    "multi_worker_cpu_auto_s",
+    "metal_default_s",
+    "casa_s",
+    "speedup_auto_vs_serial",
+    "speedup_metal_vs_multi_worker_cpu",
+    "speedup_default_vs_casa",
+    "worker_count",
+    "selected_backend",
+    "metal_status",
+    "correctness_status",
+    "target_status",
+    "evidence_link",
+    "performance_evidence_link",
+    "correctness_evidence_link"
+  ],
+  "rows": [
+    {
+      "row_id": "standard_cube_dirty",
+      "owner_issue": 311,
+      "mode_family": "standard cube",
+      "phase": "dirty",
+      "deconvolver": "none",
+      "specmode": "cube",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt"],
+      "multi_worker_requirement": "plane or batch workers",
+      "metal_requirement": "Metal/batched eligibility or measured rejection",
+      "required_speedups": ["auto_vs_serial", "default_vs_casa_or_large_baseline"]
+    },
+    {
+      "row_id": "standard_cube_clean_hogbom",
+      "owner_issue": 318,
+      "mode_family": "standard cube",
+      "phase": "clean",
+      "deconvolver": "hogbom",
+      "specmode": "cube",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+      "multi_worker_requirement": "plane workers first",
+      "metal_requirement": "grouped Metal default when eligible",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-06-17",
+        "reason": "Brian reviewed the regenerated standard cube Hogbom .image, .residual, .model, .psf, and .sumwt panels after the CASA-style restore edge fix and accepted the remaining model/residual component-order divergence for Wave 4. Metal-vs-multi-worker CPU target is met, but default-vs-CASA remains below the 10x target."
+      }
+    },
+    {
+      "row_id": "standard_cube_clean_clark",
+      "owner_issue": 318,
+      "mode_family": "standard cube",
+      "phase": "clean",
+      "deconvolver": "clark",
+      "specmode": "cube",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+      "multi_worker_requirement": "plane workers first",
+      "metal_requirement": "grouped Metal default when eligible",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["investigate"],
+        "reviewed_on": "2026-06-17",
+        "reason": "Brian reviewed the standard cube Clark .image, .residual, restored .model, .psf, and .sumwt panels and accepted the small structured .image/.residual differences for Wave 4. CASA speed target is met, but Metal-vs-multi-worker CPU remains below the 1.5x target."
+      }
+    },
+    {
+      "row_id": "standard_cube_clean_multiscale",
+      "owner_issue": 318,
+      "mode_family": "standard cube",
+      "phase": "clean",
+      "deconvolver": "multiscale",
+      "specmode": "cube",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+      "multi_worker_requirement": "plane workers first",
+      "metal_requirement": "grouped Metal default when eligible",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the measured deep multiscale correctness/performance misses as accepted Wave 4 residuals rather than changing thresholds."
+      }
+    },
+    {
+      "row_id": "cubedata_dirty",
+      "owner_issue": 311,
+      "mode_family": "cubedata",
+      "phase": "dirty",
+      "deconvolver": "none",
+      "specmode": "cubedata",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt"],
+      "multi_worker_requirement": "plane or batch workers",
+      "metal_requirement": "Metal/batched eligibility or measured rejection",
+      "required_speedups": ["auto_vs_serial", "default_vs_casa_or_large_baseline"]
+    },
+    {
+      "row_id": "cubedata_clean_hogbom",
+      "owner_issue": 315,
+      "mode_family": "cubedata",
+      "phase": "clean",
+      "deconvolver": "hogbom",
+      "specmode": "cubedata",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+      "multi_worker_requirement": "plane workers first",
+      "metal_requirement": "grouped Metal/default or explicit rejection",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the measured cubedata Hogbom correctness/performance misses as accepted Wave 4 residuals rather than changing thresholds."
+      }
+    },
+    {
+      "row_id": "cubedata_clean_clark",
+      "owner_issue": 315,
+      "mode_family": "cubedata",
+      "phase": "clean",
+      "deconvolver": "clark",
+      "specmode": "cubedata",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+      "multi_worker_requirement": "plane workers first",
+      "metal_requirement": "grouped Metal/default or explicit rejection",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["investigate"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the measured cubedata Clark investigate-level correctness status and Metal-vs-CPU miss as accepted Wave 4 residuals."
+      }
+    },
+    {
+      "row_id": "cubedata_clean_multiscale",
+      "owner_issue": 315,
+      "mode_family": "cubedata",
+      "phase": "clean",
+      "deconvolver": "multiscale",
+      "specmode": "cubedata",
+      "gridder": "standard",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+      "multi_worker_requirement": "plane workers first",
+      "metal_requirement": "grouped Metal/default or explicit rejection",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the measured cubedata multiscale correctness/performance misses as accepted Wave 4 residuals rather than changing thresholds."
+      }
+    },
+    {
+      "row_id": "mosaic_cube_dirty",
+      "owner_issue": 317,
+      "mode_family": "mosaic cube",
+      "phase": "dirty",
+      "deconvolver": "none",
+      "specmode": "cube",
+      "gridder": "mosaic",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".weight", ".pb", ".image.pbcor"],
+      "multi_worker_requirement": "true multi-plane slab workers",
+      "metal_requirement": "Metal/batched eligibility or measured rejection",
+      "required_speedups": ["auto_vs_single_plane_stream", "default_vs_casa_or_large_baseline"]
+    },
+    {
+      "row_id": "mosaic_cube_clean_hogbom",
+      "owner_issue": 316,
+      "mode_family": "mosaic cube",
+      "phase": "clean",
+      "deconvolver": "hogbom",
+      "specmode": "cube",
+      "gridder": "mosaic",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".weight", ".pb", ".image.pbcor", ".model"],
+      "multi_worker_requirement": "true multi-plane slab workers",
+      "metal_requirement": "Metal/default or explicit PB-aware rejection",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["investigate"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the small-row mosaic Hogbom correctness/performance misses as accepted Wave 4 residuals."
+      }
+    },
+    {
+      "row_id": "mosaic_cube_clean_clark",
+      "owner_issue": 316,
+      "mode_family": "mosaic cube",
+      "phase": "clean",
+      "deconvolver": "clark",
+      "specmode": "cube",
+      "gridder": "mosaic",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".weight", ".pb", ".image.pbcor", ".model"],
+      "multi_worker_requirement": "true multi-plane slab workers",
+      "metal_requirement": "Metal/default or explicit PB-aware rejection",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the small-row mosaic Clark correctness/performance misses as accepted Wave 4 residuals."
+      }
+    },
+    {
+      "row_id": "mosaic_cube_clean_multiscale",
+      "owner_issue": 316,
+      "mode_family": "mosaic cube",
+      "phase": "clean",
+      "deconvolver": "multiscale",
+      "specmode": "cube",
+      "gridder": "mosaic",
+      "products": [".image", ".residual", ".psf", ".sumwt", ".weight", ".pb", ".image.pbcor", ".model"],
+      "multi_worker_requirement": "true multi-plane slab workers",
+      "metal_requirement": "Metal/default or explicit PB-aware rejection",
+      "required_speedups": ["auto_vs_serial", "metal_vs_multi_worker_cpu", "default_vs_casa"],
+      "brian_acceptance": {
+        "target_status": "missed-accepted-by-Brian",
+        "correctness_statuses": ["bad"],
+        "reviewed_on": "2026-07-02",
+        "reason": "Brian accepted the remaining blocked clean rows for Wave 4 closeout. This row retains the small-row mosaic multiscale correctness/performance misses as accepted Wave 4 residuals."
+      }
+    }
+  ]
+}

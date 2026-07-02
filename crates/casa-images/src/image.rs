@@ -22,13 +22,13 @@ use casa_lattices::{
 };
 use casa_tables::{
     ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema, TilePixel,
-    TiledFileIO,
+    TiledFileIO, TiledFileIoStats,
 };
 use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
     Value,
 };
-use ndarray::{IxDyn, Slice, SliceInfoElem};
+use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 
 use crate::error::ImageError;
 use crate::image_expr::ImageExpr;
@@ -923,21 +923,25 @@ impl<T: ImagePixel> PagedImage<T> {
             Value::Array(to_array_value(&placeholder)),
         )]))?;
 
-        // Save the table skeleton to create the directory.
-        // Use default DM (StManAipsIO) since our pixel data is in the TSM file
-        // managed by TiledFileIO, not in the table cell.
-        table.save(TableOptions::new(&path))?;
+        // Save the table skeleton with a CASA-visible tiled data manager for
+        // the map column. TiledFileIO overwrites this same DM sequence below
+        // with the full target cube shape while avoiding a full in-memory map.
+        table.save(
+            TableOptions::new(&path)
+                .with_data_manager(DataManagerKind::TiledCellStMan)
+                .with_tile_shape(tile_shape.clone()),
+        )?;
 
         // Create the TiledFileIO which writes the TSM header + allocates
-        // a zeroed data file. Use dm_seq_nr=1 to avoid conflict with the
-        // StManAipsIO data manager at seq_nr=0.
+        // a zeroed data file for the same TiledCellStMan sequence registered
+        // in table.dat.
         let tiled_io = TiledFileIO::create(
             &path,
             &shape,
             &tile_shape,
             T::PRIMITIVE_TYPE,
             cfg!(target_endian = "big"), // native endian, matching C++ default
-            1,                           // dm_seq_nr=1 avoids conflict with StManAipsIO at 0
+            0,
             MAP_COLUMN,
         )
         .map_err(|e| ImageError::Io(e.to_string()))?;
@@ -996,7 +1000,11 @@ impl<T: ImagePixel> PagedImage<T> {
             MAP_COLUMN,
             Value::Array(to_array_value(&placeholder)),
         )]))?;
-        table.save(TableOptions::new(&path))?;
+        table.save(
+            TableOptions::new(&path)
+                .with_data_manager(DataManagerKind::TiledCellStMan)
+                .with_tile_shape(tile_shape.clone()),
+        )?;
 
         let tiled_io = TiledFileIO::create_with_cache_limit(
             &path,
@@ -1004,7 +1012,7 @@ impl<T: ImagePixel> PagedImage<T> {
             &tile_shape,
             T::PRIMITIVE_TYPE,
             cfg!(target_endian = "big"),
-            1,
+            0,
             MAP_COLUMN,
             max_cache_bytes,
         )
@@ -1283,6 +1291,29 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Writes a full-value slice at the given start position.
     pub fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), ImageError> {
         <Self as LatticeMut<T>>::put_slice(self, data, start).map_err(Into::into)
+    }
+
+    /// Writes a borrowed full-value slice at the given start position.
+    pub fn put_slice_view(
+        &mut self,
+        data: ArrayViewD<'_, T>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        paged_image_put_slice_view(self, data, start).map_err(Into::into)
+    }
+
+    /// Returns current tiled-I/O diagnostic counters for this image.
+    pub fn tiled_io_stats(&self) -> Option<TiledFileIoStats> {
+        self.tiled_io
+            .as_ref()
+            .map(|tiled_io| tiled_io.borrow().io_stats())
+    }
+
+    /// Clears tiled-I/O diagnostic counters for this image.
+    pub fn reset_tiled_io_stats(&mut self) {
+        if let Some(tiled_io) = &self.tiled_io {
+            tiled_io.borrow_mut().reset_io_stats();
+        }
     }
 
     /// Writes a single pixel.
@@ -1723,6 +1754,55 @@ impl<T: ImagePixel> PagedImage<T> {
             Self::write_mask_table(path, name, data)?;
         } else {
             self.temp_masks.insert(name.to_string(), data.clone());
+        }
+        self.persistent_masks.borrow_mut().remove(name);
+        Ok(())
+    }
+
+    /// Writes a rectangular slice into a named mask.
+    ///
+    /// If the mask does not exist yet, it is created with all pixels initialized
+    /// to false before writing the supplied slice.
+    pub fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(&self.shape, data.shape(), start)?;
+        let table_ref = match &self.path {
+            Some(path) => mask_table_reference(path, name),
+            None => name.to_string(),
+        };
+        let record = make_paged_mask_record(&table_ref, &self.shape);
+        let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
+        };
+        masks.upsert(name, Value::Record(record));
+        self.table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+
+        if let Some(path) = &self.path {
+            let mask_path = resolve_mask_table_path(path, &table_ref);
+            if !mask_path.exists() {
+                let mut mask =
+                    PagedArray::<bool>::create(TiledShape::new(self.shape.clone()), &mask_path)
+                        .map_err(ImageError::from)?;
+                mask.put_slice(data, start)?;
+                mask.flush().map_err(ImageError::from)?;
+            } else {
+                let mut mask = PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?;
+                mask.put_slice(data, start)?;
+                mask.flush().map_err(ImageError::from)?;
+            }
+        } else {
+            let mask = self
+                .temp_masks
+                .entry(name.to_string())
+                .or_insert_with(|| ArrayD::from_elem(IxDyn(&self.shape), false));
+            assign_mask_slice(mask, data, start)?;
         }
         self.persistent_masks.borrow_mut().remove(name);
         Ok(())
@@ -2280,6 +2360,91 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
     }
 }
 
+fn paged_image_put_slice_view<T: ImagePixel>(
+    image: &mut PagedImage<T>,
+    data: ArrayViewD<'_, T>,
+    start: &[usize],
+) -> Result<(), LatticeError> {
+    if start.len() != image.shape.len() {
+        return Err(LatticeError::NdimMismatch {
+            expected: image.shape.len(),
+            got: start.len(),
+        });
+    }
+    let end: Vec<usize> = start
+        .iter()
+        .zip(data.shape().iter())
+        .map(|(&s, &n)| s + n)
+        .collect();
+    for (&limit, &dim) in end.iter().zip(image.shape.iter()) {
+        if limit > dim {
+            return Err(LatticeError::ShapeMismatch {
+                expected: image.shape.clone(),
+                got: end,
+            });
+        }
+    }
+    if let Some(ref tio) = image.tiled_io {
+        if view_is_fortran_contiguous(&data)
+            && let Some(slice) = data.as_slice_memory_order()
+            && tio
+                .borrow_mut()
+                .put_aligned_fortran_order_tiles::<T>(slice, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?
+        {
+            return Ok(());
+        }
+        if let Some(slice) = data.as_slice()
+            && tio
+                .borrow_mut()
+                .put_aligned_c_order_tiles::<T>(slice, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?
+        {
+            return Ok(());
+        }
+        let fortran_view = data.t();
+        if let Some(s) = fortran_view.as_slice() {
+            tio.borrow_mut()
+                .put_slice_fortran::<T>(s, start, data.shape())
+                .map_err(|e| LatticeError::Table(e.to_string()))?;
+            return Ok(());
+        }
+        let contiguous = data.as_standard_layout();
+        let slice = contiguous.as_slice().expect("contiguous C-order data");
+        tio.borrow_mut()
+            .put_slice_c_order::<T>(slice, start, data.shape())
+            .map_err(|e| LatticeError::Table(e.to_string()))?;
+        return Ok(());
+    }
+    let mut array = image
+        .read_array()
+        .map_err(|e| LatticeError::Table(e.to_string()))?;
+    {
+        let mut view = array.slice_each_axis_mut(|axis| {
+            let idx = axis.axis.index();
+            Slice::from(start[idx] as isize..end[idx] as isize)
+        });
+        view.assign(&data);
+    }
+    image
+        .write_array(&array)
+        .map_err(|e| LatticeError::Table(e.to_string()))
+}
+
+fn view_is_fortran_contiguous<T>(data: &ArrayViewD<'_, T>) -> bool {
+    let mut expected = 1isize;
+    for (&dim, &stride) in data.shape().iter().zip(data.strides()) {
+        if dim <= 1 {
+            continue;
+        }
+        if stride != expected {
+            return false;
+        }
+        expected = expected.saturating_mul(dim as isize);
+    }
+    true
+}
+
 impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
     fn with_traversal_cache_hint_mut<R>(
         &mut self,
@@ -2339,55 +2504,7 @@ impl<T: ImagePixel> LatticeMut<T> for PagedImage<T> {
     }
 
     fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), LatticeError> {
-        if start.len() != self.shape.len() {
-            return Err(LatticeError::NdimMismatch {
-                expected: self.shape.len(),
-                got: start.len(),
-            });
-        }
-        let end: Vec<usize> = start
-            .iter()
-            .zip(data.shape().iter())
-            .map(|(&s, &n)| s + n)
-            .collect();
-        for (&limit, &dim) in end.iter().zip(self.shape.iter()) {
-            if limit > dim {
-                return Err(LatticeError::ShapeMismatch {
-                    expected: self.shape.clone(),
-                    got: end,
-                });
-            }
-        }
-        // Tile-aware path.
-        if let Some(ref tio) = self.tiled_io {
-            // Try Fortran-contiguous first (zero-copy fast path).
-            let fortran_view = data.t();
-            if let Some(s) = fortran_view.as_slice() {
-                tio.borrow_mut()
-                    .put_slice_fortran::<T>(s, start, data.shape())
-                    .map_err(|e| LatticeError::Table(e.to_string()))?;
-                return Ok(());
-            }
-            // C-order input: use the C-order put method.
-            let contiguous = data.as_standard_layout();
-            let slice = contiguous.as_slice().expect("contiguous C-order data");
-            tio.borrow_mut()
-                .put_slice_c_order::<T>(slice, start, data.shape())
-                .map_err(|e| LatticeError::Table(e.to_string()))?;
-            return Ok(());
-        }
-        let mut array = self
-            .read_array()
-            .map_err(|e| LatticeError::Table(e.to_string()))?;
-        {
-            let mut view = array.slice_each_axis_mut(|axis| {
-                let idx = axis.axis.index();
-                Slice::from(start[idx] as isize..end[idx] as isize)
-            });
-            view.assign(data);
-        }
-        self.write_array(&array)
-            .map_err(|e| LatticeError::Table(e.to_string()))
+        paged_image_put_slice_view(self, data.view(), start)
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
@@ -2518,6 +2635,53 @@ fn slice_mask_array(
     Ok(view.to_owned())
 }
 
+fn validate_mask_slice_write(
+    full_shape: &[usize],
+    data_shape: &[usize],
+    start: &[usize],
+) -> Result<(), ImageError> {
+    if start.len() != full_shape.len() || data_shape.len() != full_shape.len() {
+        return Err(ImageError::ShapeMismatch {
+            expected: full_shape.to_vec(),
+            got: data_shape.to_vec(),
+        });
+    }
+    for axis in 0..full_shape.len() {
+        let Some(end) = start[axis].checked_add(data_shape[axis]) else {
+            return Err(ImageError::ShapeMismatch {
+                expected: full_shape.to_vec(),
+                got: start.to_vec(),
+            });
+        };
+        if end > full_shape[axis] {
+            return Err(ImageError::ShapeMismatch {
+                expected: full_shape.to_vec(),
+                got: start.to_vec(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn assign_mask_slice(
+    mask: &mut ArrayD<bool>,
+    data: &ArrayD<bool>,
+    start: &[usize],
+) -> Result<(), ImageError> {
+    validate_mask_slice_write(mask.shape(), data.shape(), start)?;
+    let slice_info: Vec<SliceInfoElem> = start
+        .iter()
+        .zip(data.shape().iter())
+        .map(|(&s, &n)| SliceInfoElem::Slice {
+            start: s as isize,
+            end: Some((s + n) as isize),
+            step: 1,
+        })
+        .collect();
+    mask.slice_mut(slice_info.as_slice()).assign(data);
+    Ok(())
+}
+
 fn to_array_value<T: ImagePixel>(array: &ArrayD<T>) -> ArrayValue {
     if TypeId::of::<T>() == TypeId::of::<f32>() {
         let array = unsafe_cast_ref::<T, f32>(array);
@@ -2575,7 +2739,7 @@ pub fn image_pixel_type(path: impl AsRef<Path>) -> Result<ImagePixelType, ImageE
 mod tests {
     use super::*;
     use casa_lattices::LatticeError;
-    use ndarray::Dimension;
+    use ndarray::{Dimension, ShapeBuilder};
 
     fn make_coords() -> CoordinateSystem {
         CoordinateSystem::new()
@@ -2691,6 +2855,172 @@ mod tests {
         assert_eq!(reopened.history().unwrap(), vec!["hello".to_string()]);
         assert_eq!(reopened.default_mask_name().as_deref(), Some("mask0"));
         assert_eq!(image_pixel_type(&path).unwrap(), ImagePixelType::Float32);
+    }
+
+    #[test]
+    fn put_slice_view_writes_borrowed_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.image");
+        let mut image = PagedImage::<f32>::create(vec![4, 4], make_coords(), &path).unwrap();
+        let data = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+
+        image.put_slice_view(data.view(), &[1, 1]).unwrap();
+
+        let observed = image
+            .get_slice(&[1, 1], &[2, 2])
+            .unwrap()
+            .into_raw_vec_and_offset()
+            .0;
+        assert_eq!(observed, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_aligned_tiled_plane() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-plane.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 2],
+            vec![2, 2, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let values = (0..16).map(|value| value as f32).collect::<Vec<_>>();
+        let data = ArrayD::from_shape_vec(IxDyn(&[4, 4, 1, 1]), values.clone()).unwrap();
+
+        image.put_slice_view(data.view(), &[0, 0, 0, 1]).unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 4);
+        assert_eq!(stats.direct_tile_write_bytes, 64);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 1]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                assert_eq!(observed[IxDyn(&[x, y, 0, 0])], data[IxDyn(&[x, y, 0, 0])]);
+            }
+        }
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_fortran_aligned_tiled_plane() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-fortran-plane.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 2],
+            vec![2, 2, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let mut data = ndarray::Array4::<f32>::zeros((4, 4, 1, 1).f());
+        for x in 0..4 {
+            for y in 0..4 {
+                data[(x, y, 0, 0)] = (x * 10 + y) as f32;
+            }
+        }
+
+        image
+            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+            .unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 4);
+        assert_eq!(stats.direct_tile_write_bytes, 64);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        assert_eq!(stats.put_slice_fortran_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 1]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                assert_eq!(observed[IxDyn(&[x, y, 0, 0])], data[(x, y, 0, 0)]);
+            }
+        }
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_fortran_whole_plane_without_pack_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-fortran-whole-plane.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 2],
+            vec![4, 4, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let mut data = ndarray::Array4::<f32>::zeros((4, 4, 1, 1).f());
+        for x in 0..4 {
+            for y in 0..4 {
+                data[(x, y, 0, 0)] = (x * 10 + y) as f32;
+            }
+        }
+
+        image
+            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+            .unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 1);
+        assert_eq!(stats.direct_tile_write_bytes, 64);
+        assert_eq!(stats.direct_tile_pack_ns, 0);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        assert_eq!(stats.put_slice_fortran_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 1]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                assert_eq!(observed[IxDyn(&[x, y, 0, 0])], data[(x, y, 0, 0)]);
+            }
+        }
+    }
+
+    #[test]
+    fn put_slice_view_direct_writes_fortran_aligned_tiled_plane_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("direct-fortran-plane-group.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 4],
+            vec![2, 2, 1, 1],
+            make_coords(),
+            &path,
+            16,
+        )
+        .unwrap();
+        let mut data = ndarray::Array4::<f32>::zeros((4, 4, 1, 3).f());
+        for x in 0..4 {
+            for y in 0..4 {
+                for channel in 0..3 {
+                    data[(x, y, 0, channel)] = (channel * 100 + x * 10 + y) as f32;
+                }
+            }
+        }
+
+        image
+            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 1])
+            .unwrap();
+
+        let stats = image.tiled_io_stats().expect("tile io stats");
+        assert_eq!(stats.direct_tile_write_calls, 1);
+        assert_eq!(stats.direct_tile_write_tiles, 12);
+        assert_eq!(stats.direct_tile_write_bytes, 192);
+        assert_eq!(stats.put_slice_c_order_calls, 0);
+        assert_eq!(stats.put_slice_fortran_calls, 0);
+        let observed = image.get_slice(&[0, 0, 0, 1], &[4, 4, 1, 3]).unwrap();
+        for x in 0..4 {
+            for y in 0..4 {
+                for channel in 0..3 {
+                    assert_eq!(
+                        observed[IxDyn(&[x, y, 0, channel])],
+                        data[(x, y, 0, channel)]
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -2821,6 +3151,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tiled_io_image_registers_casa_visible_data_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiled_dm.image");
+        let mut img = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![16, 16, 1, 4],
+            vec![8, 8, 1, 2],
+            make_coords(),
+            &path,
+            4096,
+        )
+        .unwrap();
+        img.put_slice(
+            &ArrayD::from_shape_vec(IxDyn(&[16, 16, 1, 1]), vec![1.0; 16 * 16]).unwrap(),
+            &[0, 0, 0, 2],
+        )
+        .unwrap();
+        img.save().unwrap();
+
+        let table = Table::open(TableOptions::new(&path)).unwrap();
+        let map_dm = table
+            .data_manager_info()
+            .iter()
+            .find(|dm| dm.columns.iter().any(|column| column == MAP_COLUMN))
+            .expect("map data manager");
+        assert_eq!(map_dm.dm_type, "TiledCellStMan");
+        assert_eq!(map_dm.seq_nr, 0);
+
+        let reopened = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(reopened.shape(), &[16, 16, 1, 4]);
+        let plane = reopened.get_slice(&[0, 0, 0, 2], &[16, 16, 1, 1]).unwrap();
+        assert!(plane.iter().all(|value| *value == 1.0));
     }
 
     #[test]
@@ -3071,6 +3435,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn paged_image_mask_slice_write_creates_persistent_mask_without_full_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_slice_write.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape(
+            vec![4, 4, 1, 3],
+            vec![4, 4, 1, 1],
+            make_coords(),
+            &path,
+        )
+        .unwrap();
+        let plane_mask = ArrayD::from_shape_fn(IxDyn(&[2, 2, 1, 1]), |idx| idx[0] == idx[1]);
+        image
+            .put_mask_slice("mask0", &plane_mask, &[1, 1, 0, 2])
+            .unwrap();
+        image.set_default_mask("mask0").unwrap();
+        image.save().unwrap();
+
+        let reopened = PagedImage::<f32>::open_with_cache(&path, 256).unwrap();
+        assert_eq!(reopened.default_mask_name().as_deref(), Some("mask0"));
+        let written = reopened
+            .get_mask_slice(&[1, 1, 0, 2], &[2, 2, 1, 1], &[1, 1, 1, 1])
+            .unwrap()
+            .unwrap();
+        assert_eq!(written, plane_mask);
+        let untouched = reopened
+            .get_mask_slice(&[0, 0, 0, 0], &[4, 4, 1, 1], &[1, 1, 1, 1])
+            .unwrap()
+            .unwrap();
+        assert!(untouched.iter().all(|value| !*value));
     }
 
     #[test]

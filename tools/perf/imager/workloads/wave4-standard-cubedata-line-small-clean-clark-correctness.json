@@ -1,0 +1,46 @@
+{
+  "id": "wave4-standard-cubedata-line-small-clean-clark-correctness",
+  "mode_id": "standard-cubedata-line-clean-clark-niter2-small",
+  "description": "Wave 4 W4-20 small full-channel standard-gridder cubedata Clark clean workload for CASA shape/correctness coverage.",
+  "dataset": {
+    "key": "wave1-vla-single-small",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/vla/single/small/ms/wave1-vla-single-small.ms"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cubedata",
+    "gridder": "standard",
+    "interpolation": "nearest",
+    "field": "0",
+    "phasecenter_field": null,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 24,
+    "start": "0",
+    "width": "1",
+    "imsize": 512,
+    "cell_arcsec": 0.35,
+    "weighting": "natural",
+    "robust": 0.5,
+    "perchanweightdensity": false,
+    "deconvolver": "clark",
+    "nterms": 1,
+    "scales": "",
+    "niter": 2,
+    "minor_cycle_length": 2,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 1,
+    "profile_repeats": 1,
+    "phase_probe": "0",
+    "skip_profile": "1",
+    "run_label": "w4-20-cubedata-clark-small-correctness",
+    "storage_label": "well-below-memory"
+  },
+  "comparison": {
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model"],
+    "max_elements_per_product": 1000000
+  }
+}

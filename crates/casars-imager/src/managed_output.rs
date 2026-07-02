@@ -270,11 +270,31 @@ impl ManagedImagingOutput {
                             result.run.stage_timings.weighting_ns,
                         ),
                         (
+                            "executor_build".to_string(),
+                            result.run.stage_timings.executor_build_ns,
+                        ),
+                        (
                             "major_cycle_refresh".to_string(),
                             result.run.stage_timings.major_cycle_refresh_ns,
                         ),
+                        (
+                            "psf_grid_alloc".to_string(),
+                            result.run.stage_timings.psf_grid_alloc_ns,
+                        ),
+                        (
+                            "planned_sample_replay".to_string(),
+                            result.run.stage_timings.planned_sample_replay_ns,
+                        ),
+                        (
+                            "grid_update".to_string(),
+                            result.run.stage_timings.grid_update_ns,
+                        ),
                         ("psf_grid".to_string(), result.run.stage_timings.psf_grid_ns),
                         ("psf_fft".to_string(), result.run.stage_timings.psf_fft_ns),
+                        (
+                            "psf_image_correction".to_string(),
+                            result.run.stage_timings.psf_image_correction_ns,
+                        ),
                         (
                             "psf_normalize".to_string(),
                             result.run.stage_timings.psf_normalize_ns,
@@ -284,12 +304,20 @@ impl ManagedImagingOutput {
                             result.run.stage_timings.model_fft_ns,
                         ),
                         (
+                            "residual_grid_alloc".to_string(),
+                            result.run.stage_timings.residual_grid_alloc_ns,
+                        ),
+                        (
                             "residual_degrid_grid".to_string(),
                             result.run.stage_timings.residual_degrid_grid_ns,
                         ),
                         (
                             "residual_fft".to_string(),
                             result.run.stage_timings.residual_fft_ns,
+                        ),
+                        (
+                            "residual_image_correction".to_string(),
+                            result.run.stage_timings.residual_image_correction_ns,
                         ),
                         (
                             "residual_normalize".to_string(),
@@ -398,6 +426,10 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.weighting.as_nanos() as u64,
             ),
             (
+                "executor_build".to_string(),
+                summary.stage_timings.executor_build.as_nanos() as u64,
+            ),
+            (
                 "major_cycle_refresh".to_string(),
                 summary.stage_timings.major_cycle_refresh.as_nanos() as u64,
             ),
@@ -418,12 +450,28 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.multiscale_scale_refresh.as_nanos() as u64,
             ),
             (
+                "psf_grid_alloc".to_string(),
+                summary.stage_timings.psf_grid_alloc.as_nanos() as u64,
+            ),
+            (
+                "planned_sample_replay".to_string(),
+                summary.stage_timings.planned_sample_replay.as_nanos() as u64,
+            ),
+            (
+                "grid_update".to_string(),
+                summary.stage_timings.grid_update.as_nanos() as u64,
+            ),
+            (
                 "psf_grid".to_string(),
                 summary.stage_timings.psf_grid.as_nanos() as u64,
             ),
             (
                 "psf_fft".to_string(),
                 summary.stage_timings.psf_fft.as_nanos() as u64,
+            ),
+            (
+                "psf_image_correction".to_string(),
+                summary.stage_timings.psf_image_correction.as_nanos() as u64,
             ),
             (
                 "psf_normalize".to_string(),
@@ -434,12 +482,20 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.model_fft.as_nanos() as u64,
             ),
             (
+                "residual_grid_alloc".to_string(),
+                summary.stage_timings.residual_grid_alloc.as_nanos() as u64,
+            ),
+            (
                 "residual_degrid_grid".to_string(),
                 summary.stage_timings.residual_degrid_grid.as_nanos() as u64,
             ),
             (
                 "residual_fft".to_string(),
                 summary.stage_timings.residual_fft.as_nanos() as u64,
+            ),
+            (
+                "residual_image_correction".to_string(),
+                summary.stage_timings.residual_image_correction.as_nanos() as u64,
             ),
             (
                 "residual_normalize".to_string(),
@@ -683,6 +739,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -698,17 +755,39 @@ mod tests {
         let stage_timings = ImagingStageTimings {
             controller_overhead: Duration::from_nanos(11),
             weighting: Duration::from_nanos(12),
+            executor_build: Duration::from_nanos(28),
+            psf_grid_alloc: Duration::from_nanos(29),
+            planned_sample_replay: Duration::from_nanos(33),
+            grid_update: Duration::from_nanos(34),
             psf_grid: Duration::from_nanos(13),
             psf_fft: Duration::from_nanos(14),
+            psf_image_correction: Duration::from_nanos(30),
             psf_normalize: Duration::from_nanos(15),
             model_fft: Duration::from_nanos(16),
+            residual_grid_alloc: Duration::from_nanos(31),
             residual_degrid_grid: Duration::from_nanos(15),
             residual_fft: Duration::from_nanos(16),
+            residual_image_correction: Duration::from_nanos(32),
             residual_normalize: Duration::from_nanos(17),
             clean_cycle_setup: Duration::from_nanos(24),
             deconvolver_setup: Duration::from_nanos(25),
             minor_cycle: Duration::from_nanos(18),
             minor_cycle_solve: Duration::from_nanos(19),
+            deconvolver_peak_search: Duration::from_nanos(35),
+            deconvolver_active_set_build: Duration::from_nanos(36),
+            deconvolver_model_update: Duration::from_nanos(37),
+            deconvolver_psf_subtract: Duration::from_nanos(38),
+            deconvolver_residual_replay: Duration::from_nanos(39),
+            deconvolver_fft_convolve: Duration::from_nanos(40),
+            deconvolver_peak_searches: 41,
+            deconvolver_model_updates: 42,
+            deconvolver_subtract_updates: 43,
+            deconvolver_pixels_searched: 44,
+            deconvolver_pixels_touched: 45,
+            deconvolver_full_window_peak_searches: 46,
+            deconvolver_full_window_subtract_updates: 47,
+            deconvolver_peak_search_window_pixels_max: 48,
+            deconvolver_subtract_window_pixels_max: 49,
             major_cycle_refresh: Duration::from_nanos(20),
             residual_refresh_overhead: Duration::from_nanos(26),
             multiscale_scale_refresh: Duration::from_nanos(27),
@@ -785,6 +864,7 @@ mod tests {
             .iter()
             .cloned()
             .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(stage_timings["executor_build"], 28);
         assert_eq!(stage_timings["psf_normalize"], 15);
         assert_eq!(stage_timings["model_fft"], 16);
         assert_eq!(stage_timings["minor_cycle"], 18);
@@ -883,6 +963,7 @@ mod tests {
                 standard_mfs_tile_anchor: None,
                 standard_mfs_residual_backend: None,
                 standard_mfs_initial_dirty_backend: None,
+                standard_mfs_metal_minor_cycle_chunk: None,
                 standard_mfs_metal_grouped_input_cache: None,
                 standard_mfs_memory_target_mb: None,
                 standard_mfs_prepare_buffer_mb: None,
@@ -905,19 +986,26 @@ mod tests {
                 stage_timings: crate::ImagerCoreStageTimings {
                     controller_overhead_ns: 1,
                     weighting_ns: 2,
-                    psf_grid_ns: 3,
-                    psf_fft_ns: 4,
-                    psf_normalize_ns: 5,
-                    model_fft_ns: 6,
-                    residual_degrid_grid_ns: 7,
-                    residual_fft_ns: 8,
-                    residual_normalize_ns: 9,
-                    minor_cycle_ns: 10,
-                    minor_cycle_solve_ns: 11,
-                    major_cycle_refresh_ns: 12,
-                    beam_fit_ns: 13,
-                    restore_ns: 14,
-                    total_ns: 15,
+                    executor_build_ns: 3,
+                    psf_grid_alloc_ns: 17,
+                    planned_sample_replay_ns: 21,
+                    grid_update_ns: 22,
+                    psf_grid_ns: 4,
+                    psf_fft_ns: 5,
+                    psf_image_correction_ns: 18,
+                    psf_normalize_ns: 6,
+                    model_fft_ns: 7,
+                    residual_grid_alloc_ns: 19,
+                    residual_degrid_grid_ns: 8,
+                    residual_fft_ns: 9,
+                    residual_image_correction_ns: 20,
+                    residual_normalize_ns: 10,
+                    minor_cycle_ns: 11,
+                    minor_cycle_solve_ns: 12,
+                    major_cycle_refresh_ns: 13,
+                    beam_fit_ns: 14,
+                    restore_ns: 15,
+                    total_ns: 16,
                 },
                 frontend_timings: crate::ImagerFrontendTaskStageTimings {
                     open_measurement_set_ns: 16,
@@ -968,7 +1056,7 @@ mod tests {
         );
         assert_eq!(
             output.run.stage_timings.values_ns[0],
-            ("controller_total".to_string(), 15)
+            ("controller_total".to_string(), 16)
         );
         let stage_timings = output
             .run
@@ -977,13 +1065,14 @@ mod tests {
             .iter()
             .cloned()
             .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(stage_timings["psf_normalize"], 5);
-        assert_eq!(stage_timings["model_fft"], 6);
-        assert_eq!(stage_timings["minor_cycle"], 10);
-        assert_eq!(stage_timings["minor_cycle_solve"], 11);
-        assert_eq!(stage_timings["major_cycle_refresh"], 12);
-        assert_eq!(stage_timings["beam_fit"], 13);
-        assert_eq!(stage_timings["restore"], 14);
+        assert_eq!(stage_timings["executor_build"], 3);
+        assert_eq!(stage_timings["psf_normalize"], 6);
+        assert_eq!(stage_timings["model_fft"], 7);
+        assert_eq!(stage_timings["minor_cycle"], 11);
+        assert_eq!(stage_timings["minor_cycle_solve"], 12);
+        assert_eq!(stage_timings["major_cycle_refresh"], 13);
+        assert_eq!(stage_timings["beam_fit"], 14);
+        assert_eq!(stage_timings["restore"], 15);
         assert_eq!(
             output.run.frontend_timings.values_ns[6],
             ("total".to_string(), 22)

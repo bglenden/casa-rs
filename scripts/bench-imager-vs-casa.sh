@@ -61,6 +61,8 @@ robust="${IMAGER_BENCH_ROBUST:-0.5}"
 perchanweightdensity="${IMAGER_BENCH_PERCHANWEIGHTDENSITY:-}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
 standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
+standard_mfs_grid_threads="${IMAGER_BENCH_STANDARD_MFS_GRID_THREADS:-}"
+standard_mfs_metal_minor_cycle_chunk="${IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK:-}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
@@ -81,10 +83,17 @@ write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
 pbcor="${IMAGER_BENCH_PBCOR:-0}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
 ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
-tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
+default_tmp_root="${TMPDIR:-/tmp}"
+if [[ -d "/Volumes/GLENDENNING" ]]; then
+  default_tmp_root="/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/tmp"
+fi
+tmp_root="${IMAGER_BENCH_TMP_ROOT:-$default_tmp_root}"
 phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
 skip_casa="${IMAGER_BENCH_SKIP_CASA:-0}"
+skip_rust="${IMAGER_BENCH_SKIP_RUST:-0}"
 skip_profile="${IMAGER_BENCH_SKIP_PROFILE:-0}"
+reuse_rust_prefix="${IMAGER_BENCH_REUSE_RUST_PREFIX:-}"
+reuse_casa_prefix="${IMAGER_BENCH_REUSE_CASA_PREFIX:-}"
 
 case "$gridder" in
   wproject|widefield|awproject|awp2|awphpg)
@@ -101,6 +110,18 @@ if [[ "$wterm" != "none" && ! ( "$gridder_uses_wproject_wterm" == "1" && "$wterm
 fi
 if [[ -n "$wprojplanes" && ! "$wprojplanes" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_WPROJPLANES must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$standard_mfs_grid_threads" && "$standard_mfs_grid_threads" != "auto" && ! "$standard_mfs_grid_threads" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_STANDARD_MFS_GRID_THREADS must be auto or an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$standard_mfs_metal_minor_cycle_chunk" && "$standard_mfs_metal_minor_cycle_chunk" != "auto" && "$standard_mfs_metal_minor_cycle_chunk" != "full" && ! "$standard_mfs_metal_minor_cycle_chunk" =~ ^auto:[0-9]+([.][0-9]+)?$ && ! "$standard_mfs_metal_minor_cycle_chunk" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK must be auto, auto:<positive-ms>, full, or an unsigned integer" >&2
+  exit 2
+fi
+if [[ "$standard_mfs_metal_minor_cycle_chunk" == "0" || "$standard_mfs_metal_minor_cycle_chunk" == "auto:0" || "$standard_mfs_metal_minor_cycle_chunk" == "auto:0.0" ]]; then
+  echo "error: IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK must be auto, auto:<positive-ms>, full, or a positive integer" >&2
   exit 2
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
@@ -182,6 +203,19 @@ case "$skip_profile" in
     ;;
 esac
 
+case "$skip_rust" in
+  1|true|TRUE|yes|YES|on|ON)
+    skip_rust_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    skip_rust_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_SKIP_RUST must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+
 case "$write_pb" in
   1|true|TRUE|yes|YES|on|ON)
     write_pb_enabled=1
@@ -229,9 +263,16 @@ else
   esac
 fi
 
-if [[ ! -d "$tmp_root" ]]; then
-  echo "error: IMAGER_BENCH_TMP_ROOT does not exist: $tmp_root" >&2
-  exit 2
+mkdir -p "$tmp_root"
+if [[ "$tmp_root" == /Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts* ]]; then
+  marker="/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/README_SAFE_TO_DELETE.txt"
+  if [[ ! -e "$marker" ]]; then
+    cat >"$marker" <<'EOF'
+This directory contains generated casa-rs ImPerformance artifacts.
+It is safe to delete when no benchmark run is actively using it.
+Recreate the contents by rerunning the relevant tools/perf/imager command.
+EOF
+  fi
 fi
 
 if [[ "$mode" == "dirty" ]]; then
@@ -265,12 +306,31 @@ import time
 print(f"{time.perf_counter():.9f}")
 PY
 )"
+  set +e
   if [[ "${IMAGER_BENCH_STREAM_LOG:-0}" == "1" || "${IMAGER_BENCH_STREAM_LOG:-}" == "true" || "${IMAGER_BENCH_STREAM_LOG:-}" == "yes" || "${IMAGER_BENCH_STREAM_LOG:-}" == "on" ]]; then
-    "$@" >/dev/null 2> >(tee "$stderr_file" >&2)
+    : >"$stderr_file"
+    tail -f "$stderr_file" >&2 &
+    local tail_pid="$!"
+    "$@" >/dev/null 2>>"$stderr_file" &
+    local command_pid="$!"
+    local heartbeat_start="$SECONDS"
+    local last_heartbeat="$SECONDS"
+    while kill -0 "$command_pid" 2>/dev/null; do
+      sleep 1
+      if (( SECONDS - last_heartbeat >= 30 )) && kill -0 "$command_pid" 2>/dev/null; then
+        echo "benchmark_command_progress command=$(basename "$1") elapsed_s=$((SECONDS - heartbeat_start))" >&2
+        last_heartbeat="$SECONDS"
+      fi
+    done
+    wait "$command_pid"
+    status="$?"
+    kill "$tail_pid" 2>/dev/null
+    wait "$tail_pid" 2>/dev/null
   else
     "$@" >/dev/null 2>"$stderr_file"
+    status="$?"
   fi
-  status="$?"
+  set -e
   python3 - "$start" "$stderr_file" <<'PY'
 import sys
 import time
@@ -284,12 +344,24 @@ PY
   return "$status"
 }
 
+emit_rust_backend_diagnostics() {
+  local stderr_file="$1"
+  if [[ ! -s "$stderr_file" ]]; then
+    return 0
+  fi
+  grep -E \
+    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
+    "$stderr_file" || true
+}
+
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_profile=$skip_profile_enabled"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
-cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
+if [[ "$skip_rust_enabled" == "0" ]]; then
+  cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
+fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -343,6 +415,13 @@ fi
 if [[ -n "$imaging_prepare_workers" ]]; then
   rust_source_stream_flags+=(--imaging-prepare-workers "$imaging_prepare_workers")
 fi
+rust_thread_flags=()
+if [[ -n "$standard_mfs_grid_threads" ]]; then
+  rust_thread_flags+=(--standard-mfs-grid-threads "$standard_mfs_grid_threads")
+fi
+if [[ -n "$standard_mfs_metal_minor_cycle_chunk" ]]; then
+  rust_thread_flags+=(--standard-mfs-metal-minor-cycle-chunk "$standard_mfs_metal_minor_cycle_chunk")
+fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
@@ -353,12 +432,19 @@ run_with_optional_phasecenter() {
     "$@"
   fi
 }
+if [[ "$skip_rust_enabled" == "1" ]]; then
+  echo "  skipped; IMAGER_BENCH_SKIP_RUST=$skip_rust"
+  if [[ -n "$reuse_rust_prefix" ]]; then
+    echo "  kept_rust_prefix=$reuse_rust_prefix"
+  fi
+else
 for run in $(seq 1 "$repeats"); do
   if [[ -n "$rust_keep_prefix" && "$run" == "$repeats" ]]; then
     prefix="$rust_keep_prefix"
   else
     prefix="$tmpdir/rust-run-$run"
   fi
+  echo "rust_run_start run=$run prefix=$prefix"
   rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
@@ -380,6 +466,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
@@ -422,6 +509,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
@@ -447,15 +535,19 @@ for run in $(seq 1 "$repeats"); do
   real_seconds="$(awk '/^real / {print $2}' "$rust_stderr")"
   printf "  run=%s real=%s\n" "$run" "$real_seconds"
   printf "%s\n" "$real_seconds" >>"$rust_cli_file"
+  emit_rust_backend_diagnostics "$rust_stderr"
 done
 echo "  median=$(median_from_file "$rust_cli_file")"
 if [[ -n "$rust_keep_prefix" ]]; then
   echo "  kept_rust_prefix=$rust_keep_prefix"
 fi
+fi
 echo
 
 echo "Rust stage medians (milliseconds):"
-if [[ "$skip_profile_enabled" == "1" ]]; then
+if [[ "$skip_rust_enabled" == "1" ]]; then
+  echo "  skipped=1"
+elif [[ "$skip_profile_enabled" == "1" ]]; then
   echo "  skipped=1"
 elif [[ -n "$scales" ]]; then
   run_with_optional_phasecenter target/release/examples/profile_imager \
@@ -474,6 +566,7 @@ elif [[ -n "$scales" ]]; then
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
@@ -513,6 +606,7 @@ else
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+    ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
     --nterms "$nterms" \
@@ -626,7 +720,7 @@ with tempfile.TemporaryDirectory() as td:
             savemodel="none",
             psfcutoff=psfcutoff,
         )
-        if specmode == "cube":
+        if specmode in ("cube", "cubedata"):
             casa_start = int(cube_start) if cube_start else chan_start
             casa_width = int(cube_width) if cube_width else 1
             kwargs.update(
@@ -655,8 +749,12 @@ PY
 if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ]]; then
   echo "CASA tclean timings (seconds):"
   echo "  skipped; IMAGER_BENCH_SKIP_CASA=$skip_casa"
+  if [[ -n "$reuse_casa_prefix" ]]; then
+    echo "  kept_casa_prefix=$reuse_casa_prefix"
+  fi
 else
   echo "CASA tclean timings (seconds):"
+  echo "casa_run_start repeats=$repeats"
   CASA_RS_BENCH_MS_PATH="$ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
@@ -698,8 +796,16 @@ echo
 if [[ -n "$keep_output_root" ]]; then
   echo "Kept benchmark products:"
   echo "  product_root=$keep_output_root"
-  echo "  rust_prefix=$rust_keep_prefix"
-  echo "  casa_prefix=$casa_keep_prefix"
+  if [[ -n "$reuse_rust_prefix" ]]; then
+    echo "  rust_prefix=$reuse_rust_prefix"
+  else
+    echo "  rust_prefix=$rust_keep_prefix"
+  fi
+  if [[ -n "$reuse_casa_prefix" ]]; then
+    echo "  casa_prefix=$reuse_casa_prefix"
+  else
+    echo "  casa_prefix=$casa_keep_prefix"
+  fi
   echo
 fi
 

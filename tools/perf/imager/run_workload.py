@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import datetime as dt
 import json
 import os
@@ -15,6 +16,8 @@ import sys
 import uuid
 import math
 from typing import Any
+
+import perf_paths
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -65,6 +68,9 @@ RUST_STAGE_FIELDS = {
     "frontend_total",
     "controller_overhead",
     "weighting",
+    "executor_build",
+    "planned_sample_replay",
+    "grid_update",
     "psf_grid",
     "psf_fft",
     "psf_normalize",
@@ -83,20 +89,55 @@ RUST_STAGE_FIELDS = {
     "restore",
     "total",
 }
+CASA_STAGE_FIELDS = {
+    "parameter_setup",
+    "construct_imager",
+    "initialize_imagers",
+    "select_data",
+    "define_image",
+    "normalizer_info",
+    "cf_cache_setup",
+    "initialize_normalizers",
+    "set_weighting",
+    "set_weighting_core",
+    "initialize_deconvolvers",
+    "estimate_memory",
+    "initialize_iteration_control",
+    "make_psf",
+    "make_pb",
+    "calcres_major_cycle",
+    "update_mask",
+    "has_converged",
+    "minor_cycle",
+    "clean_major_cycle",
+    "restore_images",
+    "delete_tools",
+    "total",
+}
 
 
 class HarnessError(Exception):
     """Error that should be shown without a Python traceback."""
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workload", help="workload manifest id or JSON path")
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
-        default=pathlib.Path("target/imperformance-wave1"),
+        default=perf_paths.artifact_path("imager", "runs"),
         help="directory for result JSON and benchmark log",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "root for large benchmark artifacts such as image products, panels, "
+            f"and scratch data; defaults to ${perf_paths.ARTIFACT_ROOT_ENV} or "
+            f"{perf_paths.DEFAULT_EXTERNAL_ARTIFACT_ROOT}"
+        ),
     )
     parser.add_argument(
         "--repeats",
@@ -120,12 +161,23 @@ def main() -> None:
         help="validate manifest support and write the planned command without running",
     )
     parser.add_argument(
+        "--stream-log",
+        action="store_true",
+        default=None,
+        help="stream benchmark stdout while still recording the full benchmark log",
+    )
+    parser.add_argument(
         "--set-imaging",
         action="append",
         default=[],
         metavar="KEY=VALUE",
         help="override one imaging manifest field for benchmark sweeps",
     )
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     try:
@@ -138,11 +190,19 @@ def main() -> None:
             repeats_override=args.repeats,
             run_label_override=args.run_label,
             storage_label_override=args.storage_label,
+            stream_log_override=args.stream_log,
             dry_run=args.dry_run,
         )
-        output_dir = args.output_dir.resolve()
+        output_dir = args.output_dir.expanduser().resolve()
+        artifact_root = (
+            args.artifact_root.expanduser()
+            if args.artifact_root is not None
+            else perf_paths.default_artifact_root()
+        ).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-        attach_output_paths(plan, output_dir, dry_run=args.dry_run)
+        if not args.dry_run:
+            perf_paths.mark_safe_to_delete(artifact_root)
+        attach_output_paths(plan, output_dir, artifact_root, dry_run=args.dry_run)
         result_path = output_dir / f"{plan['run_id']}.json"
         log_path = output_dir / f"{plan['run_id']}.log"
 
@@ -228,6 +288,7 @@ def build_plan(
     run_label_override: str | None,
     storage_label_override: str | None,
     dry_run: bool,
+    stream_log_override: bool | None = None,
 ) -> dict[str, Any]:
     workload_id = required_str(manifest, "id")
     mode_id = required_str(manifest, "mode_id")
@@ -272,11 +333,22 @@ def build_plan(
     )
     if skip_casa.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.skip_casa must be 0/1, true/false, yes/no, or on/off")
+    skip_rust = os.environ.get("CASA_RS_BENCH_SKIP_RUST") or str_value(
+        run, "skip_rust", "0"
+    )
+    if skip_rust.lower() not in SUPPORTED_BOOLEAN_FLAGS:
+        raise HarnessError("run.skip_rust must be 0/1, true/false, yes/no, or on/off")
     skip_profile = os.environ.get("CASA_RS_BENCH_SKIP_PROFILE") or str_value(
         run, "skip_profile", "0"
     )
     if skip_profile.lower() not in SUPPORTED_BOOLEAN_FLAGS:
         raise HarnessError("run.skip_profile must be 0/1, true/false, yes/no, or on/off")
+    reuse_rust_prefix = os.environ.get("CASA_RS_BENCH_REUSE_RUST_PREFIX") or str_value(
+        run, "reuse_rust_prefix", ""
+    )
+    reuse_casa_prefix = os.environ.get("CASA_RS_BENCH_REUSE_CASA_PREFIX") or str_value(
+        run, "reuse_casa_prefix", ""
+    )
     profile_repeats = os.environ.get("CASA_RS_BENCH_PROFILE_REPEATS") or str(
         int_value(run, "profile_repeats", repeats)
     )
@@ -344,10 +416,17 @@ def build_plan(
         "IMAGER_BENCH_MS_STAGING": ms_staging,
         "IMAGER_BENCH_PHASE_PROBE": phase_probe,
         "IMAGER_BENCH_SKIP_CASA": skip_casa,
+        "IMAGER_BENCH_SKIP_RUST": skip_rust,
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
+    if reuse_rust_prefix:
+        env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
+    if reuse_casa_prefix:
+        env["IMAGER_BENCH_REUSE_CASA_PREFIX"] = reuse_casa_prefix
     optional_imaging_env = {
+        "standard_mfs_grid_threads": "IMAGER_BENCH_STANDARD_MFS_GRID_THREADS",
+        "standard_mfs_metal_minor_cycle_chunk": "IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK",
         "imaging_memory_target_mb": "IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB",
         "imaging_prepare_buffer_mb": "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
         "imaging_row_block_rows": "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
@@ -355,7 +434,13 @@ def build_plan(
     }
     for imaging_key, env_key in optional_imaging_env.items():
         if imaging.get(imaging_key) is not None:
-            env[env_key] = str(int_value(imaging, imaging_key, 0))
+            if imaging_key in {
+                "standard_mfs_grid_threads",
+                "standard_mfs_metal_minor_cycle_chunk",
+            }:
+                env[env_key] = str(imaging[imaging_key])
+            else:
+                env[env_key] = str(int_value(imaging, imaging_key, 0))
     env.setdefault("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", "1")
     env.update(extra_env)
 
@@ -393,6 +478,11 @@ def build_plan(
             "standard_mfs_acceleration": str_value(
                 imaging, "standard_mfs_acceleration", "auto"
             ),
+            "standard_mfs_metal_minor_cycle_chunk": (
+                str(imaging["standard_mfs_metal_minor_cycle_chunk"])
+                if imaging.get("standard_mfs_metal_minor_cycle_chunk") is not None
+                else None
+            ),
             "hogbom_iteration_mode": hogbom_iteration_mode,
             "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
@@ -405,8 +495,16 @@ def build_plan(
             or str_value(run, "storage_label", "script-staged-tempdir"),
             "ms_staging": ms_staging,
             "phase_probe": phase_probe,
+            "skip_casa": skip_casa,
+            "skip_rust": skip_rust,
+            "reuse_rust_prefix": reuse_rust_prefix or None,
+            "reuse_casa_prefix": reuse_casa_prefix or None,
             "env": extra_env,
-            "stream_log": bool_value(run, "stream_log", False),
+            "stream_log": (
+                bool(stream_log_override)
+                if stream_log_override is not None
+                else bool_value(run, "stream_log", False)
+            ),
             "profile_repeats": int(profile_repeats),
         },
         "run_support": run_support,
@@ -427,15 +525,32 @@ def build_plan(
     return plan
 
 
-def attach_output_paths(plan: dict[str, Any], output_dir: pathlib.Path, *, dry_run: bool) -> None:
-    product_root = output_dir / "products" / plan["run_id"]
+def attach_output_paths(
+    plan: dict[str, Any],
+    output_dir: pathlib.Path,
+    artifact_root: pathlib.Path,
+    *,
+    dry_run: bool,
+) -> None:
+    product_root = artifact_root / "products" / plan["run_id"]
+    comparison_root = artifact_root / "comparisons" / plan["run_id"]
+    tmp_root = artifact_root / "tmp"
     plan["products"] = {
         "root": None if dry_run else str(product_root),
         "rust_prefix": None if dry_run else str(product_root / "rust" / "rust"),
         "casa_prefix": None if dry_run else str(product_root / "casa" / "casa"),
     }
+    plan["artifacts"] = {
+        "root": str(artifact_root),
+        "result_dir": str(output_dir),
+        "products_root": None if dry_run else str(product_root),
+        "comparison_root": None if dry_run else str(comparison_root),
+        "tmp_root": None if dry_run else str(tmp_root),
+    }
     if not dry_run:
+        tmp_root.mkdir(parents=True, exist_ok=True)
         plan["command"]["env"]["IMAGER_BENCH_KEEP_OUTPUT_ROOT"] = str(product_root)
+        plan["command"]["env"]["IMAGER_BENCH_TMP_ROOT"] = str(tmp_root)
 
 
 def benchmark_run_support(
@@ -544,6 +659,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     env.update(plan["command"]["env"])
     if bool(plan.get("run", {}).get("stream_log", False)):
         env["IMAGER_BENCH_STREAM_LOG"] = "1"
+        env["CASA_RS_IMAGING_PROGRESS"] = "1"
     started = utc_now()
     completed = run_benchmark_command(
         plan["command"]["argv"],
@@ -667,6 +783,7 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
             missing_reason="CASA tclean timing section was not reported",
         ),
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
+        "casa_clean_control_diagnostics": parse_casa_clean_control_diagnostics(text),
         "product_paths": parse_product_paths(text),
     }
 
@@ -680,7 +797,26 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "source_stream_consumer": [],
         "frontend_progress": [],
         "profile_runs": [],
+        "spectral_slab_events": [],
+        "spectral_slab_memory": [],
+        "spectral_slab_plans": [],
+        "mosaic_cube_slab_plans": [],
+        "cube_per_plane_backend": [],
+        "cube_resident_clean_control": [],
+        "cube_resident_clean_executor": [],
+        "cube_resident_clean_finish_planes": [],
+        "cube_resident_clean_stage": [],
+        "cube_source_row_blocks": [],
+        "cube_product_summaries": [],
+        "cube_plane_state_store": [],
+        "visibility_geometry_cache": [],
+        "executor_limitations": [],
         "worker_diagnostics": [],
+        "minor_cycle_diagnostics": [],
+        "hogbom_minor_cycle_diagnostics": [],
+        "clark_minor_cycle_diagnostics": [],
+        "multiscale_minor_cycle_diagnostics": [],
+        "clean_residual_refresh_diagnostics": [],
         "metal_diagnostics": [],
     }
     for raw_line in text.splitlines():
@@ -703,6 +839,65 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["frontend_progress"].append(parsed)
         elif name == "standard_mfs_profile_run":
             buckets["profile_runs"].append(parsed)
+        elif name == "spectral_slab_event":
+            buckets["spectral_slab_events"].append(parsed)
+        elif name == "spectral_slab_memory":
+            buckets["spectral_slab_memory"].append(parsed)
+        elif name == "spectral_slab_plan":
+            buckets["spectral_slab_plans"].append(parsed)
+        elif name == "mosaic_cube_slab_plan":
+            buckets["mosaic_cube_slab_plans"].append(parsed)
+        elif name == "cube_per_plane_backend_summary":
+            buckets["cube_per_plane_backend"].append(parsed)
+        elif name == "cube_resident_clean_control":
+            buckets["cube_resident_clean_control"].append(parsed)
+        elif name == "cube_resident_clean_executor_summary":
+            buckets["cube_resident_clean_executor"].append(parsed)
+        elif name == "cube_resident_clean_finish_plane":
+            buckets["cube_resident_clean_finish_planes"].append(parsed)
+        elif name in {
+            "cube_resident_clean_stage_summary",
+            "cube_resident_clean_finish_plane_stage_detail",
+        }:
+            buckets["cube_resident_clean_stage"].append(parsed)
+        elif name == "cube_source_row_blocks":
+            buckets["cube_source_row_blocks"].append(parsed)
+        elif name == "cube_plane_state_store_summary":
+            buckets["cube_plane_state_store"].append(parsed)
+        elif name == "visibility_geometry_cache_summary":
+            buckets["visibility_geometry_cache"].append(parsed)
+        elif name in {
+            "cube_shared_direct_plane_executor_summary",
+            "cube_shared_plane_executor_summary",
+        }:
+            buckets["cube_product_summaries"].append(parsed)
+        elif name.endswith("_executor_limitation"):
+            buckets["executor_limitations"].append(parsed)
+        elif name == "standard_mfs_hogbom_minor_cycle_summary":
+            buckets["minor_cycle_diagnostics"].append(parsed)
+            buckets["hogbom_minor_cycle_diagnostics"].append(parsed)
+            if parsed.get("fields", {}).get("backend") != "cpu":
+                buckets["metal_diagnostics"].append(parsed)
+        elif name == "standard_mfs_clark_minor_cycle_summary":
+            buckets["minor_cycle_diagnostics"].append(parsed)
+            buckets["clark_minor_cycle_diagnostics"].append(parsed)
+            if parsed.get("fields", {}).get("backend") != "cpu":
+                buckets["metal_diagnostics"].append(parsed)
+        elif name == "standard_mfs_multiscale_minor_cycle_summary":
+            buckets["minor_cycle_diagnostics"].append(parsed)
+            buckets["multiscale_minor_cycle_diagnostics"].append(parsed)
+            if parsed.get("fields", {}).get("backend") != "cpu":
+                buckets["metal_diagnostics"].append(parsed)
+        elif name in {
+            "standard_mfs_multiscale_metal_minor_cycle_summary",
+            "standard_mfs_multiscale_metal_indirect_summary",
+        }:
+            buckets["metal_diagnostics"].append(parsed)
+        elif name == "standard_mfs_clean_residual_refresh_summary":
+            buckets["clean_residual_refresh_diagnostics"].append(parsed)
+            residual_backend = parsed.get("fields", {}).get("residual_backend")
+            if isinstance(residual_backend, str) and "metal" in residual_backend:
+                buckets["metal_diagnostics"].append(parsed)
         elif "worker" in name or "prepare_parallel" in name:
             buckets["worker_diagnostics"].append(parsed)
         elif "metal" in name:
@@ -756,6 +951,96 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
+    spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
+    mosaic_cube_slab_plan = last_fields(buckets.get("mosaic_cube_slab_plans", []))
+    cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
+    cube_resident_control = last_fields(buckets.get("cube_resident_clean_control", []))
+    cube_resident_executor = last_fields(buckets.get("cube_resident_clean_executor", []))
+    cube_resident_stage = last_fields(
+        [
+            entry
+            for entry in buckets.get("cube_resident_clean_stage", [])
+            if entry.get("name") == "cube_resident_clean_stage_summary"
+        ]
+    )
+    cube_resident_finish_planes = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(
+            buckets.get("cube_resident_clean_finish_planes", [])
+        )
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    cube_resident_finished_cleaned_planes = [
+        entry
+        for entry in cube_resident_finish_planes
+        if entry.get("skipped_minor_cycle") is False
+    ]
+    cube_resident_finished_skipped_planes = [
+        entry
+        for entry in cube_resident_finish_planes
+        if entry.get("skipped_minor_cycle") is True
+    ]
+    cube_source_rows = last_fields(buckets.get("cube_source_row_blocks", []))
+    cube_product_summaries = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("cube_product_summaries", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    cube_plane_state_store = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("cube_plane_state_store", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    last_cube_plane_state_store = (
+        cube_plane_state_store[-1] if cube_plane_state_store else {}
+    )
+    visibility_geometry_cache = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("visibility_geometry_cache", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    last_visibility_geometry_cache = (
+        visibility_geometry_cache[-1] if visibility_geometry_cache else {}
+    )
+    executor_limitation = last_fields(buckets.get("executor_limitations", []))
+    metal_entries = unique_entries_by_raw(buckets.get("metal_diagnostics", []))
+    clean_residual_refresh = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(
+            buckets.get("clean_residual_refresh_diagnostics", [])
+        )
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    metal_residual_refresh = fields_for_names(
+        metal_entries,
+        {
+            "standard_mfs_metal_residual_refresh",
+            "standard_mfs_metal_row_run_residual_refresh",
+            "standard_mfs_metal_row_run_grouped_residual_refresh",
+        },
+    )
+    metal_residual_refresh_detail = fields_for_names(
+        metal_entries,
+        {
+            "standard_mfs_metal_residual_refresh_detail",
+            "standard_mfs_metal_row_run_residual_refresh_detail",
+            "standard_mfs_metal_row_run_grouped_residual_refresh_detail",
+        },
+    )
+    metal_grouped_append_detail = fields_for_names(
+        metal_entries, {"standard_mfs_metal_row_run_grouped_append_detail"}
+    )
+    spectral_memory = [
+        entry.get("fields", {})
+        for entry in buckets.get("spectral_slab_memory", [])
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    max_current_rss = max_int_field(spectral_memory, "current_rss_bytes")
+    max_peak_rss = max_int_field(spectral_memory, "peak_rss_bytes")
+    max_baseline_delta = max_int_field(spectral_memory, "delta_from_baseline_bytes")
+    max_previous_delta_entry = max_entry_by_int_field(
+        spectral_memory, "delta_from_previous_bytes"
+    )
     return {
         "single_plane_reason": {
             "cpu_multi_worker": single_plane.get("cpu_multi_worker_reason"),
@@ -766,17 +1051,488 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "resolved_tile_anchor": runtime.get("tile_anchor"),
         "resolved_residual_backend": runtime.get("residual_backend"),
         "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
+        "resolved_minor_cycle_backend": runtime.get("minor_cycle_backend"),
+        "resolved_minor_cycle_backend_reason": runtime.get("minor_cycle_backend_reason"),
         "metal_device_available": runtime.get("metal_device_available"),
         "metal_grouped_input_cache": runtime.get("metal_grouped_input_cache"),
+        "cube_per_plane_backend": cube_per_plane_backend.get("selected_backend"),
+        "cube_per_plane_phase": cube_per_plane_backend.get("phase"),
+        "cube_per_plane_workers": cube_per_plane_backend.get("plane_worker_count"),
+        "cube_per_plane_grid_threads": cube_per_plane_backend.get("per_plane_grid_threads"),
+        "cube_per_plane_fixed_tile_eligible": cube_per_plane_backend.get(
+            "fixed_tile_cpu_eligible"
+        ),
+        "cube_per_plane_metal_eligible": cube_per_plane_backend.get("metal_eligible"),
+        "cube_per_plane_fallback_reasons": cube_per_plane_backend.get("fallback_reasons"),
+        "cube_resident_clean_planes": cube_resident_control.get("planes"),
+        "cube_resident_clean_cycle_threshold": cube_resident_control.get(
+            "cycle_threshold"
+        ),
+        "cube_resident_clean_planes_at_or_below_threshold": cube_resident_control.get(
+            "planes_at_or_below_threshold"
+        ),
+        "cube_resident_clean_residency": cube_resident_control.get("residency"),
+        "cube_resident_clean_completed": cube_resident_executor.get("completed"),
+        "cube_resident_clean_skipped_minor_cycle_planes": cube_resident_executor.get(
+            "skipped_minor_cycle_planes"
+        ),
+        "cube_resident_clean_cleaned_planes": cube_resident_executor.get(
+            "cleaned_planes"
+        ),
+        "cube_resident_clean_elapsed_ms": cube_resident_executor.get("elapsed_ms"),
+        "cube_resident_clean_control_source_read_ms": cube_resident_executor.get(
+            "control_source_read_ms"
+        ),
+        "cube_resident_clean_publish_source_read_ms": cube_resident_executor.get(
+            "publish_source_read_ms"
+        ),
+        "cube_resident_clean_control_prepare_ms": cube_resident_executor.get(
+            "control_prepare_ms"
+        ),
+        "cube_resident_clean_publish_prepare_ms": cube_resident_executor.get(
+            "publish_prepare_ms"
+        ),
+        "cube_resident_clean_product_write_ms": cube_resident_executor.get(
+            "product_write_ms"
+        ),
+        "cube_resident_clean_result_wait_ms": cube_resident_stage.get("result_wait_ms"),
+        "cube_resident_clean_consume_ms": cube_resident_stage.get("consume_ms"),
+        "cube_resident_clean_core_total_ms": cube_resident_stage.get("total_ms"),
+        "cube_resident_clean_minor_cycle_ms": cube_resident_stage.get("minor_cycle_ms"),
+        "cube_resident_clean_minor_cycle_solve_ms": cube_resident_stage.get(
+            "minor_cycle_solve_ms"
+        ),
+        "cube_resident_clean_major_cycle_refresh_ms": cube_resident_stage.get(
+            "major_cycle_refresh_ms"
+        ),
+        "cube_resident_clean_residual_refresh_overhead_ms": cube_resident_stage.get(
+            "residual_refresh_overhead_ms"
+        ),
+        "cube_resident_clean_restore_ms": cube_resident_stage.get("restore_ms"),
+        "cube_resident_clean_controller_overhead_ms": cube_resident_stage.get(
+            "controller_overhead_ms"
+        ),
+        "cube_resident_clean_finish_plane_count": len(cube_resident_finish_planes),
+        "cube_resident_clean_finish_cleaned_plane_count": len(
+            cube_resident_finished_cleaned_planes
+        ),
+        "cube_resident_clean_finish_skipped_plane_count": len(
+            cube_resident_finished_skipped_planes
+        ),
+        "cube_resident_clean_actual_updates": sum_int_or_float_field(
+            cube_resident_finish_planes, "actual_updates"
+        ),
+        "cube_resident_clean_reported_updates": sum_int_or_float_field(
+            cube_resident_finish_planes, "reported_updates"
+        ),
+        "cube_resident_clean_trace_minor_cycles": sum_int_or_float_field(
+            cube_resident_finish_planes, "minor_cycle_count"
+        ),
+        "cube_resident_clean_minor_iterations_from_planes": sum_int_or_float_field(
+            cube_resident_finish_planes, "minor_iterations"
+        ),
+        "cube_resident_clean_max_actual_updates_per_plane": max_int_field(
+            cube_resident_finish_planes, "actual_updates"
+        ),
+        "cube_resident_clean_model_nonzero_pixels": sum_int_or_float_field(
+            cube_resident_finish_planes, "model_nonzero_pixels"
+        ),
+        "cube_resident_clean_model_nonzero_planes": count_positive_field(
+            cube_resident_finish_planes, "model_nonzero_pixels"
+        ),
+        "cube_resident_clean_skipped_model_nonzero_planes": count_positive_field(
+            cube_resident_finished_skipped_planes, "model_nonzero_pixels"
+        ),
+        "cube_resident_clean_model_sum_abs_jy": sum_int_or_float_field(
+            cube_resident_finish_planes, "model_sum_abs_jy"
+        ),
+        "cube_resident_clean_model_peak_abs_jy": max_int_or_float_field(
+            cube_resident_finish_planes, "model_peak_abs_jy"
+        ),
+        "cube_resident_clean_stop_reason_counts": compact_value_counts(
+            cube_resident_finish_planes, "stop_reason"
+        ),
+        "mosaic_cube_slab_schedule": mosaic_cube_slab_plan.get("schedule"),
+        "mosaic_cube_slab_executor_capabilities": mosaic_cube_slab_plan.get(
+            "executor_capabilities"
+        ),
+        "mosaic_cube_slab_nplanes": mosaic_cube_slab_plan.get("nplanes"),
+        "mosaic_cube_slab_active_planes": mosaic_cube_slab_plan.get("active_planes"),
+        "mosaic_cube_slab_count": mosaic_cube_slab_plan.get("slab_count"),
+        "mosaic_cube_slab_worker_count": mosaic_cube_slab_plan.get("worker_count"),
+        "mosaic_cube_slab_source_reuse": mosaic_cube_slab_plan.get("source_reuse"),
+        "mosaic_cube_slab_product_state": mosaic_cube_slab_plan.get("product_state"),
         "row_block_rows": memory.get("row_block_rows"),
         "selected_channels": memory.get("selected_channels"),
         "active_rows": memory.get("rows_total"),
         "memory_target_bytes": memory.get("memory_target_bytes"),
         "planned_active_bytes": memory.get("planned_active_bytes"),
+        "source_stream_buffer_bytes": memory.get("source_stream_buffer_bytes"),
+        "visibility_row_channel_bytes": memory.get("visibility_row_channel_bytes"),
+        "visibility_row_fixed_bytes": memory.get("visibility_row_fixed_bytes"),
+        "visibility_row_fixed_resident_bytes": memory.get(
+            "visibility_row_fixed_resident_bytes"
+        ),
+        "visibility_row_cache_overhead_bytes": memory.get(
+            "visibility_row_cache_overhead_bytes"
+        ),
+        "modeled_source_read_bytes": memory.get("modeled_source_read_bytes"),
         "peak_rss_bytes": profile.get("peak_rss_bytes"),
         "gridded_samples": profile.get("gridded_samples"),
         "major_cycles": profile.get("major_cycles"),
         "minor_iterations": profile.get("minor_iterations"),
+        "cube_source_row_blocks": cube_source_rows.get("blocks"),
+        "cube_source_row_block_rows": cube_source_rows.get("row_block_rows"),
+        "cube_source_row_blocks_wall_ms": cube_source_rows.get("wall_ms"),
+        "cube_source_row_blocks_read_ms": cube_source_rows.get("read_wall_ms"),
+        "cube_source_row_blocks_prepare_ms": cube_source_rows.get("prepare_ms"),
+        "cube_source_row_blocks_visibility_capacity_bytes": cube_source_rows.get(
+            "visibility_capacity_bytes"
+        ),
+        "cube_product_summary_count": len(cube_product_summaries),
+        "cube_product_write_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_write_ms"
+        ),
+        "cube_product_bytes": sum_int_or_float_field(cube_product_summaries, "product_bytes"),
+        "cube_product_groups": sum_int_or_float_field(cube_product_summaries, "product_groups"),
+        "cube_product_group_planes": sum_int_or_float_field(
+            cube_product_summaries, "product_group_planes"
+        ),
+        "cube_product_tiled_c_order_calls": sum_int_or_float_field(
+            cube_product_summaries, "tiled_c_order_calls"
+        ),
+        "cube_product_tiled_fortran_calls": sum_int_or_float_field(
+            cube_product_summaries, "tiled_fortran_calls"
+        ),
+        "cube_product_tiled_tile_visits": sum_int_or_float_field(
+            cube_product_summaries, "tiled_tile_visits"
+        ),
+        "cube_product_tiled_copied_elements": sum_int_or_float_field(
+            cube_product_summaries, "tiled_copied_elements"
+        ),
+        "cube_product_tiled_lru_zero_fill_tiles": sum_int_or_float_field(
+            cube_product_summaries, "tiled_lru_zero_fill_tiles"
+        ),
+        "cube_product_tiled_lru_batch_flush_tiles": sum_int_or_float_field(
+            cube_product_summaries, "tiled_lru_batch_flush_tiles"
+        ),
+        "cube_product_tiled_lru_batch_flush_bytes": sum_int_or_float_field(
+            cube_product_summaries, "tiled_lru_batch_flush_bytes"
+        ),
+        "cube_product_tiled_direct_write_calls": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_calls"
+        ),
+        "cube_product_tiled_direct_write_tiles": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_tiles"
+        ),
+        "cube_product_tiled_direct_write_bytes": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_bytes"
+        ),
+        "cube_product_tiled_direct_pack_ns": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_pack_ns"
+        ),
+        "cube_product_tiled_direct_swap_ns": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_swap_ns"
+        ),
+        "cube_product_tiled_direct_write_ns": sum_int_or_float_field(
+            cube_product_summaries, "tiled_direct_write_ns"
+        ),
+        "cube_plane_state_store_count": len(cube_plane_state_store),
+        "cube_plane_state_store_bytes_read": sum_int_or_float_field(
+            cube_plane_state_store, "bytes_read"
+        ),
+        "cube_plane_state_store_bytes_written": sum_int_or_float_field(
+            cube_plane_state_store, "bytes_written"
+        ),
+        "cube_plane_state_store_elapsed_ms": sum_int_or_float_field(
+            cube_plane_state_store, "elapsed_ms"
+        ),
+        "cube_plane_state_store_kind": last_cube_plane_state_store.get("kind"),
+        "cube_plane_state_store_cleanup_policy": last_cube_plane_state_store.get(
+            "cleanup_policy"
+        ),
+        "visibility_geometry_cache_enabled": last_visibility_geometry_cache.get(
+            "enabled"
+        ),
+        "visibility_geometry_cache_budget_bytes": last_visibility_geometry_cache.get(
+            "budget_bytes"
+        ),
+        "visibility_geometry_cache_resident_bytes": last_visibility_geometry_cache.get(
+            "resident_bytes"
+        ),
+        "visibility_geometry_cache_entries": last_visibility_geometry_cache.get(
+            "entries"
+        ),
+        "visibility_geometry_cache_fills": last_visibility_geometry_cache.get("fills"),
+        "visibility_geometry_cache_hits": last_visibility_geometry_cache.get("hits"),
+        "visibility_geometry_cache_misses": last_visibility_geometry_cache.get(
+            "misses"
+        ),
+        "visibility_geometry_cache_shares": last_visibility_geometry_cache.get(
+            "shares"
+        ),
+        "visibility_geometry_cache_bypasses": last_visibility_geometry_cache.get(
+            "bypasses"
+        ),
+        "visibility_geometry_cache_rejected_model_dependent": last_visibility_geometry_cache.get(
+            "rejected_model_dependent"
+        ),
+        "visibility_geometry_cache_elapsed_ms": last_visibility_geometry_cache.get(
+            "elapsed_ms"
+        ),
+        "metal_diagnostic_count": len(metal_entries),
+        "clean_residual_refresh_calls": len(clean_residual_refresh),
+        "clean_residual_refresh_backend": last_field_value(
+            clean_residual_refresh, "residual_backend"
+        ),
+        "clean_residual_refresh_ms": sum_int_or_float_field(
+            clean_residual_refresh, "refresh_ms"
+        ),
+        "clean_residual_refresh_accounted_ms": sum_int_or_float_field(
+            clean_residual_refresh, "accounted_ms"
+        ),
+        "clean_residual_refresh_overhead_ms": sum_int_or_float_field(
+            clean_residual_refresh, "overhead_ms"
+        ),
+        "clean_residual_refresh_model_fft_ms": sum_int_or_float_field(
+            clean_residual_refresh, "model_fft_ms"
+        ),
+        "clean_residual_refresh_residual_degrid_grid_ms": sum_int_or_float_field(
+            clean_residual_refresh, "residual_degrid_grid_ms"
+        ),
+        "clean_residual_refresh_residual_fft_ms": sum_int_or_float_field(
+            clean_residual_refresh, "residual_fft_ms"
+        ),
+        "clean_residual_refresh_residual_normalize_ms": sum_int_or_float_field(
+            clean_residual_refresh, "residual_normalize_ms"
+        ),
+        "metal_residual_refresh_calls": len(metal_residual_refresh),
+        "metal_residual_refresh_prepare_plus_dispatch_ms": sum_int_or_float_field(
+            metal_residual_refresh, "prepare_plus_dispatch_ms"
+        ),
+        "metal_residual_refresh_dispatch_wait_ms": sum_int_or_float_field(
+            metal_residual_refresh, "dispatch_wait_ms"
+        ),
+        "metal_residual_refresh_dispatch_gpu_ms": sum_int_or_float_field(
+            metal_residual_refresh, "dispatch_gpu_ms"
+        ),
+        "metal_residual_refresh_dispatch_kernel_ms": sum_int_or_float_field(
+            metal_residual_refresh, "dispatch_kernel_ms"
+        ),
+        "metal_residual_refresh_readback_ms": sum_int_or_float_field(
+            metal_residual_refresh, "readback_ms"
+        ),
+        "metal_residual_refresh_chunks": sum_int_or_float_field(
+            metal_residual_refresh, "chunks"
+        ),
+        "metal_residual_refresh_runs": sum_int_or_float_field(
+            metal_residual_refresh, "runs"
+        ),
+        "metal_residual_refresh_logical_lanes": sum_int_or_float_field(
+            metal_residual_refresh, "logical_lanes"
+        ),
+        "metal_residual_refresh_group_descs": sum_int_or_float_field(
+            metal_residual_refresh, "group_descs"
+        ),
+        "metal_residual_refresh_lane_refs": sum_int_or_float_field(
+            metal_residual_refresh, "lane_refs"
+        ),
+        "metal_residual_refresh_input_cache_hits": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_hit"
+        ),
+        "metal_residual_refresh_input_cache_fills": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_fill"
+        ),
+        "metal_residual_refresh_input_cache_chunks": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_chunks"
+        ),
+        "metal_residual_refresh_input_cache_host_bytes": sum_int_or_float_field(
+            metal_residual_refresh, "input_cache_host_bytes"
+        ),
+        "metal_residual_refresh_model_pack_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "model_pack_ms"
+        ),
+        "metal_residual_refresh_model_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "model_buffer_ms"
+        ),
+        "metal_residual_refresh_density_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "density_buffer_ms"
+        ),
+        "metal_residual_refresh_grid_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "grid_buffer_ms"
+        ),
+        "metal_residual_refresh_replay_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "replay_ms"
+        ),
+        "metal_residual_refresh_append_total_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "append_total_ms"
+        ),
+        "metal_residual_refresh_dispatch_input_buffers_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_input_buffers_ms"
+        ),
+        "metal_residual_refresh_dispatch_params_buffer_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_params_buffer_ms"
+        ),
+        "metal_residual_refresh_dispatch_encode_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_encode_ms"
+        ),
+        "metal_residual_refresh_detail_dispatch_wait_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_wait_ms"
+        ),
+        "metal_residual_refresh_detail_dispatch_gpu_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_gpu_ms"
+        ),
+        "metal_residual_refresh_detail_dispatch_kernel_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "dispatch_kernel_ms"
+        ),
+        "metal_residual_refresh_detail_readback_ms": sum_int_or_float_field(
+            metal_residual_refresh_detail, "readback_ms"
+        ),
+        "metal_residual_refresh_staged_bytes": sum_int_or_float_field(
+            metal_residual_refresh_detail, "staged_bytes"
+        ),
+        "metal_residual_refresh_candidate_tap_visits": sum_int_or_float_field(
+            metal_residual_refresh_detail, "candidate_tap_visits"
+        ),
+        "metal_residual_refresh_candidate_model_reads": sum_int_or_float_field(
+            metal_residual_refresh_detail, "candidate_model_reads"
+        ),
+        "metal_residual_refresh_exact_candidate_grid_atomic_adds": sum_int_or_float_field(
+            metal_residual_refresh_detail, "exact_candidate_grid_atomic_adds"
+        ),
+        "metal_residual_refresh_grouped_candidate_grid_atomic_adds": sum_int_or_float_field(
+            metal_residual_refresh_detail, "grouped_candidate_grid_atomic_adds"
+        ),
+        "metal_residual_refresh_grouped_candidate_scan_tests": sum_int_or_float_field(
+            metal_residual_refresh_detail, "grouped_candidate_scan_tests"
+        ),
+        "metal_residual_refresh_unsupported_runs": sum_int_or_float_field(
+            metal_residual_refresh_detail, "unsupported_runs"
+        ),
+        "metal_grouped_append_setup_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "setup_ms"
+        ),
+        "metal_grouped_append_lane_push_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "lane_push_ms"
+        ),
+        "metal_grouped_append_data_flag_copy_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "data_flag_copy_ms"
+        ),
+        "metal_grouped_append_run_desc_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "run_desc_ms"
+        ),
+        "metal_grouped_append_group_assign_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "group_assign_ms"
+        ),
+        "metal_grouped_append_group_finalize_ms": sum_int_or_float_field(
+            metal_grouped_append_detail, "group_finalize_ms"
+        ),
+        "executor_limitation_materialization": executor_limitation.get(
+            "materialization"
+        ),
+        "executor_limitation_reason": executor_limitation.get("reason"),
+        "spectral_active_planes": spectral_plan.get("active_planes"),
+        "spectral_slab_count": spectral_plan.get("slab_count"),
+        "spectral_schedule": spectral_plan.get("schedule"),
+        "spectral_best_modeled_schedule": spectral_plan.get("best_modeled_schedule"),
+        "spectral_executor_capabilities": spectral_plan.get("executor_capabilities"),
+        "spectral_cache_budget_bytes": spectral_plan.get("cache_budget_bytes"),
+        "spectral_visibility_cache_policy": spectral_plan.get("visibility_cache_policy"),
+        "spectral_prepared_residency": spectral_plan.get("prepared_residency"),
+        "spectral_visibility_cache_bytes": spectral_plan.get("visibility_cache_bytes"),
+        "spectral_product_batch_planes": spectral_plan.get("product_batch_planes"),
+        "spectral_source_channel_visits": spectral_plan.get("source_channel_visits"),
+        "spectral_max_slab_source_channels": spectral_plan.get("max_slab_source_channels"),
+        "spectral_full_source_channel_count": spectral_plan.get("full_source_channel_count"),
+        "spectral_source_cell_channel_count": spectral_plan.get("source_cell_channel_count"),
+        "spectral_visibility_row_channel_bytes": spectral_plan.get(
+            "visibility_row_channel_bytes"
+        ),
+        "spectral_visibility_row_fixed_bytes": spectral_plan.get(
+            "visibility_row_fixed_bytes"
+        ),
+        "spectral_visibility_row_fixed_resident_bytes": spectral_plan.get(
+            "visibility_row_fixed_resident_bytes"
+        ),
+        "spectral_visibility_row_cache_overhead_bytes": spectral_plan.get(
+            "visibility_row_cache_overhead_bytes"
+        ),
+        "spectral_visibility_resident_cache_layout": spectral_plan.get(
+            "visibility_resident_cache_layout"
+        ),
+        "spectral_data_channel_read_granularity": spectral_plan.get(
+            "data_channel_read_granularity"
+        ),
+        "spectral_flag_channel_read_granularity": spectral_plan.get(
+            "flag_channel_read_granularity"
+        ),
+        "spectral_weight_spectrum_channel_read_granularity": spectral_plan.get(
+            "weight_spectrum_channel_read_granularity"
+        ),
+        "spectral_best_modeled_total_io_bytes": spectral_plan.get(
+            "best_modeled_total_io_bytes"
+        ),
+        "spectral_best_modeled_source_read_bytes": spectral_plan.get(
+            "best_modeled_source_read_bytes"
+        ),
+        "spectral_best_modeled_visibility_cache_io_bytes": spectral_plan.get(
+            "best_modeled_visibility_cache_io_bytes"
+        ),
+        "spectral_best_modeled_output_spill_io_bytes": spectral_plan.get(
+            "best_modeled_output_spill_io_bytes"
+        ),
+        "spectral_best_modeled_product_write_bytes": spectral_plan.get(
+            "best_modeled_product_write_bytes"
+        ),
+        "spectral_best_modeled_active_planes": spectral_plan.get(
+            "best_modeled_active_planes"
+        ),
+        "spectral_best_modeled_slab_count": spectral_plan.get("best_modeled_slab_count"),
+        "spectral_best_modeled_source_channel_visits": spectral_plan.get(
+            "best_modeled_source_channel_visits"
+        ),
+        "spectral_modeled_total_io_bytes": spectral_plan.get("modeled_total_io_bytes"),
+        "spectral_modeled_source_read_bytes": spectral_plan.get("modeled_source_read_bytes"),
+        "spectral_modeled_visibility_cache_fill_bytes": spectral_plan.get(
+            "modeled_visibility_cache_fill_bytes"
+        ),
+        "spectral_modeled_visibility_cache_read_bytes": spectral_plan.get(
+            "modeled_visibility_cache_read_bytes"
+        ),
+        "spectral_modeled_visibility_cache_io_bytes": spectral_plan.get(
+            "modeled_visibility_cache_io_bytes"
+        ),
+        "spectral_modeled_output_spill_read_bytes": spectral_plan.get(
+            "modeled_output_spill_read_bytes"
+        ),
+        "spectral_modeled_output_spill_write_bytes": spectral_plan.get(
+            "modeled_output_spill_write_bytes"
+        ),
+        "spectral_modeled_output_spill_io_bytes": spectral_plan.get(
+            "modeled_output_spill_io_bytes"
+        ),
+        "spectral_modeled_product_write_bytes": spectral_plan.get(
+            "modeled_product_write_bytes"
+        ),
+        "spectral_modeled_no_cache_source_read_bytes": spectral_plan.get(
+            "modeled_no_cache_source_read_bytes"
+        ),
+        "spectral_modeled_full_cache_source_read_bytes": spectral_plan.get(
+            "modeled_full_cache_source_read_bytes"
+        ),
+        "spectral_visibility_cache_saved_read_bytes": spectral_plan.get(
+            "visibility_cache_saved_read_bytes"
+        ),
+        "spectral_candidate_io_costs": spectral_plan.get("candidate_io_costs"),
+        "spectral_backend": spectral_plan.get("backend"),
+        "spectral_memory_max_current_rss_bytes": max_current_rss,
+        "spectral_memory_max_peak_rss_bytes": max_peak_rss,
+        "spectral_memory_max_delta_from_baseline_bytes": max_baseline_delta,
+        "spectral_memory_max_delta_from_previous_bytes": max_previous_delta_entry.get(
+            "delta_from_previous_bytes"
+        ),
+        "spectral_memory_max_delta_stage": max_previous_delta_entry.get("stage"),
+        "spectral_memory_max_delta_slab_id": max_previous_delta_entry.get("slab_id"),
     }
 
 
@@ -785,6 +1541,89 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
         return {}
     value = entries[-1].get("fields", {})
     return value if isinstance(value, dict) else {}
+
+
+def unique_entries_by_raw(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    unique = []
+    for entry in entries:
+        raw = entry.get("raw")
+        if raw in seen:
+            continue
+        seen.add(raw)
+        unique.append(entry)
+    return unique
+
+
+def fields_for_names(
+    entries: list[dict[str, Any]], names: set[str]
+) -> list[dict[str, Any]]:
+    return [
+        entry.get("fields", {})
+        for entry in entries
+        if entry.get("name") in names and isinstance(entry.get("fields", {}), dict)
+    ]
+
+
+def max_int_field(entries: list[dict[str, Any]], field: str) -> int | None:
+    values = [entry.get(field) for entry in entries if isinstance(entry.get(field), int)]
+    return max(values) if values else None
+
+
+def max_int_or_float_field(
+    entries: list[dict[str, Any]], field: str
+) -> int | float | None:
+    values = [
+        entry.get(field)
+        for entry in entries
+        if isinstance(entry.get(field), int | float)
+        and not isinstance(entry.get(field), bool)
+    ]
+    return max(values) if values else None
+
+
+def sum_int_or_float_field(entries: list[dict[str, Any]], field: str) -> int | float | None:
+    values = [
+        entry.get(field)
+        for entry in entries
+        if isinstance(entry.get(field), int | float)
+    ]
+    return sum(values) if values else None
+
+
+def count_positive_field(entries: list[dict[str, Any]], field: str) -> int:
+    return sum(
+        1
+        for entry in entries
+        if isinstance(entry.get(field), int | float)
+        and not isinstance(entry.get(field), bool)
+        and entry[field] > 0
+    )
+
+
+def compact_value_counts(entries: list[dict[str, Any]], field: str) -> str | None:
+    counts = Counter(
+        str(entry[field])
+        for entry in entries
+        if field in entry and entry[field] is not None
+    )
+    if not counts:
+        return None
+    return ",".join(f"{key}:{counts[key]}" for key in sorted(counts))
+
+
+def last_field_value(entries: list[dict[str, Any]], field: str) -> Any:
+    for entry in reversed(entries):
+        if field in entry:
+            return entry[field]
+    return None
+
+
+def max_entry_by_int_field(entries: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    candidates = [entry for entry in entries if isinstance(entry.get(field), int)]
+    if not candidates:
+        return {}
+    return max(candidates, key=lambda entry: entry[field])
 
 
 def build_benchmark_feature_summary(
@@ -883,6 +1722,41 @@ def build_benchmark_feature_summary(
             "resolved_tile_anchor": backend_summary.get("resolved_tile_anchor"),
             "resolved_residual_backend": backend_summary.get("resolved_residual_backend"),
             "resolved_initial_dirty_backend": backend_summary.get("resolved_initial_dirty_backend"),
+            "cube_per_plane_backend": backend_summary.get("cube_per_plane_backend"),
+            "cube_per_plane_phase": backend_summary.get("cube_per_plane_phase"),
+            "cube_per_plane_workers": backend_summary.get("cube_per_plane_workers"),
+            "cube_per_plane_grid_threads": backend_summary.get(
+                "cube_per_plane_grid_threads"
+            ),
+            "cube_per_plane_fixed_tile_eligible": backend_summary.get(
+                "cube_per_plane_fixed_tile_eligible"
+            ),
+            "cube_per_plane_metal_eligible": backend_summary.get(
+                "cube_per_plane_metal_eligible"
+            ),
+            "cube_per_plane_fallback_reasons": backend_summary.get(
+                "cube_per_plane_fallback_reasons"
+            ),
+            "mosaic_cube_slab_schedule": backend_summary.get(
+                "mosaic_cube_slab_schedule"
+            ),
+            "mosaic_cube_slab_executor_capabilities": backend_summary.get(
+                "mosaic_cube_slab_executor_capabilities"
+            ),
+            "mosaic_cube_slab_nplanes": backend_summary.get("mosaic_cube_slab_nplanes"),
+            "mosaic_cube_slab_active_planes": backend_summary.get(
+                "mosaic_cube_slab_active_planes"
+            ),
+            "mosaic_cube_slab_count": backend_summary.get("mosaic_cube_slab_count"),
+            "mosaic_cube_slab_worker_count": backend_summary.get(
+                "mosaic_cube_slab_worker_count"
+            ),
+            "mosaic_cube_slab_source_reuse": backend_summary.get(
+                "mosaic_cube_slab_source_reuse"
+            ),
+            "mosaic_cube_slab_product_state": backend_summary.get(
+                "mosaic_cube_slab_product_state"
+            ),
             "cpu_multi_worker_reason": backend_summary.get("single_plane_reason", {}).get("cpu_multi_worker")
             if isinstance(backend_summary.get("single_plane_reason"), dict)
             else None,
@@ -1114,12 +1988,38 @@ def build_casa_stage_breakdown(stages: dict[str, float]) -> dict[str, Any]:
                 "initialize_iteration_control",
                 "estimate_memory",
             ],
-            "CASA PySynthesisImager setup, construction, and initialization.",
+            "CASA PySynthesisImager setup, construction, initialization, and memory estimation.",
+        ),
+        "ms_selection_and_image_definition": stage_category(
+            stages,
+            [
+                "select_data",
+                "define_image",
+                "normalizer_info",
+                "cf_cache_setup",
+            ],
+            (
+                "Narrow CASA helper timings for synthesisimager.selectdata, "
+                "defineimage, normalizerinfo, and CF-cache setup during initializeImagers."
+            ),
         ),
         "weighting_density_setup": stage_category(
             stages,
-            ["set_weighting"],
-            "CASA weighting setup.",
+            ["set_weighting", "set_weighting_core"],
+            (
+                "CASA weighting setup; set_weighting_core is the direct "
+                "synthesisimager.setweighting call when the phase probe is enabled."
+            ),
+        ),
+        "cube_major_cycle_algorithm_envelope": stage_category(
+            stages,
+            ["make_psf", "calcres_major_cycle", "clean_major_cycle"],
+            (
+                "CASA cube major-cycle envelope. For cube imaging this brackets "
+                "CubeMajorCycleAlgorithm work including C++ tuneSelectData, "
+                "nSubCubeFitInMemory, gridding/degridding, normalization, and "
+                "subimage writeback that are not exposed as separate Python timers."
+            ),
         ),
         "psf_and_primary_beam": stage_category(
             stages,
@@ -1134,7 +2034,19 @@ def build_casa_stage_breakdown(stages: dict[str, float]) -> dict[str, Any]:
         "deconvolution_minor_cycle": stage_category(
             stages,
             ["minor_cycle", "update_mask", "has_converged"],
-            "CASA minor-cycle, mask update, and convergence checks.",
+            (
+                "CASA minor-cycle, mask update, and convergence checks. For cube "
+                "imaging minor_cycle brackets CubeMinorCycleAlgorithm."
+            ),
+        ),
+        "image_store_writeback_and_restore": stage_category(
+            stages,
+            ["clean_major_cycle", "calcres_major_cycle", "restore_images"],
+            (
+                "CASA image-store writeback envelope: cube subimage writes occur "
+                "inside major-cycle C++ calls, while final restored-image writes "
+                "are included in restore_images."
+            ),
         ),
         "restore_and_cleanup": stage_category(
             stages,
@@ -1228,7 +2140,12 @@ def compare_products(
             "products": {},
         }
 
-    panel_dir = log_path.with_suffix(".panels")
+    comparison_root = plan.get("artifacts", {}).get("comparison_root")
+    panel_dir = (
+        pathlib.Path(comparison_root) / "panels"
+        if comparison_root
+        else log_path.with_suffix(".panels")
+    )
     request = {
         "rust_prefix": rust_prefix,
         "casa_prefix": casa_prefix,
@@ -1322,9 +2239,27 @@ def parse_stage_section(text: str, heading: str) -> dict[str, float]:
         for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
             if heading == "Rust stage medians" and name not in RUST_STAGE_FIELDS:
                 continue
+            if (
+                heading == "CASA PySynthesisImager stage medians"
+                and name not in CASA_STAGE_FIELDS
+            ):
+                continue
             if name != "run":
                 stages[name] = float(value)
     return stages
+
+
+def parse_casa_clean_control_diagnostics(text: str) -> list[Any]:
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        prefix = "clean_control_diagnostics_json="
+        if line.startswith(prefix):
+            try:
+                value = json.loads(line[len(prefix) :])
+            except json.JSONDecodeError:
+                return []
+            return value if isinstance(value, list) else []
+    return []
 
 
 def section_lines(text: str, heading_prefix: str) -> list[str]:
@@ -1588,6 +2523,7 @@ def main():
     os.makedirs(request["panel_dir"], exist_ok=True)
     max_elements = int(request["max_elements_per_product"])
     beam_info = estimate_beam_info(request["casa_prefix"] + ".psf", max_elements)
+    panel_displays = product_panel_displays(request, max_elements)
     for suffix in request["products"]:
         rust_path = request["rust_prefix"] + suffix
         casa_path = request["casa_prefix"] + suffix
@@ -1598,6 +2534,7 @@ def main():
             request["panel_dir"],
             suffix,
             beam_info,
+            panel_displays.get(suffix),
         )
     output = {
         "status": "completed",
@@ -1661,7 +2598,76 @@ def structured_difference_rollup_summary(overall, product_labels):
     return f"overall {overall}; " + "; ".join(parts)
 
 
-def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info):
+def product_panel_displays(request, max_elements):
+    displays = {}
+    if ".model" not in request["products"]:
+        return displays
+    restored = restored_model_panel_display(
+        rust_prefix=request["rust_prefix"],
+        casa_prefix=request["casa_prefix"],
+        max_elements=max_elements,
+    )
+    if restored is not None:
+        displays[".model"] = restored
+    return displays
+
+
+def restored_model_panel_display(rust_prefix, casa_prefix, max_elements):
+    required = {
+        "rust_image": rust_prefix + ".image",
+        "rust_residual": rust_prefix + ".residual",
+        "casa_image": casa_prefix + ".image",
+        "casa_residual": casa_prefix + ".residual",
+    }
+    missing = [path for path in required.values() if not os.path.isdir(path)]
+    if missing:
+        return {
+            "status": "unavailable",
+            "reason": "restored model visualization requires .image and .residual",
+            "missing_paths": missing,
+        }
+    try:
+        rust_image = load_image_display_plane(required["rust_image"], max_elements)
+        rust_residual = load_image_display_plane(required["rust_residual"], max_elements)
+        casa_image = load_image_display_plane(required["casa_image"], max_elements)
+        casa_residual = load_image_display_plane(required["casa_residual"], max_elements)
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "reason": f"failed to load restored model visualization inputs: {error}",
+        }
+    inputs = [rust_image, rust_residual, casa_image, casa_residual]
+    shapes = [item["shape"] for item in inputs]
+    strides = [item["sample_stride"] for item in inputs]
+    if any(shape != shapes[0] for shape in shapes):
+        return {
+            "status": "unavailable",
+            "reason": "restored model visualization inputs have mismatched shapes",
+            "shapes": shapes,
+        }
+    if any(stride != strides[0] for stride in strides):
+        return {
+            "status": "unavailable",
+            "reason": "restored model visualization inputs have mismatched sampling strides",
+            "sample_strides": strides,
+        }
+    rust_display = rust_image["data"] - rust_residual["data"]
+    casa_display = casa_image["data"] - casa_residual["data"]
+    return {
+        "status": "available",
+        "rust_data": rust_display,
+        "casa_data": casa_display,
+        "diff_data": rust_display - casa_display,
+        "transform": "restored_model_from_image_minus_residual",
+        "description": ".model visualized as restoring-beam-convolved model via .image - .residual",
+        "product_label": ".model restored",
+        "value_label": "Jy/beam",
+        "shape": shapes[0],
+        "sample_stride": strides[0],
+    }
+
+
+def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info, panel_display=None):
     if not os.path.isdir(rust_path) or not os.path.isdir(casa_path):
         return {
             "status": "missing",
@@ -1712,6 +2718,24 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info
         diff_data=diff_full,
         beam_info=beam_info,
     )
+    panel_display_data = panel_display
+    if panel_display_data is None:
+        rust_display = load_image_display_plane(rust_path, max_elements)
+        casa_display = load_image_display_plane(casa_path, max_elements)
+        panel_display_data = {
+            "status": "available",
+            "rust_data": rust_display["data"],
+            "casa_data": casa_display["data"],
+            "diff_data": rust_display["data"] - casa_display["data"],
+            "transform": "center_plane_full_spatial_display",
+            "description": (
+                "center display plane loaded with spatial-only stride; "
+                "non-spatial axes fixed at their center"
+            ),
+            "shape": rust_display["shape"],
+            "display_bounds": rust_display["display_bounds"],
+            "sample_stride": rust_display["sample_stride"],
+        }
     panel = write_review_panel(
         panel_dir=panel_dir,
         suffix=suffix,
@@ -1719,6 +2743,7 @@ def compare_one(rust_path, casa_path, max_elements, panel_dir, suffix, beam_info
         casa_data=casa_data,
         diff_data=diff_full,
         review=structure.get("review") if isinstance(structure, dict) else None,
+        display=panel_display_data,
     )
     return {
         "status": "compared",
@@ -1817,6 +2842,39 @@ def structured_difference_metrics(suffix, rust_data, casa_data, diff_data, beam_
     flux_norm = robust_product_scale(casa_values)
     diff_rms = rms(diff_values)
     normalized_diff_rms = diff_rms / flux_norm if flux_norm else None
+    if non_spatial_product(suffix):
+        classification = non_spatial_difference_classification(normalized_diff_rms)
+        review = structured_difference_review(
+            suffix=suffix,
+            classification=classification,
+            normalized_diff_rms=normalized_diff_rms,
+            low_order_r2=None,
+            large_scale_power=None,
+            block_decay_slope=None,
+        )
+        return {
+            "status": "computed",
+            "mask": mask_description,
+            "masked_pixels": finite_count,
+            "analysis_pixels": int(np.count_nonzero(analysis_mask)),
+            "beam_block_side_pixels": int(beam_side),
+            "normalization": {
+                "type": "casa_support_rms_or_peak",
+                "value": finite_float(flux_norm),
+            },
+            "diff_rms": finite_float(diff_rms),
+            "normalized_diff_rms": finite_float(normalized_diff_rms),
+            "low_order_r2_quadratic": None,
+            "large_scale_power_fraction": None,
+            "scale_offset_gradient_fit": {
+                "status": "not_applicable",
+                "reason": "non_spatial_product",
+            },
+            "beam_block_rms_by_scale": [],
+            "block_rms_decay_slope_vs_independent_beams": None,
+            "classification": classification,
+            "review": review,
+        }
     low_order_r2 = low_order_r2_score(diff_plane, analysis_mask)
     large_scale_power = large_scale_power_fraction(
         diff_plane,
@@ -1889,6 +2947,10 @@ def structured_difference_mask(suffix, rust_plane, casa_plane, base_mask):
     return base_mask, {"type": "finite_overlap"}
 
 
+def non_spatial_product(suffix):
+    return suffix in {".sumwt"}
+
+
 def erode_mask_for_product(mask, suffix, beam_side):
     if suffix not in {".pb", ".weight"} or beam_side <= 1:
         return mask
@@ -1942,6 +3004,11 @@ def low_order_r2_score(data, mask):
 def difference_basis_fit(reference, diff, mask):
     if int(np.count_nonzero(mask)) < 8:
         return {"status": "insufficient_pixels"}
+    if reference.ndim != 2 or min(reference.shape) < 2:
+        return {
+            "status": "insufficient_dimensions",
+            "shape": [int(v) for v in reference.shape],
+        }
     y_gradient, x_gradient = np.gradient(reference.astype(np.float64))
     diff_values = diff[mask].astype(np.float64)
     reference_values = reference[mask].astype(np.float64)
@@ -1988,13 +3055,32 @@ def structured_difference_classification(
         ),
         "low_order_r2_quadratic": classify_low_order_r2(low_order_r2),
     }
-    structure = worst_classification(structure_components.values())
-    overall = overall_structured_difference_label(amplitude, structure)
+    numerical_floor_override = (
+        normalized_diff_rms is not None and normalized_diff_rms < 1.0e-6
+    )
+    if numerical_floor_override and amplitude == "good":
+        structure = "good"
+        overall = "good"
+    else:
+        structure = worst_classification(structure_components.values())
+        overall = overall_structured_difference_label(amplitude, structure)
     return {
         "overall": overall,
         "amplitude": amplitude,
         "structure": structure,
         "structure_components": structure_components,
+        "structure_suppressed_by_numerical_floor": numerical_floor_override,
+        "thresholds": structured_difference_thresholds(),
+    }
+
+
+def non_spatial_difference_classification(normalized_diff_rms):
+    amplitude = classify_amplitude(normalized_diff_rms)
+    return {
+        "overall": amplitude,
+        "amplitude": amplitude,
+        "structure": "not_applicable",
+        "structure_components": {},
         "thresholds": structured_difference_thresholds(),
     }
 
@@ -2051,6 +3137,7 @@ def structured_difference_thresholds():
     return {
         "normalized_diff_rms": {
             "good": "< 1e-4",
+            "numerical_floor": "< 1e-6 suppresses structure-only escalation",
             "investigate": "1e-4 .. 1e-3",
             "bad": "> 1e-3",
         },
@@ -2085,6 +3172,17 @@ def structured_difference_review_summary(suffix, classification):
     overall = classification.get("overall", "unknown")
     amplitude = classification.get("amplitude", "unknown")
     structure = classification.get("structure", "unknown")
+    if structure == "not_applicable":
+        if overall == "good":
+            return f"{suffix}: good; non-spatial product amplitude check passed."
+        if overall == "bad":
+            return (
+                f"{suffix}: bad; non-spatial product amplitude is {amplitude}. "
+                "Treat this as a correctness blocker until instrumented or explained."
+            )
+        if overall == "investigate":
+            return f"{suffix}: investigate; non-spatial product amplitude is {amplitude}."
+        return f"{suffix}: unknown; non-spatial product amplitude check did not run."
     if overall == "good":
         return f"{suffix}: good; amplitude and beam-scale structure checks passed."
     if overall == "bad":
@@ -2282,15 +3380,43 @@ def peak_summary(data):
     }
 
 
-def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, review=None):
+def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, review=None, display=None):
     if plt is None:
         return {
             "status": "skipped",
             "reason": f"matplotlib unavailable: {MATPLOTLIB_ERROR}",
         }
-    rust_plane = display_plane(rust_data)
-    casa_plane = display_plane(casa_data)
-    diff_plane = display_plane(diff_data)
+    display_status = "raw_product"
+    display_transform = None
+    display_description = None
+    display_reason = None
+    display_shape = None
+    display_bounds = None
+    display_sample_stride = None
+    product_label = suffix if suffix else ".image"
+    value_label = product_value_label(suffix)
+    panel_rust_data = rust_data
+    panel_casa_data = casa_data
+    panel_diff_data = diff_data
+    if isinstance(display, dict):
+        if display.get("status") == "available":
+            panel_rust_data = display["rust_data"]
+            panel_casa_data = display["casa_data"]
+            panel_diff_data = display["diff_data"]
+            product_label = display.get("product_label") or product_label
+            value_label = display.get("value_label") or value_label
+            display_status = "derived"
+            display_transform = display.get("transform")
+            display_description = display.get("description")
+            display_shape = display.get("shape")
+            display_bounds = display.get("display_bounds")
+            display_sample_stride = display.get("sample_stride")
+        else:
+            display_status = display.get("status", "unavailable")
+            display_reason = display.get("reason")
+    rust_plane = display_plane(panel_rust_data)
+    casa_plane = display_plane(panel_casa_data)
+    diff_plane = display_plane(panel_diff_data)
     shared = np.concatenate(
         [
             rust_plane[np.isfinite(rust_plane)].ravel(),
@@ -2299,21 +3425,125 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
     )
     if shared.size == 0:
         return {"status": "skipped", "reason": "no finite pixels for panel scaling"}
-    image_vmin = finite_float(np.nanmin(shared))
-    image_vmax = finite_float(np.nanmax(shared))
+    image_vmin, image_vmax = panel_color_limits(shared)
     finite_diff = diff_plane[np.isfinite(diff_plane)]
-    diff_abs = finite_float(np.nanmax(np.abs(finite_diff))) if finite_diff.size else None
-    if diff_abs is None:
-        diff_abs = 0.0
+    diff_abs = panel_symmetric_abs_limit(finite_diff)
     safe_name = suffix.strip(".").replace(".", "_") or "image"
-    product_label = suffix if suffix else ".image"
-    value_label = product_value_label(suffix)
     review_label = None
     review_summary = None
     if isinstance(review, dict):
         review_label = review.get("label")
         review_summary = review.get("summary")
     panel_path = os.path.join(panel_dir, f"{safe_name}.review.png")
+    render_review_panel_figure(
+        panel_path=panel_path,
+        rust_plane=rust_plane,
+        casa_plane=casa_plane,
+        diff_plane=diff_plane,
+        product_label=product_label,
+        value_label=value_label,
+        image_vmin=image_vmin,
+        image_vmax=image_vmax,
+        diff_abs=diff_abs,
+        review_label=review_label,
+    )
+    zoom_panel = write_zoom_review_panel(
+        panel_dir=panel_dir,
+        safe_name=safe_name,
+        rust_plane=rust_plane,
+        casa_plane=casa_plane,
+        diff_plane=diff_plane,
+        product_label=product_label,
+        value_label=value_label,
+        review_label=review_label,
+    )
+    return {
+        "status": "written",
+        "path": panel_path,
+        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
+        "difference_color_limits": [-diff_abs, diff_abs],
+        "structured_difference_label": review_label,
+        "structured_difference_summary": review_summary,
+        "display_status": display_status,
+        "display_transform": display_transform,
+        "display_description": display_description,
+        "display_reason": display_reason,
+        "display_shape": display_shape,
+        "display_bounds": display_bounds,
+        "display_sample_stride": display_sample_stride,
+        "zoom_panel": zoom_panel,
+    }
+
+
+def write_zoom_review_panel(
+    panel_dir,
+    safe_name,
+    rust_plane,
+    casa_plane,
+    diff_plane,
+    product_label,
+    value_label,
+    review_label,
+):
+    bounds = zoom_bounds_for_planes(rust_plane, casa_plane)
+    if bounds is None:
+        return {"status": "skipped", "reason": "no finite nonzero support for zoom panel"}
+    x0, x1, y0, y1 = bounds
+    if x0 == 0 and y0 == 0 and x1 == rust_plane.shape[0] and y1 == rust_plane.shape[1]:
+        return {
+            "status": "skipped",
+            "reason": "zoom bounds cover the full review plane",
+            "bounds": {"x_start": x0, "x_end": x1, "y_start": y0, "y_end": y1},
+        }
+    rust_zoom = rust_plane[x0:x1, y0:y1]
+    casa_zoom = casa_plane[x0:x1, y0:y1]
+    diff_zoom = diff_plane[x0:x1, y0:y1]
+    shared = np.concatenate(
+        [
+            rust_zoom[np.isfinite(rust_zoom)].ravel(),
+            casa_zoom[np.isfinite(casa_zoom)].ravel(),
+        ]
+    )
+    if shared.size == 0:
+        return {"status": "skipped", "reason": "no finite pixels for zoom panel scaling"}
+    image_vmin, image_vmax = panel_color_limits(shared)
+    finite_diff = diff_zoom[np.isfinite(diff_zoom)]
+    diff_abs = panel_symmetric_abs_limit(finite_diff)
+    zoom_path = os.path.join(panel_dir, f"{safe_name}.zoom.review.png")
+    zoom_label = f"{product_label} zoom"
+    render_review_panel_figure(
+        panel_path=zoom_path,
+        rust_plane=rust_zoom,
+        casa_plane=casa_zoom,
+        diff_plane=diff_zoom,
+        product_label=zoom_label,
+        value_label=value_label,
+        image_vmin=image_vmin,
+        image_vmax=image_vmax,
+        diff_abs=diff_abs,
+        review_label=review_label,
+    )
+    return {
+        "status": "written",
+        "path": zoom_path,
+        "bounds": {"x_start": x0, "x_end": x1, "y_start": y0, "y_end": y1},
+        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
+        "difference_color_limits": [-diff_abs, diff_abs],
+    }
+
+
+def render_review_panel_figure(
+    panel_path,
+    rust_plane,
+    casa_plane,
+    diff_plane,
+    product_label,
+    value_label,
+    image_vmin,
+    image_vmax,
+    diff_abs,
+    review_label,
+):
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.8), constrained_layout=True)
     if review_label:
         fig.suptitle(
@@ -2362,14 +3592,6 @@ def write_review_panel(panel_dir, suffix, rust_data, casa_data, diff_data, revie
         axis.set_yticks([])
     fig.savefig(panel_path, dpi=160)
     plt.close(fig)
-    return {
-        "status": "written",
-        "path": panel_path,
-        "casa_rs_and_casa_color_limits": [image_vmin, image_vmax],
-        "difference_color_limits": [-diff_abs, diff_abs],
-        "structured_difference_label": review_label,
-        "structured_difference_summary": review_summary,
-    }
 
 
 def product_value_label(suffix):
@@ -2384,10 +3606,68 @@ def product_value_label(suffix):
     return "value"
 
 
+def zoom_bounds_for_planes(rust_plane, casa_plane):
+    if rust_plane.ndim != 2 or casa_plane.ndim != 2 or rust_plane.shape != casa_plane.shape:
+        return None
+    finite = np.isfinite(rust_plane) & np.isfinite(casa_plane)
+    if not np.any(finite):
+        return None
+    amplitude = np.maximum(np.abs(rust_plane), np.abs(casa_plane))
+    amplitude = np.where(finite, amplitude, 0.0)
+    peak = finite_absmax(amplitude)
+    if peak <= 0.0:
+        return None
+    support = amplitude >= peak * 1.0e-3
+    if not np.any(support):
+        peak_index = np.unravel_index(int(np.nanargmax(amplitude)), amplitude.shape)
+        xs = np.asarray([peak_index[0]])
+        ys = np.asarray([peak_index[1]])
+    else:
+        xs, ys = np.nonzero(support)
+    height, width = rust_plane.shape
+    x_min = int(np.min(xs))
+    x_max = int(np.max(xs)) + 1
+    y_min = int(np.min(ys))
+    y_max = int(np.max(ys)) + 1
+    support_side = max(x_max - x_min, y_max - y_min)
+    min_side = min(min(height, width), max(32, min(height, width) // 16))
+    side = min(min(height, width), max(min_side, support_side * 4))
+    x_center = (x_min + x_max) // 2
+    y_center = (y_min + y_max) // 2
+    x0 = max(0, min(height - side, x_center - side // 2))
+    y0 = max(0, min(width - side, y_center - side // 2))
+    return int(x0), int(x0 + side), int(y0), int(y0 + side)
+
+
+def panel_color_limits(values):
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0, 0.0
+    vmin = finite_float(np.nanmin(finite))
+    vmax = finite_float(np.nanmax(finite))
+    if vmin is None or vmax is None:
+        return 0.0, 0.0
+    if vmax > vmin:
+        return vmin, vmax
+    abs_peak = finite_absmax(finite)
+    delta = abs_peak * 1.0e-6 if abs_peak > 0.0 else 1.0
+    return vmin - delta, vmax + delta
+
+
+def panel_symmetric_abs_limit(values):
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 1.0
+    abs_peak = finite_float(np.nanmax(np.abs(finite)))
+    if abs_peak is None or abs_peak <= 0.0:
+        return 1.0
+    return abs_peak
+
+
 def display_plane(data):
     plane = np.squeeze(data)
     while plane.ndim > 2:
-        plane = plane[..., 0]
+        plane = plane[..., plane.shape[-1] // 2]
     if plane.ndim == 0:
         plane = np.asarray([[float(plane)]])
     elif plane.ndim == 1:
@@ -2416,6 +3696,52 @@ def load_image(path, max_elements):
         "sample_stride": stride,
         "data": np.asarray(data, dtype=np.float64),
     }
+
+
+def load_image_display_plane(path, max_elements):
+    tool = image()
+    try:
+        tool.open(path)
+        shape = [int(v) for v in tool.shape()]
+        blc, trc = display_plane_bounds(shape)
+        plane_shape = [shape[0] if shape else 1, shape[1] if len(shape) > 1 else 1]
+        spatial_stride = stride_for(plane_shape, max_elements)
+        inc = [1] * len(shape)
+        if len(inc) >= 1:
+            inc[0] = spatial_stride[0]
+        if len(inc) >= 2:
+            inc[1] = spatial_stride[1]
+        data = tool.getchunk(
+            blc=blc,
+            trc=trc,
+            inc=inc,
+            dropdeg=False,
+            getmask=False,
+        )
+    finally:
+        tool.close()
+    return {
+        "shape": shape,
+        "display_bounds": {
+            "blc": blc,
+            "trc": trc,
+            "inc": inc,
+        },
+        "sample_stride": inc,
+        "data": np.asarray(data, dtype=np.float64),
+    }
+
+
+def display_plane_bounds(shape):
+    if not shape:
+        return [], []
+    blc = [0] * len(shape)
+    trc = [max(0, int(size) - 1) for size in shape]
+    for axis in range(2, len(shape)):
+        center = max(0, int(shape[axis]) // 2)
+        blc[axis] = center
+        trc[axis] = center
+    return blc, trc
 
 
 def stride_for(shape, max_elements):

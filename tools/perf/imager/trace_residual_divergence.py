@@ -18,13 +18,15 @@ import numpy as np
 from casatasks import tclean
 from casatools import image
 
+import perf_paths
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 DEFAULT_MS = pathlib.Path(
     "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/"
     "wave1-vla-single-medium.ms"
 )
-DEFAULT_OUTPUT = REPO_ROOT / "target" / "imperformance-wave3" / "residual-divergence"
+DEFAULT_OUTPUT = perf_paths.artifact_path("wave3", "residual-divergence")
 
 
 def parse_args() -> argparse.Namespace:
@@ -155,7 +157,22 @@ def case_controls(case: str) -> dict[str, Any]:
         return {"niter": 50, "cycleniter": 50, "dirty_only": False}
     if case == "full":
         return {"niter": 500, "cycleniter": 50, "dirty_only": False}
+    if case == "deep-cycle":
+        return {"niter": 2000, "cycleniter": 2000, "dirty_only": False}
+    if case == "cycle1479":
+        return {"niter": 1479, "cycleniter": 1479, "dirty_only": False}
     raise ValueError(f"unsupported case {case!r}")
+
+
+def rust_weighting(weighting: str, robust: float) -> dict[str, Any]:
+    normalized = weighting.lower()
+    if normalized == "natural":
+        return {"kind": "natural"}
+    if normalized == "uniform":
+        return {"kind": "uniform"}
+    if normalized == "briggs":
+        return {"kind": "briggs", "robust": robust}
+    raise ValueError(f"unsupported weighting {weighting!r}")
 
 
 def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[str, Any]:
@@ -171,7 +188,7 @@ def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         "channel_count": args.channel_count,
         "data_column": "DATA",
         "spectral_mode": "mfs",
-        "weighting": {"kind": "briggs", "robust": args.robust},
+        "weighting": rust_weighting(args.weighting, args.robust),
         "deconvolver": args.deconvolver,
         "nterms": 1,
         "niter": controls["niter"],
@@ -228,7 +245,10 @@ def run_casa(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         if args.channel_count == 1
         else f"{args.spw}:{args.channel_start}~{args.channel_start + args.channel_count - 1}"
     )
+    trace_path = prefix.parent / f"{prefix.name}.cpp-clark-trace.jsonl"
     os.environ["SAVE_ALL_RESIMS"] = "true"
+    if args.deconvolver == "clark":
+        os.environ["CASA_CPP_CLARK_TRACE"] = str(trace_path)
     started = time.perf_counter()
     try:
         result = tclean(
@@ -269,6 +289,7 @@ def run_casa(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         )
     finally:
         os.environ.pop("SAVE_ALL_RESIMS", None)
+        os.environ.pop("CASA_CPP_CLARK_TRACE", None)
     elapsed = time.perf_counter() - started
     return {
         "elapsed_seconds": elapsed,
@@ -276,6 +297,7 @@ def run_casa(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[
         "nmajordone": int(result.get("nmajordone", 0)),
         "stopcode": int(result.get("stopcode", 0)),
         "summaryminor": result.get("summaryminor"),
+        "cpp_clark_trace": str(trace_path) if trace_path.exists() else None,
     }
 
 
@@ -322,6 +344,7 @@ def main() -> None:
     if not args.ms.exists():
         raise SystemExit(f"MeasurementSet not found: {args.ms}")
     cases = [case.strip() for case in args.cases.split(",") if case.strip()]
+    perf_paths.mark_safe_to_delete(perf_paths.default_artifact_root())
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "measurement_set": str(args.ms),

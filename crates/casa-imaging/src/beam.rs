@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! PSF beam fitting and restoration helpers following CASA's `psfcutoff` flow.
 
-use casa_images::GaussianBeam;
 use ndarray::Array2;
+use num_complex::Complex32;
 
+use crate::fft::{centered_fft2, centered_ifft2};
 use crate::{BeamFit, BeamFitDebugSummary};
 
-const FWHM_PER_SIGMA: f64 = 2.354_820_045_030_949_3;
 const CASA_FWHM_TO_INTERNAL: f64 = 0.600_561_204_393_224_9;
 const PSF_PATCH_RADIUS: usize = 20;
 const REGION_PADDING: usize = 5;
@@ -114,76 +114,15 @@ pub(crate) fn restore_model(
         return model.clone();
     };
 
-    let Some(kernel) = gaussian_kernel(beam, cell_size_rad, false) else {
-        return model.clone();
-    };
-    apply_kernel(model, &kernel)
+    let gaussian_psf = make_casa_gaussian_psf_image(model.raw_dim(), cell_size_rad, beam, false);
+    fft_convolve_real_casa_restore(model, &gaussian_psf)
 }
 
-pub(crate) fn rescale_residual_to_restored_beam(
-    residual: &Array2<f32>,
-    cell_size_rad: [f64; 2],
-    restored_beam: BeamFit,
-    fitted_psf_beam: BeamFit,
-) -> Result<Array2<f32>, String> {
-    let restored = beamfit_to_gaussian(restored_beam);
-    let fitted = beamfit_to_gaussian(fitted_psf_beam);
-    let Some(convolving_beam) = restored
-        .deconvolving_beam(fitted)
-        .map_err(|error| format!("deconvolve restoring beam: {error}"))?
-    else {
-        return Ok(residual.clone());
-    };
-    let pixel_width = cell_size_rad[0].hypot(cell_size_rad[1]);
-    if convolving_beam.minor <= pixel_width {
-        return Ok(residual.clone());
-    }
-    let Some(kernel) = gaussian_kernel(gaussian_to_beamfit(convolving_beam), cell_size_rad, true)
-    else {
-        return Ok(residual.clone());
-    };
-    let mut rescaled = apply_kernel(residual, &kernel);
-    let area_ratio = restored.area() / fitted.area();
-    rescaled.mapv_inplace(|value| (f64::from(value) * area_ratio) as f32);
-    Ok(rescaled)
-}
-
-pub(crate) fn beamfit_to_gaussian(beam: BeamFit) -> GaussianBeam {
-    GaussianBeam::new(
-        beam.major_fwhm_rad,
-        beam.minor_fwhm_rad,
-        beam.position_angle_rad,
-    )
-}
-
-pub(crate) fn gaussian_to_beamfit(beam: GaussianBeam) -> BeamFit {
-    BeamFit {
-        major_fwhm_rad: beam.major,
-        minor_fwhm_rad: beam.minor,
-        position_angle_rad: beam.position_angle,
-    }
-}
-
-fn apply_kernel(model: &Array2<f32>, kernel: &[(isize, isize, f32)]) -> Array2<f32> {
-    let mut restored = Array2::<f32>::zeros(model.raw_dim());
-
-    for ((center_x, center_y), flux) in model.indexed_iter() {
-        if flux.abs() <= 1.0e-12 {
-            continue;
-        }
-        for &(dx, dy, weight) in kernel {
-            let x = center_x as isize + dx;
-            let y = center_y as isize + dy;
-            if !(0..model.shape()[0] as isize).contains(&x)
-                || !(0..model.shape()[1] as isize).contains(&y)
-            {
-                continue;
-            }
-            restored[(x as usize, y as usize)] += *flux * weight;
-        }
-    }
-
-    restored
+fn fft_convolve_real_casa_restore(model: &Array2<f32>, psf: &Array2<f32>) -> Array2<f32> {
+    let model_complex = model.mapv(|value| Complex32::new(value, 0.0));
+    let psf_complex = psf.mapv(|value| Complex32::new(value, 0.0));
+    let product = centered_fft2(&model_complex) * centered_fft2(&psf_complex);
+    centered_ifft2(&product).mapv(|value| value.re)
 }
 
 pub(crate) fn estimate_psf_sidelobe_level(
@@ -197,6 +136,22 @@ pub(crate) fn estimate_psf_sidelobe_level(
     };
 
     let gaussian_psf = make_casa_gaussian_psf_image(psf.raw_dim(), cell_size_rad, beam, false);
+    estimate_psf_sidelobe_level_with_beam(psf, &gaussian_psf)
+}
+
+pub(crate) fn estimate_psf_sidelobe_level_for_beam(
+    psf: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    beam: Option<BeamFit>,
+) -> f32 {
+    let Some(beam) = beam else {
+        return 0.0;
+    };
+    let gaussian_psf = make_casa_gaussian_psf_image(psf.raw_dim(), cell_size_rad, beam, false);
+    estimate_psf_sidelobe_level_with_beam(psf, &gaussian_psf)
+}
+
+fn estimate_psf_sidelobe_level_with_beam(psf: &Array2<f32>, gaussian_psf: &Array2<f32>) -> f32 {
     let mut all_min = 0.0f32;
     let mut all_max = 0.0f32;
     for ((x, y), value) in psf.indexed_iter() {
@@ -708,46 +663,6 @@ fn solve_3x3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
     Some(b)
 }
 
-fn gaussian_kernel(
-    beam: BeamFit,
-    cell_size_rad: [f64; 2],
-    normalize_volume: bool,
-) -> Option<Vec<(isize, isize, f32)>> {
-    let sigma_major = beam.major_fwhm_rad / FWHM_PER_SIGMA;
-    let sigma_minor = beam.minor_fwhm_rad / FWHM_PER_SIGMA;
-    if !(sigma_major.is_finite()
-        && sigma_major > MIN_SIGMA_RAD
-        && sigma_minor.is_finite()
-        && sigma_minor > MIN_SIGMA_RAD)
-    {
-        return None;
-    }
-    let radius_rad = 5.0 * sigma_major.max(sigma_minor);
-    let radius_x = (radius_rad / cell_size_rad[0]).ceil() as isize;
-    let radius_y = (radius_rad / cell_size_rad[1]).ceil() as isize;
-    let kernel_image = make_casa_gaussian_psf_image(
-        ndarray::Dim([(2 * radius_x + 1) as usize, (2 * radius_y + 1) as usize]),
-        cell_size_rad,
-        beam,
-        normalize_volume,
-    );
-    let mut kernel = Vec::new();
-    let center_x = radius_x as usize;
-    let center_y = radius_y as usize;
-    for dx in -radius_x..=radius_x {
-        for dy in -radius_y..=radius_y {
-            let weight = kernel_image[(
-                (center_x as isize + dx) as usize,
-                (center_y as isize + dy) as usize,
-            )];
-            if weight > 1.0e-6 {
-                kernel.push((dx, dy, weight));
-            }
-        }
-    }
-    Some(kernel)
-}
-
 fn casa_interp_cubic(data: &Array2<f32>, x: f64, y: f64) -> f64 {
     let nx = data.shape()[0] as isize;
     let ny = data.shape()[1] as isize;
@@ -1011,7 +926,27 @@ mod tests {
     }
 
     #[test]
-    fn restoration_skips_gaussian_kernel_for_empty_model() {
+    fn restoration_uses_casa_style_circular_fft_boundary() {
+        let mut model = Array2::<f32>::zeros((16, 16));
+        model[(0, 8)] = 1.0;
+        let restored = restore_model(
+            &model,
+            [1.0e-4, 1.0e-4],
+            Some(BeamFit {
+                major_fwhm_rad: 4.0e-4,
+                minor_fwhm_rad: 3.0e-4,
+                position_angle_rad: 0.0,
+            }),
+        );
+        assert!(restored[(0, 8)] > 0.0);
+        assert!(
+            restored[(15, 8)] > 0.0,
+            "CASA StokesImageUtil::Convolve uses full-plane FFT convolution, so restored model flux wraps at image boundaries"
+        );
+    }
+
+    #[test]
+    fn restoration_skips_fft_for_empty_model() {
         let model = Array2::<f32>::zeros((16, 16));
         let restored = restore_model(
             &model,

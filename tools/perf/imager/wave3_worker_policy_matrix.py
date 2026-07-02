@@ -11,9 +11,11 @@ import shlex
 import sys
 from typing import Any
 
+import perf_paths
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-DEFAULT_OUTPUT_ROOT = pathlib.Path("target/imperformance-wave3/worker-policy")
+DEFAULT_OUTPUT_ROOT = perf_paths.artifact_path("wave3", "worker-policy")
 BACKENDS = ("cpu", "multi-cpu", "auto", "metal")
 
 SCENARIOS: list[dict[str, Any]] = [

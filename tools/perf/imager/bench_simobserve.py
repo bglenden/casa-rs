@@ -14,9 +14,12 @@ import sys
 import time
 from typing import Any
 
+import perf_paths
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "simobserve"
+DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("wave1", "simobserve-bench")
 
 
 class BenchError(Exception):
@@ -43,7 +46,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
-        default=pathlib.Path("target/imperformance-wave1/simobserve-bench"),
+        default=DEFAULT_OUTPUT_DIR,
     )
     parser.add_argument("--casars-binary", type=pathlib.Path, default=DEFAULT_BINARY)
     parser.add_argument(
@@ -120,6 +123,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     plan = read_json(args.plan)
     dataset = select_dataset(plan, args.dataset)
     output_dir = args.output_dir.resolve()
+    perf_paths.mark_safe_to_delete(perf_paths.default_artifact_root())
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{dataset['id']}"
     run_root = output_dir / run_id

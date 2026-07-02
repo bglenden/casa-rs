@@ -54,7 +54,7 @@ Implemented as the #167-owned slice, not as a #196 sub-ticket:
 - `--no-fastnoise`
 - canonical JSON task request fields `use_mask` and `auto_mask`
 - Python `casars.tasks.imager.mfs(..., use_mask=..., auto_mask=...)`
-- CASA-style cube clean masks in `CubeImagingRequest` with shape `(nx, ny, 1, nchan)`, so generated or supplied masks can differ by output channel
+- CASA-style cube clean masks with shape `(nx, ny, 1, nchan)`, so generated or supplied masks can differ by output channel
 - `.mask` product writing for effective clean masks, including channel-specific cube masks
 
 The native cube controller now owns standard-gridder `auto-multithresh` updates across major cycles. Initial masks use CASA's no-growth `iterdone == 0` path; later major-cycle residual refreshes may grow existing positive masks and stop channels that remain empty under a noise threshold.

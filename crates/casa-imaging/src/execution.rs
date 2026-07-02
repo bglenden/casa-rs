@@ -16368,7 +16368,7 @@ static inline bool row_run_density_lookup(
         x = -u * params.density_u_scale + params.density_center_x;
         y = v * params.density_v_scale + params.density_center_y;
     } else {
-        x = -u_lambda * params.density_u_scale + params.density_center_x;
+        x = u_lambda * params.density_u_scale + params.density_center_x;
         y = -v_lambda * params.density_v_scale + params.density_center_y;
     }
     if (!isfinite(x) || !isfinite(y)) {
@@ -18718,6 +18718,8 @@ pub(crate) fn finite_visibility(visibility: Complex32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    use super::METAL_DIRTY_SHADER;
     use super::{
         STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY, STANDARD_MFS_TILE_FLAG_PSF_ONLY,
         StandardMfsBackend, StandardMfsBlockTileBuckets, StandardMfsCpuExecutor,
@@ -18726,9 +18728,10 @@ mod tests {
         StandardMfsTiledCpuExecutor,
     };
     use crate::{
-        ImageGeometry, StandardMfsExecutionConfig, StandardMfsPlannedWeightedSample,
-        StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-        StandardMfsVisibilityPolarization, VisibilityBatch, gridder::StandardGridder,
+        ImageGeometry, StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
+        StandardMfsPlannedWeightedSample, StandardMfsRoutedVisibilityRow,
+        StandardMfsRoutedVisibilityRun, StandardMfsVisibilityPolarization, VisibilityBatch,
+        gridder::StandardGridder,
     };
     use num_complex::{Complex32, Complex64};
     use std::{
@@ -18773,6 +18776,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    fn metal_row_run_density_lookup_matches_cpu_cube_briggs_axes() {
+        assert!(
+            METAL_DIRTY_SHADER.contains(
+                "x = -u * params.density_u_scale + params.density_center_x;\n        y = v * params.density_v_scale + params.density_center_y;"
+            ),
+            "VisImagingWeight density convention should preserve the legacy Metal sign convention"
+        );
+        assert!(
+            METAL_DIRTY_SHADER.contains(
+                "x = u_lambda * params.density_u_scale + params.density_center_x;\n        y = -v_lambda * params.density_v_scale + params.density_center_y;"
+            ),
+            "Cube Briggs density convention must match StandardGridder::weight_density_cell_anchor"
+        );
     }
 
     #[test]
@@ -19614,12 +19634,14 @@ mod tests {
         let evicted = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(1),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -19627,12 +19649,14 @@ mod tests {
         let direct = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -19751,6 +19775,10 @@ mod tests {
             v_lambda: 0.0,
             center_x,
             center_y,
+            x_start: center_x.saturating_sub(3),
+            y_start: center_y.saturating_sub(3),
+            x_weight_index: 0,
+            y_weight_index: 0,
             flags: StandardMfsPlannedWeightedSample::FINITE_VISIBILITY,
             tap_count: 49,
             grid_weight: 1.0,
@@ -19769,12 +19797,14 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: true,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -19915,12 +19945,14 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -20030,12 +20062,14 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )
@@ -20222,12 +20256,14 @@ mod tests {
         let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
             &gridder,
             StandardMfsExecutionConfig {
+                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
                 fixed_tile_resident_bytes: Some(usize::MAX),
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
                 metal_grouped_input_cache: false,
+                materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
             },
         )

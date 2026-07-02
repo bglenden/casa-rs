@@ -266,15 +266,15 @@ pub use sorting::{TableGroup, TableIterator};
 pub use storage::{
     DataManagerInfo, StorageError, StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType,
     StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
-    StreamingTiledShapeComplex32Writer, TableInfo, TilePixel, TiledFileIO,
+    StreamingTiledShapeComplex32Writer, TableInfo, TilePixel, TiledFileIO, TiledFileIoStats,
     install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
     install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
     table_cache_budget_bytes,
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    QueryResult, RecordColumnCell, RecordColumnIter, RowRange, Slicer, SortOrder, Table, TableCell,
-    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
-    TableRowMut,
+    QueryResult, RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange, Slicer,
+    SortOrder, Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+    TableOptions, TableRow, TableRowMut,
 };
 pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

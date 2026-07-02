@@ -14,6 +14,8 @@ import sys
 import time
 from typing import Any
 
+import perf_paths
+
 try:
     import numpy as np
 except ImportError:  # pragma: no cover - exercised only in minimal Python installs.
@@ -22,7 +24,7 @@ except ImportError:  # pragma: no cover - exercised only in minimal Python insta
 
 TOOL_DIR = pathlib.Path(__file__).resolve().parent
 REGISTRY_PATH = TOOL_DIR / "wave1_dataset_registry.json"
-DEFAULT_OUTPUT_DIR = pathlib.Path("target/imperformance-wave1/datasets")
+DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("wave1", "datasets")
 EXTERNAL_PREFIX = pathlib.Path("/Volumes/GLENDENNING")
 MODEL_PHASE_CENTER_RA_DEG = 180.0
 DEFAULT_ELEVATION_LIMIT_DEG = 20.0
@@ -91,6 +93,7 @@ def main() -> None:
         )
         data_root = resolve_data_root(registry, args.data_root)
         plan = build_plan(registry, specs, data_root, args.allow_non_external_large_root)
+        perf_paths.mark_safe_to_delete(perf_paths.default_artifact_root())
         args.output_dir.mkdir(parents=True, exist_ok=True)
         plan_path = args.output_dir / "wave1-dataset-plan.json"
         if args.materialize_models and not args.dry_run:
@@ -324,11 +327,11 @@ def materialize_workloads(plan: dict[str, Any], output_dir: pathlib.Path) -> Non
 
 
 def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, Any]:
-    specmode = "cube" if "cube" in mode_id else "mfs"
+    specmode = "cubedata" if "cubedata" in mode_id else ("cube" if "cube" in mode_id else "mfs")
     gridder = "mosaic" if mode_id.startswith("mosaic") else "standard"
     is_clean = "clean" in mode_id or mode_id.startswith("mtmfs")
     is_mtmfs = mode_id.startswith("mtmfs")
-    deconvolver = "mtmfs" if is_mtmfs else ("multiscale" if is_clean else "hogbom")
+    deconvolver = workload_deconvolver(mode_id, is_clean=is_clean, is_mtmfs=is_mtmfs)
     channels = workload_channel_count(dataset, mode_id, specmode)
     if mode_id.endswith("-niter2"):
         niter = 2 if is_clean else 0
@@ -339,6 +342,41 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
     else:
         niter = 250 if is_clean else 0
     minor_cycle_length = niter if is_clean else 2
+    imaging = {
+        "mode": "clean" if is_clean else "dirty",
+        "specmode": specmode,
+        "gridder": gridder,
+        **({"interpolation": "nearest"} if specmode in {"cube", "cubedata"} else {}),
+        "field": mosaic_field_selector(dataset) if gridder == "mosaic" else "0",
+        "phasecenter_field": 0 if gridder == "mosaic" else None,
+        "spw": "0",
+        "channel_start": 0,
+        "channel_count": channels,
+        "imsize": int(dataset["shape"]["image_pixels"]),
+        "cell_arcsec": workload_cell_arcsec(dataset["instrument"]),
+        "weighting": "briggs" if is_clean else "natural",
+        "robust": 0.5,
+        **({"perchanweightdensity": False} if specmode == "cubedata" else {}),
+        "deconvolver": deconvolver,
+        "nterms": 2 if is_mtmfs else 1,
+        "scales": [0, 5, 15] if deconvolver == "multiscale" else "",
+        "niter": niter,
+        "minor_cycle_length": minor_cycle_length,
+        "wterm": "none",
+    }
+    if gridder == "mosaic":
+        imaging.update(
+            {
+                "pblimit": 0.2,
+                "write_pb": True,
+                "pbcor": True,
+            }
+        )
+    hogbom_iteration_mode = workload_hogbom_iteration_mode(
+        mode_id, deconvolver=deconvolver, is_clean=is_clean
+    )
+    if hogbom_iteration_mode is not None:
+        imaging["hogbom_iteration_mode"] = hogbom_iteration_mode
     return {
         "id": f"{dataset['id']}-{mode_id}",
         "mode_id": mode_id,
@@ -348,33 +386,42 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "root_env": "CASA_RS_IMPERF_DATA_ROOT",
             "relative_path": relative_to_wave_root(dataset["paths"]["output_ms"]),
         },
-        "imaging": {
-            "mode": "clean" if is_clean else "dirty",
-            "specmode": specmode,
-            "gridder": gridder,
-            "field": mosaic_field_selector(dataset) if gridder == "mosaic" else "0",
-            "phasecenter_field": 0 if gridder == "mosaic" else None,
-            "spw": "0",
-            "channel_start": 0,
-            "channel_count": channels,
-            "imsize": int(dataset["shape"]["image_pixels"]),
-            "cell_arcsec": workload_cell_arcsec(dataset["instrument"]),
-            "weighting": "briggs" if is_clean else "natural",
-            "robust": 0.5,
-            "deconvolver": deconvolver,
-            "nterms": 2 if is_mtmfs else 1,
-            "scales": [0, 5, 15] if deconvolver == "multiscale" else "",
-            "niter": niter,
-            "minor_cycle_length": minor_cycle_length,
-            "wterm": "none",
-        },
+        "imaging": imaging,
         "run": {
             "repeats": 3,
             "run_label": "warm",
             "storage_label": dataset["storage_label"],
         },
-        "comparison": {"products": comparison_products_for_mode(is_clean, is_mtmfs)},
+        "comparison": {
+            "products": comparison_products_for_mode(
+                is_clean, is_mtmfs, gridder=gridder
+            )
+        },
     }
+
+
+def workload_deconvolver(mode_id: str, *, is_clean: bool, is_mtmfs: bool) -> str:
+    if is_mtmfs:
+        return "mtmfs"
+    if "clean-clark" in mode_id:
+        return "clark"
+    if "clean-multiscale" in mode_id:
+        return "multiscale"
+    if "clean-hogbom" in mode_id:
+        return "hogbom"
+    return "multiscale" if is_clean else "hogbom"
+
+
+def workload_hogbom_iteration_mode(
+    mode_id: str, *, deconvolver: str, is_clean: bool
+) -> str | None:
+    if deconvolver != "hogbom":
+        return None
+    if "hogbom-strict" in mode_id:
+        return "strict"
+    if is_clean and "hogbom-casa" in mode_id:
+        return "casa"
+    return None
 
 
 def mosaic_field_selector(dataset: dict[str, Any]) -> str:
@@ -386,18 +433,22 @@ def workload_cell_arcsec(instrument: str) -> float:
     return 0.08 if instrument == "alma" else 0.35
 
 
-def comparison_products_for_mode(is_clean: bool, is_mtmfs: bool) -> list[str]:
+def comparison_products_for_mode(
+    is_clean: bool, is_mtmfs: bool, *, gridder: str = "standard"
+) -> list[str]:
     if is_mtmfs:
         return [".image.tt0", ".residual.tt0", ".psf.tt0"]
-    products = [".image", ".residual", ".psf"]
+    products = [".image", ".residual", ".psf", ".sumwt"]
     if is_clean:
         products.append(".model")
+    if gridder == "mosaic":
+        products.extend([".weight", ".pb", ".image.pbcor"])
     return products
 
 
 def workload_channel_count(dataset: dict[str, Any], mode_id: str, specmode: str) -> int:
     channels = int(dataset["shape"]["channels"])
-    if specmode != "cube":
+    if specmode not in {"cube", "cubedata"}:
         return channels
     if "bounded" in mode_id:
         return min(channels, 32)

@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import statistics
 import tempfile
 import time
 from typing import Callable, Dict, List, Tuple
 
+from casatools import synthesisimager
 from casatasks.private.imagerhelpers.imager_base import PySynthesisImager
 from casatasks.private.imagerhelpers.input_parameters import ImagerParameters
 
@@ -38,10 +40,161 @@ def median_int(values: List[int]) -> int:
     return ordered[len(ordered) // 2]
 
 
+def summarize_summaryminor(summaryminor: object) -> Dict[str, object]:
+    """Return compact CASA minor-cycle summary facts without dumping large arrays."""
+    shape = getattr(summaryminor, "shape", None)
+    if shape is not None and len(shape) == 2:
+        fields = int(shape[0])
+        entries = int(shape[1])
+        facts: Dict[str, object] = {
+            "present": True,
+            "matrix_shape": [fields, entries],
+            "total_entries": entries,
+            "total_iterations": 0.0,
+            "iterations_by_entry": [],
+            "max_cycle_threshold": 0.0,
+            "cycle_threshold_by_entry": [],
+            "stop_codes": {},
+        }
+        if entries > 0 and fields > 0:
+            facts["total_iterations"] = float(summaryminor[0].sum())
+            facts["iterations_by_entry"] = [float(value) for value in summaryminor[0].tolist()]
+        if entries > 0 and fields > 3:
+            facts["max_cycle_threshold"] = float(summaryminor[3].max())
+            facts["cycle_threshold_by_entry"] = [
+                float(value) for value in summaryminor[3].tolist()
+            ]
+        if entries > 0 and fields > 14:
+            stop_codes: Dict[str, int] = {}
+            for value in summaryminor[14]:
+                key = str(int(value))
+                stop_codes[key] = stop_codes.get(key, 0) + 1
+            facts["stop_codes"] = stop_codes
+        return facts
+    if not isinstance(summaryminor, dict):
+        return {"present": False}
+    facts: Dict[str, object] = {
+        "present": True,
+        "field_count": len(summaryminor),
+        "channels_with_entries": 0,
+        "total_entries": 0,
+        "total_iterations": 0.0,
+        "max_cycle_threshold": 0.0,
+        "stop_codes": {},
+    }
+    stop_codes: Dict[str, int] = {}
+    for field_value in summaryminor.values():
+        if not isinstance(field_value, dict):
+            continue
+        for channel_value in field_value.values():
+            if not isinstance(channel_value, dict):
+                continue
+            for pol_value in channel_value.values():
+                if not isinstance(pol_value, list) or not pol_value:
+                    continue
+                if not all(isinstance(row, list) for row in pol_value):
+                    continue
+                rows = list(zip(*pol_value))
+                facts["channels_with_entries"] = int(facts["channels_with_entries"]) + 1
+                facts["total_entries"] = int(facts["total_entries"]) + len(rows)
+                for row in rows:
+                    if len(row) > 0 and isinstance(row[0], (int, float)):
+                        facts["total_iterations"] = float(facts["total_iterations"]) + float(
+                            row[0]
+                        )
+                    if len(row) > 3 and isinstance(row[3], (int, float)):
+                        facts["max_cycle_threshold"] = max(
+                            float(facts["max_cycle_threshold"]), float(row[3])
+                        )
+                    if len(row) > 14 and isinstance(row[14], (int, float)):
+                        key = str(int(row[14]))
+                        stop_codes[key] = stop_codes.get(key, 0) + 1
+    facts["stop_codes"] = stop_codes
+    return facts
+
+
 def timed(callable_obj: Callable, *args, **kwargs) -> Tuple[float, object]:
     started = time.perf_counter()
     result = callable_obj(*args, **kwargs)
     return time.perf_counter() - started, result
+
+
+class InstrumentedPySynthesisImager(PySynthesisImager):
+    """PySynthesisImager with narrow CASA helper timers for W4 attribution."""
+
+    def __init__(self, params: ImagerParameters):
+        self._instrumented_stage_values: Dict[str, float] = {}
+        super().__init__(params=params)
+
+    def _record_stage(self, name: str, elapsed: float) -> None:
+        self._instrumented_stage_values[name] = (
+            self._instrumented_stage_values.get(name, 0.0) + elapsed
+        )
+
+    def _timed_stage(self, name: str, callable_obj: Callable, *args, **kwargs):
+        elapsed, result = timed(callable_obj, *args, **kwargs)
+        self._record_stage(name, elapsed)
+        return result
+
+    def drain_instrumented_stage_values(self) -> Dict[str, float]:
+        values = dict(self._instrumented_stage_values)
+        self._instrumented_stage_values.clear()
+        return values
+
+    def initializeImagers(self):
+        self.SItool = synthesisimager()
+
+        for mss in sorted((self.allselpars).keys()):
+            self._timed_stage(
+                "select_data",
+                self.SItool.selectdata,
+                self.allselpars[mss],
+            )
+
+        cfCacheName = ""
+        exists = False
+        if self.allgridpars["0"]["gridder"].startswith("awpr"):
+            cfCacheName = self.allgridpars["0"]["cfcache"]
+            if cfCacheName == "":
+                cfCacheName = self.allimpars["0"]["imagename"] + ".cf"
+                self.allgridpars["0"]["cfcache"] = cfCacheName
+            exists = os.path.exists(cfCacheName) and os.path.isdir(cfCacheName)
+        else:
+            exists = True
+
+        for fld in range(0, self.NF):
+            self._timed_stage(
+                "define_image",
+                self.SItool.defineimage,
+                self.allimpars[str(fld)],
+                self.allgridpars[str(fld)],
+            )
+
+        self._timed_stage(
+            "normalizer_info",
+            self.SItool.normalizerinfo,
+            self.allnormpars["0"],
+        )
+
+        if ("cube" in self.allimpars["0"]["specmode"]) or (
+            "awphpg" in self.allgridpars["0"]["gridder"]
+        ):
+            self._timed_stage("cf_cache_setup", self.makeCFCache, exists)
+
+    def setWeighting(self):
+        self._timed_stage(
+            "set_weighting_core",
+            self.SItool.setweighting,
+            **self.weightpars,
+        )
+
+
+def drain_probe_stages(imager: object, per_stage: Dict[str, float]) -> None:
+    drain = getattr(imager, "drain_instrumented_stage_values", None)
+    if drain is None:
+        return
+    for name, elapsed in drain().items():
+        per_stage[name] = per_stage.get(name, 0.0) + elapsed
 
 
 def main() -> None:
@@ -88,8 +241,13 @@ def main() -> None:
         "parameter_setup",
         "construct_imager",
         "initialize_imagers",
+        "select_data",
+        "define_image",
+        "normalizer_info",
+        "cf_cache_setup",
         "initialize_normalizers",
         "set_weighting",
+        "set_weighting_core",
         "initialize_deconvolvers",
         "estimate_memory",
         "initialize_iteration_control",
@@ -107,6 +265,7 @@ def main() -> None:
     stage_values: Dict[str, List[float]] = {name: [] for name in stage_names}
     clean_major_counts: List[int] = []
     minor_cycle_counts: List[int] = []
+    clean_control_records: List[Dict[str, object]] = []
 
     with tempfile.TemporaryDirectory() as tempdir:
         for run_index in range(repeats):
@@ -150,7 +309,7 @@ def main() -> None:
                     parallel=False,
                     psfcutoff=psfcutoff,
                     pblimit=pblimit,
-                    pbcor=pbcor,
+                    dopbcorr=pbcor,
                 )
                 if wprojplanes_env:
                     parameter_kwargs["wprojplanes"] = int(wprojplanes_env)
@@ -164,15 +323,17 @@ def main() -> None:
                 elapsed, param_list = timed(ImagerParameters, **parameter_kwargs)
                 per_stage["parameter_setup"] += elapsed
 
-                elapsed, imager = timed(PySynthesisImager, params=param_list)
+                elapsed, imager = timed(InstrumentedPySynthesisImager, params=param_list)
                 per_stage["construct_imager"] += elapsed
 
                 elapsed, _ = timed(imager.initializeImagers)
                 per_stage["initialize_imagers"] += elapsed
+                drain_probe_stages(imager, per_stage)
                 elapsed, _ = timed(imager.initializeNormalizers)
                 per_stage["initialize_normalizers"] += elapsed
                 elapsed, _ = timed(imager.setWeighting)
                 per_stage["set_weighting"] += elapsed
+                drain_probe_stages(imager, per_stage)
 
                 if niter > 0 or restoration:
                     elapsed, _ = timed(imager.initializeDeconvolvers)
@@ -205,6 +366,31 @@ def main() -> None:
                         elapsed, done_minor = timed(imager.runMinorCycle)
                         per_stage["minor_cycle"] += elapsed
                         minor_cycles += 1
+                        if hasattr(imager, "IBtool"):
+                            try:
+                                summary = imager.IBtool.getiterationsummary()
+                                clean_control_records.append(
+                                    {
+                                        "minor_cycle": minor_cycles,
+                                        "done_minor": bool(done_minor),
+                                        "iterdone": int(summary.get("iterdone", 0)),
+                                        "nmajordone": int(summary.get("nmajordone", 0)),
+                                        "stopcode": int(summary.get("stopcode", 0)),
+                                        "maxpsfsidelobe": float(
+                                            summary.get("maxpsfsidelobe", 0.0)
+                                        ),
+                                        "cyclethreshold": float(
+                                            summary.get("cyclethreshold", 0.0)
+                                        ),
+                                        "summaryminor": summarize_summaryminor(
+                                            summary.get("summaryminor")
+                                        ),
+                                    }
+                                )
+                            except Exception as error:  # pragma: no cover - diagnostic only
+                                clean_control_records.append(
+                                    {"minor_cycle": minor_cycles, "error": str(error)}
+                                )
 
                         if done_minor:
                             elapsed, _ = timed(imager.runMajorCycle)
@@ -257,9 +443,20 @@ def main() -> None:
     print("stage medians (ms):")
     for name in stage_names:
         print(f"  {name}={millis(median(stage_values[name])):.3f}")
+    print("instrumentation notes:")
+    print("  select_data wraps synthesisimager.selectdata for each selected MS.")
+    print("  define_image wraps synthesisimager.defineimage for each image field.")
+    print("  set_weighting_core wraps synthesisimager.setweighting only.")
+    print("  cube tuneSelectData and nSubCubeFitInMemory live inside CASA C++ cube major-cycle calls.")
+    print("  cube image-store writeback is inside CASA C++ major-cycle envelopes plus restore_images.")
     print(
         "result medians: clean_major_cycles={} minor_cycles={}".format(
             median_int(clean_major_counts), median_int(minor_cycle_counts)
+        )
+    )
+    print(
+        "clean_control_diagnostics_json={}".format(
+            json.dumps(clean_control_records[-5:], sort_keys=True)
         )
     )
 

@@ -964,6 +964,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional explicit standard-MFS initial dirty/PSF backend override.
     #[serde(default)]
     pub standard_mfs_initial_dirty_backend: Option<String>,
+    /// Optional standard-MFS Metal minor-cycle command-buffer component chunk.
+    #[serde(default)]
+    pub standard_mfs_metal_minor_cycle_chunk: Option<String>,
     /// Optional explicit Metal grouped input cache override.
     #[serde(default)]
     pub standard_mfs_metal_grouped_input_cache: Option<bool>,
@@ -1054,6 +1057,9 @@ impl ImagerRunTaskRequest {
             standard_mfs_tile_anchor: config.standard_mfs_tile_anchor.clone(),
             standard_mfs_residual_backend: config.standard_mfs_residual_backend.clone(),
             standard_mfs_initial_dirty_backend: config.standard_mfs_initial_dirty_backend.clone(),
+            standard_mfs_metal_minor_cycle_chunk: config
+                .standard_mfs_metal_minor_cycle_chunk
+                .clone(),
             standard_mfs_metal_grouped_input_cache: config.standard_mfs_metal_grouped_input_cache,
             standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb: config.standard_mfs_prepare_buffer_mb,
@@ -1100,6 +1106,9 @@ impl ImagerRunTaskRequest {
                     "invalid multiscale scale {scale}; expected finite value >= 0"
                 ));
             }
+        }
+        if let Some(value) = self.standard_mfs_metal_minor_cycle_chunk.as_deref() {
+            validate_metal_minor_cycle_chunk(value)?;
         }
         if self.use_mask == ImagerCleanMaskMode::AutoMultithresh {
             for (name, value) in [
@@ -1180,6 +1189,7 @@ impl ImagerRunTaskRequest {
             standard_mfs_tile_anchor: self.standard_mfs_tile_anchor.clone(),
             standard_mfs_residual_backend: self.standard_mfs_residual_backend.clone(),
             standard_mfs_initial_dirty_backend: self.standard_mfs_initial_dirty_backend.clone(),
+            standard_mfs_metal_minor_cycle_chunk: self.standard_mfs_metal_minor_cycle_chunk.clone(),
             standard_mfs_metal_grouped_input_cache: self.standard_mfs_metal_grouped_input_cache,
             standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
             standard_mfs_prepare_buffer_mb: self.standard_mfs_prepare_buffer_mb,
@@ -1200,6 +1210,31 @@ impl ImagerRunTaskRequest {
     fn plane_from_text(text: &str) -> Result<ImagerPlaneSelection, String> {
         ImagerPlaneSelection::from_cli_text(text)
     }
+}
+
+fn validate_metal_minor_cycle_chunk(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto")
+        || value.eq_ignore_ascii_case("full")
+        || parse_metal_minor_cycle_auto_target_ms(value).is_some()
+    {
+        return Ok(());
+    }
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Ok(()),
+        _ => Err(format!(
+            "invalid standard_mfs_metal_minor_cycle_chunk {value:?}; expected auto, auto:<positive-ms>, full, or a positive integer"
+        )),
+    }
+}
+
+fn parse_metal_minor_cycle_auto_target_ms(value: &str) -> Option<f64> {
+    let lowercase = value.trim().to_ascii_lowercase();
+    let target_ms = lowercase.strip_prefix("auto:")?.parse::<f64>().ok()?;
+    target_ms
+        .is_finite()
+        .then_some(target_ms)
+        .filter(|value| *value > 0.0)
 }
 
 /// Stable stop reasons for CLEAN controller completion.
@@ -1243,18 +1278,32 @@ pub struct ImagerCoreStageTimings {
     pub controller_overhead_ns: u64,
     /// Imaging-weighting and taper time.
     pub weighting_ns: u64,
+    /// Backend executor/sample-plan setup time.
+    pub executor_build_ns: u64,
+    /// PSF grid allocation and zero-initialization time.
+    pub psf_grid_alloc_ns: u64,
+    /// Planned-sample replay/build time before scalar grid updates.
+    pub planned_sample_replay_ns: u64,
+    /// Scalar grid-update loop time after planned samples exist.
+    pub grid_update_ns: u64,
     /// PSF grid time.
     pub psf_grid_ns: u64,
     /// PSF FFT time.
     pub psf_fft_ns: u64,
+    /// PSF image correction/copy time after FFT.
+    pub psf_image_correction_ns: u64,
     /// PSF normalization time.
     pub psf_normalize_ns: u64,
     /// Model FFT time.
     pub model_fft_ns: u64,
+    /// Residual grid allocation and zero-initialization time.
+    pub residual_grid_alloc_ns: u64,
     /// Residual degrid/grid time.
     pub residual_degrid_grid_ns: u64,
     /// Residual FFT time.
     pub residual_fft_ns: u64,
+    /// Residual image correction/copy time after FFT.
+    pub residual_image_correction_ns: u64,
     /// Residual normalization time.
     pub residual_normalize_ns: u64,
     /// Minor-cycle total time.
@@ -1577,12 +1626,19 @@ fn core_stage_timings(timings: &casa_imaging::ImagingStageTimings) -> ImagerCore
     ImagerCoreStageTimings {
         controller_overhead_ns: timings.controller_overhead.as_nanos() as u64,
         weighting_ns: timings.weighting.as_nanos() as u64,
+        executor_build_ns: timings.executor_build.as_nanos() as u64,
+        psf_grid_alloc_ns: timings.psf_grid_alloc.as_nanos() as u64,
+        planned_sample_replay_ns: timings.planned_sample_replay.as_nanos() as u64,
+        grid_update_ns: timings.grid_update.as_nanos() as u64,
         psf_grid_ns: timings.psf_grid.as_nanos() as u64,
         psf_fft_ns: timings.psf_fft.as_nanos() as u64,
+        psf_image_correction_ns: timings.psf_image_correction.as_nanos() as u64,
         psf_normalize_ns: timings.psf_normalize.as_nanos() as u64,
         model_fft_ns: timings.model_fft.as_nanos() as u64,
+        residual_grid_alloc_ns: timings.residual_grid_alloc.as_nanos() as u64,
         residual_degrid_grid_ns: timings.residual_degrid_grid.as_nanos() as u64,
         residual_fft_ns: timings.residual_fft.as_nanos() as u64,
+        residual_image_correction_ns: timings.residual_image_correction.as_nanos() as u64,
         residual_normalize_ns: timings.residual_normalize.as_nanos() as u64,
         minor_cycle_ns: timings.minor_cycle.as_nanos() as u64,
         minor_cycle_solve_ns: timings.minor_cycle_solve.as_nanos() as u64,
@@ -2008,6 +2064,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2082,6 +2139,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2339,6 +2397,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2513,6 +2572,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,
@@ -2672,6 +2732,7 @@ mod tests {
             standard_mfs_tile_anchor: None,
             standard_mfs_residual_backend: None,
             standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_minor_cycle_chunk: None,
             standard_mfs_metal_grouped_input_cache: None,
             standard_mfs_memory_target_mb: None,
             standard_mfs_prepare_buffer_mb: None,

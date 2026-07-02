@@ -62,6 +62,15 @@ pub(crate) struct ResidualRefreshTraceInternal {
     pub(crate) skipped_samples: usize,
 }
 
+/// Frequency convention used when tracing cube model prediction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CubePredictionLambdaMode {
+    /// Degrid every contributing model plane at the output channel frequency.
+    OutputChannel,
+    /// Degrid each contributing model plane at that model channel's frequency.
+    ModelChannel,
+}
+
 fn public_residual_refresh_diagnostics(
     trace: ResidualRefreshTraceInternal,
 ) -> ResidualRefreshDiagnostics {
@@ -114,87 +123,6 @@ pub fn trace_weighting(request: &ImagingRequest) -> Result<WeightingDiagnostics,
         None,
         trace,
     ))
-}
-
-/// Trace the explicit weighting seam for every plane of a spectral-cube request.
-///
-/// The returned diagnostics stay in channel order and preserve the
-/// `perchanweightdensity` / taper settings that feed CASA-style cube dirty
-/// imaging.
-pub fn trace_cube_weighting(
-    request: &CubeImagingRequest,
-) -> Result<Vec<WeightingDiagnostics>, ImagingError> {
-    request.validate()?;
-    let combined_density_batches =
-        matches!(request.weight_density_mode, WeightDensityMode::Combined).then(|| {
-            request
-                .channels
-                .iter()
-                .flat_map(|channel| channel.visibility_batches.iter().cloned())
-                .collect::<Vec<_>>()
-        });
-    let mut diagnostics = Vec::with_capacity(request.channels.len());
-    for channel in &request.channels {
-        let plane_request = ImagingRequest {
-            geometry: request.geometry,
-            visibility_batches: channel.visibility_batches.clone(),
-            gridder_mode: GridderMode::Standard,
-            plane_stokes: request.plane_stokes,
-            weighting: request.weighting,
-            reffreq_hz: channel.channel_frequency_hz,
-            selected_frequency_range_hz: [
-                channel.channel_frequency_hz,
-                channel.channel_frequency_hz,
-            ],
-            deconvolver: request.deconvolver,
-            multiscale_scales: request.multiscale_scales.clone(),
-            small_scale_bias: request.small_scale_bias,
-            clean: request.clean,
-            clean_mask: request.clean_mask.clone(),
-            initial_model: None,
-            w_term_mode: request.w_term_mode,
-            w_project_planes: request.w_project_planes,
-            compatibility: request.compatibility,
-        };
-        plane_request.validate()?;
-        let gridder = StandardGridder::new(plane_request.geometry)?;
-        let density_batches = match request.weight_density_mode {
-            WeightDensityMode::Combined => combined_density_batches
-                .as_deref()
-                .expect("combined cube density batches prepared"),
-            WeightDensityMode::PerPlane if channel.density_batches.is_empty() => {
-                &plane_request.visibility_batches
-            }
-            WeightDensityMode::PerPlane => &channel.density_batches,
-        };
-        let trace = trace_weighting_with_density_source(
-            plane_request.weighting,
-            request.weight_density_mode,
-            request.uv_taper,
-            weighting::fractional_bandwidth_from_frequency_range([
-                request
-                    .channels
-                    .first()
-                    .map(|channel| channel.channel_frequency_hz)
-                    .unwrap_or(channel.channel_frequency_hz),
-                request
-                    .channels
-                    .last()
-                    .map(|channel| channel.channel_frequency_hz)
-                    .unwrap_or(channel.channel_frequency_hz),
-            ]),
-            &plane_request.visibility_batches,
-            density_batches,
-            &gridder,
-        )?;
-        diagnostics.push(public_weighting_diagnostics(
-            plane_request.weighting,
-            request.weight_density_mode,
-            request.uv_taper,
-            trace,
-        ));
-    }
-    Ok(diagnostics)
 }
 
 fn public_w_project_diagnostics(prepared: WProjectPreparedData) -> WProjectDiagnostics {
@@ -277,44 +205,6 @@ pub fn trace_w_project_plan(request: &ImagingRequest) -> Result<WProjectDiagnost
     Ok(public_w_project_diagnostics(prepared))
 }
 
-/// Trace the explicit `wproject` CF/grid-planning seam for one cube channel.
-pub fn trace_cube_channel_w_project_plan(
-    request: &CubeImagingRequest,
-    channel_index: usize,
-) -> Result<WProjectDiagnostics, ImagingError> {
-    request.validate()?;
-    if request.w_term_mode != WTermMode::WProject {
-        return Err(ImagingError::InvalidRequest(
-            "trace_cube_channel_w_project_plan requires w_term_mode='wproject'".to_string(),
-        ));
-    }
-    let Some(channel) = request.channels.get(channel_index) else {
-        return Err(ImagingError::InvalidRequest(format!(
-            "cube channel index {channel_index} is out of range for {} channels",
-            request.channels.len()
-        )));
-    };
-    let plane_request = ImagingRequest {
-        geometry: request.geometry,
-        visibility_batches: channel.visibility_batches.clone(),
-        gridder_mode: GridderMode::Standard,
-        plane_stokes: request.plane_stokes,
-        weighting: request.weighting,
-        reffreq_hz: channel.channel_frequency_hz,
-        selected_frequency_range_hz: [channel.channel_frequency_hz, channel.channel_frequency_hz],
-        deconvolver: request.deconvolver,
-        multiscale_scales: request.multiscale_scales.clone(),
-        small_scale_bias: request.small_scale_bias,
-        clean: request.clean,
-        clean_mask: request.clean_mask.clone(),
-        initial_model: None,
-        w_term_mode: request.w_term_mode,
-        w_project_planes: request.w_project_planes,
-        compatibility: request.compatibility,
-    };
-    trace_w_project_plan(&plane_request)
-}
-
 /// Trace the standard major-cycle residual-refresh seam for one imaging plane.
 ///
 /// This applies the normal weighting/PSF path and then exposes the predicted
@@ -363,20 +253,23 @@ pub fn trace_residual_refresh(
 
 /// Trace the standard major-cycle residual-refresh seam for one cube plane.
 ///
-/// Unlike [`trace_residual_refresh`], this uses the per-sample cube
-/// interpolation state carried by [`CubeChannelRequest`] so the predicted
-/// visibilities can draw from neighboring model planes in the same way CASA's
-/// cube major cycle does. The trace surface is currently limited to standard
-/// 2-D imaging (`w_term_mode = None`).
+/// Unlike [`trace_residual_refresh`], this uses explicit per-sample cube
+/// interpolation state so predicted visibilities can draw from neighboring
+/// model planes in the same way CASA's cube major cycle does. The trace surface
+/// is currently limited to standard 2-D imaging (`w_term_mode = None`).
 pub fn trace_cube_channel_residual_refresh(
-    request: &CubeImagingRequest,
-    channel_index: usize,
+    request: &ImagingRequest,
+    model_interpolation_batches: &[CubeModelInterpolationBatch],
+    identity_model_channel_index: usize,
     model_planes: &[Array2<f32>],
+    model_channel_frequencies_hz: &[f64],
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     trace_cube_channel_residual_refresh_with_mode(
         request,
-        channel_index,
+        model_interpolation_batches,
+        identity_model_channel_index,
         model_planes,
+        model_channel_frequencies_hz,
         CubePredictionLambdaMode::OutputChannel,
     )
 }
@@ -387,22 +280,28 @@ pub fn trace_cube_channel_residual_refresh(
 ///
 /// This is a diagnostic helper for parity work on cube prediction semantics.
 pub fn trace_cube_channel_residual_refresh_model_channel_lambda(
-    request: &CubeImagingRequest,
-    channel_index: usize,
+    request: &ImagingRequest,
+    model_interpolation_batches: &[CubeModelInterpolationBatch],
+    identity_model_channel_index: usize,
     model_planes: &[Array2<f32>],
+    model_channel_frequencies_hz: &[f64],
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     trace_cube_channel_residual_refresh_with_mode(
         request,
-        channel_index,
+        model_interpolation_batches,
+        identity_model_channel_index,
         model_planes,
+        model_channel_frequencies_hz,
         CubePredictionLambdaMode::ModelChannel,
     )
 }
 
 fn trace_cube_channel_residual_refresh_with_mode(
-    request: &CubeImagingRequest,
-    channel_index: usize,
+    request: &ImagingRequest,
+    model_interpolation_batches: &[CubeModelInterpolationBatch],
+    identity_model_channel_index: usize,
     model_planes: &[Array2<f32>],
+    model_channel_frequencies_hz: &[f64],
     prediction_lambda_mode: CubePredictionLambdaMode,
 ) -> Result<ResidualRefreshDiagnostics, ImagingError> {
     request.validate()?;
@@ -412,11 +311,11 @@ fn trace_cube_channel_residual_refresh_with_mode(
                 .to_string(),
         ));
     }
-    if model_planes.len() != request.channels.len() {
+    if model_planes.len() != model_channel_frequencies_hz.len() {
         return Err(ImagingError::InvalidRequest(format!(
-            "cube residual-refresh trace model plane count {} does not match request channel count {}",
+            "cube residual-refresh trace model plane count {} does not match model frequency count {}",
             model_planes.len(),
-            request.channels.len()
+            model_channel_frequencies_hz.len()
         )));
     }
     let expected_shape = (
@@ -432,89 +331,26 @@ fn trace_cube_channel_residual_refresh_with_mode(
             )));
         }
     }
-    let Some(channel) = request.channels.get(channel_index) else {
+    if identity_model_channel_index >= model_planes.len() {
         return Err(ImagingError::InvalidRequest(format!(
-            "cube residual-refresh trace channel index {channel_index} is out of range for {} channels",
-            request.channels.len()
+            "cube residual-refresh trace identity channel index {identity_model_channel_index} is out of range for {} model planes",
+            model_planes.len()
         )));
-    };
-    let plane_request = ImagingRequest {
-        geometry: request.geometry,
-        visibility_batches: channel.visibility_batches.clone(),
-        gridder_mode: GridderMode::Standard,
-        plane_stokes: request.plane_stokes,
-        weighting: request.weighting,
-        reffreq_hz: channel.channel_frequency_hz,
-        selected_frequency_range_hz: [channel.channel_frequency_hz, channel.channel_frequency_hz],
-        deconvolver: request.deconvolver,
-        multiscale_scales: request.multiscale_scales.clone(),
-        small_scale_bias: request.small_scale_bias,
-        clean: request.clean,
-        clean_mask: request.clean_mask.clone(),
-        initial_model: None,
-        w_term_mode: request.w_term_mode,
-        w_project_planes: request.w_project_planes,
-        compatibility: request.compatibility,
-    };
-    plane_request.validate()?;
-    let gridder = StandardGridder::new(plane_request.geometry)?;
-    let combined_density_batches =
-        matches!(request.weight_density_mode, WeightDensityMode::Combined).then(|| {
-            request
-                .channels
-                .iter()
-                .flat_map(|cube_channel| cube_channel.visibility_batches.iter().cloned())
-                .collect::<Vec<_>>()
-        });
-    let density_batches = match request.weight_density_mode {
-        WeightDensityMode::Combined => combined_density_batches
-            .as_deref()
-            .expect("combined cube density batches prepared"),
-        WeightDensityMode::PerPlane if channel.density_batches.is_empty() => {
-            &plane_request.visibility_batches
-        }
-        WeightDensityMode::PerPlane => &channel.density_batches,
-    };
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
-    let weighted_batches = apply_weighting_with_density_source(
-        plane_request.weighting,
-        request.weight_density_mode,
-        request.uv_taper,
-        weighting::fractional_bandwidth_from_frequency_range([
-            request
-                .channels
-                .first()
-                .map(|channel| channel.channel_frequency_hz)
-                .unwrap_or(plane_request.reffreq_hz),
-            request
-                .channels
-                .last()
-                .map(|channel| channel.channel_frequency_hz)
-                .unwrap_or(plane_request.reffreq_hz),
-        ]),
-        &plane_request.visibility_batches,
-        density_batches,
-        &gridder,
-    )?;
+    let weighted_batches = apply_weighting(request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let psf_state = compute_psf(
-        &plane_request,
-        &weighted_batches,
-        &gridder,
-        &mut stage_timings,
-    )?;
+    let psf_state = compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?;
     let trace = compute_residual_trace_cube_standard(
         &weighted_batches,
-        &channel.model_interpolation_batches,
+        model_interpolation_batches,
         &gridder,
         model_planes,
-        channel.channel_frequency_hz,
-        &request
-            .channels
-            .iter()
-            .map(|cube_channel| cube_channel.channel_frequency_hz)
-            .collect::<Vec<_>>(),
+        identity_model_channel_index,
+        request.reffreq_hz,
+        model_channel_frequencies_hz,
         prediction_lambda_mode,
         &psf_state,
         &mut stage_timings,
