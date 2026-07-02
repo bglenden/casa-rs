@@ -26314,7 +26314,9 @@ mod tests {
         cpp_convolve_gridder_predict_visibility_2d,
     };
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
-    use ndarray::{Array2, Array4, ShapeBuilder, s};
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    use ndarray::ShapeBuilder;
+    use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
     use std::time::Duration;
@@ -26337,15 +26339,15 @@ mod tests {
         build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
         compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
         compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, fft_convolve_real, kernel_nonzero_support, make_multiscale_kernel,
-        mean_stddev, minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
+        dirty_clean_config, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
+        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
         mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
         parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
         peak_location_masked, peak_location_masked_in_window,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_voltage_pattern_for_offsets, run_clark_cotton_schwab, run_clark_minor_cycle,
-        run_clark_minor_cycle_cpu, run_clark_minor_cycle_metal, run_hogbom_minor_cycle,
-        run_imaging, run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        run_hogbom_minor_cycle, run_imaging, run_imaging_owned,
+        run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -26357,10 +26359,10 @@ mod tests {
     };
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::{
-        build_multiscale_state, compute_dirty_psf_and_residual_standard_metal,
-        peak_abs_value_masked, run_hogbom_minor_cycle_cpu, run_hogbom_minor_cycle_metal,
-        run_multiscale_cotton_schwab, run_multiscale_minor_cycle_metal,
-        standard_mfs_metal_device_available,
+        build_multiscale_state, compute_dirty_psf_and_residual_standard_metal, fft_convolve_real,
+        peak_abs_value_masked, run_clark_minor_cycle_cpu, run_clark_minor_cycle_metal,
+        run_hogbom_minor_cycle_cpu, run_hogbom_minor_cycle_metal, run_multiscale_cotton_schwab,
+        run_multiscale_minor_cycle_metal, standard_mfs_metal_device_available,
     };
 
     #[test]

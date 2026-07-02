@@ -18718,10 +18718,12 @@ pub(crate) fn finite_visibility(visibility: Complex32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    use super::METAL_DIRTY_SHADER;
     use super::{
-        METAL_DIRTY_SHADER, STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
-        STANDARD_MFS_TILE_FLAG_PSF_ONLY, StandardMfsBackend, StandardMfsBlockTileBuckets,
-        StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, StandardMfsFixedTilePartition,
+        STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY, STANDARD_MFS_TILE_FLAG_PSF_ONLY,
+        StandardMfsBackend, StandardMfsBlockTileBuckets, StandardMfsCpuExecutor,
+        StandardMfsDirtyCpuExecutor, StandardMfsFixedTilePartition,
         StandardMfsRowBlockSampleAccess, StandardMfsSampleRef, StandardMfsTileId,
         StandardMfsTiledCpuExecutor,
     };
