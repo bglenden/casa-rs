@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(missing_docs)]
 
-use casa_imaging::{Deconvolver, WTermMode, WeightingMode};
+#[cfg(test)]
+use casa_imaging::SinglePlanePrimaryBeamRequirement;
+use casa_imaging::{
+    SinglePlaneAccelerationPolicy, SinglePlaneCubeInterpolation, SinglePlaneDeconvolverPlan,
+    SinglePlaneExecutionPlan, SinglePlaneExecutionPlanInput, SinglePlaneProjectionPlan,
+    SinglePlaneSpectralPlan, WTermMode, build_single_plane_execution_plan as build_core_plan,
+};
 use casa_ms::CubeInterpolation;
 
 use crate::{
@@ -11,143 +17,6 @@ use crate::{
     standard_mfs_wproject_auto_grid_threads,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SinglePlaneSpectralPlan {
-    Mfs,
-    CubeLikeOneChannel,
-    CubeLikeMultiChannel,
-}
-
-impl SinglePlaneSpectralPlan {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Mfs => "mfs",
-            Self::CubeLikeOneChannel => "cube-like-one-channel",
-            Self::CubeLikeMultiChannel => "cube-like-multi-channel",
-        }
-    }
-
-    pub(crate) fn is_one_output_channel(self) -> bool {
-        matches!(self, Self::Mfs | Self::CubeLikeOneChannel)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SinglePlaneProjectionPlan {
-    Standard,
-    StandardOrMosaicInferred,
-    WProjection,
-    Mosaic,
-}
-
-impl SinglePlaneProjectionPlan {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::StandardOrMosaicInferred => "standard-or-mosaic-inferred",
-            Self::WProjection => "wproject",
-            Self::Mosaic => "mosaic",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SinglePlanePrimaryBeamRequirement {
-    None,
-    SingleFieldProducts,
-    WProjectionProducts,
-    MosaicProjection,
-}
-
-impl SinglePlanePrimaryBeamRequirement {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::SingleFieldProducts => "single-field-products",
-            Self::WProjectionProducts => "wprojection-products",
-            Self::MosaicProjection => "mosaic-projection",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SinglePlaneDeconvolverPlan {
-    SingleTerm,
-    Multiscale,
-    Mtmfs,
-}
-
-impl SinglePlaneDeconvolverPlan {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::SingleTerm => "single-term",
-            Self::Multiscale => "multiscale",
-            Self::Mtmfs => "mtmfs",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BackendEligibility {
-    pub(crate) eligible: bool,
-    pub(crate) reason: String,
-}
-
-impl BackendEligibility {
-    fn eligible(reason: impl Into<String>) -> Self {
-        Self {
-            eligible: true,
-            reason: reason.into(),
-        }
-    }
-
-    fn ineligible(reason: impl Into<String>) -> Self {
-        Self {
-            eligible: false,
-            reason: reason.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SinglePlaneExecutionPlan {
-    pub(crate) spectral: SinglePlaneSpectralPlan,
-    pub(crate) projection: SinglePlaneProjectionPlan,
-    pub(crate) deconvolver: SinglePlaneDeconvolverPlan,
-    pub(crate) weighting: &'static str,
-    pub(crate) output_channel_count: usize,
-    pub(crate) primary_beam_products: bool,
-    pub(crate) primary_beam_requirement: SinglePlanePrimaryBeamRequirement,
-    pub(crate) output_products: Vec<String>,
-    pub(crate) cpu_multi_worker: BackendEligibility,
-    pub(crate) gpu_metal: BackendEligibility,
-    pub(crate) stage_timing_attribution: &'static str,
-    pub(crate) standard_mfs_regression_sentinel: bool,
-}
-
-impl SinglePlaneExecutionPlan {
-    pub(crate) fn log_line(&self) -> String {
-        format!(
-            "single_plane_execution_plan spectral={} projection={} deconvolver={} weighting={} output_channels={} one_output_channel={} source_stream=bounded source_stream_memory=planner pb_products={} pb_requirement={} output_products={} cpu_multi_worker_eligible={} cpu_multi_worker_reason={} gpu_metal_eligible={} gpu_metal_reason={} stage_timing_attribution={} standard_mfs_regression_sentinel={}",
-            self.spectral.label(),
-            self.projection.label(),
-            self.deconvolver.label(),
-            self.weighting,
-            self.output_channel_count,
-            self.spectral.is_one_output_channel(),
-            self.primary_beam_products,
-            self.primary_beam_requirement.label(),
-            self.output_products.join(","),
-            self.cpu_multi_worker.eligible,
-            self.cpu_multi_worker.reason,
-            self.gpu_metal.eligible,
-            self.gpu_metal.reason,
-            self.stage_timing_attribution,
-            self.standard_mfs_regression_sentinel,
-        )
-    }
-}
-
 pub(crate) fn build_single_plane_execution_plan(
     config: &CliConfig,
     force_standard_gridder: bool,
@@ -156,52 +25,33 @@ pub(crate) fn build_single_plane_execution_plan(
     let output_channel_count = output_channel_count(config);
     let spectral = spectral_plan(config.spectral_mode, output_channel_count);
     let projection = projection_plan(config, force_standard_gridder);
-    let deconvolver = deconvolver_plan(config.deconvolver);
     let primary_beam_products = needs_single_field_primary_beam_products(config);
-    let primary_beam_requirement =
-        primary_beam_requirement(config, projection, primary_beam_products);
-    let output_products = output_products(config, primary_beam_requirement);
-    let standard_mfs_eligible =
-        can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count);
-    let mosaic_mfs_eligible = can_plan_mosaic_mfs_acceleration(config, ms_count);
-    let one_output_channel = spectral.is_one_output_channel();
-    let standard_mfs_regression_sentinel = matches!(spectral, SinglePlaneSpectralPlan::Mfs)
-        && matches!(
-            projection,
-            SinglePlaneProjectionPlan::Standard
-                | SinglePlaneProjectionPlan::StandardOrMosaicInferred
-        )
-        && matches!(
-            deconvolver,
-            SinglePlaneDeconvolverPlan::SingleTerm
-                | SinglePlaneDeconvolverPlan::Multiscale
-                | SinglePlaneDeconvolverPlan::Mtmfs
-        );
-
-    SinglePlaneExecutionPlan {
+    build_core_plan(SinglePlaneExecutionPlanInput::new(
         spectral,
         projection,
-        deconvolver,
-        weighting: weighting_label(&config.weighting),
+        SinglePlaneDeconvolverPlan::from_deconvolver(config.deconvolver),
+        config.weighting,
         output_channel_count,
         primary_beam_products,
-        primary_beam_requirement,
-        output_products,
-        cpu_multi_worker: cpu_multi_worker_eligibility(
-            config,
-            standard_mfs_eligible,
-            mosaic_mfs_eligible,
-            one_output_channel,
-        ),
-        gpu_metal: gpu_metal_eligibility(
-            config,
-            standard_mfs_eligible,
-            mosaic_mfs_eligible,
-            one_output_channel,
-        ),
-        stage_timing_attribution: "frontend-core-product-stages",
-        standard_mfs_regression_sentinel,
-    }
+        config.write_pb,
+        config.pbcor,
+        config.mosaic_pb_limit < 0.0,
+        config.nterms,
+        can_plan_standard_mfs_acceleration(config, force_standard_gridder, ms_count),
+        can_plan_mosaic_mfs_acceleration(config, ms_count),
+        acceleration_policy(config.standard_mfs_acceleration),
+        single_plane_grid_threads_override(config.standard_mfs_grid_threads.as_deref()),
+        standard_mfs_auto_grid_threads(),
+        standard_mfs_wproject_auto_grid_threads(),
+        casa_imaging::standard_mfs_metal_device_available(),
+        config.spectral_mode.is_cube_like(),
+        cube_interpolation(config.cube_axis.interpolation),
+        config.dirty_only || config.niter == 0,
+        config.use_pointing,
+        config.save_model != SaveModelMode::None,
+        config.use_mask == CleanMaskMode::User,
+        config.w_term_mode,
+    ))
 }
 
 fn output_channel_count(config: &CliConfig) -> usize {
@@ -220,6 +70,22 @@ fn spectral_plan(mode: SpectralMode, output_channel_count: usize) -> SinglePlane
         SpectralMode::Cube | SpectralMode::Cubedata => {
             SinglePlaneSpectralPlan::CubeLikeMultiChannel
         }
+    }
+}
+
+fn acceleration_policy(policy: StandardMfsAccelerationPolicy) -> SinglePlaneAccelerationPolicy {
+    match policy {
+        StandardMfsAccelerationPolicy::Cpu => SinglePlaneAccelerationPolicy::Cpu,
+        StandardMfsAccelerationPolicy::Auto => SinglePlaneAccelerationPolicy::Auto,
+        StandardMfsAccelerationPolicy::MultiCpu => SinglePlaneAccelerationPolicy::MultiCpu,
+        StandardMfsAccelerationPolicy::Metal => SinglePlaneAccelerationPolicy::Metal,
+    }
+}
+
+fn cube_interpolation(interpolation: CubeInterpolation) -> SinglePlaneCubeInterpolation {
+    match interpolation {
+        CubeInterpolation::Nearest => SinglePlaneCubeInterpolation::Nearest,
+        CubeInterpolation::Linear | CubeInterpolation::Cubic => SinglePlaneCubeInterpolation::Other,
     }
 }
 
@@ -245,219 +111,12 @@ fn projection_plan(config: &CliConfig, force_standard_gridder: bool) -> SinglePl
     }
 }
 
-fn deconvolver_plan(deconvolver: Deconvolver) -> SinglePlaneDeconvolverPlan {
-    match deconvolver {
-        Deconvolver::Mtmfs => SinglePlaneDeconvolverPlan::Mtmfs,
-        Deconvolver::Multiscale => SinglePlaneDeconvolverPlan::Multiscale,
-        Deconvolver::Hogbom | Deconvolver::Clark => SinglePlaneDeconvolverPlan::SingleTerm,
-    }
-}
-
-fn primary_beam_requirement(
-    config: &CliConfig,
-    projection: SinglePlaneProjectionPlan,
-    primary_beam_products: bool,
-) -> SinglePlanePrimaryBeamRequirement {
-    if matches!(projection, SinglePlaneProjectionPlan::Mosaic) {
-        SinglePlanePrimaryBeamRequirement::MosaicProjection
-    } else if primary_beam_products && matches!(projection, SinglePlaneProjectionPlan::WProjection)
-    {
-        SinglePlanePrimaryBeamRequirement::WProjectionProducts
-    } else if primary_beam_products {
-        SinglePlanePrimaryBeamRequirement::SingleFieldProducts
-    } else if config.use_pointing {
-        SinglePlanePrimaryBeamRequirement::MosaicProjection
-    } else {
-        SinglePlanePrimaryBeamRequirement::None
-    }
-}
-
-fn output_products(
-    config: &CliConfig,
-    primary_beam_requirement: SinglePlanePrimaryBeamRequirement,
-) -> Vec<String> {
-    let mut products = Vec::new();
-    if config.deconvolver == Deconvolver::Mtmfs {
-        let nterms = config.nterms.max(1);
-        for term in 0..nterms {
-            products.push(format!(".image.tt{term}"));
-            products.push(format!(".residual.tt{term}"));
-            products.push(format!(".model.tt{term}"));
-            products.push(format!(".psf.tt{term}"));
-            products.push(format!(".sumwt.tt{term}"));
-        }
-        if nterms > 1 {
-            products.push(".alpha".to_string());
-            products.push(".alpha.error".to_string());
-        }
-        if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
-            for term in 0..nterms {
-                products.push(format!(".pb.tt{term}"));
-            }
-        }
-        if config.pbcor {
-            for term in 0..nterms {
-                products.push(format!(".image.tt{term}.pbcor"));
-            }
-            if nterms > 1 {
-                products.push(".alpha.pbcor".to_string());
-            }
-        }
-        return products;
-    }
-
-    for product in [".image", ".residual", ".model", ".psf", ".sumwt"] {
-        products.push(product.to_string());
-    }
-    if matches!(
-        primary_beam_requirement,
-        SinglePlanePrimaryBeamRequirement::MosaicProjection
-    ) {
-        products.push(".weight".to_string());
-    }
-    if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
-        products.push(".pb".to_string());
-    }
-    if config.pbcor {
-        products.push(".image.pbcor".to_string());
-    }
-    products
-}
-
-fn weighting_label(weighting: &WeightingMode) -> &'static str {
-    match weighting {
-        WeightingMode::Natural => "natural",
-        WeightingMode::Uniform => "uniform",
-        WeightingMode::Briggs { .. } => "briggs",
-        WeightingMode::BriggsBwTaper { .. } => "briggsbwtaper",
-    }
-}
-
-fn cpu_multi_worker_eligibility(
-    config: &CliConfig,
-    standard_mfs_eligible: bool,
-    mosaic_mfs_eligible: bool,
-    one_output_channel: bool,
-) -> BackendEligibility {
-    if !one_output_channel {
-        return BackendEligibility::ineligible("not-one-output-channel");
-    }
-    if standard_mfs_eligible || mosaic_mfs_eligible {
-        let workers = match config.standard_mfs_acceleration {
-            StandardMfsAccelerationPolicy::Cpu => 1,
-            StandardMfsAccelerationPolicy::Auto
-            | StandardMfsAccelerationPolicy::MultiCpu
-            | StandardMfsAccelerationPolicy::Metal => {
-                if let Some(override_workers) =
-                    single_plane_grid_threads_override(config.standard_mfs_grid_threads.as_deref())
-                {
-                    override_workers
-                } else if matches!(config.w_term_mode, WTermMode::WProject) {
-                    standard_mfs_wproject_auto_grid_threads()
-                } else {
-                    standard_mfs_auto_grid_threads()
-                }
-            }
-        };
-        if workers > 1 {
-            if mosaic_mfs_eligible {
-                if config.spectral_mode.is_cube_like() && config.channel_count == Some(1) {
-                    BackendEligibility::eligible(format!(
-                        "mosaic-cube-like-one-channel-parallel-prepare-workers-{workers}-single-grid-owner"
-                    ))
-                } else if config.standard_mfs_acceleration
-                    == StandardMfsAccelerationPolicy::MultiCpu
-                {
-                    BackendEligibility::eligible(format!(
-                        "mosaic-sample-range-workers-{workers}-diagnostic"
-                    ))
-                } else {
-                    BackendEligibility::ineligible(
-                        "mosaic-auto-uses-single-grid-owner-or-metal-groups",
-                    )
-                }
-            } else if matches!(config.w_term_mode, WTermMode::WProject) {
-                BackendEligibility::eligible(format!("wproject-streaming-workers-{workers}"))
-            } else if config.spectral_mode.is_cube_like() {
-                BackendEligibility::eligible(format!(
-                    "standard-cube-like-one-channel-parallel-prepare-workers-{workers}"
-                ))
-            } else {
-                BackendEligibility::eligible(format!("standard-mfs-fixed-tile-workers-{workers}"))
-            }
-        } else {
-            BackendEligibility::ineligible("standard-mfs-policy-selected-single-worker")
-        }
-    } else {
-        BackendEligibility::ineligible(shared_strategy_gap_reason(config))
-    }
-}
-
 fn single_plane_grid_threads_override(value: Option<&str>) -> Option<usize> {
     let value = value?.trim();
     if value.eq_ignore_ascii_case("auto") {
         return None;
     }
     value.parse::<usize>().ok().filter(|threads| *threads > 0)
-}
-
-fn gpu_metal_eligibility(
-    config: &CliConfig,
-    standard_mfs_eligible: bool,
-    mosaic_mfs_eligible: bool,
-    one_output_channel: bool,
-) -> BackendEligibility {
-    if !one_output_channel {
-        return BackendEligibility::ineligible("not-one-output-channel");
-    }
-    if !(standard_mfs_eligible || mosaic_mfs_eligible) {
-        return BackendEligibility::ineligible(shared_strategy_gap_reason(config));
-    }
-    if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Cpu
-        || config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::MultiCpu
-    {
-        return BackendEligibility::ineligible("standard-mfs-policy-disabled-metal");
-    }
-    if casa_imaging::standard_mfs_metal_device_available() {
-        if mosaic_mfs_eligible {
-            BackendEligibility::eligible("mosaic-screen-projector-metal-single-grid-owner")
-        } else if matches!(config.w_term_mode, WTermMode::WProject) {
-            BackendEligibility::eligible("wproject-metal-kernel")
-        } else if config.spectral_mode.is_cube_like() {
-            BackendEligibility::eligible("standard-cube-like-one-channel-grouped-metal")
-        } else if config.deconvolver == Deconvolver::Mtmfs {
-            BackendEligibility::eligible("mtmfs-metal-sample-cache")
-        } else {
-            BackendEligibility::eligible("standard-mfs-grouped-metal")
-        }
-    } else {
-        BackendEligibility::ineligible("metal-device-unavailable")
-    }
-}
-
-fn shared_strategy_gap_reason(config: &CliConfig) -> String {
-    if config.spectral_mode.is_cube_like() && config.channel_count != Some(1) {
-        return "not-one-output-channel".to_string();
-    }
-    if config.spectral_mode.is_cube_like() && !matches!(config.w_term_mode, WTermMode::None) {
-        return "cube-like-wterm-requires-cube-path".to_string();
-    }
-    if config.spectral_mode.is_cube_like()
-        && config.cube_axis.interpolation != CubeInterpolation::Nearest
-        && !(config.dirty_only || config.niter == 0)
-    {
-        return "cleaned-linear-cube-like-requires-cube-path".to_string();
-    }
-    if config.use_pointing || matches!(config.w_term_mode, WTermMode::Direct) {
-        return "shared-strategy-not-yet-adapted-to-projection-family".to_string();
-    }
-    if config.save_model != SaveModelMode::None {
-        return "savemodel-requires-traced-path".to_string();
-    }
-    if config.use_mask != CleanMaskMode::User {
-        return "automask-not-supported-by-shared-strategy".to_string();
-    }
-    "standard-mfs-eligibility-check-rejected".to_string()
 }
 
 #[cfg(test)]

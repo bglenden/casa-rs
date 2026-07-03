@@ -156,6 +156,8 @@ pub use transform::{
 pub use visibility_buffer::{
     SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
     VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
-    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityComplexSamples,
-    VisibilityFloatSamples, VisibilityShape,
+    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityChannelReadRange,
+    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan,
+    VisibilityRowSelectionPlan, VisibilityRowSelectionRequest, VisibilitySelectedMainRow,
+    VisibilityShape,
 };

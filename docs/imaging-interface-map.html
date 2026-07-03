@@ -1362,7 +1362,7 @@
             <td><code>casa-imaging</code></td>
             <td>
               Concept APIs and types: <code>ImagingRequest</code>,
-              <code>VisibilityBatch</code>, <code>ColumnarVisibilitySourceRef</code>,
+              <code>VisibilityBatch</code>, <code>VisibilityBlockView</code>,
               <code>GridderMode</code>, <code>WTermMode</code>,
               <code>Deconvolver</code>, <code>run_imaging</code>,
               <code>run_mosaic_mfs_from_single_plane_stream</code>,
@@ -1455,12 +1455,13 @@
             <td>Row-block and spectral preparation</td>
             <td>
               <code>prepare_source_row_block_plane_inner</code>,
-              <code>collapse_paired_visibility</code>,
-              <code>interpolate_explicit_cube_output_sample</code>
+              <code>interpolate_explicit_cube_output_sample_from_rows</code>
             </td>
             <td>
               These functions shape samples for the core. If every mode shapes
               them privately in the app, MFS, cube, mosaic, and MT-MFS drift.
+              Pair-collapse itself is now owned by
+              <code>StandardMfsPairCollapseTransform</code>.
             </td>
             <td><span class="tag move">split between casa-ms and casa-imaging</span></td>
           </tr>
@@ -1469,13 +1470,14 @@
             <td>
               <code>accumulate_standard_mfs_density_rows_without_data_parallel</code>,
               <code>accumulate_standard_mfs_density_essentials_rows</code>,
-              <code>accumulate_standard_mfs_density_row</code>
+              library row helpers
             </td>
             <td>
-              Density is imaging math and a performance hotspot. It should be
-              controlled by the same execution and weighting plan as gridding.
+              Row-level density math is now in <code>casa-imaging</code>.
+              Remaining app code owns streaming, worker-local fork/merge, and
+              progress/timing until the source/execution boundary moves again.
             </td>
-            <td><span class="tag hot">move to casa-imaging</span></td>
+            <td><span class="tag move">mostly moved; orchestration remains</span></td>
           </tr>
           <tr>
             <td>Outlier and joint minor-cycle control</td>
@@ -1492,9 +1494,10 @@
           <tr>
             <td>Primary beam, masks, and product assembly</td>
             <td>
-              <code>write_products</code>, <code>build_coordinate_system</code>,
-              <code>robust_plane_stats</code>,
-              <code>build_auto_multithresh_cube_clean_mask</code>
+              <code>write_products</code> and remaining PB/pbcor branch logic.
+              The tested <code>auto-multithresh</code> mask computation,
+              primary-beam product math, and image coordinate-system
+              construction are now owned by <code>casa-imaging</code>.
             </td>
             <td>
               Product correctness is mode-sensitive, but it should consume an
@@ -1689,24 +1692,118 @@
       <code>run_standard_mfs_dirty_plan</code>, and
       <code>StandardMfsCleanSession</code>; the former weighted, planned,
       routed, and prepared-clean runners are private implementation functions.
+      The current #319 source-boundary slice also adds neutral
+      <code>VisibilityBlockView</code> adapters, physical row-selection plans,
+      and read-block plans in <code>casa-ms</code> and
+      moves tested auto-multithresh mask computation into
+      <code>casa-imaging</code>. The app-local pair-collapse enum and helper
+      have been folded into <code>StandardMfsPairCollapseTransform</code>,
+      <code>ParallelHandBatch</code>, and <code>PlaneStokes</code> methods,
+      including the correlation-pair selection rule. The app-local
+      <code>VisibilitySourceBlock</code> concrete row adapter and both
+      <code>get_ms_values_into_*_processing_buffer</code> wrappers have also
+      been deleted, as has the single-implementation app
+      <code>VisibilitySourceRows</code> trait. Standard-MFS, mosaic,
+      one-channel cube, and trace row-block reads now share the
+      <code>VisibilityBuffer</code> backed <code>ColumnarPreparedSource</code>
+      route, including the data-free density essentials readers. Worker-count
+      planning and single-plane execution/product/capability planning now live
+      in <code>casa-imaging</code>. The spectral route-plan vocabulary now hides
+      raw route fields behind methods, and the pure geometric
+      <code>phase_rotate_visibility</code> helper has moved from the app crate
+      into <code>casa-imaging</code>. The
+      <code>StandardMfsWeightedSample</code>,
+      <code>StandardMfsPlannedWeightedSample*</code>,
+      <code>StandardMfsRoutedVisibility*</code>, and
+      <code>StandardMfsMetalGroupedInputCache*</code> are now private backend
+      IR behind public scalar, planned-block, row, routed-block, and routed-cache
+      facade contracts. Primary-beam
+      product math and CASA-compatible image coordinate-system construction now
+      live in <code>casa-imaging</code>; the app still owns MS-specific PB
+      inference, file names, table writing, previews, and replacement policy.
+      Standard-MFS density row translation now also lives in
+      <code>casa-imaging</code>; the app retains MS streaming, worker-local
+      density accumulator orchestration, and timing/progress reporting.
+      Product-side PB support masks, pbcor products, alpha PB correction, and
+      clean-mask product materialization now use <code>casa-imaging</code>
+      helpers; the app remains the writer and naming/replacement policy owner.
+      MFS product plane extraction/expansion, masked MFS peak measurement, and
+      clean-mask pixel counting are also library helpers now. Joint-outlier
+      Hogbom also now uses shared finite masked peak search, plane minor-cycle
+      execution, PSF subtraction, CASA-inclusive iteration accounting, and
+      clean-cycle threshold policy from
+      <code>casa-imaging</code>. CASA cube-Briggs density-cell lookup, robust
+      scale, and preweighting denominator formulas are also library helpers now.
     </p>
     <div class="cards">
       <div class="card">
-        <strong>10 -> 0</strong>
-        <span>old route-specific public standard-MFS runners/free functions</span>
+        <strong>5 -> 0</strong>
+        <span>old route-specific public standard-MFS runners</span>
       </div>
       <div class="card">
-        <strong>170 -> 160</strong>
-        <span>public symbols in the measured issue files</span>
+        <strong>397 -> 529</strong>
+        <span>public symbol-like items in the expanded imaging scope</span>
       </div>
       <div class="card">
-        <strong>14 -> 11</strong>
+        <strong>1,066 -> 1,108</strong>
+        <span>public fields in the expanded imaging scope</span>
+      </div>
+      <div class="card">
+        <strong>13 -> 0</strong>
+        <span>public <code>StandardMfsPlannedWeightedSample</code> fields</span>
+      </div>
+      <div class="card">
+        <strong>17 -> 0</strong>
         <span>public <code>StandardMfs*</code> backend payload subset</span>
       </div>
       <div class="card">
-        <strong>-54</strong>
-        <span>Rust lines across the issue files after facade consolidation</span>
+        <strong>620 -> 556</strong>
+        <span>private app functions in <code>casars-imager</code></span>
       </div>
+      <div class="card">
+        <strong>5 -> 0</strong>
+        <span>app product-plane helpers</span>
+      </div>
+      <div class="card">
+        <strong>7 -> 0</strong>
+        <span>app cube-Briggs formula helpers</span>
+      </div>
+      <div class="card">
+        <strong>4 -> 2</strong>
+        <span>app standard-MFS density row helpers</span>
+      </div>
+      <div class="card">
+        <strong>2 -> 0</strong>
+        <span>legacy app <code>get_ms_values_into_*</code> helpers</span>
+      </div>
+      <div class="card">
+        <strong>3 -> 0</strong>
+        <span>legacy app <code>VisibilitySourceBlock*</code> types</span>
+      </div>
+      <div class="card">
+        <strong>+646</strong>
+        <span>Rust code lines in the expanded imaging scope</span>
+      </div>
+      <div class="card">
+        <strong>0.912x</strong>
+        <span>current Rust smoke time versus origin/main</span>
+      </div>
+      <div class="card">
+        <strong>same</strong>
+        <span>CASA product deltas for image, residual, and PSF</span>
+      </div>
+    </div>
+    <div class="note">
+      Performance smoke snapshot: the current worktree and origin/main commit
+      <code>e5df883d1b465f87661322fec875dacd05e5fc0f</code> were run through
+      <code>wave1-standard-mfs-dirty-smoke</code> with three repeats. Current
+      Rust median was <code>0.046237 s</code>; origin/main Rust median was
+      <code>0.050690 s</code>. The first run in each row includes cold
+      process/data effects, so this is a small smoke guardrail rather than a
+      broad benchmark conclusion. CASA-backed product comparisons completed for
+      <code>.image</code>, <code>.residual</code>, and <code>.psf</code> with
+      identical deltas between the two runs. This is a smoke guardrail, not a
+      medium/large performance conclusion.
     </div>
     <div class="diagram" aria-label="Issue 319 standard-MFS facade before and after">
       <svg viewBox="0 0 1120 350" role="img">
@@ -1768,12 +1865,12 @@
       </svg>
     </div>
     <div class="note">
-      Remaining transition point: the app still constructs some
-      <code>StandardMfsWeightedSample</code>,
-      <code>StandardMfsPlannedWeightedSampleRunBlock</code>,
-      <code>StandardMfsRoutedVisibilityRun*</code>, and Metal grouped-input
-      payloads directly. Demoting those types cleanly requires the broader
-      neutral bounded-source boundary described below, not a flattening pass.
+      The old standard-MFS backend payload subset is now fully demoted. The
+      public symbol count is still up because explicit domain contracts replaced
+      app-private logic: row/read plans, worker plans, single-plane
+      execution/product/capability plans, PB and coordinate helpers, density row
+      translation, product-plane helpers, cube-Briggs formulas, image-product
+      metadata, and the scalar/row/block/cache source facade.
     </div>
   </section>
 
@@ -2030,12 +2127,14 @@
             <td><code>casa-imaging</code></td>
             <td>
               Partially reduced in #319: source traits, routed-sample IR, and
-              prepared clean state are crate-private. Weighted, planned,
-              routed-visibility, and Metal cache payloads remain transitional
-              public API until a neutral bounded source contract moves app
-              construction out of the boundary.
+              prepared clean state are crate-private. Row/read planning,
+              worker planning, and single-plane execution planning now have
+              concept contracts. Weighted, planned, routed-visibility, and
+              Metal cache payloads remain transitional public API until a
+              neutral bounded source contract moves app construction out of the
+              boundary.
             </td>
-            <td>Next source-boundary wave</td>
+            <td>Remaining #319 source-boundary work</td>
             <td>Bounded streaming, tile occupancy, Metal cache bytes, allocations.</td>
           </tr>
           <tr>
@@ -2043,12 +2142,18 @@
               App MS readers:
               <code>select_main_rows</code>,
               <code>read_visibility_source_columns</code>,
-              <code>read_columnar_prepared_source</code>.
+              <code>read_columnar_prepared_source</code>. The older concrete
+              <code>VisibilitySourceBlock</code> and
+              <code>get_ms_values_into_*</code> wrapper path has been removed;
+              physical MAIN-row selection now delegates to <code>casa-ms</code>.
             </td>
             <td><code>casa-ms</code></td>
             <td>
-              <code>VisibilityReadPlan</code>, source partitions, and bounded
-              stream factories.
+              <code>VisibilityRowSelectionPlan</code>,
+              <code>VisibilityReadBlockPlan</code>, source partitions, and
+              bounded stream factories. Active row-block routes already use
+              <code>VisibilityBuffer</code>, including density essentials;
+              data-bearing essentials/routed replay helpers remain.
             </td>
             <td>Phase 3</td>
             <td>Selected rows/DDIDs/SPWs/fields/channels match current behavior.</td>
@@ -2057,8 +2162,8 @@
             <td>
               App spectral/sample shapers:
               <code>prepare_source_row_block_plane_inner</code>,
-              <code>collapse_paired_visibility</code>,
-              <code>interpolate_explicit_cube_output_sample</code>.
+              <code>interpolate_explicit_cube_output_sample_from_rows</code>.
+              Pair-collapse itself is now a library enum method.
             </td>
             <td><code>casa-imaging</code></td>
             <td>
@@ -2070,7 +2175,12 @@
             <td>MFS/cube/MT-MFS route parity and plane-coordinate parity.</td>
           </tr>
           <tr>
-            <td>App density helpers: <code>accumulate_standard_mfs_density_*</code>.</td>
+            <td>
+              Remaining app density orchestration:
+              <code>accumulate_standard_mfs_density_rows_without_data_parallel</code>,
+              <code>accumulate_standard_mfs_density_essentials_rows</code>. Row
+              translation now calls <code>casa-imaging</code>.
+            </td>
             <td><code>casa-imaging</code></td>
             <td><code>WeightingPlan</code> plus private executor strategy.</td>
             <td>Phase 5</td>
@@ -2079,8 +2189,16 @@
           <tr>
             <td>
               App product assembly:
-              <code>write_products</code>, <code>build_coordinate_system</code>,
-              <code>robust_plane_stats</code>, PB/pbcor/mask branch logic.
+              <code>write_products</code> and writer orchestration. The old
+              app-local <code>build_coordinate_system</code>, PB product math,
+              PB support-mask/pbcor grouping, alpha PB correction, and
+              clean-mask materialization have moved into
+              <code>casa-imaging</code>. Product membership, units, beam
+              metadata, default masks, and derived side products now flow
+              through <code>ImageProductSet</code>,
+              <code>ImageProduct</code>, and
+              <code>ImageProductMetadata</code>; the app owns filenames,
+              <code>PagedImage</code> writes, previews, and replacement policy.
             </td>
             <td><code>casa-imaging</code> plus writer</td>
             <td>
@@ -2088,14 +2206,20 @@
               <code>ImageProductMetadata</code>,
               <code>ImageTableWriter</code>.
             </td>
-            <td>Phase 6</td>
-            <td>Product metadata parity and CASA table serialization parity.</td>
+            <td>Phase 6, partially implemented</td>
+            <td>
+              Product-set metadata and membership are implemented; focused
+              writer extraction remains app-side persistence work.
+            </td>
           </tr>
           <tr>
             <td>
               App clean control:
               <code>run_joint_outlier_hogbom</code>,
               <code>run_joint_hogbom_minor_cycle</code>, MT-MFS island runner.
+              Finite peak search, plane Hogbom updates, PSF subtraction,
+              CASA-inclusive iteration accounting, and clean-cycle threshold
+              policy now use <code>casa-imaging</code> helpers.
             </td>
             <td><code>casa-imaging</code></td>
             <td>
@@ -2495,10 +2619,11 @@
         under <code>WeightingPlan</code> and <code>ExecutionPlan</code>.
       </li>
       <li>
-        Split products and persistence: <code>ImageProductSet</code> and
-        <code>ImageProductMetadata</code> in <code>casa-imaging</code>,
-        <code>ImageTableWriter</code> for serialization, app for naming and
-        replacement policy.
+        Split products and persistence: <code>ImageProductSet</code>,
+        <code>ImageProduct</code>, and <code>ImageProductMetadata</code> now
+        live in <code>casa-imaging</code>; a focused
+        <code>ImageTableWriter</code> remains the serialization boundary, with
+        the app keeping naming and replacement policy.
       </li>
       <li>
         Unify clean control, including outliers and MT-MFS. Treat
@@ -2544,17 +2669,19 @@
       <li>
         App private imaging math examples:
         <a href="../crates/casars-imager/src/lib.rs#L23215"><code>accumulate_standard_mfs_density_rows_without_data_parallel</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L40040"><code>collapse_paired_visibility</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L40268"><code>interpolate_explicit_cube_output_sample</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L37364"><code>robust_plane_stats</code></a>.
+        <a href="../crates/casars-imager/src/lib.rs#L39334"><code>interpolate_explicit_cube_output_sample_from_rows</code></a>.
       </li>
       <li>
         Core imaging types:
         <a href="../crates/casa-imaging/src/types.rs#L98"><code>GridderMode</code></a>,
         <a href="../crates/casa-imaging/src/types.rs#L451"><code>Deconvolver</code></a>,
         <a href="../crates/casa-imaging/src/types.rs#L473"><code>WTermMode</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L618"><code>ColumnarVisibilitySourceRef</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L618"><code>VisibilityBlockView</code></a>,
         <a href="../crates/casa-imaging/src/types.rs#L852"><code>VisibilityBatch</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L75"><code>PlaneStokes::derive_pair_selection</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L1083"><code>StandardMfsPairCollapseTransform::collapse</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L1515"><code>ParallelHandBatch::collapse_with_transform</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs#L1885"><code>CubeAutoMultiThresholdConfig::build_cube_clean_mask</code></a>,
         <a href="../crates/casa-imaging/src/types.rs#L1548"><code>ImagingRequest</code></a>.
       </li>
       <li>

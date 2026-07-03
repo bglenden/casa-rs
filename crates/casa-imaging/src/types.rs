@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Public request/result types for the pure imaging core.
 
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
 
-use ndarray::{Array2, Array4};
+use ndarray::{Array2, Array4, Zip};
 use num_complex::{Complex32, Complex64};
 
-use crate::{ImagingError, gridder::STANDARD_GRIDDER_TAP_COUNT};
+use crate::ImagingError;
 
 /// Fixed CASA-style axis ordering for persisted products.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,88 @@ impl PlaneStokes {
             Self::YY => "YY",
             Self::RR => "RR",
             Self::LL => "LL",
+        }
+    }
+
+    /// CASA-style logical `sumwt` multiplicity for a paired-hand collapse into
+    /// this plane.
+    pub fn paired_sumwt_factor(self) -> f32 {
+        match self {
+            Self::I => 2.0,
+            Self::Q | Self::U | Self::V => 1.0,
+            Self::XX | Self::YY | Self::RR | Self::LL => 1.0,
+        }
+    }
+
+    /// Selects the paired correlations and collapse transform for this
+    /// derived Stokes plane.
+    ///
+    /// Correlation codes use CASA/casacore numbering: `RR=5`, `RL=6`,
+    /// `LR=7`, `LL=8`, `XX=9`, `XY=10`, `YX=11`, and `YY=12`.
+    pub fn derive_pair_selection(
+        self,
+        corr_types: &[i32],
+    ) -> Result<((usize, usize), StandardMfsPairCollapseTransform), ImagingError> {
+        let correlation_index = |corr_code| corr_types.iter().position(|code| *code == corr_code);
+        let xx_yy = correlation_index(9).zip(correlation_index(12));
+        let xy_yx = correlation_index(10).zip(correlation_index(11));
+        let rr_ll = correlation_index(5).zip(correlation_index(8));
+        let rl_lr = correlation_index(6).zip(correlation_index(7));
+
+        match self {
+            Self::I => xx_yy
+                .map(|pair| (pair, StandardMfsPairCollapseTransform::HalfSum))
+                .or_else(|| rr_ll.map(|pair| (pair, StandardMfsPairCollapseTransform::HalfSum)))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "Stokes I imaging requires XX+YY or RR+LL unless an explicit raw correlation plane is selected"
+                            .to_string(),
+                    )
+                }),
+            Self::Q => xx_yy
+                .map(|pair| (pair, StandardMfsPairCollapseTransform::HalfDifference))
+                .or_else(|| rl_lr.map(|pair| (pair, StandardMfsPairCollapseTransform::HalfSum)))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "Stokes Q imaging requires XX+YY (linear basis) or RL+LR (circular basis)"
+                            .to_string(),
+                    )
+                }),
+            Self::U => xy_yx
+                .map(|pair| (pair, StandardMfsPairCollapseTransform::HalfSum))
+                .or_else(|| {
+                    rl_lr.map(|pair| {
+                        (
+                            pair,
+                            StandardMfsPairCollapseTransform::PositiveHalfImagDifference,
+                        )
+                    })
+                })
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "Stokes U imaging requires XY+YX (linear basis) or RL+LR (circular basis)"
+                            .to_string(),
+                    )
+                }),
+            Self::V => xy_yx
+                .map(|pair| {
+                    (
+                        pair,
+                        StandardMfsPairCollapseTransform::NegativeHalfImagDifference,
+                    )
+                })
+                .or_else(|| {
+                    rr_ll.map(|pair| (pair, StandardMfsPairCollapseTransform::HalfDifference))
+                })
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "Stokes V imaging requires XY+YX (linear basis) or RR+LL (circular basis)"
+                            .to_string(),
+                    )
+                }),
+            Self::XX | Self::YY | Self::RR | Self::LL => Err(ImagingError::InvalidRequest(
+                format!("{self:?} is a raw correlation plane, not a derived Stokes plane"),
+            )),
         }
     }
 }
@@ -534,11 +616,11 @@ impl ImageGeometry {
 
 /// Stable identity for one homogeneous visibility source partition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ImagingSourcePartitionId(pub usize);
+pub struct VisibilitySourcePartitionId(pub usize);
 
 /// Shape invariant for one homogeneous visibility source partition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImagingSourceShape {
+pub struct VisibilitySourceShape {
     /// Number of source channels in the partition.
     pub channel_count: usize,
     /// Number of correlations in each source row/channel sample.
@@ -547,9 +629,9 @@ pub struct ImagingSourceShape {
 
 /// Source identity and shape visible to the pure imaging core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImagingSourcePartition {
+pub struct VisibilitySourcePartition {
     /// Frontend-owned source partition id.
-    pub id: ImagingSourcePartitionId,
+    pub id: VisibilitySourcePartitionId,
     /// Frontend-owned MeasurementSet/source id.
     pub ms_id: usize,
     /// Main-table data-description id.
@@ -559,19 +641,126 @@ pub struct ImagingSourcePartition {
     /// Polarization id.
     pub polarization_id: i32,
     /// Homogeneous source shape.
-    pub shape: ImagingSourceShape,
+    pub shape: VisibilitySourceShape,
+}
+
+/// Replay behavior guaranteed by a visibility source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayCapability {
+    /// The stream can be consumed once.
+    SinglePass,
+    /// The stream can be replayed by reopening the source.
+    Reopenable,
+    /// The stream is backed by an in-memory bounded cache.
+    Cached,
+}
+
+/// Conservative resident-size limits for one visibility stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisibilityStreamBounds {
+    /// Maximum rows exposed by one block.
+    pub max_rows_per_block: usize,
+    /// Maximum source channels exposed by one block.
+    pub max_channels_per_block: usize,
+    /// Maximum correlations exposed by one row/channel sample.
+    pub max_correlations: usize,
+    /// Maximum blocks retained concurrently by the stream contract.
+    pub max_concurrent_blocks: usize,
+    /// Maximum resident visibility bytes promised by the source.
+    pub max_resident_visibility_bytes: usize,
+}
+
+impl VisibilityStreamBounds {
+    /// Validate that the stream declares finite bounded residency.
+    pub fn validate(self) -> Result<(), ImagingError> {
+        if self.max_rows_per_block == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "visibility stream max_rows_per_block must be greater than zero".to_string(),
+            ));
+        }
+        if self.max_channels_per_block == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "visibility stream max_channels_per_block must be greater than zero".to_string(),
+            ));
+        }
+        if self.max_correlations == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "visibility stream max_correlations must be greater than zero".to_string(),
+            ));
+        }
+        if self.max_concurrent_blocks == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "visibility stream max_concurrent_blocks must be greater than zero".to_string(),
+            ));
+        }
+        if self.max_resident_visibility_bytes == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "visibility stream max_resident_visibility_bytes must be greater than zero"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Runtime residency telemetry reported by a visibility stream.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VisibilityStreamTelemetry {
+    /// Number of blocks emitted by the stream.
+    pub blocks_emitted: usize,
+    /// Maximum rows observed in one emitted block.
+    pub max_rows_per_block_seen: usize,
+    /// Maximum channels observed in one emitted block.
+    pub max_channels_per_block_seen: usize,
+    /// Maximum concurrently resident blocks observed by the source.
+    pub max_concurrent_blocks_seen: usize,
+    /// Maximum resident visibility bytes observed by the source.
+    pub max_resident_visibility_bytes_seen: usize,
+}
+
+/// Bounded block stream over selected visibility data.
+pub trait VisibilityBlockStream {
+    /// Return the static bounds promised by this stream.
+    fn bounds(&self) -> VisibilityStreamBounds;
+
+    /// Return the replay behavior promised by this stream.
+    fn replay_capability(&self) -> ReplayCapability;
+
+    /// Stream borrowed visibility blocks in stable source order.
+    fn stream_blocks(
+        &mut self,
+        consumer: &mut dyn for<'a> FnMut(VisibilityBlockView<'a>) -> Result<(), ImagingError>,
+    ) -> Result<VisibilityStreamTelemetry, ImagingError>;
+}
+
+/// Semantic selected-visibility source consumed by imaging plans.
+pub trait VisibilitySource {
+    /// Homogeneous partitions contained by this source.
+    fn partitions(&self) -> &[VisibilitySourcePartition];
+
+    /// Return the static bounds promised by this source.
+    fn bounds(&self) -> VisibilityStreamBounds;
+
+    /// Return the replay behavior promised by this source.
+    fn replay_capability(&self) -> ReplayCapability;
+
+    /// Stream borrowed visibility blocks in stable source order.
+    fn stream_blocks(
+        &mut self,
+        consumer: &mut dyn for<'a> FnMut(VisibilityBlockView<'a>) -> Result<(), ImagingError>,
+    ) -> Result<VisibilityStreamTelemetry, ImagingError>;
 }
 
 /// Borrowed complex sample storage for columnar source visibility data.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColumnarComplexSamplesRef<'a> {
+pub enum VisibilityComplexSamplesRef<'a> {
     /// Native Complex32 samples.
     Complex32(&'a [Complex32]),
     /// Native Complex64 samples.
     Complex64(&'a [Complex64]),
 }
 
-impl ColumnarComplexSamplesRef<'_> {
+impl VisibilityComplexSamplesRef<'_> {
     /// Number of complex values in the borrowed storage.
     pub fn len(self) -> usize {
         match self {
@@ -588,14 +777,14 @@ impl ColumnarComplexSamplesRef<'_> {
 
 /// Borrowed real sample storage for columnar source weights.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColumnarFloatSamplesRef<'a> {
+pub enum VisibilityFloatSamplesRef<'a> {
     /// Native Float32 samples.
     Float32(&'a [f32]),
     /// Native Float64 samples.
     Float64(&'a [f64]),
 }
 
-impl ColumnarFloatSamplesRef<'_> {
+impl VisibilityFloatSamplesRef<'_> {
     /// Number of real values in the borrowed storage.
     pub fn len(self) -> usize {
         match self {
@@ -615,9 +804,9 @@ impl ColumnarFloatSamplesRef<'_> {
 /// Channelized arrays use `[channel][row][correlation]` layout. Row sidecars use
 /// `[row]`, and UVW uses `[row][axis]` with three axes per row.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ColumnarVisibilitySourceRef<'a> {
+pub struct VisibilityBlockView<'a> {
     /// Homogeneous partition identity and shape.
-    pub partition: ImagingSourcePartition,
+    pub partition: VisibilitySourcePartition,
     /// Original source row indices in stable processing order.
     pub row_indices: &'a [usize],
     /// First source channel represented in channelized arrays.
@@ -625,13 +814,13 @@ pub struct ColumnarVisibilitySourceRef<'a> {
     /// Number of source channels represented in channelized arrays.
     pub channel_count: usize,
     /// Complex visibility samples.
-    pub data: Option<ColumnarComplexSamplesRef<'a>>,
+    pub data: Option<VisibilityComplexSamplesRef<'a>>,
     /// Channel flags.
     pub flags: Option<&'a [bool]>,
     /// Per-row weights.
-    pub weights: Option<ColumnarFloatSamplesRef<'a>>,
+    pub weights: Option<VisibilityFloatSamplesRef<'a>>,
     /// Per-channel weights.
-    pub weight_spectrum: Option<ColumnarFloatSamplesRef<'a>>,
+    pub weight_spectrum: Option<VisibilityFloatSamplesRef<'a>>,
     /// UVW coordinates.
     pub uvw_m: Option<&'a [f64]>,
     /// Row flags.
@@ -646,7 +835,7 @@ pub struct ColumnarVisibilitySourceRef<'a> {
     pub time: Option<&'a [f64]>,
 }
 
-impl ColumnarVisibilitySourceRef<'_> {
+impl VisibilityBlockView<'_> {
     /// Number of rows represented by this source block.
     pub fn row_count(self) -> usize {
         self.row_indices.len()
@@ -753,25 +942,48 @@ fn validate_optional_row_len<T>(
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralRoutePlan {
     /// Source-channel to output-plane mapping.
-    pub channel_routes: Vec<SourceChannelRoute>,
+    channel_routes: Vec<SourceChannelRoute>,
+}
+
+impl SpectralRoutePlan {
+    /// Route each source channel in a block to the matching output plane.
+    pub fn identity_for_block(source: VisibilityBlockView<'_>) -> Self {
+        let channel_routes = source
+            .channel_range()
+            .enumerate()
+            .map(|(plane_index, source_channel)| SourceChannelRoute {
+                source_channel,
+                output_planes: vec![OutputPlaneContribution {
+                    plane_index,
+                    factor: 1.0,
+                }],
+            })
+            .collect();
+        Self { channel_routes }
+    }
+
+    /// Number of source-channel routes represented by this plan.
+    pub fn channel_route_count(&self) -> usize {
+        self.channel_routes.len()
+    }
 }
 
 /// Mapping for one represented source channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceChannelRoute {
     /// Source channel index.
-    pub source_channel: usize,
+    source_channel: usize,
     /// Output planes receiving this source channel.
-    pub output_planes: Vec<OutputPlaneContribution>,
+    output_planes: Vec<OutputPlaneContribution>,
 }
 
 /// Contribution of one source channel to one output plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OutputPlaneContribution {
     /// Output plane index.
-    pub plane_index: usize,
+    plane_index: usize,
     /// Linear contribution factor.
-    pub factor: f32,
+    factor: f32,
 }
 
 /// Compact Stokes/correlation routing state.
@@ -813,7 +1025,7 @@ pub struct ModelRoutePlan {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ImagingSourceBlockView<'a> {
     /// Borrowed source samples and row sidecars.
-    pub source: ColumnarVisibilitySourceRef<'a>,
+    pub source: VisibilityBlockView<'a>,
     /// Spectral routing plan.
     pub spectral: &'a SpectralRoutePlan,
     /// Polarization routing plan.
@@ -878,13 +1090,13 @@ pub struct VisibilityBatch {
     pub visibility: Vec<Complex32>,
 }
 
-/// Already weighted scalar standard-MFS sample streamed directly to gridding.
+/// One already-selected scalar visibility sample in wavelength coordinates.
 ///
-/// This is the single-sample equivalent of one row in [`VisibilityBatch`]. It
-/// lets frontends feed bounded row blocks to the standard-MFS replay path
-/// without first materializing a full owned batch for every major-cycle replay.
+/// This is the single-sample counterpart to [`VisibilityBatch`]. Streaming
+/// frontends use it when retaining an owned columnar batch for every replay
+/// would exceed the intended residency budget.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StandardMfsWeightedSample {
+pub struct ScalarVisibilitySample {
     /// Baseline `u` coordinate in wavelengths.
     pub u_lambda: f64,
     /// Baseline `v` coordinate in wavelengths.
@@ -899,6 +1111,43 @@ pub struct StandardMfsWeightedSample {
     pub gridable: bool,
     /// Complex scalar visibility.
     pub visibility: Complex32,
+}
+
+/// Already weighted scalar standard-MFS sample streamed directly to gridding.
+///
+/// This is the single-sample equivalent of one row in [`VisibilityBatch`]. It
+/// lets frontends feed bounded row blocks to the standard-MFS replay path
+/// without first materializing a full owned batch for every major-cycle replay.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct StandardMfsWeightedSample {
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Final imaging weight after natural/uniform/Briggs weighting.
+    pub weight: f32,
+    /// Logical multiplicity factor for CASA-style reported `sumwt`.
+    pub sumwt_factor: f32,
+    /// Whether this sample participates in image/PSF gridding.
+    pub gridable: bool,
+    /// Complex scalar visibility.
+    pub visibility: Complex32,
+}
+
+impl From<ScalarVisibilitySample> for StandardMfsWeightedSample {
+    fn from(sample: ScalarVisibilitySample) -> Self {
+        Self {
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
+            w_lambda: sample.w_lambda,
+            weight: sample.weight,
+            sumwt_factor: sample.sumwt_factor,
+            gridable: sample.gridable,
+            visibility: sample.visibility,
+        }
+    }
 }
 
 /// Tile-routed standard-MFS sample before final density-dependent weighting.
@@ -952,6 +1201,23 @@ pub enum StandardMfsPairCollapseTransform {
     NegativeHalfImagDifference,
 }
 
+impl StandardMfsPairCollapseTransform {
+    /// Collapse paired parallel-hand visibilities into the requested Stokes-like
+    /// scalar visibility.
+    pub fn collapse(self, first_visibility: Complex32, second_visibility: Complex32) -> Complex32 {
+        match self {
+            Self::HalfSum => (first_visibility + second_visibility) * 0.5,
+            Self::HalfDifference => (first_visibility - second_visibility) * 0.5,
+            Self::PositiveHalfImagDifference => {
+                (first_visibility - second_visibility) * Complex32::new(0.0, 0.5)
+            }
+            Self::NegativeHalfImagDifference => {
+                (first_visibility - second_visibility) * Complex32::new(0.0, -0.5)
+            }
+        }
+    }
+}
+
 /// Polarization selection represented by a row-shaped standard-MFS visibility run.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StandardMfsVisibilityPolarization {
@@ -975,13 +1241,62 @@ pub enum StandardMfsVisibilityPolarization {
     },
 }
 
+/// Row-shaped standard-MFS visibility input before backend-specific routing.
+///
+/// Frontends build this from selected MeasurementSet rows or equivalent
+/// visibility stores. The imaging core owns tap routing, run slicing, and
+/// backend cache layout from this point forward.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StandardMfsVisibilityRow {
+    /// Baseline `uvw` coordinate in meters.
+    pub uvw_m: [f64; 3],
+    /// MeasurementSet spectral-window id for diagnostics.
+    pub spw_id: usize,
+    /// First source-channel index loaded into the row matrices.
+    pub channel_origin: usize,
+    /// Selected source-channel indices addressed by this row.
+    pub source_channel_indices: Arc<[usize]>,
+    /// Per-selected-channel conversion factor from meters to wavelengths.
+    pub channel_lambda_scales: Arc<[f64]>,
+    /// Complex visibility matrix in `[correlation, local_channel]` order.
+    pub data: Array2<Complex32>,
+    /// Flag matrix in `[correlation, local_channel]` order.
+    pub flag: Array2<bool>,
+    /// Per-correlation natural weights.
+    pub weight: Arc<[f32]>,
+    /// Optional per-correlation, per-channel natural weights.
+    pub weight_spectrum: Option<Array2<f32>>,
+    /// Whether this row is gridable by the standard interferometric path.
+    pub gridable: bool,
+    /// Polarization/correlation interpretation for this imaging plane.
+    pub polarization: StandardMfsVisibilityPolarization,
+}
+
+impl StandardMfsVisibilityRow {
+    pub(crate) fn into_routed_row(self) -> StandardMfsRoutedVisibilityRow {
+        StandardMfsRoutedVisibilityRow {
+            uvw_m: self.uvw_m,
+            spw_id: self.spw_id,
+            channel_origin: self.channel_origin,
+            source_channel_indices: self.source_channel_indices,
+            channel_lambda_scales: self.channel_lambda_scales,
+            data: self.data,
+            flag: self.flag,
+            weight: self.weight,
+            weight_spectrum: self.weight_spectrum,
+            gridable: self.gridable,
+            polarization: self.polarization,
+        }
+    }
+}
+
 /// Owned row-shaped visibility payload for standard-MFS fixed-tile routing.
 ///
 /// A row may be shared by several tile-local runs through `Arc`; this avoids
 /// copying `u/v/w`, flags, weights, weight spectra, and visibility matrices
 /// into one scalar queue record per channel lane.
 #[derive(Debug, Clone, PartialEq)]
-pub struct StandardMfsRoutedVisibilityRow {
+pub(crate) struct StandardMfsRoutedVisibilityRow {
     /// Baseline `uvw` coordinate in meters.
     pub uvw_m: [f64; 3],
     /// MeasurementSet spectral-window id for diagnostics.
@@ -1008,7 +1323,7 @@ pub struct StandardMfsRoutedVisibilityRow {
 
 /// Tile-routed row/channel span for standard-MFS fixed-tile workers.
 #[derive(Debug, Clone, PartialEq)]
-pub struct StandardMfsRoutedVisibilityRun {
+pub(crate) struct StandardMfsRoutedVisibilityRun {
     /// Shared row payload.
     pub row: Arc<StandardMfsRoutedVisibilityRow>,
     /// Range into `row.source_channel_indices` and `row.channel_lambda_scales`.
@@ -1031,59 +1346,59 @@ impl StandardMfsRoutedVisibilityRun {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    /// Return the expected tap visits for this run.
-    pub fn estimated_tap_visits(&self) -> usize {
-        self.len()
-            .saturating_mul(STANDARD_GRIDDER_TAP_COUNT)
-            .saturating_mul(STANDARD_GRIDDER_TAP_COUNT)
-    }
 }
 
-/// Bounded row-shaped routed standard-MFS visibility runs.
+/// Counts returned while routing one standard-MFS visibility row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StandardMfsRoutedVisibilityAppendCounts {
+    /// Candidate source-channel lanes considered for routing.
+    pub candidate_samples: usize,
+    /// Candidate lanes accepted by the standard-gridder tap planner.
+    pub planned_samples: usize,
+}
+
+/// Opaque replay block of standard-MFS routed visibility runs.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct StandardMfsRoutedVisibilityRunBlock {
-    runs: Vec<StandardMfsRoutedVisibilityRun>,
-    len: usize,
+pub struct StandardMfsRoutedVisibilityBlock {
+    pub(crate) runs: Vec<StandardMfsRoutedVisibilityRun>,
 }
 
-impl StandardMfsRoutedVisibilityRunBlock {
-    /// Remove all runs while retaining allocated capacity.
+impl StandardMfsRoutedVisibilityBlock {
+    /// Remove all routed runs while retaining allocation.
     pub fn clear(&mut self) {
         self.runs.clear();
-        self.len = 0;
     }
 
-    /// Append a row/channel run.
-    pub fn push_run(&mut self, run: StandardMfsRoutedVisibilityRun) {
-        if run.is_empty() {
-            return;
-        }
-        self.len = self.len.saturating_add(run.len());
+    /// Number of routed row/channel runs represented by this block.
+    pub fn run_count(&self) -> usize {
+        self.runs.len()
+    }
+
+    /// Number of logical channel lanes represented by this block.
+    pub fn logical_lanes(&self) -> usize {
+        self.runs
+            .iter()
+            .map(StandardMfsRoutedVisibilityRun::len)
+            .sum()
+    }
+
+    /// Return true when this block contains no routed runs.
+    pub fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+
+    pub(crate) fn push_run(&mut self, run: StandardMfsRoutedVisibilityRun) {
         self.runs.push(run);
     }
 
-    /// Return routed row/channel runs.
-    pub fn runs(&self) -> &[StandardMfsRoutedVisibilityRun] {
+    pub(crate) fn runs(&self) -> &[StandardMfsRoutedVisibilityRun] {
         &self.runs
     }
 
-    /// Return the number of logical channel lanes in all runs.
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Return `true` when there are no logical channel lanes.
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Return expected tap visits for all runs.
-    pub fn estimated_tap_visits(&self) -> usize {
-        self.runs
-            .iter()
-            .map(StandardMfsRoutedVisibilityRun::estimated_tap_visits)
-            .sum()
+    pub(crate) fn drain_runs(
+        &mut self,
+    ) -> impl Iterator<Item = StandardMfsRoutedVisibilityRun> + '_ {
+        self.runs.drain(..)
     }
 }
 
@@ -1094,49 +1409,49 @@ impl StandardMfsRoutedVisibilityRunBlock {
 /// It stores the deterministic positive-tap center for tile ownership, while
 /// core workers consume the precomputed compact tap identity directly.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StandardMfsPlannedWeightedSample {
+pub(crate) struct StandardMfsPlannedWeightedSample {
     /// Baseline `u` coordinate in wavelengths.
-    pub u_lambda: f64,
+    pub(crate) u_lambda: f64,
     /// Baseline `v` coordinate in wavelengths.
-    pub v_lambda: f64,
+    pub(crate) v_lambda: f64,
     /// Positive-tap center x cell in the padded standard grid.
-    pub center_x: u32,
+    pub(crate) center_x: u32,
     /// Positive-tap center y cell in the padded standard grid.
-    pub center_y: u32,
+    pub(crate) center_y: u32,
     /// First x cell touched by the compact positive-tap stencil.
-    pub x_start: u32,
+    pub(crate) x_start: u32,
     /// First y cell touched by the compact positive-tap stencil.
-    pub y_start: u32,
+    pub(crate) y_start: u32,
     /// Compact x-axis prolate-spheroidal weight table index.
-    pub x_weight_index: u32,
+    pub(crate) x_weight_index: u32,
     /// Compact y-axis prolate-spheroidal weight table index.
-    pub y_weight_index: u32,
+    pub(crate) y_weight_index: u32,
     /// Planned-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
-    pub flags: u16,
+    pub(crate) flags: u16,
     /// Number of 2-D tap visits expected for work attribution.
-    pub tap_count: u8,
+    pub(crate) tap_count: u8,
     /// Product of final imaging weight and CASA-style `sumwt` factor.
-    pub grid_weight: f32,
+    pub(crate) grid_weight: f32,
     /// Baseline `w` coordinate in wavelengths, retained for diagnostics.
-    pub w_lambda: f64,
+    pub(crate) w_lambda: f64,
     /// Complex scalar visibility.
-    pub visibility: Complex32,
+    pub(crate) visibility: Complex32,
 }
 
 impl StandardMfsPlannedWeightedSample {
     /// Visibility is finite and contributes to dirty/residual grids.
-    pub const FINITE_VISIBILITY: u16 = 1 << 0;
+    pub(crate) const FINITE_VISIBILITY: u16 = 1 << 0;
     /// Visibility is nonfinite and contributes only to the PSF.
-    pub const PSF_ONLY: u16 = 1 << 1;
+    pub(crate) const PSF_ONLY: u16 = 1 << 1;
 
     /// Returns true when the sample visibility can contribute to dirty/residual grids.
-    pub fn finite_visibility(self) -> bool {
+    pub(crate) fn finite_visibility(self) -> bool {
         self.flags & Self::FINITE_VISIBILITY != 0
     }
 
-    /// Returns true when the sample should contribute to the PSF only.
-    pub fn psf_only(self) -> bool {
-        self.flags & Self::PSF_ONLY != 0
+    /// Number of 2-D tap visits expected for work attribution.
+    pub fn tap_count(self) -> u8 {
+        self.tap_count
     }
 }
 
@@ -1147,7 +1462,7 @@ impl StandardMfsPlannedWeightedSample {
 /// canonical gridding payload; `runs` only describes contiguous slices that
 /// should be considered together for tile routing.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct StandardMfsPlannedWeightedSampleRunBlock {
+pub(crate) struct StandardMfsPlannedWeightedSampleRunBlock {
     samples: Vec<StandardMfsPlannedWeightedSample>,
     runs: Vec<Range<usize>>,
 }
@@ -1165,7 +1480,7 @@ impl StandardMfsPlannedWeightedSampleRunBlock {
     }
 
     /// Return contiguous run ranges into [`Self::samples`].
-    pub fn runs(&self) -> &[Range<usize>] {
+    pub(crate) fn runs(&self) -> &[Range<usize>] {
         &self.runs
     }
 
@@ -1188,7 +1503,7 @@ impl StandardMfsPlannedWeightedSampleRunBlock {
     }
 
     /// Append one run by copying the provided planned samples.
-    pub fn push_run_from_slice(&mut self, samples: &[StandardMfsPlannedWeightedSample]) {
+    pub(crate) fn push_run_from_slice(&mut self, samples: &[StandardMfsPlannedWeightedSample]) {
         let start = self.begin_run();
         self.samples.extend_from_slice(samples);
         self.finish_run(start);
@@ -1205,6 +1520,63 @@ impl StandardMfsPlannedWeightedSampleRunBlock {
     }
 }
 
+/// Opaque bounded block of planned standard-MFS scalar samples.
+///
+/// The block preserves row/run boundaries for fixed-tile scheduling without
+/// exposing compact tap-table identities or worker payload fields to frontends.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StandardMfsPlannedSampleBlock {
+    pub(crate) inner: StandardMfsPlannedWeightedSampleRunBlock,
+}
+
+impl StandardMfsPlannedSampleBlock {
+    /// Remove all planned samples and run ranges while retaining capacity.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Start a new run, returning the current sample offset.
+    pub fn begin_run(&self) -> usize {
+        self.inner.begin_run()
+    }
+
+    /// Finish a run that began at `start`, recording it if it is non-empty.
+    pub fn finish_run(&mut self, start: usize) {
+        self.inner.finish_run(start);
+    }
+
+    /// Return the total number of planned scalar samples.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Return true when there are no planned scalar samples.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Return the total planned 2-D tap visits represented by this block.
+    pub fn tap_visits(&self) -> usize {
+        self.inner
+            .samples()
+            .iter()
+            .map(|sample| usize::from(sample.tap_count()))
+            .sum()
+    }
+
+    pub(crate) fn samples(&self) -> &[StandardMfsPlannedWeightedSample] {
+        self.inner.samples()
+    }
+
+    pub(crate) fn push_sample(&mut self, sample: StandardMfsPlannedWeightedSample) {
+        self.inner.push_sample(sample);
+    }
+
+    pub(crate) fn inner(&self) -> &StandardMfsPlannedWeightedSampleRunBlock {
+        &self.inner
+    }
+}
+
 /// Bounded routed standard-MFS samples with explicit scalar-run ranges.
 ///
 /// This is the fixed-tile worker handoff for final-weight-deferred execution:
@@ -1218,12 +1590,12 @@ pub(crate) struct StandardMfsRoutedSampleRunBlock {
 
 impl StandardMfsRoutedSampleRunBlock {
     /// Return the routed scalar samples in stable input order.
-    pub fn samples(&self) -> &[StandardMfsRoutedSample] {
+    pub(crate) fn samples(&self) -> &[StandardMfsRoutedSample] {
         &self.samples
     }
 
     /// Return contiguous run ranges into [`Self::samples`].
-    pub fn runs(&self) -> &[Range<usize>] {
+    pub(crate) fn runs(&self) -> &[Range<usize>] {
         &self.runs
     }
 }
@@ -1327,6 +1699,19 @@ impl ParallelHandBatch {
     /// that logical sample is dropped instead of silently falling back to a
     /// pseudo-I estimate.
     pub fn collapse_to_stokes_i(&self) -> Result<VisibilityBatch, ImagingError> {
+        self.collapse_with_transform(StandardMfsPairCollapseTransform::HalfSum, PlaneStokes::I)
+    }
+
+    /// Collapses unflagged paired parallel hands with an explicit
+    /// Stokes-like transform.
+    ///
+    /// If either hand is flagged, if either weight is non-positive, or if the
+    /// transformed visibility is non-finite, that logical sample is dropped.
+    pub fn collapse_with_transform(
+        &self,
+        transform: StandardMfsPairCollapseTransform,
+        plane_stokes: PlaneStokes,
+    ) -> Result<VisibilityBatch, ImagingError> {
         self.validate()?;
 
         let mut u_lambda = Vec::with_capacity(self.len());
@@ -1350,7 +1735,8 @@ impl ParallelHandBatch {
             {
                 continue;
             }
-            let vis = (self.first_visibility[index] + self.second_visibility[index]) * 0.5;
+            let vis =
+                transform.collapse(self.first_visibility[index], self.second_visibility[index]);
             if !(vis.re.is_finite() && vis.im.is_finite()) {
                 continue;
             }
@@ -1366,7 +1752,7 @@ impl ParallelHandBatch {
             v_lambda.push(self.v_lambda[index]);
             w_lambda.push(self.w_lambda[index]);
             weight.push(combined_weight);
-            sumwt_factor.push(2.0);
+            sumwt_factor.push(plane_stokes.paired_sumwt_factor());
             gridable.push(self.gridable[index]);
             visibility.push(vis);
         }
@@ -1680,6 +2066,384 @@ impl Default for CubeAutoMultiThresholdConfig {
             fast_noise: true,
         }
     }
+}
+
+impl CubeAutoMultiThresholdConfig {
+    /// Builds a CASA-style `auto-multithresh` clean-mask cube from residual
+    /// products and per-plane diagnostics.
+    ///
+    /// The returned mask has shape `[nx, ny, 1, nchan]`; multiple residual
+    /// Stokes planes are OR-combined into the single persisted clean-mask
+    /// plane for each channel. `mask_beams` should contain the restoring beam
+    /// selected for each output channel after any common-beam policy has been
+    /// applied.
+    pub fn build_cube_clean_mask(
+        &self,
+        geometry: ImageGeometry,
+        dirty: &CubeImagingResult,
+        mask_beams: &[Option<BeamFit>],
+        user_mask: Option<&Array2<bool>>,
+    ) -> Result<Array4<bool>, ImagingError> {
+        let residual = &dirty.residual;
+        let shape = residual.shape();
+        if shape.len() != 4 {
+            return Err(ImagingError::InvalidRequest(format!(
+                "auto-multithresh residual product must be rank-4, found shape {shape:?}"
+            )));
+        }
+        if shape[0] != geometry.nx() || shape[1] != geometry.ny() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "auto-multithresh residual shape {:?} does not match image geometry {:?}",
+                &shape[0..2],
+                geometry.image_shape
+            )));
+        }
+        if let Some(mask) = user_mask
+            && mask.dim() != (geometry.nx(), geometry.ny())
+        {
+            return Err(ImagingError::InvalidRequest(format!(
+                "auto-multithresh user mask shape {:?} does not match image geometry {:?}",
+                mask.dim(),
+                geometry.image_shape
+            )));
+        }
+        let nstokes = shape[2];
+        let nchan = shape[3];
+        let result_channel_count = dirty.compatibility.channel_frequencies_hz.len();
+        if result_channel_count != nchan {
+            return Err(ImagingError::InvalidRequest(format!(
+                "auto-multithresh residual channel count {nchan} does not match result channel count {result_channel_count}",
+            )));
+        }
+        let mut mask = Array4::<bool>::from_elem((geometry.nx(), geometry.ny(), 1, nchan), false);
+        for channel_index in 0..nchan {
+            let mut channel_mask = user_mask.cloned().unwrap_or_else(|| {
+                Array2::<bool>::from_elem((geometry.nx(), geometry.ny()), false)
+            });
+            let max_psf_sidelobe_level = dirty
+                .diagnostics
+                .channel_diagnostics
+                .get(channel_index)
+                .map(|diagnostics| diagnostics.max_psf_sidelobe_level)
+                .unwrap_or(0.0);
+            let beam = mask_beams.get(channel_index).copied().flatten();
+            let min_region_pixels = auto_mask_min_region_pixels(geometry, beam, self);
+            let beam_shape = auto_mask_beam_shape(geometry, beam, self);
+            for stokes_index in 0..nstokes {
+                let plane = residual
+                    .slice(ndarray::s![.., .., stokes_index, channel_index])
+                    .to_owned();
+                let plane_mask = auto_multithresh_plane_mask(
+                    &plane,
+                    max_psf_sidelobe_level,
+                    min_region_pixels,
+                    beam_shape,
+                    self,
+                );
+                Zip::from(&mut channel_mask)
+                    .and(&plane_mask)
+                    .for_each(|out, generated| *out = *out || *generated);
+            }
+            mask.slice_mut(ndarray::s![.., .., 0, channel_index])
+                .assign(&channel_mask);
+        }
+        Ok(mask)
+    }
+}
+
+fn auto_mask_min_region_pixels(
+    geometry: ImageGeometry,
+    beam: Option<BeamFit>,
+    config: &CubeAutoMultiThresholdConfig,
+) -> usize {
+    if config.min_beam_frac <= 0.0 {
+        return 1;
+    }
+    let Some(beam) = beam else {
+        return 1;
+    };
+    let cell_area = geometry.cell_size_rad[0].abs() * geometry.cell_size_rad[1].abs();
+    if !(cell_area.is_finite() && cell_area > 0.0) {
+        return 1;
+    }
+    let beam_area = std::f64::consts::PI * beam.major_fwhm_rad.abs() * beam.minor_fwhm_rad.abs()
+        / (4.0 * std::f64::consts::LN_2);
+    if !(beam_area.is_finite() && beam_area > 0.0) {
+        return 1;
+    }
+    ((config.min_beam_frac as f64 * beam_area / cell_area).ceil() as usize).max(1)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AutoMaskBeamShape {
+    sigma_x_pixels: f64,
+    sigma_y_pixels: f64,
+    position_angle_rad: f64,
+}
+
+fn auto_mask_beam_shape(
+    geometry: ImageGeometry,
+    beam: Option<BeamFit>,
+    config: &CubeAutoMultiThresholdConfig,
+) -> Option<AutoMaskBeamShape> {
+    let beam = beam?;
+    if config.smooth_factor <= 0.0 {
+        return None;
+    }
+    let cell_x = geometry.cell_size_rad[0].abs();
+    let cell_y = geometry.cell_size_rad[1].abs();
+    if !(cell_x.is_finite() && cell_x > 0.0 && cell_y.is_finite() && cell_y > 0.0) {
+        return None;
+    }
+    let sigma_from_fwhm = |fwhm_rad: f64, cell_rad: f64| {
+        config.smooth_factor as f64 * fwhm_rad.abs()
+            / (2.0 * (2.0 * std::f64::consts::LN_2).sqrt() * cell_rad)
+    };
+    let sigma_x_pixels = sigma_from_fwhm(beam.minor_fwhm_rad, cell_x);
+    let sigma_y_pixels = sigma_from_fwhm(beam.major_fwhm_rad, cell_y);
+    (sigma_x_pixels.is_finite()
+        && sigma_x_pixels > 0.0
+        && sigma_y_pixels.is_finite()
+        && sigma_y_pixels > 0.0)
+        .then_some(AutoMaskBeamShape {
+            sigma_x_pixels,
+            sigma_y_pixels,
+            position_angle_rad: beam.position_angle_rad,
+        })
+}
+
+fn auto_multithresh_plane_mask(
+    residual: &Array2<f32>,
+    max_psf_sidelobe_level: f32,
+    min_region_pixels: usize,
+    beam_shape: Option<AutoMaskBeamShape>,
+    config: &CubeAutoMultiThresholdConfig,
+) -> Array2<bool> {
+    let Some(stats) = robust_plane_stats(residual) else {
+        return Array2::<bool>::from_elem(residual.dim(), false);
+    };
+    let sidelobe_threshold =
+        stats.median + max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax;
+    let noise_threshold = stats.median + config.noise_threshold * stats.robust_rms;
+    let low_noise_threshold = stats.median
+        + (max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax)
+            .max(config.low_noise_threshold * stats.robust_rms);
+    let main_threshold = sidelobe_threshold.max(noise_threshold);
+    let mut initial = threshold_positive_mask(residual, main_threshold);
+    prune_small_regions(&mut initial, min_region_pixels);
+    let mut grown = smooth_and_cut_mask(&initial, beam_shape, config.cut_threshold);
+    if config.grow_iterations > 0 {
+        let constraint = threshold_positive_mask(residual, low_noise_threshold);
+        grow_mask_constrained(&mut grown, &constraint, config.grow_iterations);
+        if config.do_grow_prune {
+            prune_small_regions(&mut grown, min_region_pixels);
+        }
+    }
+    if config.negative_threshold > 0.0 {
+        let negative_threshold = stats.median
+            - (max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax)
+                .max(config.negative_threshold * stats.robust_rms);
+        let mut negative = threshold_negative_mask(residual, negative_threshold);
+        prune_small_regions(&mut negative, min_region_pixels);
+        negative = smooth_and_cut_mask(&negative, beam_shape, config.cut_threshold);
+        Zip::from(&mut grown)
+            .and(&negative)
+            .for_each(|out, generated| *out = *out || *generated);
+    }
+    grown
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RobustPlaneStats {
+    median: f32,
+    robust_rms: f32,
+    absmax: f32,
+}
+
+fn robust_plane_stats(residual: &Array2<f32>) -> Option<RobustPlaneStats> {
+    let mut values = residual
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    let median = sorted_median(&values);
+    let absmax = values
+        .iter()
+        .fold(0.0f32, |acc, value| acc.max(value.abs()));
+    let mut deviations = values
+        .iter()
+        .map(|value| (value - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(|a, b| a.total_cmp(b));
+    let mad_rms = sorted_median(&deviations) * 1.4826;
+    let rms = (values.iter().map(|value| value * value).sum::<f32>() / values.len() as f32).sqrt();
+    let robust_rms = if mad_rms > 0.0 { mad_rms } else { rms };
+    Some(RobustPlaneStats {
+        median,
+        robust_rms,
+        absmax,
+    })
+}
+
+fn sorted_median(values: &[f32]) -> f32 {
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        0.5 * (values[mid - 1] + values[mid])
+    } else {
+        values[mid]
+    }
+}
+
+fn threshold_positive_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
+    residual.mapv(|value| value.is_finite() && value > threshold)
+}
+
+fn threshold_negative_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
+    residual.mapv(|value| value.is_finite() && value < threshold)
+}
+
+fn smooth_and_cut_mask(
+    mask: &Array2<bool>,
+    beam_shape: Option<AutoMaskBeamShape>,
+    cut_threshold: f32,
+) -> Array2<bool> {
+    let Some(beam_shape) = beam_shape else {
+        return mask.clone();
+    };
+    let (nx, ny) = mask.dim();
+    let radius_x = (beam_shape.sigma_x_pixels * 4.0).ceil().max(1.0) as isize;
+    let radius_y = (beam_shape.sigma_y_pixels * 4.0).ceil().max(1.0) as isize;
+    let cos_pa = beam_shape.position_angle_rad.cos();
+    let sin_pa = beam_shape.position_angle_rad.sin();
+    let mut smoothed = Array2::<f32>::zeros((nx, ny));
+    for ((x, y), value) in mask.indexed_iter() {
+        if !*value {
+            continue;
+        }
+        let x = x as isize;
+        let y = y as isize;
+        for dx in -radius_x..=radius_x {
+            let xx = x + dx;
+            if !(0..nx as isize).contains(&xx) {
+                continue;
+            }
+            for dy in -radius_y..=radius_y {
+                let yy = y + dy;
+                if !(0..ny as isize).contains(&yy) {
+                    continue;
+                }
+                let rotated_x = dx as f64 * cos_pa + dy as f64 * sin_pa;
+                let rotated_y = -dx as f64 * sin_pa + dy as f64 * cos_pa;
+                let exponent = -0.5
+                    * ((rotated_x / beam_shape.sigma_x_pixels).powi(2)
+                        + (rotated_y / beam_shape.sigma_y_pixels).powi(2));
+                smoothed[(xx as usize, yy as usize)] += exponent.exp() as f32;
+            }
+        }
+    }
+    let peak = smoothed.iter().copied().fold(0.0f32, f32::max);
+    if !(peak.is_finite() && peak > 0.0) {
+        return Array2::<bool>::from_elem((nx, ny), false);
+    }
+    let threshold = cut_threshold.max(0.0) * peak;
+    smoothed.mapv(|value| value.is_finite() && value > threshold)
+}
+
+fn grow_mask_constrained(
+    mask: &mut Array2<bool>,
+    constraint: &Array2<bool>,
+    max_iterations: usize,
+) {
+    let (nx, ny) = mask.dim();
+    for _ in 0..max_iterations {
+        let mut next = mask.clone();
+        let mut changed = false;
+        for x in 0..nx {
+            for y in 0..ny {
+                if mask[(x, y)] || !constraint[(x, y)] {
+                    continue;
+                }
+                if neighboring_masked(mask, x, y) {
+                    next[(x, y)] = true;
+                    changed = true;
+                }
+            }
+        }
+        *mask = next;
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn neighboring_masked(mask: &Array2<bool>, x: usize, y: usize) -> bool {
+    let (nx, ny) = mask.dim();
+    (x > 0 && mask[(x - 1, y)])
+        || (x + 1 < nx && mask[(x + 1, y)])
+        || (y > 0 && mask[(x, y - 1)])
+        || (y + 1 < ny && mask[(x, y + 1)])
+}
+
+fn prune_small_regions(mask: &mut Array2<bool>, min_pixels: usize) {
+    if min_pixels <= 1 {
+        return;
+    }
+    let (nx, ny) = mask.dim();
+    let mut visited = Array2::<bool>::from_elem((nx, ny), false);
+    for x0 in 0..nx {
+        for y0 in 0..ny {
+            if visited[(x0, y0)] || !mask[(x0, y0)] {
+                continue;
+            }
+            let mut region = Vec::new();
+            let mut queue = VecDeque::from([(x0, y0)]);
+            visited[(x0, y0)] = true;
+            while let Some((x, y)) = queue.pop_front() {
+                region.push((x, y));
+                for (nx0, ny0) in neighbors4(mask.dim(), x, y) {
+                    if !visited[(nx0, ny0)] && mask[(nx0, ny0)] {
+                        visited[(nx0, ny0)] = true;
+                        queue.push_back((nx0, ny0));
+                    }
+                }
+            }
+            if region.len() < min_pixels {
+                for (x, y) in region {
+                    mask[(x, y)] = false;
+                }
+            }
+        }
+    }
+}
+
+fn neighbors4(
+    (nx, ny): (usize, usize),
+    x: usize,
+    y: usize,
+) -> impl Iterator<Item = (usize, usize)> {
+    let mut neighbors = [(usize::MAX, usize::MAX); 4];
+    let mut count = 0;
+    if x > 0 {
+        neighbors[count] = (x - 1, y);
+        count += 1;
+    }
+    if x + 1 < nx {
+        neighbors[count] = (x + 1, y);
+        count += 1;
+    }
+    if y > 0 {
+        neighbors[count] = (x, y - 1);
+        count += 1;
+    }
+    if y + 1 < ny {
+        neighbors[count] = (x, y + 1);
+        count += 1;
+    }
+    neighbors.into_iter().take(count)
 }
 
 /// Restoring-beam parameters derived from the PSF main lobe.
@@ -2468,18 +3232,133 @@ pub struct CubeImagingResult {
 }
 
 #[cfg(test)]
+mod auto_multithreshold_tests {
+    use super::*;
+
+    #[test]
+    fn auto_multithresh_mask_thresholds_grows_and_prunes_regions() {
+        let mut residual = Array2::<f32>::zeros((9, 9));
+        residual[(4, 4)] = 10.0;
+        residual[(4, 5)] = 4.0;
+        residual[(5, 4)] = 4.0;
+        residual[(0, 0)] = 9.0;
+        let config = CubeAutoMultiThresholdConfig {
+            sidelobe_threshold: 0.0,
+            noise_threshold: 2.0,
+            low_noise_threshold: 0.4,
+            min_beam_frac: 0.0,
+            grow_iterations: 2,
+            ..CubeAutoMultiThresholdConfig::default()
+        };
+
+        let mask = auto_multithresh_plane_mask(&residual, 0.0, 2, None, &config);
+        assert!(mask[(4, 4)]);
+        assert!(mask[(4, 5)]);
+        assert!(mask[(5, 4)]);
+        assert!(!mask[(0, 0)], "single-pixel island should be pruned");
+    }
+
+    #[test]
+    fn auto_multithresh_cube_mask_keeps_channels_separate() {
+        let geometry = ImageGeometry {
+            image_shape: [9, 9],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let mut residual = Array4::<f32>::zeros((9, 9, 1, 2));
+        residual[(4, 4, 0, 0)] = 10.0;
+        residual[(1, 7, 0, 1)] = 10.0;
+        let diagnostics = |max_psf_sidelobe_level| ImagingDiagnostics {
+            warnings: Vec::new(),
+            gridded_samples: 0,
+            skipped_samples: 0,
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            psf_peak_normalization: 0.0,
+            major_cycles: 0,
+            minor_iterations: 0,
+            clean_stop_reason: None,
+            minor_cycle_traces: Vec::new(),
+            initial_residual_peak_jy_per_beam: 0.0,
+            final_residual_peak_jy_per_beam: 0.0,
+            max_abs_w_lambda: 0.0,
+            fractional_bandwidth: 0.0,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: 0.0,
+            clean_mask_pixels: 0,
+            beam_fit_attempts: 0,
+            beam_fit_cutoff_used: None,
+            beam_fit_debug: None,
+            mosaic_weight_image: None,
+            stage_timings: ImagingStageTimings::default(),
+        };
+        let dirty = CubeImagingResult {
+            psf: Array4::<f32>::zeros((9, 9, 1, 2)),
+            residual,
+            model: Array4::<f32>::zeros((9, 9, 1, 2)),
+            image: Array4::<f32>::zeros((9, 9, 1, 2)),
+            sumwt: Array4::<f32>::zeros((1, 1, 1, 2)),
+            clean_mask: None,
+            beams: vec![None, None],
+            restored_beams: vec![None, None],
+            diagnostics: CubeImagingDiagnostics {
+                warnings: Vec::new(),
+                gridded_samples: 0,
+                skipped_samples: 0,
+                major_cycles: 0,
+                minor_iterations: 0,
+                clean_stop_reason: None,
+                channel_diagnostics: vec![diagnostics(0.1), diagnostics(0.1)],
+                stage_timings: ImagingStageTimings::default(),
+            },
+            compatibility: CompatibilityMetadata {
+                axis_order: [
+                    AxisKind::RightAscension,
+                    AxisKind::Declination,
+                    AxisKind::Stokes,
+                    AxisKind::Frequency,
+                ],
+                plane_stokes: PlaneStokes::I,
+                reffreq_hz: 1.5,
+                channel_frequencies_hz: vec![1.0, 2.0],
+                psf_units: String::new(),
+                residual_units: "Jy/beam".to_string(),
+                model_units: "Jy/pixel".to_string(),
+                image_units: "Jy/beam".to_string(),
+            },
+        };
+        let config = CubeAutoMultiThresholdConfig {
+            sidelobe_threshold: 0.5,
+            noise_threshold: 0.0,
+            low_noise_threshold: 0.0,
+            min_beam_frac: 0.0,
+            grow_iterations: 0,
+            ..CubeAutoMultiThresholdConfig::default()
+        };
+
+        let mask = config
+            .build_cube_clean_mask(geometry, &dirty, &dirty.beams, None)
+            .unwrap();
+
+        assert!(mask[(4, 4, 0, 0)]);
+        assert!(!mask[(4, 4, 0, 1)]);
+        assert!(mask[(1, 7, 0, 1)]);
+        assert!(!mask[(1, 7, 0, 0)]);
+    }
+}
+
+#[cfg(test)]
 mod source_view_tests {
     use super::*;
 
     #[test]
-    fn columnar_source_view_validates_shape_and_routes() {
-        let partition = ImagingSourcePartition {
-            id: ImagingSourcePartitionId(0),
+    fn visibility_block_view_validates_shape_and_routes() {
+        let partition = VisibilitySourcePartition {
+            id: VisibilitySourcePartitionId(0),
             ms_id: 0,
             data_desc_id: 3,
             spectral_window_id: 4,
             polarization_id: 5,
-            shape: ImagingSourceShape {
+            shape: VisibilitySourceShape {
                 channel_count: 4,
                 correlation_count: 2,
             },
@@ -2490,14 +3369,14 @@ mod source_view_tests {
         let weights = vec![1.0f32; 4];
         let uvw = vec![0.0f64; 6];
         let flag_row = [false, true];
-        let source = ColumnarVisibilitySourceRef {
+        let source = VisibilityBlockView {
             partition,
             row_indices: &row_indices,
             channel_start: 1,
             channel_count: 2,
-            data: Some(ColumnarComplexSamplesRef::Complex32(&data)),
+            data: Some(VisibilityComplexSamplesRef::Complex32(&data)),
             flags: Some(&flags),
-            weights: Some(ColumnarFloatSamplesRef::Float32(&weights)),
+            weights: Some(VisibilityFloatSamplesRef::Float32(&weights)),
             weight_spectrum: None,
             uvw_m: Some(&uvw),
             flag_row: Some(&flag_row),
@@ -2524,6 +3403,7 @@ mod source_view_tests {
                 },
             ],
         };
+        assert_eq!(SpectralRoutePlan::identity_for_block(source), spectral);
         let polarization = PolarizationRoutePlan {
             output_stokes: PlaneStokes::I,
         };
@@ -2555,26 +3435,26 @@ mod source_view_tests {
     }
 
     #[test]
-    fn columnar_source_view_rejects_route_channel_mismatch() {
-        let partition = ImagingSourcePartition {
-            id: ImagingSourcePartitionId(0),
+    fn visibility_block_view_rejects_route_channel_mismatch() {
+        let partition = VisibilitySourcePartition {
+            id: VisibilitySourcePartitionId(0),
             ms_id: 0,
             data_desc_id: 3,
             spectral_window_id: 4,
             polarization_id: 5,
-            shape: ImagingSourceShape {
+            shape: VisibilitySourceShape {
                 channel_count: 4,
                 correlation_count: 1,
             },
         };
         let row_indices = [10usize];
         let data = vec![Complex32::new(1.0, 0.0); 2];
-        let source = ColumnarVisibilitySourceRef {
+        let source = VisibilityBlockView {
             partition,
             row_indices: &row_indices,
             channel_start: 0,
             channel_count: 2,
-            data: Some(ColumnarComplexSamplesRef::Complex32(&data)),
+            data: Some(VisibilityComplexSamplesRef::Complex32(&data)),
             flags: None,
             weights: None,
             weight_spectrum: None,
@@ -2619,6 +3499,28 @@ mod source_view_tests {
         let error = view.validate().unwrap_err();
         assert!(
             error.to_string().contains("spectral route count"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn visibility_stream_bounds_require_bounded_residency() {
+        let valid = VisibilityStreamBounds {
+            max_rows_per_block: 2,
+            max_channels_per_block: 4,
+            max_correlations: 2,
+            max_concurrent_blocks: 1,
+            max_resident_visibility_bytes: 256,
+        };
+        valid.validate().unwrap();
+
+        let invalid = VisibilityStreamBounds {
+            max_resident_visibility_bytes: 0,
+            ..valid
+        };
+        let error = invalid.validate().unwrap_err();
+        assert!(
+            error.to_string().contains("max_resident_visibility_bytes"),
             "{error}"
         );
     }

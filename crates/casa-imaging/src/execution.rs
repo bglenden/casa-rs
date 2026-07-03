@@ -10501,7 +10501,7 @@ struct MetalInitialDirtyGroupedPendingDispatch {
 /// replaying and repacking the same routed visibility runs for initial dirty
 /// and residual-refresh stages.
 #[derive(Debug, Default)]
-pub struct StandardMfsMetalGroupedInputCache {
+pub(crate) struct StandardMfsMetalGroupedInputCache {
     key: Option<MetalResidualGroupedInputCacheKey>,
     chunks: Vec<MetalResidualGroupedCachedChunk>,
     accumulation: StandardMfsTiledResidualAccumulation,
@@ -10544,7 +10544,7 @@ impl StandardMfsMetalGroupedInputCache {
 /// is already streaming the density pass. Finalization is delayed until the
 /// streaming weighting plan has computed Uniform/Briggs density statistics.
 #[cfg(all(target_os = "macos", not(coverage)))]
-pub struct StandardMfsMetalGroupedInputCachePrefill {
+pub(crate) struct StandardMfsMetalGroupedInputCachePrefill {
     gridder: StandardGridder,
     backend: MetalDirtyBackend,
     partition: MetalResidualGroupedTilePartition,
@@ -10855,12 +10855,12 @@ fn grouped_row_run_params_from_fill_and_chunk(
 #[cfg(any(not(target_os = "macos"), coverage))]
 /// Placeholder grouped input cache on platforms without Metal.
 #[derive(Debug, Default)]
-pub struct StandardMfsMetalGroupedInputCache;
+pub(crate) struct StandardMfsMetalGroupedInputCache;
 
 #[cfg(any(not(target_os = "macos"), coverage))]
 /// Placeholder grouped input cache prefill on platforms without Metal.
 #[derive(Debug)]
-pub struct StandardMfsMetalGroupedInputCachePrefill;
+pub(crate) struct StandardMfsMetalGroupedInputCachePrefill;
 
 #[cfg(any(not(target_os = "macos"), coverage))]
 impl StandardMfsMetalGroupedInputCachePrefill {

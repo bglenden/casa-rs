@@ -6,8 +6,9 @@ use std::{sync::LazyLock, thread};
 use ndarray::{Array2, Zip};
 
 use crate::{
-    GaussianUvTaper, ImageGeometry, ImagingRequest, UvTaperSize, VisibilityBatch,
-    VisibilitySampleRange, WeightDensityMode, WeightingMode,
+    GaussianUvTaper, ImageGeometry, ImagingRequest, StandardMfsVisibilityPolarization, UvTaperSize,
+    VisibilityBatch, VisibilityBlockView, VisibilityFloatSamplesRef, VisibilitySampleRange,
+    WeightDensityMode, WeightingMode,
     gridder::{DensityCellConvention, StandardGridder},
     profile,
 };
@@ -385,6 +386,385 @@ impl StandardMfsStreamingWeightingPlan {
                     fractional_bandwidth,
                 })
             }
+        }
+    }
+}
+
+/// Accumulate standard-MFS density samples from one row in a borrowed visibility block.
+///
+/// The block must use the crate's neutral columnar layout:
+/// `[channel][row][correlation]` for `FLAG` and `WEIGHT_SPECTRUM`, and
+/// `[row][correlation]` for `WEIGHT`. `uvw_m` is supplied separately so
+/// frontends can pass either raw or already-reprojected coordinates without
+/// changing the source block contract.
+#[allow(clippy::too_many_arguments)]
+pub fn accumulate_standard_mfs_density_row_from_visibility_block(
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+    source: VisibilityBlockView<'_>,
+    row_slot: usize,
+    uvw_m: [f64; 3],
+    mfs_frequency_scale: f64,
+    source_channel_indices: &[usize],
+    source_channel_frequencies_hz: &[f64],
+    polarization: StandardMfsVisibilityPolarization,
+) -> Result<usize, crate::ImagingError> {
+    if row_slot >= source.row_count() {
+        return Err(crate::ImagingError::InvalidRequest(format!(
+            "standard MFS density row slot {row_slot} is out of bounds for {} rows",
+            source.row_count()
+        )));
+    }
+    let flags = source.flags.ok_or_else(|| {
+        crate::ImagingError::InvalidRequest(
+            "standard MFS density source requires FLAG samples".to_string(),
+        )
+    })?;
+    let weights = source.weights.ok_or_else(|| {
+        crate::ImagingError::InvalidRequest(
+            "standard MFS density source requires WEIGHT samples".to_string(),
+        )
+    })?;
+    let corr_count = source.partition.shape.correlation_count;
+    let channel_count = source.channel_count;
+    accumulate_standard_mfs_density_row_with_accessors(
+        weighting_plan,
+        uvw_m,
+        mfs_frequency_scale,
+        source_channel_indices,
+        source_channel_frequencies_hz,
+        polarization,
+        |source_channel| {
+            standard_mfs_density_local_channel(source_channel, source.channel_start, channel_count)
+        },
+        |corr, _source_channel, local_channel| {
+            standard_mfs_density_columnar_flag(source, flags, row_slot, corr, local_channel)
+        },
+        |corr, _source_channel, local_channel| {
+            standard_mfs_density_columnar_weight(
+                source,
+                weights,
+                source.weight_spectrum,
+                row_slot,
+                corr,
+                local_channel,
+            )
+        },
+        |corr| {
+            if source.weight_spectrum.is_some() {
+                Ok(None)
+            } else {
+                standard_mfs_density_columnar_row_weight(source, weights, row_slot, corr).map(Some)
+            }
+        },
+        |first_corr, second_corr| {
+            if source.weight_spectrum.is_some() {
+                Ok(None)
+            } else if first_corr >= corr_count || second_corr >= corr_count {
+                Err(crate::ImagingError::InvalidRequest(format!(
+                    "standard MFS density WEIGHT pair [{first_corr}, {second_corr}] is out of bounds"
+                )))
+            } else {
+                Ok(Some((
+                    standard_mfs_density_columnar_row_weight(
+                        source, weights, row_slot, first_corr,
+                    )?,
+                    standard_mfs_density_columnar_row_weight(
+                        source,
+                        weights,
+                        row_slot,
+                        second_corr,
+                    )?,
+                )))
+            }
+        },
+    )
+}
+
+/// Accumulate standard-MFS density samples from one row-major visibility row.
+///
+/// `flags` and `weight_spectrum` use `[correlation][local_channel]` layout,
+/// while `weights` is one value per correlation. `channel_origin` maps absolute
+/// source-channel indices onto the local channel axis.
+#[allow(clippy::too_many_arguments)]
+pub fn accumulate_standard_mfs_density_row_from_arrays(
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+    uvw_m: [f64; 3],
+    mfs_frequency_scale: f64,
+    channel_origin: usize,
+    flags: &Array2<bool>,
+    weights: &[f32],
+    weight_spectrum: Option<&Array2<f32>>,
+    source_channel_indices: &[usize],
+    source_channel_frequencies_hz: &[f64],
+    polarization: StandardMfsVisibilityPolarization,
+) -> Result<usize, crate::ImagingError> {
+    let (corr_count, channel_count) = flags.dim();
+    accumulate_standard_mfs_density_row_with_accessors(
+        weighting_plan,
+        uvw_m,
+        mfs_frequency_scale,
+        source_channel_indices,
+        source_channel_frequencies_hz,
+        polarization,
+        |source_channel| {
+            standard_mfs_density_local_channel(source_channel, channel_origin, channel_count)
+        },
+        |corr, source_channel, local_channel| {
+            flags.get((corr, local_channel)).copied().ok_or_else(|| {
+                crate::ImagingError::InvalidRequest(format!(
+                    "standard MFS density FLAG index [{corr}, {source_channel}] is out of bounds"
+                ))
+            })
+        },
+        |corr, source_channel, local_channel| {
+            if let Some(weight_spectrum) = weight_spectrum
+                && let Some(weight) = weight_spectrum.get((corr, local_channel)).copied()
+            {
+                return Ok(weight);
+            }
+            weights.get(corr).copied().ok_or_else(|| {
+                crate::ImagingError::InvalidRequest(format!(
+                    "standard MFS density WEIGHT correlation {corr} is out of bounds for source channel {source_channel}"
+                ))
+            })
+        },
+        |corr| {
+            if weight_spectrum.is_some() {
+                Ok(None)
+            } else {
+                weights.get(corr).copied().map(Some).ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(format!(
+                        "standard MFS density WEIGHT correlation {corr} is out of bounds"
+                    ))
+                })
+            }
+        },
+        |first_corr, second_corr| {
+            if weight_spectrum.is_some() {
+                Ok(None)
+            } else if first_corr >= corr_count || second_corr >= corr_count {
+                Err(crate::ImagingError::InvalidRequest(format!(
+                    "standard MFS density WEIGHT pair [{first_corr}, {second_corr}] is out of bounds"
+                )))
+            } else {
+                Ok(Some((
+                    *weights.get(first_corr).ok_or_else(|| {
+                        crate::ImagingError::InvalidRequest(format!(
+                            "standard MFS density WEIGHT correlation {first_corr} is out of bounds"
+                        ))
+                    })?,
+                    *weights.get(second_corr).ok_or_else(|| {
+                        crate::ImagingError::InvalidRequest(format!(
+                            "standard MFS density WEIGHT correlation {second_corr} is out of bounds"
+                        ))
+                    })?,
+                )))
+            }
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_standard_mfs_density_row_with_accessors<
+    Local,
+    Flag,
+    Weight,
+    Invariant,
+    PairInvariant,
+>(
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+    uvw_m: [f64; 3],
+    mfs_frequency_scale: f64,
+    source_channel_indices: &[usize],
+    source_channel_frequencies_hz: &[f64],
+    polarization: StandardMfsVisibilityPolarization,
+    mut local_channel_for_source: Local,
+    mut flag_at: Flag,
+    mut weight_at: Weight,
+    mut channel_invariant_weight: Invariant,
+    mut channel_invariant_pair_weights: PairInvariant,
+) -> Result<usize, crate::ImagingError>
+where
+    Local: FnMut(usize) -> Result<usize, crate::ImagingError>,
+    Flag: FnMut(usize, usize, usize) -> Result<bool, crate::ImagingError>,
+    Weight: FnMut(usize, usize, usize) -> Result<f32, crate::ImagingError>,
+    Invariant: FnMut(usize) -> Result<Option<f32>, crate::ImagingError>,
+    PairInvariant: FnMut(usize, usize) -> Result<Option<(f32, f32)>, crate::ImagingError>,
+{
+    if source_channel_indices.len() != source_channel_frequencies_hz.len() {
+        return Err(crate::ImagingError::InvalidRequest(format!(
+            "standard MFS density source-channel count {} differs from frequency count {}",
+            source_channel_indices.len(),
+            source_channel_frequencies_hz.len()
+        )));
+    }
+    let mfs_lambda_scale = mfs_frequency_scale / crate::SPEED_OF_LIGHT_M_PER_S;
+    let mut accepted_samples = 0usize;
+    match polarization {
+        StandardMfsVisibilityPolarization::Explicit { corr_index, .. } => {
+            let invariant_weight = channel_invariant_weight(corr_index)?;
+            for (&source_channel, &frequency_hz) in source_channel_indices
+                .iter()
+                .zip(source_channel_frequencies_hz.iter())
+            {
+                let local_channel = local_channel_for_source(source_channel)?;
+                if flag_at(corr_index, source_channel, local_channel)? {
+                    continue;
+                }
+                let weight = match invariant_weight {
+                    Some(weight) => weight,
+                    None => weight_at(corr_index, source_channel, local_channel)?,
+                };
+                if !(weight.is_finite() && weight > 0.0) {
+                    continue;
+                }
+                let lambda_scale = frequency_hz * mfs_lambda_scale;
+                weighting_plan.accumulate_density_sample(
+                    uvw_m[0] * lambda_scale,
+                    uvw_m[1] * lambda_scale,
+                    weight,
+                );
+                accepted_samples += 1;
+            }
+        }
+        StandardMfsVisibilityPolarization::CollapsedPair {
+            first_corr_index,
+            second_corr_index,
+            ..
+        } => {
+            let invariant_pair =
+                channel_invariant_pair_weights(first_corr_index, second_corr_index)?;
+            for (&source_channel, &frequency_hz) in source_channel_indices
+                .iter()
+                .zip(source_channel_frequencies_hz.iter())
+            {
+                let local_channel = local_channel_for_source(source_channel)?;
+                if flag_at(first_corr_index, source_channel, local_channel)?
+                    || flag_at(second_corr_index, source_channel, local_channel)?
+                {
+                    continue;
+                }
+                let (first_weight, second_weight) = match invariant_pair {
+                    Some(weights) => weights,
+                    None => (
+                        weight_at(first_corr_index, source_channel, local_channel)?,
+                        weight_at(second_corr_index, source_channel, local_channel)?,
+                    ),
+                };
+                if !(first_weight.is_finite()
+                    && first_weight > 0.0
+                    && second_weight.is_finite()
+                    && second_weight > 0.0)
+                {
+                    continue;
+                }
+                let combined_weight = 0.5 * (first_weight + second_weight);
+                if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                    continue;
+                }
+                let lambda_scale = frequency_hz * mfs_lambda_scale;
+                weighting_plan.accumulate_density_sample(
+                    uvw_m[0] * lambda_scale,
+                    uvw_m[1] * lambda_scale,
+                    combined_weight,
+                );
+                accepted_samples += 1;
+            }
+        }
+    }
+    Ok(accepted_samples)
+}
+
+fn standard_mfs_density_local_channel(
+    source_channel: usize,
+    channel_origin: usize,
+    channel_count: usize,
+) -> Result<usize, crate::ImagingError> {
+    let local_channel = source_channel.checked_sub(channel_origin).ok_or_else(|| {
+        crate::ImagingError::InvalidRequest(format!(
+            "standard MFS density source channel {source_channel} precedes loaded channel origin {channel_origin}"
+        ))
+    })?;
+    if local_channel >= channel_count {
+        return Err(crate::ImagingError::InvalidRequest(format!(
+            "standard MFS density source channel {source_channel} is outside loaded channel range {}..{}",
+            channel_origin,
+            channel_origin.saturating_add(channel_count)
+        )));
+    }
+    Ok(local_channel)
+}
+
+fn standard_mfs_density_columnar_flag(
+    source: VisibilityBlockView<'_>,
+    flags: &[bool],
+    row_slot: usize,
+    corr: usize,
+    local_channel: usize,
+) -> Result<bool, crate::ImagingError> {
+    let index = source.channel_row_corr_index(local_channel, row_slot, corr);
+    flags.get(index).copied().ok_or_else(|| {
+        crate::ImagingError::InvalidRequest(format!(
+            "standard MFS density FLAG sample index {index} is out of bounds"
+        ))
+    })
+}
+
+fn standard_mfs_density_columnar_weight(
+    source: VisibilityBlockView<'_>,
+    weights: VisibilityFloatSamplesRef<'_>,
+    weight_spectrum: Option<VisibilityFloatSamplesRef<'_>>,
+    row_slot: usize,
+    corr: usize,
+    local_channel: usize,
+) -> Result<f32, crate::ImagingError> {
+    if let Some(weight_spectrum) = weight_spectrum {
+        let index = source.channel_row_corr_index(local_channel, row_slot, corr);
+        return standard_mfs_density_float_sample(weight_spectrum, index, "WEIGHT_SPECTRUM");
+    }
+    standard_mfs_density_columnar_row_weight(source, weights, row_slot, corr)
+}
+
+fn standard_mfs_density_columnar_row_weight(
+    source: VisibilityBlockView<'_>,
+    weights: VisibilityFloatSamplesRef<'_>,
+    row_slot: usize,
+    corr: usize,
+) -> Result<f32, crate::ImagingError> {
+    let corr_count = source.partition.shape.correlation_count;
+    if corr >= corr_count {
+        return Err(crate::ImagingError::InvalidRequest(format!(
+            "standard MFS density WEIGHT correlation {corr} is out of bounds"
+        )));
+    }
+    let index = row_slot
+        .checked_mul(corr_count)
+        .and_then(|value| value.checked_add(corr))
+        .ok_or_else(|| {
+            crate::ImagingError::InvalidRequest(
+                "standard MFS density WEIGHT sample index overflowed".to_string(),
+            )
+        })?;
+    standard_mfs_density_float_sample(weights, index, "WEIGHT")
+}
+
+fn standard_mfs_density_float_sample(
+    values: VisibilityFloatSamplesRef<'_>,
+    index: usize,
+    label: &str,
+) -> Result<f32, crate::ImagingError> {
+    match values {
+        VisibilityFloatSamplesRef::Float32(values) => values.get(index).copied().ok_or_else(|| {
+            crate::ImagingError::InvalidRequest(format!(
+                "standard MFS density {label} sample index {index} is out of bounds"
+            ))
+        }),
+        VisibilityFloatSamplesRef::Float64(values) => {
+            values.get(index).map(|value| *value as f32).ok_or_else(|| {
+                crate::ImagingError::InvalidRequest(format!(
+                    "standard MFS density {label} sample index {index} is out of bounds"
+                ))
+            })
         }
     }
 }
@@ -2202,6 +2582,119 @@ pub(crate) fn fractional_bandwidth_from_frequency_range(frequency_range_hz: [f64
     }
 }
 
+/// Compute the CASA cube Briggs robust scale factor for one density plane.
+///
+/// Uniform weighting returns `1.0`. Natural or unsupported weighting modes
+/// return `0.0` so callers can reject the sample without special casing.
+pub fn casa_cube_briggs_f2(weighting: WeightingMode, density: &Array2<f32>) -> f32 {
+    if weighting == WeightingMode::Uniform {
+        return 1.0;
+    }
+    let robust = match weighting {
+        WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => robust,
+        _ => return 0.0,
+    };
+    let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
+    let sumlocwt = density
+        .iter()
+        .filter(|value| **value > 0.0)
+        .map(|value| f64::from(*value) * f64::from(*value))
+        .sum::<f64>();
+    if sumlocwt > 0.0 && density_weight_sum > 0.0 {
+        ((5.0f64 * 10f64.powf(-(robust as f64))).powi(2) / (sumlocwt / density_weight_sum)) as f32
+    } else {
+        0.0
+    }
+}
+
+/// Map a cube Briggs `GridFT` density sample in wavelengths to a density cell.
+///
+/// This follows CASA's one-based intermediate rounding path before converting
+/// back to zero-based Rust indices.
+pub fn casa_cube_briggs_gridft_density_cell_from_lambda(
+    shape: (usize, usize),
+    u_lambda: f64,
+    v_lambda: f64,
+    cell_size_rad: [f64; 2],
+) -> Option<(usize, usize)> {
+    let nx = shape.0 as f64;
+    let ny = shape.1 as f64;
+    let x_loc = (u_lambda * nx * cell_size_rad[0] + nx / 2.0 + 1.0).round() as isize;
+    let y_loc = (-v_lambda * ny * cell_size_rad[1] + ny / 2.0 + 1.0).round() as isize;
+    let x = x_loc - 1;
+    let y = y_loc - 1;
+    if x <= 0 || y <= 0 || x >= shape.0 as isize || y >= shape.1 as isize {
+        return None;
+    }
+    Some((x as usize, y as usize))
+}
+
+/// Map a CASA cube Briggs density lookup in wavelengths to a density cell.
+///
+/// The calculation intentionally uses CASA-like `f32` rounding before the final
+/// integer cell conversion.
+pub fn casa_cube_briggs_density_cell_from_lambda(
+    shape: (usize, usize),
+    u_lambda: f64,
+    v_lambda: f64,
+    cell_size_rad: [f64; 2],
+) -> Option<(usize, usize)> {
+    let nx_f32 = shape.0 as f32;
+    let ny_f32 = shape.1 as f32;
+    let x =
+        ((u_lambda as f32) * nx_f32 * (cell_size_rad[0] as f32) + nx_f32 / 2.0).round() as isize;
+    let y =
+        (-(v_lambda as f32) * ny_f32 * (cell_size_rad[1] as f32) + ny_f32 / 2.0).round() as isize;
+    if x <= 0 || y <= 0 || x >= shape.0 as isize || y >= shape.1 as isize {
+        return None;
+    }
+    Some((x as usize, y as usize))
+}
+
+/// Compute the CASA cube Briggs preweighting denominator for a density cell.
+pub fn casa_cube_briggs_weight_denominator(
+    weighting: WeightingMode,
+    geometry: ImageGeometry,
+    fractional_bandwidth: f64,
+    u_lambda: f64,
+    v_lambda: f64,
+    density: f32,
+    f2: f32,
+) -> f32 {
+    match weighting {
+        WeightingMode::Uniform => density,
+        WeightingMode::BriggsBwTaper { .. } => {
+            let taper = casa_cube_briggs_bw_taper_uv_distance_factor(
+                geometry,
+                fractional_bandwidth,
+                u_lambda,
+                v_lambda,
+            ) as f32;
+            (f2 * density) / taper + 1.0
+        }
+        WeightingMode::Briggs { .. } => f2 * density + 1.0,
+        WeightingMode::Natural => 0.0,
+    }
+}
+
+fn casa_cube_briggs_bw_taper_uv_distance_factor(
+    geometry: ImageGeometry,
+    fractional_bandwidth: f64,
+    u_lambda: f64,
+    v_lambda: f64,
+) -> f64 {
+    let nx = geometry.image_shape[0] as f64;
+    let ny = geometry.image_shape[1] as f64;
+    let u_cells = u_lambda * nx * geometry.cell_size_rad[0];
+    let v_cells = v_lambda * ny * geometry.cell_size_rad[1];
+    let n_cells_bw = fractional_bandwidth * (u_cells * u_cells + v_cells * v_cells).sqrt();
+    let mut factor = n_cells_bw + 0.5;
+    if factor < 1.5 {
+        factor = (4.0 - n_cells_bw) / (4.0 - 2.0 * n_cells_bw);
+    }
+    factor.max(f64::MIN_POSITIVE)
+}
+
 fn briggs_bw_taper_uv_distance_factor(
     fractional_bandwidth: f64,
     gridder: &StandardGridder,
@@ -2223,7 +2716,9 @@ mod tests {
     use super::*;
     use crate::{
         CleanConfig, CompatibilityMode, Deconvolver, GridderMode, ImageGeometry, ImagingRequest,
-        PlaneStokes,
+        PlaneStokes, StandardMfsPairCollapseTransform, StandardMfsVisibilityPolarization,
+        VisibilityBlockView, VisibilityFloatSamplesRef, VisibilitySourcePartition,
+        VisibilitySourcePartitionId, VisibilitySourceShape,
     };
 
     fn request_for(mode: WeightingMode) -> ImagingRequest {
@@ -2453,6 +2948,203 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn standard_mfs_density_array_row_applies_flags_and_weight_spectrum_precedence() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let mut explicit_plan = StandardMfsStreamingWeightingPlan::new(
+            geometry,
+            WeightingMode::Uniform,
+            [1.0e9, 1.4e9],
+        )
+        .unwrap();
+        let flags = Array2::from_shape_vec(
+            (2, 4),
+            vec![false, false, false, false, false, false, true, false],
+        )
+        .unwrap();
+        let weight_spectrum =
+            Array2::from_shape_vec((2, 4), vec![0.0, 2.0, f32::NAN, 3.0, 4.0, 5.0, 6.0, 0.0])
+                .unwrap();
+        let source_channels = [10, 11, 12, 13];
+        let source_frequencies_hz = [1.0e9, 1.1e9, 1.2e9, 1.3e9];
+
+        let accepted = accumulate_standard_mfs_density_row_from_arrays(
+            &mut explicit_plan,
+            [12.0, -7.0, 0.0],
+            1.0,
+            10,
+            &flags,
+            &[10.0, 20.0],
+            Some(&weight_spectrum),
+            &source_channels,
+            &source_frequencies_hz,
+            StandardMfsVisibilityPolarization::Explicit {
+                corr_index: 0,
+                sumwt_factor: 1.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(accepted, 2);
+
+        let mut paired_plan = StandardMfsStreamingWeightingPlan::new(
+            geometry,
+            WeightingMode::Uniform,
+            [1.0e9, 1.4e9],
+        )
+        .unwrap();
+        let accepted = accumulate_standard_mfs_density_row_from_arrays(
+            &mut paired_plan,
+            [12.0, -7.0, 0.0],
+            1.0,
+            10,
+            &flags,
+            &[10.0, 20.0],
+            Some(&weight_spectrum),
+            &source_channels,
+            &source_frequencies_hz,
+            StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index: 0,
+                second_corr_index: 1,
+                transform: StandardMfsPairCollapseTransform::HalfSum,
+                sumwt_factor: 2.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(accepted, 1);
+    }
+
+    #[test]
+    fn standard_mfs_density_visibility_block_uses_channel_invariant_weights() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let mut plan = StandardMfsStreamingWeightingPlan::new(
+            geometry,
+            WeightingMode::Uniform,
+            [1.0e9, 1.3e9],
+        )
+        .unwrap();
+        let row_indices = [100usize, 101usize];
+        let mut flags = vec![false; 3 * 2 * 2];
+        flags[(2 * 2 + 1) * 2] = true;
+        let weights = [99.0f32, 88.0, 4.0, 6.0];
+        let source = VisibilityBlockView {
+            partition: VisibilitySourcePartition {
+                id: VisibilitySourcePartitionId(3),
+                ms_id: 0,
+                data_desc_id: 0,
+                spectral_window_id: 0,
+                polarization_id: 0,
+                shape: VisibilitySourceShape {
+                    channel_count: 8,
+                    correlation_count: 2,
+                },
+            },
+            row_indices: &row_indices,
+            channel_start: 5,
+            channel_count: 3,
+            data: None,
+            flags: Some(&flags),
+            weights: Some(VisibilityFloatSamplesRef::Float32(&weights)),
+            weight_spectrum: None,
+            uvw_m: None,
+            flag_row: None,
+            antenna1: None,
+            antenna2: None,
+            field_ids: None,
+            time: None,
+        };
+
+        let accepted = accumulate_standard_mfs_density_row_from_visibility_block(
+            &mut plan,
+            source,
+            1,
+            [9.0, 4.0, 0.0],
+            1.0,
+            &[5, 6, 7],
+            &[1.0e9, 1.1e9, 1.2e9],
+            StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index: 0,
+                second_corr_index: 1,
+                transform: StandardMfsPairCollapseTransform::HalfSum,
+                sumwt_factor: 2.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(accepted, 2);
+    }
+
+    #[test]
+    fn cube_briggs_density_helpers_match_casa_rounding() {
+        let geometry = ImageGeometry {
+            image_shape: [800, 800],
+            cell_size_rad: [0.5 * std::f64::consts::PI / (180.0 * 3600.0); 2],
+        };
+
+        assert_eq!(
+            casa_cube_briggs_density_cell_from_lambda(
+                (geometry.image_shape[0], geometry.image_shape[1]),
+                36242.06640625,
+                7992.76708984375,
+                geometry.cell_size_rad,
+            ),
+            Some((470, 385))
+        );
+        assert_eq!(
+            casa_cube_briggs_gridft_density_cell_from_lambda(
+                (geometry.image_shape[0], geometry.image_shape[1]),
+                36242.06640625,
+                7992.76708984375,
+                geometry.cell_size_rad,
+            ),
+            Some((470, 384))
+        );
+    }
+
+    #[test]
+    fn cube_briggs_f2_and_denominator_follow_casa_formula() {
+        let density = Array2::from_shape_vec((2, 2), vec![0.0, 2.0, 3.0, 0.0]).unwrap();
+        let f2 = casa_cube_briggs_f2(WeightingMode::Briggs { robust: 0.0 }, &density);
+        assert!((f2 - 9.615385).abs() < 1.0e-5);
+        assert_eq!(casa_cube_briggs_f2(WeightingMode::Uniform, &density), 1.0);
+
+        let geometry = ImageGeometry {
+            image_shape: [800, 800],
+            cell_size_rad: [0.5 * std::f64::consts::PI / (180.0 * 3600.0); 2],
+        };
+        assert_eq!(
+            casa_cube_briggs_weight_denominator(
+                WeightingMode::Briggs { robust: 0.0 },
+                geometry,
+                0.0,
+                100.0,
+                200.0,
+                2.0,
+                f2,
+            ),
+            f2 * 2.0 + 1.0
+        );
+        assert_eq!(
+            casa_cube_briggs_weight_denominator(
+                WeightingMode::Uniform,
+                geometry,
+                0.0,
+                100.0,
+                200.0,
+                2.0,
+                f2,
+            ),
+            2.0
+        );
     }
 
     #[test]

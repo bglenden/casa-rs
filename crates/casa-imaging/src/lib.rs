@@ -24,17 +24,20 @@
 //! - staged Hogbom major/minor-cycle CLEAN with explicit stop reasons
 //! - PSF-cutoff beam fitting with interpolation and retry semantics
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod beam;
 mod error;
 mod execution;
 mod fft;
 mod gridder;
+mod image_product;
 mod profile;
+mod single_plane_plan;
 mod trace;
 mod types;
 mod weighting;
+mod worker_plan;
 
 use std::{
     env,
@@ -42,16 +45,22 @@ use std::{
     hash::{BuildHasherDefault, Hasher},
     io::Write,
     sync::{
-        Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
+use casa_coordinates::{
+    CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
+    SpectralCoordinate, StokesCoordinate, StokesType,
+};
 use casa_lattices::array_madfm;
+use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::frequency::FrequencyRef;
 use libm::{erfc, j1};
-use ndarray::{Array2, Array4, ShapeBuilder, Zip, s};
+use ndarray::{Array2, Array4, ArrayD, ShapeBuilder, Zip, s};
 use num_complex::{Complex32, Complex64};
 
 use beam::{
@@ -64,10 +73,10 @@ use execution::{
 };
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyAccumulation, StandardMfsDirtyCpuExecutor,
+    StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill,
     StandardMfsPlannedSample, StandardMfsTiledCpuExecutor, StandardMfsTiledResidualAccumulation,
     StandardMfsVisibilityPlan, finite_visibility,
 };
-pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
 use fft::{
     centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned,
     centered_ifft2_f64_owned_unshifted_even,
@@ -77,7 +86,12 @@ use gridder::{
     ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
     WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
 };
-pub use weighting::StandardMfsStreamingWeightingPlan;
+pub use weighting::{
+    StandardMfsStreamingWeightingPlan, accumulate_standard_mfs_density_row_from_arrays,
+    accumulate_standard_mfs_density_row_from_visibility_block,
+    casa_cube_briggs_density_cell_from_lambda, casa_cube_briggs_f2,
+    casa_cube_briggs_gridft_density_cell_from_lambda, casa_cube_briggs_weight_denominator,
+};
 use weighting::{
     VisibilitySampleRangeRef, apply_weighting, apply_weighting_to_owned_batches,
     apply_weighting_to_owned_batches_by_sample_groups,
@@ -86,13 +100,24 @@ use weighting::{
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
+pub use image_product::{
+    ImageProduct, ImageProductMetadata, ImageProductRole, ImageProductSet, ImageProductSetMetadata,
+    beam_fit_to_gaussian, cube_image_product_set, image_beam_set_from_beam,
+    image_beam_set_from_channel_beams, mfs_image_product_set, mtmfs_image_product_set,
+};
 pub use trace::CubePredictionLambdaMode;
+pub use worker_plan::{
+    ImagingWorkerBackend, ImagingWorkerParallelism, ImagingWorkerPlan, ImagingWorkerPlanInput,
+    modeled_worker_runtime_cost_units, plan_imaging_worker_count,
+    planned_backend_command_target_ms,
+};
 
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 
 const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
 const MOSAIC_PROJECTOR_BUILD_THREADS: usize = 4;
+const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
@@ -121,6 +146,24 @@ pub(crate) struct HogbomMinorCycleOutcome {
     pub(crate) stop_reason: Option<CleanStopReason>,
     pub(crate) final_cycle_threshold_jy_per_beam: f32,
     pub(crate) final_nsigma_threshold_jy_per_beam: f32,
+}
+
+/// Apply the CASA-style geometric phase rotation for a visibility sample.
+///
+/// `phase_shift_m` is the path-length correction in metres and `frequency_hz`
+/// is the sample frequency. Zero shift or zero frequency returns the input
+/// unchanged.
+pub fn phase_rotate_visibility(
+    visibility: Complex32,
+    phase_shift_m: f64,
+    frequency_hz: f64,
+) -> Complex32 {
+    if phase_shift_m == 0.0 || frequency_hz == 0.0 {
+        return visibility;
+    }
+    let phase = -std::f64::consts::TAU * phase_shift_m * frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+    let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+    visibility * phasor
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -292,6 +335,12 @@ struct MultiscaleMetalCycleState {
     _pad0: [u32; 2],
 }
 
+pub use single_plane_plan::{
+    BackendEligibility, SinglePlaneAccelerationPolicy, SinglePlaneCubeInterpolation,
+    SinglePlaneDeconvolverPlan, SinglePlaneExecutionPlan, SinglePlaneExecutionPlanInput,
+    SinglePlanePrimaryBeamRequirement, SinglePlaneProjectionPlan, SinglePlaneSpectralPlan,
+    build_single_plane_execution_plan,
+};
 pub(crate) use trace::{ResidualRefreshTraceInternal, ResidualSampleTraceInternal};
 pub use trace::{
     trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
@@ -300,26 +349,30 @@ pub use trace::{
 
 pub use error::ImagingError;
 pub use types::{
-    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason,
-    ColumnarComplexSamplesRef, ColumnarFloatSamplesRef, ColumnarVisibilitySourceRef,
-    CompatibilityMetadata, CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics,
-    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-    DirtyImagingResult, GaussianUvTaper, GeometryRoutePlan, GridderMode, GridderRoutePlan,
-    GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry,
-    ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingSourceBlockView,
-    ImagingSourcePartition, ImagingSourcePartitionId, ImagingSourceShape, ImagingStageTimings,
-    MinorCycleTrace, ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult,
-    OutputPlaneContribution, ParallelHandBatch, PlaneStokes, PolarizationRoutePlan,
-    PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics, ResidualSampleDiagnostics,
-    RestoringBeamMode, SourceChannelRoute, SpectralRoutePlan, StandardMfsPairCollapseTransform,
+    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
+    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
+    CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, DirtyImagingResult,
+    GaussianUvTaper, GeometryRoutePlan, GridderMode, GridderRoutePlan, GroupedVisibilityMetadata,
+    GroupedVisibilityMetadataBatch, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
+    ImagingRequest, ImagingResult, ImagingSourceBlockView, ImagingStageTimings, MinorCycleTrace,
+    ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult, OutputPlaneContribution,
+    ParallelHandBatch, PlaneStokes, PolarizationRoutePlan, PrimaryBeamModel, PsfBeamFitResult,
+    ReplayCapability, ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode,
+    ScalarVisibilitySample, SourceChannelRoute, SpectralRoutePlan,
+    StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBlock,
+    StandardMfsRoutedVisibilityAppendCounts, StandardMfsRoutedVisibilityBlock,
+    StandardMfsVisibilityPolarization, StandardMfsVisibilityRow, UvTaperSize, VisibilityBatch,
+    VisibilityBlockStream, VisibilityBlockView, VisibilityComplexSamplesRef,
+    VisibilityFloatSamplesRef, VisibilityMetadataBatch, VisibilitySampleRange, VisibilitySource,
+    VisibilitySourcePartition, VisibilitySourcePartitionId, VisibilitySourceShape,
+    VisibilityStreamBounds, VisibilityStreamTelemetry, WProjectDiagnostics,
+    WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics, WProjectSkipReason,
+    WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode, WeightingDiagnostics,
+    WeightingMode, WeightingRoutePlan, WeightingSampleDiagnostics,
+};
+use types::{
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    VisibilitySampleRange, WProjectDiagnostics, WProjectKernelDiagnostics,
-    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
-    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingRoutePlan,
-    WeightingSampleDiagnostics,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun, StandardMfsWeightedSample,
 };
 
 /// FFT-backed predictor for a standard MFS component model.
@@ -372,47 +425,17 @@ pub(crate) trait StandardMfsPlannedSampleBlockSource {
     }
 }
 
-/// Replayable source of bounded row-shaped standard-MFS routed visibility runs.
-///
-/// This is the preferred fixed-tile multi-worker boundary: the producer routes
-/// row/channel spans to standard-gridder centers, while tile workers perform
-/// lane-level flag, visibility, final weighting, and tap application work.
-pub(crate) trait StandardMfsRoutedVisibilityRunBlockSource {
-    /// Replay routed row/channel runs in stable input order.
-    fn replay_routed_visibility_run_blocks(
-        &mut self,
-        consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRunBlock) -> Result<(), ImagingError>,
-    ) -> Result<(), ImagingError>;
-}
-
 /// Replayable source of standard-MFS routed visibility runs.
 ///
-/// Unlike [`StandardMfsRoutedVisibilityRunBlockSource`], this boundary publishes
-/// each row/channel run as soon as it is routed, so the fixed-tile scheduler can
-/// enqueue tile work without waiting for a frontend row-block staging vector.
+/// This boundary publishes each row/channel run as soon as it is routed, so the
+/// fixed-tile scheduler can enqueue tile work without waiting for a frontend
+/// row-block staging vector.
 pub(crate) trait StandardMfsRoutedVisibilityRunSource {
     /// Replay routed row/channel runs in stable input order.
     fn replay_routed_visibility_runs(
         &mut self,
         consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>;
-}
-
-impl<T> StandardMfsRoutedVisibilityRunSource for T
-where
-    T: StandardMfsRoutedVisibilityRunBlockSource + ?Sized,
-{
-    fn replay_routed_visibility_runs(
-        &mut self,
-        consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
-    ) -> Result<(), ImagingError> {
-        self.replay_routed_visibility_run_blocks(&mut |run_block| {
-            for run in run_block.runs() {
-                consumer(run)?;
-            }
-            Ok(())
-        })
-    }
 }
 
 impl<F> StandardMfsPlannedSampleBlockSource for F
@@ -440,7 +463,7 @@ impl StandardMfsPlannedSampleBuilder {
 
     /// Plan one weighted sample, returning `None` when it does not grid.
     #[inline]
-    pub fn plan_sample(
+    pub(crate) fn plan_sample(
         &self,
         sample: StandardMfsWeightedSample,
     ) -> Result<Option<StandardMfsPlannedWeightedSample>, ImagingError> {
@@ -487,16 +510,26 @@ impl StandardMfsPlannedSampleBuilder {
         }))
     }
 
-    /// Locate the positive-tap center used for fixed-tile routing.
-    #[inline]
-    pub fn route_tap_center(&self, u_lambda: f64, v_lambda: f64) -> Option<[u32; 2]> {
-        self.gridder
-            .locate_positive_tap_center(u_lambda, v_lambda)
-            .map(|center| [center[0] as u32, center[1] as u32])
+    /// Plan and append one scalar visibility sample to an opaque planned block.
+    ///
+    /// Returns `true` when the sample contributes to the block, or `false` when
+    /// it is outside the grid or otherwise not gridable.
+    pub fn push_sample(
+        &self,
+        block: &mut StandardMfsPlannedSampleBlock,
+        sample: ScalarVisibilitySample,
+    ) -> Result<bool, ImagingError> {
+        if let Some(planned_sample) = self.plan_sample(sample.into())? {
+            block.push_sample(planned_sample);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Plan a weighted row block into a caller-provided output buffer.
-    pub fn plan_samples_into(
+    #[cfg(test)]
+    pub(crate) fn plan_samples_into(
         &self,
         samples: &[StandardMfsWeightedSample],
         planned: &mut Vec<StandardMfsPlannedWeightedSample>,
@@ -512,7 +545,8 @@ impl StandardMfsPlannedSampleBuilder {
     }
 
     /// Plan an owned visibility batch into a caller-provided output buffer.
-    pub fn plan_visibility_batch_into(
+    #[cfg(test)]
+    pub(crate) fn plan_visibility_batch_into(
         &self,
         batch: &VisibilityBatch,
         planned: &mut Vec<StandardMfsPlannedWeightedSample>,
@@ -535,6 +569,432 @@ impl StandardMfsPlannedSampleBuilder {
             }
         }
         Ok(planned.len() - initial_len)
+    }
+
+    /// Locate the positive-tap center used for fixed-tile routing.
+    #[inline]
+    pub fn route_tap_center(&self, u_lambda: f64, v_lambda: f64) -> Option<[u32; 2]> {
+        self.gridder
+            .locate_positive_tap_center(u_lambda, v_lambda)
+            .map(|center| [center[0] as u32, center[1] as u32])
+    }
+}
+
+impl StandardMfsRoutedVisibilityBlock {
+    /// Route one row-shaped standard-MFS input into this replay block.
+    ///
+    /// The block stores private backend runs while the caller receives only the
+    /// candidate/planned lane counts needed for telemetry.
+    pub fn append_visibility_row(
+        &mut self,
+        row: StandardMfsVisibilityRow,
+        planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+        next_input_seq: &mut u64,
+    ) -> Result<StandardMfsRoutedVisibilityAppendCounts, ImagingError> {
+        let mut counts = StandardMfsRoutedVisibilityAppendCounts::default();
+        if row.source_channel_indices.len() != row.channel_lambda_scales.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS routed row source slot count {} differs from lambda scale count {}",
+                row.source_channel_indices.len(),
+                row.channel_lambda_scales.len()
+            )));
+        }
+        if !row.gridable {
+            return Ok(counts);
+        }
+
+        let uvw_m = row.uvw_m;
+        let channel_lambda_scales = Arc::clone(&row.channel_lambda_scales);
+        let routed_row = Arc::new(row.into_routed_row());
+        let mut run_start = None::<usize>;
+        let mut tap_centers = Vec::<[u32; 2]>::new();
+
+        for (source_slot, lambda_scale) in channel_lambda_scales.iter().copied().enumerate() {
+            counts.candidate_samples += 1;
+            let u_lambda = uvw_m[0] * lambda_scale;
+            let v_lambda = uvw_m[1] * lambda_scale;
+            let Some(center) = planned_sample_builder.route_tap_center(u_lambda, v_lambda) else {
+                if let Some(start) = run_start.take() {
+                    let run_len = tap_centers.len();
+                    let centers = Arc::<[[u32; 2]]>::from(
+                        std::mem::take(&mut tap_centers).into_boxed_slice(),
+                    );
+                    self.push_run(StandardMfsRoutedVisibilityRun {
+                        row: Arc::clone(&routed_row),
+                        source_slot_range: start..source_slot,
+                        tap_centers: centers,
+                        first_input_seq: *next_input_seq,
+                    });
+                    *next_input_seq = (*next_input_seq).saturating_add(run_len as u64);
+                    counts.planned_samples += run_len;
+                }
+                continue;
+            };
+            if run_start.is_none() {
+                run_start = Some(source_slot);
+            }
+            tap_centers.push(center);
+        }
+
+        if let Some(start) = run_start {
+            let run_len = tap_centers.len();
+            let centers = Arc::<[[u32; 2]]>::from(tap_centers.into_boxed_slice());
+            self.push_run(StandardMfsRoutedVisibilityRun {
+                row: routed_row,
+                source_slot_range: start..channel_lambda_scales.len(),
+                tap_centers: centers,
+                first_input_seq: *next_input_seq,
+            });
+            *next_input_seq = (*next_input_seq).saturating_add(run_len as u64);
+            counts.planned_samples += run_len;
+        }
+
+        Ok(counts)
+    }
+
+    /// Append cloned runs from another routed block.
+    pub fn extend_from_block(&mut self, block: &Self) {
+        self.runs.extend_from_slice(block.runs());
+    }
+
+    /// Append runs from another routed block and assign contiguous input
+    /// sequence numbers in the receiving replay order.
+    pub fn extend_resequenced_from_block(&mut self, mut block: Self, next_input_seq: &mut u64) {
+        for mut run in block.drain_runs() {
+            run.first_input_seq = *next_input_seq;
+            *next_input_seq = (*next_input_seq).saturating_add(run.len() as u64);
+            self.push_run(run);
+        }
+    }
+
+    /// Conservative estimate of host memory retained by this replay block.
+    pub fn estimated_host_bytes(&self) -> usize {
+        let mut bytes = self
+            .runs
+            .len()
+            .saturating_mul(std::mem::size_of::<StandardMfsRoutedVisibilityRun>());
+        let mut row_ptrs = HashSet::<usize>::new();
+        let mut source_channel_ptrs = HashSet::<(usize, usize)>::new();
+        let mut lambda_scale_ptrs = HashSet::<(usize, usize)>::new();
+        let mut tap_center_ptrs = HashSet::<(usize, usize)>::new();
+
+        for run in &self.runs {
+            let tap_ptr = run.tap_centers.as_ptr() as usize;
+            let tap_len = run.tap_centers.len();
+            if tap_center_ptrs.insert((tap_ptr, tap_len)) {
+                bytes =
+                    bytes.saturating_add(tap_len.saturating_mul(std::mem::size_of::<[u32; 2]>()));
+            }
+
+            let row = run.row.as_ref();
+            let row_ptr = Arc::as_ptr(&run.row) as usize;
+            if row_ptrs.insert(row_ptr) {
+                bytes = bytes
+                    .saturating_add(std::mem::size_of::<StandardMfsRoutedVisibilityRow>())
+                    .saturating_add(
+                        row.data
+                            .len()
+                            .saturating_mul(std::mem::size_of::<Complex32>()),
+                    )
+                    .saturating_add(row.flag.len().saturating_mul(std::mem::size_of::<bool>()))
+                    .saturating_add(row.weight.len().saturating_mul(std::mem::size_of::<f32>()));
+                if let Some(weight_spectrum) = row.weight_spectrum.as_ref() {
+                    bytes = bytes.saturating_add(
+                        weight_spectrum
+                            .len()
+                            .saturating_mul(std::mem::size_of::<f32>()),
+                    );
+                }
+            }
+
+            let source_ptr = row.source_channel_indices.as_ptr() as usize;
+            let source_len = row.source_channel_indices.len();
+            if source_channel_ptrs.insert((source_ptr, source_len)) {
+                bytes =
+                    bytes.saturating_add(source_len.saturating_mul(std::mem::size_of::<usize>()));
+            }
+
+            let lambda_ptr = row.channel_lambda_scales.as_ptr() as usize;
+            let lambda_len = row.channel_lambda_scales.len();
+            if lambda_scale_ptrs.insert((lambda_ptr, lambda_len)) {
+                bytes = bytes.saturating_add(lambda_len.saturating_mul(std::mem::size_of::<f64>()));
+            }
+        }
+
+        bytes
+    }
+
+    /// Visit finite weighted scalar grid samples represented by this block.
+    ///
+    /// This is a diagnostic/export boundary for tools that need compact sample
+    /// records without inspecting routed worker payloads.
+    pub fn for_each_weighted_grid_sample(
+        &self,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        consumer: &mut dyn FnMut(StandardMfsRoutedGridSample) -> Result<(), ImagingError>,
+    ) -> Result<usize, ImagingError> {
+        let mut accepted = 0usize;
+        for run in &self.runs {
+            for lane_index in 0..run.len() {
+                let Some(sample) =
+                    routed_weighted_grid_sample_from_run(run, lane_index, weighting_plan)?
+                else {
+                    continue;
+                };
+                consumer(sample)?;
+                accepted = accepted.saturating_add(1);
+            }
+        }
+        Ok(accepted)
+    }
+}
+
+/// Weighted scalar grid sample decoded from an opaque routed replay block.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsRoutedGridSample {
+    /// Positive-tap center in the padded standard grid.
+    pub center: [u32; 2],
+    /// Final grid weight including CASA-style `sumwt` factor.
+    pub grid_weight: f32,
+    /// Scalar visibility after any configured polarization collapse.
+    pub visibility: Complex32,
+}
+
+fn routed_weighted_grid_sample_from_run(
+    run: &StandardMfsRoutedVisibilityRun,
+    lane_index: usize,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+) -> Result<Option<StandardMfsRoutedGridSample>, ImagingError> {
+    let row = &run.row;
+    if !row.gridable {
+        return Ok(None);
+    }
+    let source_slot = run
+        .source_slot_range
+        .start
+        .checked_add(lane_index)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest("routed lane source index overflowed".to_string())
+        })?;
+    let source_channel = *row.source_channel_indices.get(source_slot).ok_or_else(|| {
+        ImagingError::InvalidRequest(format!("source slot {source_slot} is out of bounds"))
+    })?;
+    let local_channel = source_channel
+        .checked_sub(row.channel_origin)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "source channel {source_channel} precedes loaded channel origin {}",
+                row.channel_origin
+            ))
+        })?;
+    let lambda_scale = *row.channel_lambda_scales.get(source_slot).ok_or_else(|| {
+        ImagingError::InvalidRequest(format!("lambda scale slot {source_slot} is out of bounds"))
+    })?;
+    let center = *run.tap_centers.get(lane_index).ok_or_else(|| {
+        ImagingError::InvalidRequest(format!("tap center lane {lane_index} is out of bounds"))
+    })?;
+    let (visibility, natural_weight, sumwt_factor) = match row.polarization {
+        StandardMfsVisibilityPolarization::Explicit {
+            corr_index,
+            sumwt_factor,
+        } => {
+            if *row.flag.get((corr_index, local_channel)).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "FLAG index [{corr_index}, {source_channel}] is out of bounds"
+                ))
+            })? {
+                return Ok(None);
+            }
+            let visibility = *row.data.get((corr_index, local_channel)).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "DATA index [{corr_index}, {source_channel}] is out of bounds"
+                ))
+            })?;
+            if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                return Ok(None);
+            }
+            let natural_weight = if let Some(weight_spectrum) = &row.weight_spectrum {
+                *weight_spectrum
+                    .get((corr_index, local_channel))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "WEIGHT_SPECTRUM index [{corr_index}, {source_channel}] is out of bounds"
+                        ))
+                    })?
+            } else {
+                *row.weight.get(corr_index).ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "WEIGHT correlation {corr_index} is out of bounds"
+                    ))
+                })?
+            };
+            (visibility, natural_weight, sumwt_factor)
+        }
+        StandardMfsVisibilityPolarization::CollapsedPair {
+            first_corr_index,
+            second_corr_index,
+            transform,
+            sumwt_factor,
+        } => {
+            if *row
+                .flag
+                .get((first_corr_index, local_channel))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "FLAG index [{first_corr_index}, {source_channel}] is out of bounds"
+                    ))
+                })?
+                || *row
+                    .flag
+                    .get((second_corr_index, local_channel))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "FLAG index [{second_corr_index}, {source_channel}] is out of bounds"
+                        ))
+                    })?
+            {
+                return Ok(None);
+            }
+            let first_visibility =
+                *row.data
+                    .get((first_corr_index, local_channel))
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "DATA index [{first_corr_index}, {source_channel}] is out of bounds"
+                        ))
+                    })?;
+            let second_visibility = *row
+                .data
+                .get((second_corr_index, local_channel))
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "DATA index [{second_corr_index}, {source_channel}] is out of bounds"
+                    ))
+                })?;
+            let visibility = transform.collapse(first_visibility, second_visibility);
+            if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                return Ok(None);
+            }
+            let (first_weight, second_weight) = if let Some(weight_spectrum) = &row.weight_spectrum
+            {
+                (
+                    *weight_spectrum
+                        .get((first_corr_index, local_channel))
+                        .ok_or_else(|| {
+                            ImagingError::InvalidRequest(format!(
+                                "WEIGHT_SPECTRUM index [{first_corr_index}, {source_channel}] is out of bounds"
+                            ))
+                        })?,
+                    *weight_spectrum
+                        .get((second_corr_index, local_channel))
+                        .ok_or_else(|| {
+                            ImagingError::InvalidRequest(format!(
+                                "WEIGHT_SPECTRUM index [{second_corr_index}, {source_channel}] is out of bounds"
+                            ))
+                        })?,
+                )
+            } else {
+                (
+                    *row.weight.get(first_corr_index).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "WEIGHT correlation {first_corr_index} is out of bounds"
+                        ))
+                    })?,
+                    *row.weight.get(second_corr_index).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "WEIGHT correlation {second_corr_index} is out of bounds"
+                        ))
+                    })?,
+                )
+            };
+            if !(first_weight.is_finite()
+                && first_weight > 0.0
+                && second_weight.is_finite()
+                && second_weight > 0.0)
+            {
+                return Ok(None);
+            }
+            (
+                visibility,
+                0.5 * (first_weight + second_weight),
+                sumwt_factor,
+            )
+        }
+    };
+    if !(natural_weight.is_finite()
+        && natural_weight > 0.0
+        && sumwt_factor.is_finite()
+        && sumwt_factor > 0.0)
+    {
+        return Ok(None);
+    }
+    let u_lambda = row.uvw_m[0] * lambda_scale;
+    let v_lambda = row.uvw_m[1] * lambda_scale;
+    let weight = weighting_plan.weight_sample(u_lambda, v_lambda, natural_weight)?;
+    let grid_weight = weight * sumwt_factor;
+    if !(grid_weight.is_finite() && grid_weight > 0.0) {
+        return Ok(None);
+    }
+    Ok(Some(StandardMfsRoutedGridSample {
+        center,
+        grid_weight,
+        visibility,
+    }))
+}
+
+/// Opaque acceleration cache for routed standard-MFS input.
+#[derive(Debug, Default)]
+pub struct StandardMfsRoutedInputCache {
+    inner: StandardMfsMetalGroupedInputCache,
+}
+
+/// Incremental builder for an opaque routed standard-MFS input cache.
+pub struct StandardMfsRoutedInputCachePrefill {
+    inner: StandardMfsMetalGroupedInputCachePrefill,
+}
+
+impl StandardMfsRoutedInputCachePrefill {
+    /// Create a grouped Metal cache prefill for one standard-MFS geometry.
+    pub fn metal_grouped(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Ok(Self {
+            inner: StandardMfsMetalGroupedInputCachePrefill::new(geometry)?,
+        })
+    }
+
+    /// Append one routed replay block to the prefill cache.
+    pub fn append_block(
+        &mut self,
+        block: &StandardMfsRoutedVisibilityBlock,
+    ) -> Result<(), ImagingError> {
+        for run in block.runs() {
+            self.inner.append_run(run)?;
+        }
+        Ok(())
+    }
+
+    /// Number of routed runs appended so far.
+    pub fn run_count(&self) -> usize {
+        self.inner.run_count()
+    }
+
+    /// Number of logical channel lanes appended so far.
+    pub fn logical_lanes(&self) -> usize {
+        self.inner.logical_lanes()
+    }
+
+    /// Conservative host byte estimate for finalized and open grouped chunks.
+    pub fn estimated_host_bytes(&self) -> usize {
+        self.inner.estimated_host_bytes()
+    }
+
+    /// Finalize into a reusable routed input cache after weighting is known.
+    pub fn finish(
+        self,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsRoutedInputCache, ImagingError> {
+        Ok(StandardMfsRoutedInputCache {
+            inner: self.inner.finish(weighting_plan)?,
+        })
     }
 }
 
@@ -677,20 +1137,23 @@ impl<'a> StandardMfsPlan<'a> {
     pub fn planned_sample_run_blocks<F>(
         request: ImagingRequest,
         execution_config: StandardMfsExecutionConfig,
-        replay: F,
+        mut replay: F,
     ) -> Self
     where
         F: FnMut(
-                &mut dyn FnMut(
-                    &StandardMfsPlannedWeightedSampleRunBlock,
-                ) -> Result<(), ImagingError>,
+                &mut dyn FnMut(&StandardMfsPlannedSampleBlock) -> Result<(), ImagingError>,
             ) -> Result<(), ImagingError>
             + 'a,
     {
+        let wrapped = move |consumer: &mut dyn FnMut(
+            &StandardMfsPlannedWeightedSampleRunBlock,
+        ) -> Result<(), ImagingError>| {
+            replay(&mut |block: &StandardMfsPlannedSampleBlock| consumer(block.inner()))
+        };
         Self {
             request,
             execution_config,
-            source: StandardMfsPlanSource::PlannedRuns(Box::new(replay)),
+            source: StandardMfsPlanSource::PlannedRuns(Box::new(wrapped)),
         }
     }
 
@@ -699,23 +1162,33 @@ impl<'a> StandardMfsPlan<'a> {
         request: ImagingRequest,
         execution_config: StandardMfsExecutionConfig,
         weighting_plan: &'a StandardMfsStreamingWeightingPlan,
-        replay: F,
-        metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
+        mut replay: F,
+        routed_input_cache: Option<StandardMfsRoutedInputCache>,
     ) -> Self
     where
         F: FnMut(
-                &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+                &mut dyn FnMut(&StandardMfsRoutedVisibilityBlock) -> Result<(), ImagingError>,
             ) -> Result<(), ImagingError>
             + 'a,
     {
+        let wrapped = move |consumer: &mut dyn FnMut(
+            &StandardMfsRoutedVisibilityRun,
+        ) -> Result<(), ImagingError>| {
+            replay(&mut |block: &StandardMfsRoutedVisibilityBlock| {
+                for run in block.runs() {
+                    consumer(run)?;
+                }
+                Ok(())
+            })
+        };
         Self {
             request,
             execution_config,
             source: StandardMfsPlanSource::RoutedVisibilityRuns(Box::new(
                 StandardMfsRoutedVisibilityRunsPlan {
                     weighting_plan,
-                    replay: Box::new(replay),
-                    metal_grouped_input_cache,
+                    replay: Box::new(wrapped),
+                    metal_grouped_input_cache: routed_input_cache.map(|cache| cache.inner),
                 },
             )),
         }
@@ -771,18 +1244,23 @@ impl<'a> StandardMfsDirtyPlan<'a> {
     pub fn planned_sample_blocks<F>(
         request: ImagingRequest,
         execution_config: StandardMfsExecutionConfig,
-        replay: F,
+        mut replay: F,
     ) -> Self
     where
         F: FnMut(
-                &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+                &mut dyn FnMut(&StandardMfsPlannedSampleBlock) -> Result<(), ImagingError>,
             ) -> Result<(), ImagingError>
             + 'a,
     {
+        let wrapped = move |consumer: &mut dyn FnMut(
+            &[StandardMfsPlannedWeightedSample],
+        ) -> Result<(), ImagingError>| {
+            replay(&mut |block: &StandardMfsPlannedSampleBlock| consumer(block.samples()))
+        };
         Self {
             request,
             execution_config,
-            replay: Box::new(replay),
+            replay: Box::new(wrapped),
         }
     }
 }
@@ -810,20 +1288,23 @@ impl<'a> StandardMfsCleanPlan<'a> {
     pub fn planned_sample_run_blocks<F>(
         request: ImagingRequest,
         execution_config: StandardMfsExecutionConfig,
-        replay: F,
+        mut replay: F,
     ) -> Self
     where
         F: FnMut(
-                &mut dyn FnMut(
-                    &StandardMfsPlannedWeightedSampleRunBlock,
-                ) -> Result<(), ImagingError>,
+                &mut dyn FnMut(&StandardMfsPlannedSampleBlock) -> Result<(), ImagingError>,
             ) -> Result<(), ImagingError>
             + 'a,
     {
+        let wrapped = move |consumer: &mut dyn FnMut(
+            &StandardMfsPlannedWeightedSampleRunBlock,
+        ) -> Result<(), ImagingError>| {
+            replay(&mut |block: &StandardMfsPlannedSampleBlock| consumer(block.inner()))
+        };
         Self {
             request,
             execution_config,
-            replay: Box::new(replay),
+            replay: Box::new(wrapped),
         }
     }
 }
@@ -840,20 +1321,23 @@ impl<'a> StandardMfsCleanFinishPlan<'a> {
     pub fn planned_sample_run_blocks<F>(
         execution_config: StandardMfsExecutionConfig,
         cube_cycle_threshold_jy_per_beam: Option<f32>,
-        replay: F,
+        mut replay: F,
     ) -> Self
     where
         F: FnMut(
-                &mut dyn FnMut(
-                    &StandardMfsPlannedWeightedSampleRunBlock,
-                ) -> Result<(), ImagingError>,
+                &mut dyn FnMut(&StandardMfsPlannedSampleBlock) -> Result<(), ImagingError>,
             ) -> Result<(), ImagingError>
             + 'a,
     {
+        let wrapped = move |consumer: &mut dyn FnMut(
+            &StandardMfsPlannedWeightedSampleRunBlock,
+        ) -> Result<(), ImagingError>| {
+            replay(&mut |block: &StandardMfsPlannedSampleBlock| consumer(block.inner()))
+        };
         Self {
             execution_config,
             cube_cycle_threshold_jy_per_beam,
-            replay: Box::new(replay),
+            replay: Box::new(wrapped),
         }
     }
 }
@@ -5980,7 +6464,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
         let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
         let start_reported_iteration = reported_minor_iterations;
         let cycle_threshold_jy_per_beam =
-            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+            clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
         let (outcome, probe) = run_mtmfs_minor_cycle(
             request,
             &psf_state.psf_terms,
@@ -12012,6 +12496,106 @@ fn circular_angle_delta_rad(angle_rad: f64) -> f64 {
     (angle_rad + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
+/// Build the CASA-compatible image coordinate system for imager output products.
+#[allow(clippy::too_many_arguments)]
+pub fn build_image_coordinate_system(
+    imsize: usize,
+    phase_center: [f64; 2],
+    cell_arcsec: f64,
+    freq_ref: FrequencyRef,
+    direction_ref: DirectionRef,
+    plane_stokes: PlaneStokes,
+    channel_frequencies_hz: &[f64],
+    spectral_delta_hz: Option<f64>,
+    requested_rest_frequency_hz: Option<f64>,
+) -> CoordinateSystem {
+    let cell_rad = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(Box::new(DirectionCoordinate::new(
+        direction_ref,
+        Projection::new(ProjectionType::SIN),
+        phase_center,
+        [-cell_rad, cell_rad],
+        [imsize as f64 / 2.0, imsize as f64 / 2.0],
+    )));
+    coords.add_coordinate(Box::new(StokesCoordinate::new(vec![plane_to_stokes_type(
+        plane_stokes,
+    )])));
+    coords.add_coordinate(Box::new(build_image_spectral_coordinate(
+        freq_ref,
+        channel_frequencies_hz,
+        spectral_delta_hz,
+        requested_rest_frequency_hz,
+    )));
+    coords
+}
+
+fn build_image_spectral_coordinate(
+    freq_ref: FrequencyRef,
+    channel_frequencies_hz: &[f64],
+    spectral_delta_hz: Option<f64>,
+    requested_rest_frequency_hz: Option<f64>,
+) -> SpectralCoordinate {
+    let rest_frequency = requested_rest_frequency_hz.unwrap_or_else(|| {
+        if channel_frequencies_hz.is_empty() {
+            0.0
+        } else {
+            0.5 * (channel_frequencies_hz[0]
+                + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
+        }
+    });
+    match channel_frequencies_hz {
+        [] => SpectralCoordinate::new(
+            freq_ref,
+            0.0,
+            spectral_delta_hz.unwrap_or(1.0),
+            0.0,
+            rest_frequency,
+        ),
+        [single] => SpectralCoordinate::new(
+            freq_ref,
+            *single,
+            spectral_delta_hz.unwrap_or(1.0),
+            0.0,
+            rest_frequency,
+        ),
+        frequencies => {
+            let delta = frequencies[1] - frequencies[0];
+            let is_linear = frequencies.windows(2).all(|window| {
+                let step = window[1] - window[0];
+                (step - delta).abs() <= delta.abs().max(1.0) * 1.0e-9
+            });
+            if is_linear {
+                SpectralCoordinate::new(freq_ref, frequencies[0], delta, 0.0, rest_frequency)
+            } else {
+                SpectralCoordinate::from_tabular(
+                    freq_ref,
+                    (0..frequencies.len()).map(|index| index as f64).collect(),
+                    frequencies.to_vec(),
+                    frequencies[0],
+                    delta,
+                    0.0,
+                    rest_frequency,
+                )
+                .expect("validated channel frequency table")
+            }
+        }
+    }
+}
+
+fn plane_to_stokes_type(plane: PlaneStokes) -> StokesType {
+    match plane {
+        PlaneStokes::I => StokesType::I,
+        PlaneStokes::Q => StokesType::Q,
+        PlaneStokes::U => StokesType::U,
+        PlaneStokes::V => StokesType::V,
+        PlaneStokes::XX => StokesType::XX,
+        PlaneStokes::YY => StokesType::YY,
+        PlaneStokes::RR => StokesType::RR,
+        PlaneStokes::LL => StokesType::LL,
+    }
+}
+
 /// Return the CASA-compatible voltage-pattern value for a homogeneous primary beam.
 pub fn primary_beam_voltage_pattern(
     primary_beam_model: PrimaryBeamModel,
@@ -12030,6 +12614,546 @@ pub fn primary_beam_voltage_pattern(
         ),
         PrimaryBeamModel::EvlaLBandCommon => evla_common_voltage_pattern(radius_rad, frequency_hz),
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrimaryBeamProductContext {
+    phase_center_direction_rad: [f64; 2],
+    primary_beam_model: PrimaryBeamModel,
+}
+
+/// Weighted frequency sample used when validating primary-beam product inputs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PrimaryBeamWeightSample {
+    /// Sample frequency in Hz.
+    pub frequency_hz: f64,
+    /// Sample weight.
+    pub weight: f32,
+}
+
+/// Primary-beam product request.
+pub enum PrimaryBeamProductRequest<'a> {
+    /// Convert a mosaic weight product into a normalized primary-beam product.
+    MosaicFromWeight {
+        /// Mosaic weight product.
+        weight_product: &'a Array4<f32>,
+    },
+    /// Build a single-field primary-beam power product using image coordinates.
+    SingleField {
+        /// Output coordinate system.
+        coords: &'a CoordinateSystem,
+        /// Output product shape `(nx, ny, nstokes, nchan)`.
+        shape: (usize, usize, usize, usize),
+        /// Image-channel frequencies in Hz.
+        channel_frequencies_hz: &'a [f64],
+        /// Phase-center direction used for the primary-beam product, in radians.
+        phase_center_direction_rad: [f64; 2],
+        /// Primary-beam model used to evaluate the product.
+        primary_beam_model: PrimaryBeamModel,
+    },
+    /// Build a weighted single-field primary-beam product.
+    WeightedSingleField {
+        /// Output coordinate system.
+        coords: &'a CoordinateSystem,
+        /// Output product shape `(nx, ny, nstokes, nchan)`.
+        shape: (usize, usize, usize, usize),
+        /// Image-channel frequencies in Hz.
+        channel_frequencies_hz: &'a [f64],
+        /// Weighted source samples used to validate the request.
+        samples: &'a [PrimaryBeamWeightSample],
+        /// Phase-center direction used for the primary-beam product, in radians.
+        phase_center_direction_rad: [f64; 2],
+        /// Primary-beam model used to evaluate the product.
+        primary_beam_model: PrimaryBeamModel,
+    },
+    /// Build the primary-beam spectral-index correction product.
+    Alpha {
+        /// Output coordinate system.
+        coords: &'a CoordinateSystem,
+        /// Output product shape `(nx, ny, nstokes, nchan)`.
+        shape: (usize, usize, usize, usize),
+        /// Reference frequency in Hz.
+        reference_frequency_hz: f64,
+        /// Phase-center direction used for the primary-beam product, in radians.
+        phase_center_direction_rad: [f64; 2],
+        /// Primary-beam model used to evaluate the product.
+        primary_beam_model: PrimaryBeamModel,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrimaryBeamPlaneGeometry {
+    pointing_x_pixel: f64,
+    pointing_y_pixel: f64,
+    increment_x_rad: f64,
+    increment_y_rad: f64,
+}
+
+/// Build a primary-beam product from a compact request.
+pub fn primary_beam_product(
+    request: PrimaryBeamProductRequest<'_>,
+) -> Result<Array4<f32>, ImagingError> {
+    match request {
+        PrimaryBeamProductRequest::MosaicFromWeight { weight_product } => Ok(
+            mosaic_primary_beam_product_from_weight_product(weight_product),
+        ),
+        PrimaryBeamProductRequest::SingleField {
+            coords,
+            shape,
+            channel_frequencies_hz,
+            phase_center_direction_rad,
+            primary_beam_model,
+        } => single_field_primary_beam_product(
+            coords,
+            shape,
+            channel_frequencies_hz,
+            PrimaryBeamProductContext {
+                phase_center_direction_rad,
+                primary_beam_model,
+            },
+        ),
+        PrimaryBeamProductRequest::WeightedSingleField {
+            coords,
+            shape,
+            channel_frequencies_hz,
+            samples,
+            phase_center_direction_rad,
+            primary_beam_model,
+        } => {
+            let usable_samples = collapse_primary_beam_weight_samples(samples);
+            if usable_samples.is_empty() {
+                return Err(ImagingError::InvalidRequest(
+                    "weighted primary-beam product requires at least one finite positive weighted sample"
+                        .to_string(),
+                ));
+            }
+            single_field_primary_beam_product(
+                coords,
+                shape,
+                channel_frequencies_hz,
+                PrimaryBeamProductContext {
+                    phase_center_direction_rad,
+                    primary_beam_model,
+                },
+            )
+        }
+        PrimaryBeamProductRequest::Alpha {
+            coords,
+            shape,
+            reference_frequency_hz,
+            phase_center_direction_rad,
+            primary_beam_model,
+        } => single_field_primary_beam_alpha_product(
+            coords,
+            shape,
+            reference_frequency_hz,
+            PrimaryBeamProductContext {
+                phase_center_direction_rad,
+                primary_beam_model,
+            },
+        ),
+    }
+}
+
+fn mosaic_primary_beam_product_from_weight_product(weight_product: &Array4<f32>) -> Array4<f32> {
+    let mut pb = Array4::<f32>::zeros(weight_product.dim());
+    let (_, _, nstokes, nchan) = weight_product.dim();
+    for stokes_index in 0..nstokes {
+        for channel_index in 0..nchan {
+            let weight_plane = weight_product.slice(s![.., .., stokes_index, channel_index]);
+            let peak = weight_plane
+                .iter()
+                .copied()
+                .filter(|value| value.is_finite())
+                .fold(0.0f32, f32::max);
+            if peak <= 0.0 {
+                continue;
+            }
+            let mut pb_plane = pb.slice_mut(s![.., .., stokes_index, channel_index]);
+            Zip::from(&mut pb_plane)
+                .and(&weight_plane)
+                .for_each(|pb_value, weight_value| {
+                    let normalized = (*weight_value).max(0.0) / peak;
+                    if normalized.is_finite() && normalized > 0.0 {
+                        *pb_value = normalized.sqrt();
+                    }
+                });
+        }
+    }
+    pb
+}
+
+/// Divide an image product by a primary beam above the configured cutoff.
+pub fn primary_beam_correct_image_product(
+    image: &Array4<f32>,
+    pb: &Array4<f32>,
+    pb_limit: f32,
+) -> Array4<f32> {
+    let pb_cutoff = pb_limit.abs();
+    let mut corrected = Array4::<f32>::zeros(image.dim());
+    Zip::from(&mut corrected).and(image).and(pb).for_each(
+        |corrected_value, image_value, pb_value| {
+            if pb_value.is_finite() && *pb_value > pb_cutoff {
+                *corrected_value = *image_value / *pb_value;
+            }
+        },
+    );
+    corrected
+}
+
+/// Build a primary-beam support mask using the configured cutoff.
+pub fn primary_beam_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
+    let pb_cutoff = pb_limit.abs();
+    pb.mapv(|value| value.is_finite() && value > pb_cutoff)
+        .into_dyn()
+}
+
+/// Zero primary-beam samples below the configured cutoff.
+pub fn primary_beam_limited_product(pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
+    let pb_cutoff = pb_limit.abs();
+    pb.mapv(|value| {
+        if value.is_finite() && value > pb_cutoff {
+            value
+        } else {
+            0.0
+        }
+    })
+}
+
+/// Clean-mask product request.
+pub enum CleanMaskProductRequest<'a> {
+    /// Repeat one 2-D mask plane across all output channels.
+    Plane {
+        /// Plane mask in image-pixel order.
+        mask: &'a Array2<bool>,
+        /// Number of output channels to materialize.
+        channel_count: usize,
+    },
+    /// Convert an already channelized mask cube.
+    Cube {
+        /// Cube mask in CASA image-product order.
+        mask: &'a Array4<bool>,
+    },
+}
+
+/// Extract the `(x, y)` MFS plane from a CASA-style 4-D image product.
+pub fn extract_mfs_plane_product(product: &Array4<f32>) -> Array2<f32> {
+    product.slice(s![.., .., 0, 0]).to_owned()
+}
+
+/// Expand a single `(x, y)` image plane to a one-Stokes, one-channel product.
+pub fn single_plane_image_product(plane: &Array2<f32>) -> Array4<f32> {
+    let (nx, ny) = plane.dim();
+    let mut product = Array4::<f32>::zeros((nx, ny, 1, 1));
+    product.slice_mut(s![.., .., 0, 0]).assign(plane);
+    product
+}
+
+/// Count true pixels in a 2-D clean mask.
+pub fn clean_mask_pixel_count(mask: &Array2<bool>) -> usize {
+    mask.iter().filter(|value| **value).count()
+}
+
+/// Return the absolute finite masked peak in the MFS plane of a 4-D product.
+pub fn mfs_image_product_peak_abs_masked(
+    product: &Array4<f32>,
+    clean_mask: Option<&Array2<bool>>,
+    relative_tolerance: f32,
+) -> f32 {
+    let plane = extract_mfs_plane_product(product);
+    clean_peak_location_masked_with_relative_tolerance(&plane, clean_mask, relative_tolerance)
+        .map(|(_, value)| value.abs())
+        .unwrap_or(0.0)
+}
+
+/// Build the CASA-style floating clean-mask product.
+pub fn clean_mask_image_product(request: CleanMaskProductRequest<'_>) -> Array4<f32> {
+    match request {
+        CleanMaskProductRequest::Plane {
+            mask,
+            channel_count,
+        } => {
+            let channel_count = channel_count.max(1);
+            let (nx, ny) = mask.dim();
+            let mut product = Array4::<f32>::zeros((nx, ny, 1, channel_count));
+            for channel_index in 0..channel_count {
+                for x in 0..nx {
+                    for y in 0..ny {
+                        product[(x, y, 0, channel_index)] = if mask[(x, y)] { 1.0 } else { 0.0 };
+                    }
+                }
+            }
+            product
+        }
+        CleanMaskProductRequest::Cube { mask } => mask.mapv(|value| if value { 1.0 } else { 0.0 }),
+    }
+}
+
+/// Build primary-beam side products for one image product.
+///
+/// Returns `(limited_pb, support_mask, image_pbcor)`.
+pub fn primary_beam_output_products(
+    image: Option<&Array4<f32>>,
+    pb: &Array4<f32>,
+    pb_limit: f32,
+    include_image_pbcor: bool,
+) -> (Array4<f32>, ArrayD<bool>, Option<Array4<f32>>) {
+    let limited_pb = primary_beam_limited_product(pb, pb_limit);
+    let support_mask = primary_beam_support_mask_product(pb, pb_limit);
+    let image_pbcor = if include_image_pbcor {
+        image.map(|image| primary_beam_correct_image_product(image, pb, pb_limit))
+    } else {
+        None
+    };
+    (limited_pb, support_mask, image_pbcor)
+}
+
+/// Apply CASA-style primary-beam spectral-index correction.
+pub fn primary_beam_correct_alpha_product(
+    alpha: &Array4<f32>,
+    pb_alpha: &Array4<f32>,
+    pb: &Array4<f32>,
+    pb_limit: f32,
+) -> Array4<f32> {
+    let pb_cutoff = pb_limit.abs();
+    let mut corrected_alpha = alpha.clone();
+    Zip::from(&mut corrected_alpha)
+        .and(pb_alpha)
+        .and(pb)
+        .for_each(|alpha_value, pb_alpha_value, pb_value| {
+            if pb_value.is_finite() && *pb_value > pb_cutoff {
+                *alpha_value -= *pb_alpha_value;
+            } else {
+                *alpha_value = 0.0;
+            }
+        });
+    corrected_alpha
+}
+
+fn primary_beam_plane_geometry(
+    coords: &CoordinateSystem,
+    context: PrimaryBeamProductContext,
+) -> Result<PrimaryBeamPlaneGeometry, ImagingError> {
+    let mut pixel_axis_offset = 0usize;
+    let mut direction_coordinate_index = None;
+    for coordinate_index in 0..coords.n_coordinates() {
+        let coordinate = coords.coordinate(coordinate_index);
+        if coordinate.coordinate_type() == CoordinateType::Direction {
+            direction_coordinate_index = Some((coordinate_index, pixel_axis_offset));
+            break;
+        }
+        pixel_axis_offset += coordinate.n_pixel_axes();
+    }
+    let (direction_coordinate_index, pixel_axis_offset) =
+        direction_coordinate_index.ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "primary-beam product requires a direction coordinate".to_string(),
+            )
+        })?;
+    if pixel_axis_offset != 0 {
+        return Err(ImagingError::InvalidRequest(
+            "primary-beam product requires direction pixel axes first".to_string(),
+        ));
+    }
+    let direction_coordinate = coords.coordinate(direction_coordinate_index);
+    let pointing_pixel = direction_coordinate
+        .to_pixel(&context.phase_center_direction_rad)
+        .map_err(|error| {
+            ImagingError::InvalidRequest(format!("convert PB pointing direction to pixel: {error}"))
+        })?;
+    let increments = direction_coordinate.increment();
+    if pointing_pixel.len() < 2 || increments.len() < 2 {
+        return Err(ImagingError::InvalidRequest(
+            "primary-beam direction coordinate must have two axes".to_string(),
+        ));
+    }
+    Ok(PrimaryBeamPlaneGeometry {
+        pointing_x_pixel: pointing_pixel[0],
+        pointing_y_pixel: pointing_pixel[1],
+        increment_x_rad: increments[0],
+        increment_y_rad: increments[1],
+    })
+}
+
+fn primary_beam_radius_rad_from_plane(
+    geometry: PrimaryBeamPlaneGeometry,
+    x: usize,
+    y: usize,
+) -> f64 {
+    let dx = geometry.increment_x_rad * (x as f64 - geometry.pointing_x_pixel);
+    let dy = geometry.increment_y_rad * (y as f64 - geometry.pointing_y_pixel);
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn single_field_primary_beam_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    channel_frequencies_hz: &[f64],
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, ImagingError> {
+    let (nx, ny, nstokes, nchan) = shape;
+    let mut pb = Array4::<f32>::zeros(shape);
+    let pixel_axis_count = coords.n_pixel_axes();
+    if pixel_axis_count < 2 {
+        return Err(ImagingError::InvalidRequest(
+            "primary-beam product requires at least two direction pixel axes".to_string(),
+        ));
+    }
+    let plane_geometry = primary_beam_plane_geometry(coords, context)?;
+    let fallback_frequency_hz = channel_frequencies_hz
+        .iter()
+        .copied()
+        .find(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "primary-beam product requires a finite positive image frequency".to_string(),
+            )
+        })?;
+    for channel_index in 0..nchan {
+        let frequency_hz = channel_frequencies_hz
+            .get(channel_index)
+            .copied()
+            .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+            .unwrap_or(fallback_frequency_hz);
+        for x in 0..nx {
+            for y in 0..ny {
+                let radius_rad = primary_beam_radius_rad_from_plane(plane_geometry, x, y);
+                let value = primary_beam_voltage_pattern(
+                    context.primary_beam_model,
+                    radius_rad,
+                    frequency_hz,
+                );
+                let value = value * value;
+                for stokes_index in 0..nstokes {
+                    pb[(x, y, stokes_index, channel_index)] = value;
+                }
+            }
+        }
+    }
+    Ok(pb)
+}
+
+fn collapse_primary_beam_weight_samples(
+    samples: &[PrimaryBeamWeightSample],
+) -> Vec<PrimaryBeamWeightSample> {
+    const CASA_PB_FREQUENCY_BIN_FRACTION: f64 = 0.005;
+    let log_bin_width = (1.0 + CASA_PB_FREQUENCY_BIN_FRACTION).ln();
+    let mut by_frequency_bin = BTreeMap::<i64, (f64, f64)>::new();
+    for sample in samples {
+        if !(sample.frequency_hz.is_finite()
+            && sample.frequency_hz > 0.0
+            && sample.weight.is_finite()
+            && sample.weight > 0.0)
+        {
+            continue;
+        }
+        let key = (sample.frequency_hz.ln() / log_bin_width).round() as i64;
+        let weight = f64::from(sample.weight);
+        let entry = by_frequency_bin.entry(key).or_insert((0.0, 0.0));
+        entry.0 += sample.frequency_hz * weight;
+        entry.1 += weight;
+    }
+    by_frequency_bin
+        .into_values()
+        .filter_map(|(weighted_frequency_sum, weight)| {
+            (weight.is_finite() && weight > 0.0).then_some(PrimaryBeamWeightSample {
+                frequency_hz: weighted_frequency_sum / weight,
+                weight: weight as f32,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn normalized_weighted_primary_beam_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    samples: &[PrimaryBeamWeightSample],
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, ImagingError> {
+    let usable_samples = collapse_primary_beam_weight_samples(samples);
+    if usable_samples.is_empty() {
+        return Err(ImagingError::InvalidRequest(
+            "weighted primary-beam product requires at least one finite positive weighted sample"
+                .to_string(),
+        ));
+    }
+
+    let (nx, ny, nstokes, nchan) = shape;
+    let mut pb = Array4::<f32>::zeros(shape);
+    let pixel_axis_count = coords.n_pixel_axes();
+    if pixel_axis_count < 2 {
+        return Err(ImagingError::InvalidRequest(
+            "primary-beam product requires at least two direction pixel axes".to_string(),
+        ));
+    }
+    let total_weight = usable_samples
+        .iter()
+        .map(|sample| f64::from(sample.weight))
+        .sum::<f64>();
+    if !(total_weight.is_finite() && total_weight > 0.0) {
+        return Err(ImagingError::InvalidRequest(
+            "weighted primary-beam product has non-positive total weight".to_string(),
+        ));
+    }
+
+    let plane_geometry = primary_beam_plane_geometry(coords, context)?;
+    let mut peak = 0.0f32;
+    for channel_index in 0..nchan {
+        for x in 0..nx {
+            for y in 0..ny {
+                let radius_rad = primary_beam_radius_rad_from_plane(plane_geometry, x, y);
+                let weighted_power = usable_samples
+                    .iter()
+                    .map(|sample| {
+                        let voltage = primary_beam_voltage_pattern(
+                            context.primary_beam_model,
+                            radius_rad,
+                            sample.frequency_hz,
+                        ) as f64;
+                        f64::from(sample.weight) * voltage * voltage
+                    })
+                    .sum::<f64>();
+                let value = (weighted_power / total_weight).max(0.0).sqrt() as f32;
+                peak = peak.max(value);
+                for stokes_index in 0..nstokes {
+                    pb[(x, y, stokes_index, channel_index)] = value;
+                }
+            }
+        }
+    }
+    if peak > 0.0 {
+        pb.mapv_inplace(|value| value / peak);
+    }
+    Ok(pb)
+}
+
+fn single_field_primary_beam_alpha_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    reference_frequency_hz: f64,
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, ImagingError> {
+    if !(reference_frequency_hz.is_finite() && reference_frequency_hz > 0.0) {
+        return Err(ImagingError::InvalidRequest(
+            "primary-beam alpha product requires a finite positive reference frequency".to_string(),
+        ));
+    }
+    let lower_frequency_hz = reference_frequency_hz * 0.995;
+    let upper_frequency_hz = reference_frequency_hz * 1.005;
+    let log_frequency_ratio = (upper_frequency_hz / lower_frequency_hz).ln();
+    let lower = single_field_primary_beam_product(coords, shape, &[lower_frequency_hz], context)?;
+    let upper = single_field_primary_beam_product(coords, shape, &[upper_frequency_hz], context)?;
+    let mut alpha = Array4::<f32>::zeros(shape);
+    Zip::from(&mut alpha).and(&lower).and(&upper).for_each(
+        |alpha_value, lower_value, upper_value| {
+            if *lower_value > 0.0 && *upper_value > 0.0 {
+                *alpha_value =
+                    ((*upper_value as f64 / *lower_value as f64).ln() / log_frequency_ratio) as f32;
+            }
+        },
+    );
+    Ok(alpha)
 }
 
 fn primary_beam_voltage_pattern_for_offsets(
@@ -12632,7 +13756,7 @@ fn run_multiscale_cotton_schwab_metal(
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
             cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
-                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+                clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
             });
         let probe = MinorCycleProbe {
             initial_scale_pixels: Some(scales[cycle_candidate.scale_index]),
@@ -13675,7 +14799,7 @@ fn run_hogbom_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         let cycle_threshold_jy_per_beam =
             cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
-                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+                clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
             });
         if profile::standard_mfs_profile_detail_enabled() {
             let mask = clean_mask_summary(request.clean_mask.as_ref(), residual.dim());
@@ -17404,7 +18528,7 @@ fn run_clark_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
             cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
-                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+                clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
             });
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_clark_minor_cycle(
@@ -17596,7 +18720,7 @@ fn run_multiscale_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
             cycle_threshold_override_jy_per_beam.unwrap_or_else(|| {
-                compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
+                clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
             });
         let probe = MinorCycleProbe {
             initial_scale_pixels: Some(scales[cycle_candidate.scale_index]),
@@ -18383,6 +19507,133 @@ fn hogbom_component_budget(reported_cycle_niter: usize, clean: CleanConfig) -> u
         // clamped back to `cycleNiter` before returning.
         HogbomIterationMode::CasaInclusive => reported_cycle_niter.saturating_add(1),
         HogbomIterationMode::Strict => reported_cycle_niter,
+    }
+}
+
+/// Control parameters for one Hogbom image-plane minor cycle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HogbomPlaneMinorCycleControl {
+    clean: CleanConfig,
+    cycle_limit: usize,
+    cycle_threshold_jy_per_beam: f32,
+    peak_relative_tolerance: f32,
+}
+
+impl HogbomPlaneMinorCycleControl {
+    /// Build one Hogbom image-plane minor-cycle control block.
+    pub fn new(
+        clean: CleanConfig,
+        cycle_limit: usize,
+        cycle_threshold_jy_per_beam: f32,
+        peak_relative_tolerance: f32,
+    ) -> Self {
+        Self {
+            clean,
+            cycle_limit,
+            cycle_threshold_jy_per_beam,
+            peak_relative_tolerance,
+        }
+    }
+}
+
+/// One component selected during a Hogbom image-plane minor cycle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HogbomPlaneComponent {
+    position: (usize, usize),
+    peak_value_jy_per_beam: f32,
+    component_jy: f32,
+}
+
+impl HogbomPlaneComponent {
+    /// Component position in image-pixel coordinates.
+    pub fn position(&self) -> (usize, usize) {
+        self.position
+    }
+
+    /// Peak residual value selected for this component.
+    pub fn peak_value_jy_per_beam(&self) -> f32 {
+        self.peak_value_jy_per_beam
+    }
+
+    /// Flux added to the model plane.
+    pub fn component_jy(&self) -> f32 {
+        self.component_jy
+    }
+}
+
+/// Result of one Hogbom image-plane minor cycle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HogbomPlaneMinorCycleOutcome {
+    actual_updates: usize,
+    reported_updates: usize,
+    components: Vec<HogbomPlaneComponent>,
+}
+
+impl HogbomPlaneMinorCycleOutcome {
+    /// Number of model/residual updates actually applied.
+    pub fn actual_updates(&self) -> usize {
+        self.actual_updates
+    }
+
+    /// CASA-compatible iteration count reported to clean control.
+    pub fn reported_updates(&self) -> usize {
+        self.reported_updates
+    }
+
+    /// Components selected during this minor cycle.
+    pub fn components(&self) -> &[HogbomPlaneComponent] {
+        &self.components
+    }
+}
+
+/// Run a finite masked Hogbom minor cycle on one image plane.
+pub fn run_hogbom_plane_minor_cycle(
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    psf: &Array2<f32>,
+    clean_mask: Option<&Array2<bool>>,
+    control: HogbomPlaneMinorCycleControl,
+) -> HogbomPlaneMinorCycleOutcome {
+    let clean = control.clean;
+    let cycle_component_budget = hogbom_component_budget(control.cycle_limit, clean);
+    let mut components = Vec::new();
+    while components.len() < cycle_component_budget {
+        let Some(((peak_x, peak_y), peak_value)) =
+            finite_peak_location_masked_with_relative_tolerance(
+                residual,
+                clean_mask,
+                control.peak_relative_tolerance,
+            )
+        else {
+            break;
+        };
+        let peak_abs = peak_value.abs();
+        if peak_abs <= clean.threshold_jy_per_beam
+            || peak_abs <= control.cycle_threshold_jy_per_beam
+        {
+            break;
+        }
+        let component = clean.gain * peak_value;
+        model[(peak_x, peak_y)] += component;
+        subtract_shifted_psf(residual, psf, (peak_x, peak_y), component);
+        components.push(HogbomPlaneComponent {
+            position: (peak_x, peak_y),
+            peak_value_jy_per_beam: peak_value,
+            component_jy: component,
+        });
+    }
+    let actual_updates = components.len();
+    let stopped_by_limit = actual_updates >= cycle_component_budget && cycle_component_budget > 0;
+    let reported_updates =
+        if clean.hogbom_iteration_mode == HogbomIterationMode::CasaInclusive && stopped_by_limit {
+            actual_updates.min(control.cycle_limit)
+        } else {
+            actual_updates
+        };
+    HogbomPlaneMinorCycleOutcome {
+        actual_updates,
+        reported_updates,
+        components,
     }
 }
 
@@ -25964,6 +27215,45 @@ fn hclean_peak_location_masked(
     peak_location_masked_with_relative_tolerance(image, mask, 0.0)
 }
 
+/// Return the finite masked peak location using a relative tie tolerance.
+pub fn clean_peak_location_masked_with_relative_tolerance(
+    image: &Array2<f32>,
+    mask: Option<&Array2<bool>>,
+    relative_tolerance: f32,
+) -> Option<((usize, usize), f32)> {
+    finite_peak_location_masked_with_relative_tolerance(image, mask, relative_tolerance)
+}
+
+fn finite_peak_location_masked_with_relative_tolerance(
+    image: &Array2<f32>,
+    mask: Option<&Array2<bool>>,
+    relative_tolerance: f32,
+) -> Option<((usize, usize), f32)> {
+    let (nx, ny) = image.dim();
+    let mut best = None;
+    for y in 0..ny {
+        for x in 0..nx {
+            if mask.is_some_and(|current| !current[(x, y)]) {
+                continue;
+            }
+            let value = image[(x, y)];
+            if !value.is_finite() {
+                continue;
+            }
+            match best {
+                None => best = Some(((x, y), value)),
+                Some((_, best_value))
+                    if value.abs() > best_value.abs() * (1.0 + relative_tolerance) =>
+                {
+                    best = Some(((x, y), value));
+                }
+                _ => {}
+            }
+        }
+    }
+    best
+}
+
 fn peak_location_masked_with_relative_tolerance(
     image: &Array2<f32>,
     mask: Option<&Array2<bool>>,
@@ -26054,7 +27344,9 @@ fn peak_location_masked_in_bounds_zero_tolerance(
     best.map(|(position, value, _)| (position, value))
 }
 
-fn compute_cycle_threshold(
+/// Compute the Cotton-Schwab minor-cycle threshold from the current peak and
+/// PSF sidelobe estimate.
+pub fn clean_cycle_threshold(
     peak_residual_jy_per_beam: f32,
     max_psf_sidelobe_level: f32,
     clean: CleanConfig,
@@ -26558,11 +27850,16 @@ fn expand_scalar(value: f32) -> Array4<f32> {
 #[cfg(test)]
 #[allow(clippy::excessive_precision, clippy::useless_vec)]
 mod tests {
+    use casa_coordinates::{
+        Coordinate, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
+    };
     use casa_test_support::gridder_interop::{
         cpp_convolve_gridder_make_model_residual_image_2d,
         cpp_convolve_gridder_predict_visibility_2d,
     };
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::FrequencyRef;
     #[cfg(all(target_os = "macos", not(coverage)))]
     use ndarray::ShapeBuilder;
     use ndarray::{Array2, Array4, s};
@@ -26571,12 +27868,13 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        ClarkPsfPatch, CleanConfig, CleanStopReason, CompatibilityMode,
+        ClarkPsfPatch, CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMode,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
-        ImageGeometry, ImageWindow, ImagingError, ImagingRequest, ImagingStageTimings,
-        MosaicGridderConfig, MtmfsRequest, MultiscaleCandidate, ParallelHandBatch, PlaneStokes,
-        PrimaryBeamModel, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
+        HogbomPlaneMinorCycleControl, ImageGeometry, ImageWindow, ImagingError, ImagingRequest,
+        ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, MultiscaleCandidate,
+        ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
+        PrimaryBeamWeightSample, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
         StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
         StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
@@ -26585,22 +27883,29 @@ mod tests {
         WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
         apply_weighting, build_direct_components, build_direct_pixel_coordinates,
+        build_image_coordinate_system, build_image_spectral_coordinate,
         build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
-        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
+        clean_cycle_threshold, clean_mask_image_product, clean_mask_pixel_count,
+        collapse_primary_beam_weight_samples, compute_dirty_psf_and_residual_standard, compute_psf,
         compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
+        dirty_clean_config, extract_mfs_plane_product, kernel_nonzero_support,
+        make_multiscale_kernel, mean_stddev, mfs_image_product_peak_abs_masked,
         minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
-        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
+        mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
+        mosaic_projector_sampling, normalized_weighted_primary_beam_product,
         parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, peak_location_masked_in_window,
+        peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
-        primary_beam_voltage_pattern_for_offsets, run_clark_cotton_schwab, run_clark_minor_cycle,
-        run_hogbom_minor_cycle, run_imaging, run_imaging_owned,
+        primary_beam_correct_alpha_product, primary_beam_correct_image_product,
+        primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
+        primary_beam_support_mask_product, primary_beam_voltage_pattern_for_offsets,
+        run_clark_cotton_schwab, run_clark_minor_cycle, run_hogbom_minor_cycle,
+        run_hogbom_plane_minor_cycle, run_imaging, run_imaging_owned,
         run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
-        run_standard_mfs_weighted_streaming_with_execution_config,
+        run_standard_mfs_weighted_streaming_with_execution_config, single_plane_image_product,
         skip_standard_mfs_prepared_clean_plane_with_cycle_threshold, tolerant_clean_stop_reason,
         trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
@@ -26623,6 +27928,361 @@ mod tests {
         assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
         assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    fn phase_rotate_visibility_applies_geometric_phasor() {
+        let visibility = Complex32::new(1.0, 0.0);
+
+        assert_eq!(phase_rotate_visibility(visibility, 0.0, 1.0e9), visibility);
+        assert_eq!(phase_rotate_visibility(visibility, 1.0, 0.0), visibility);
+
+        let frequency_hz = 1.0e9;
+        let quarter_turn_shift_m = super::SPEED_OF_LIGHT_M_PER_S / (4.0 * frequency_hz);
+        let rotated = phase_rotate_visibility(visibility, quarter_turn_shift_m, frequency_hz);
+        assert!(rotated.re.abs() < 1.0e-6, "{rotated:?}");
+        assert!((rotated.im + 1.0).abs() < 1.0e-6, "{rotated:?}");
+    }
+
+    #[test]
+    fn hogbom_plane_minor_cycle_updates_model_and_records_components() {
+        let mut model = Array2::<f32>::zeros((3, 3));
+        let mut residual = Array2::<f32>::zeros((3, 3));
+        residual[(1, 1)] = 4.0;
+        residual[(2, 2)] = f32::NAN;
+        let mut psf = Array2::<f32>::zeros((3, 3));
+        psf[(1, 1)] = 1.0;
+        let mask = Array2::from_elem((3, 3), true);
+        let clean = CleanConfig {
+            niter: 1,
+            major_cycle_limit: None,
+            gain: 0.5,
+            threshold_jy_per_beam: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 1,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.05,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+        };
+
+        let outcome = run_hogbom_plane_minor_cycle(
+            &mut model,
+            &mut residual,
+            &psf,
+            Some(&mask),
+            HogbomPlaneMinorCycleControl::new(clean, 1, 0.1, 1.0e-3),
+        );
+
+        assert_eq!(outcome.actual_updates(), 2);
+        assert_eq!(outcome.reported_updates(), 1);
+        assert_eq!(outcome.components()[0].position(), (1, 1));
+        assert_eq!(outcome.components()[0].peak_value_jy_per_beam(), 4.0);
+        assert_eq!(outcome.components()[0].component_jy(), 2.0);
+        assert_eq!(model[(1, 1)], 3.0);
+        assert_eq!(residual[(1, 1)], 1.0);
+    }
+
+    #[test]
+    fn image_coordinate_system_builds_casa_axis_record() {
+        let coords = build_image_coordinate_system(
+            64,
+            [1.0, 0.5],
+            1.5,
+            FrequencyRef::LSRK,
+            DirectionRef::J2000,
+            PlaneStokes::I,
+            &[1.4e9, 1.401e9],
+            None,
+            Some(1.420_405_751e9),
+        );
+
+        assert_eq!(coords.n_coordinates(), 3);
+        assert_eq!(coords.n_pixel_axes(), 4);
+        let record = coords.to_record();
+        assert!(record.get("coordinate0").is_some());
+        assert!(record.get("coordinate1").is_some());
+        assert!(record.get("coordinate2").is_some());
+    }
+
+    #[test]
+    fn cube_spectral_coordinate_preserves_requested_rest_frequency() {
+        let coord = build_image_spectral_coordinate(
+            FrequencyRef::LSRK,
+            &[372_672_490_000.0, 372_671_868_449.0],
+            None,
+            Some(372_672_490_000.0),
+        );
+
+        assert!((coord.rest_frequency() - 372_672_490_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn mfs_spectral_coordinate_can_record_selected_bandwidth_delta() {
+        let coord = build_image_spectral_coordinate(
+            FrequencyRef::LSRK,
+            &[1.578_964_191_647_556_8e9],
+            Some(647_988_661.229_352_2),
+            None,
+        );
+
+        assert_eq!(coord.reference_value(), vec![1.578_964_191_647_556_8e9]);
+        assert_eq!(coord.increment(), vec![647_988_661.229_352_2]);
+        assert_eq!(coord.rest_frequency(), 1.578_964_191_647_556_8e9);
+    }
+
+    fn pb_test_coordinate_system(cell_arcsec: f64) -> CoordinateSystem {
+        let cell_rad = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
+        let mut coords = CoordinateSystem::new();
+        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-cell_rad, cell_rad],
+            [2.0, 2.0],
+        )));
+        coords
+    }
+
+    #[test]
+    fn primary_beam_products_apply_cutoff() {
+        let weight = Array4::from_shape_vec((2, 2, 1, 1), vec![4.0, 1.0, 0.04, 0.0]).unwrap();
+        let pb = mosaic_primary_beam_product_from_weight_product(&weight);
+        assert_eq!(pb[[0, 0, 0, 0]], 1.0);
+        assert_eq!(pb[[0, 1, 0, 0]], 0.5);
+        assert!((pb[[1, 0, 0, 0]] - 0.1).abs() < 1.0e-6);
+        assert_eq!(pb[[1, 1, 0, 0]], 0.0);
+
+        let limited_pb = primary_beam_limited_product(&pb, 0.1);
+        assert_eq!(limited_pb[[0, 0, 0, 0]], 1.0);
+        assert_eq!(limited_pb[[0, 1, 0, 0]], 0.5);
+        assert_eq!(limited_pb[[1, 0, 0, 0]], 0.0);
+        assert_eq!(limited_pb[[1, 1, 0, 0]], 0.0);
+
+        let image = Array4::from_shape_vec((2, 2, 1, 1), vec![2.0, 2.0, 2.0, 2.0]).unwrap();
+        let corrected = primary_beam_correct_image_product(&image, &pb, 0.1);
+        assert_eq!(corrected[[0, 0, 0, 0]], 2.0);
+        assert_eq!(corrected[[0, 1, 0, 0]], 4.0);
+        assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
+        assert_eq!(corrected[[1, 1, 0, 0]], 0.0);
+        let negative_limit_corrected = primary_beam_correct_image_product(&image, &pb, -0.01);
+        assert_eq!(negative_limit_corrected[[0, 0, 0, 0]], 2.0);
+        assert_eq!(negative_limit_corrected[[1, 1, 0, 0]], 0.0);
+
+        let support = primary_beam_support_mask_product(&pb, 0.1);
+        assert!(support[[0, 0, 0, 0]]);
+        assert!(support[[0, 1, 0, 0]]);
+        assert!(!support[[1, 0, 0, 0]]);
+        assert!(!support[[1, 1, 0, 0]]);
+    }
+
+    #[test]
+    fn clean_mask_product_repeats_plane_and_preserves_cube_channels() {
+        let plane = Array2::from_shape_vec((2, 2), vec![true, false, false, true]).unwrap();
+        let product = clean_mask_image_product(CleanMaskProductRequest::Plane {
+            mask: &plane,
+            channel_count: 2,
+        });
+
+        assert_eq!(product.shape(), &[2, 2, 1, 2]);
+        assert_eq!(product[[0, 0, 0, 0]], 1.0);
+        assert_eq!(product[[0, 1, 0, 0]], 0.0);
+        assert_eq!(product[[1, 1, 0, 1]], 1.0);
+
+        let cube = Array4::from_shape_vec((1, 1, 1, 2), vec![true, false]).unwrap();
+        let product = clean_mask_image_product(CleanMaskProductRequest::Cube { mask: &cube });
+
+        assert_eq!(product[[0, 0, 0, 0]], 1.0);
+        assert_eq!(product[[0, 0, 0, 1]], 0.0);
+    }
+
+    #[test]
+    fn mfs_product_plane_helpers_preserve_plane_and_mask_semantics() {
+        let plane = Array2::from_shape_vec((2, 2), vec![1.0, -4.0, 3.0, 2.0]).unwrap();
+        let product = single_plane_image_product(&plane);
+
+        assert_eq!(product.shape(), &[2, 2, 1, 1]);
+        assert_eq!(extract_mfs_plane_product(&product), plane);
+
+        let clean_mask = Array2::from_shape_vec((2, 2), vec![true, false, true, false]).unwrap();
+        assert_eq!(clean_mask_pixel_count(&clean_mask), 2);
+        assert_eq!(
+            mfs_image_product_peak_abs_masked(&product, Some(&clean_mask), 0.0),
+            3.0
+        );
+    }
+
+    #[test]
+    fn primary_beam_output_bundle_preserves_cutoff_and_pbcor_semantics() {
+        let pb = Array4::from_shape_vec((2, 2, 1, 1), vec![1.0, 0.5, 0.1, 0.0]).unwrap();
+        let image = Array4::from_elem((2, 2, 1, 1), 2.0);
+        let (limited_pb, support_mask, image_pbcor) =
+            primary_beam_output_products(Some(&image), &pb, 0.1, true);
+
+        assert_eq!(limited_pb[[0, 0, 0, 0]], 1.0);
+        assert_eq!(limited_pb[[0, 1, 0, 0]], 0.5);
+        assert_eq!(limited_pb[[1, 0, 0, 0]], 0.0);
+        assert!(support_mask[[0, 0, 0, 0]]);
+        assert!(!support_mask[[1, 0, 0, 0]]);
+        let corrected = image_pbcor.unwrap();
+        assert_eq!(corrected[[0, 0, 0, 0]], 2.0);
+        assert_eq!(corrected[[0, 1, 0, 0]], 4.0);
+        assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
+
+        let (negative_limit, _, _) = primary_beam_output_products(Some(&image), &pb, -0.01, true);
+        assert_eq!(negative_limit[[1, 0, 0, 0]], 0.1);
+    }
+
+    #[test]
+    fn primary_beam_alpha_correction_uses_absolute_cutoff() {
+        let alpha = Array4::from_elem((2, 1, 1, 1), 3.0);
+        let pb_alpha = Array4::from_shape_vec((2, 1, 1, 1), vec![0.25, 0.5]).unwrap();
+        let pb = Array4::from_shape_vec((2, 1, 1, 1), vec![0.2, 0.005]).unwrap();
+
+        let corrected = primary_beam_correct_alpha_product(&alpha, &pb_alpha, &pb, -0.01);
+
+        assert_eq!(corrected[[0, 0, 0, 0]], 2.75);
+        assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
+    }
+
+    #[test]
+    fn primary_beam_single_field_product_uses_image_coordinates() {
+        let coords = pb_test_coordinate_system(8.0);
+        let center_world = coords.to_world(&[2.0, 2.0]).unwrap();
+
+        let pb = primary_beam_product(PrimaryBeamProductRequest::SingleField {
+            coords: &coords,
+            shape: (5, 5, 1, 1),
+            channel_frequencies_hz: &[1.5e9],
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        })
+        .unwrap();
+        let pb_alpha = primary_beam_product(PrimaryBeamProductRequest::Alpha {
+            coords: &coords,
+            shape: (5, 5, 1, 1),
+            reference_frequency_hz: 1.5e9,
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        })
+        .unwrap();
+
+        assert!(pb[[2, 2, 0, 0]] > 0.999);
+        assert!(pb[[0, 0, 0, 0]] > 0.0);
+        assert!(pb[[0, 0, 0, 0]] < pb[[2, 2, 0, 0]]);
+        assert!(pb_alpha[[0, 0, 0, 0]] < 0.0);
+        assert_eq!(
+            primary_beam_limited_product(&pb, -0.01)[[0, 0, 0, 0]],
+            pb[[0, 0, 0, 0]]
+        );
+    }
+
+    #[test]
+    fn weighted_primary_beam_validation_preserves_image_spectral_frequency() {
+        let coords = pb_test_coordinate_system(800.0);
+        let center_world = coords.to_world(&[2.0, 2.0]).unwrap();
+
+        let reference = primary_beam_product(PrimaryBeamProductRequest::SingleField {
+            coords: &coords,
+            shape: (5, 5, 1, 1),
+            channel_frequencies_hz: &[1.5e9],
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        })
+        .unwrap();
+        let selected = primary_beam_product(PrimaryBeamProductRequest::WeightedSingleField {
+            coords: &coords,
+            shape: (5, 5, 1, 1),
+            channel_frequencies_hz: &[1.5e9],
+            samples: &[
+                PrimaryBeamWeightSample {
+                    frequency_hz: 1.0e9,
+                    weight: 100.0,
+                },
+                PrimaryBeamWeightSample {
+                    frequency_hz: 2.0e9,
+                    weight: 1.0,
+                },
+            ],
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        })
+        .unwrap();
+
+        assert_eq!(selected, reference);
+    }
+
+    #[test]
+    fn normalized_weighted_primary_beam_averages_frequency_power() {
+        let coords = pb_test_coordinate_system(800.0);
+        let center_world = coords.to_world(&[2.0, 2.0]).unwrap();
+        let context = super::PrimaryBeamProductContext {
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        };
+
+        let low = primary_beam_product(PrimaryBeamProductRequest::SingleField {
+            coords: &coords,
+            shape: (5, 5, 1, 1),
+            channel_frequencies_hz: &[1.0e9],
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        })
+        .unwrap();
+        let high = primary_beam_product(PrimaryBeamProductRequest::SingleField {
+            coords: &coords,
+            shape: (5, 5, 1, 1),
+            channel_frequencies_hz: &[2.0e9],
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        })
+        .unwrap();
+        let weighted = normalized_weighted_primary_beam_product(
+            &coords,
+            (5, 5, 1, 1),
+            &[
+                PrimaryBeamWeightSample {
+                    frequency_hz: 1.0e9,
+                    weight: 1.0,
+                },
+                PrimaryBeamWeightSample {
+                    frequency_hz: 2.0e9,
+                    weight: 1.0,
+                },
+            ],
+            context,
+        )
+        .unwrap();
+
+        assert!(weighted[[2, 2, 0, 0]] > 0.999);
+        let weighted_power = weighted[[0, 0, 0, 0]].powi(2);
+        assert!(weighted_power < low[[0, 0, 0, 0]]);
+        assert!(weighted_power > high[[0, 0, 0, 0]]);
+    }
+
+    #[test]
+    fn weighted_primary_beam_collapses_repeated_frequencies() {
+        let collapsed = collapse_primary_beam_weight_samples(&[
+            PrimaryBeamWeightSample {
+                frequency_hz: 1.0e9,
+                weight: 2.0,
+            },
+            PrimaryBeamWeightSample {
+                frequency_hz: 1.0e9,
+                weight: 3.0,
+            },
+            PrimaryBeamWeightSample {
+                frequency_hz: 2.0e9,
+                weight: 4.0,
+            },
+        ]);
+
+        assert_eq!(collapsed.len(), 2);
+        assert_eq!(collapsed[0].frequency_hz, 1.0e9);
+        assert_eq!(collapsed[0].weight, 5.0);
+        assert_eq!(collapsed[1].frequency_hz, 2.0e9);
+        assert_eq!(collapsed[1].weight, 4.0);
     }
 
     #[test]
@@ -32636,7 +34296,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_cycle_threshold_uses_psf_fraction_only() {
+    fn clean_cycle_threshold_uses_psf_fraction_only() {
         let clean = CleanConfig {
             niter: 10,
             major_cycle_limit: None,
@@ -32650,7 +34310,7 @@ mod tests {
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
         };
-        let cycle_threshold = compute_cycle_threshold(10.0, 0.02, clean);
+        let cycle_threshold = clean_cycle_threshold(10.0, 0.02, clean);
         assert_eq!(cycle_threshold, 0.5);
     }
 
