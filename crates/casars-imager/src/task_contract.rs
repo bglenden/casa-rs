@@ -27,7 +27,7 @@ use serde_json::Value as JsonValue;
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
     RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, command_schema,
-    run_from_config,
+    run_from_request,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -857,8 +857,11 @@ pub struct ImagerRunTaskRequest {
     #[serde(default)]
     pub weighting: ImagerWeighting,
     /// CASA-style `perchanweightdensity` toggle for spectral cubes.
+    ///
+    /// `None` means use the same mode-dependent default as the CLI: true for
+    /// `specmode='cube'` and false otherwise.
     #[serde(default)]
-    pub per_channel_weight_density: bool,
+    pub per_channel_weight_density: Option<bool>,
     /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
     #[serde(default)]
     pub use_pointing: bool,
@@ -940,6 +943,13 @@ pub struct ImagerRunTaskRequest {
     /// Requested `w`-term handling mode.
     #[serde(default)]
     pub w_term_mode: ImagerWTermMode,
+    /// Explicit CASA-style `gridder='standard'` request.
+    ///
+    /// The standard-MFS frontend can otherwise infer mosaic metadata from FIELD,
+    /// phase-center, and POINTING-table shape. This flag preserves the explicit
+    /// user request through the canonical JSON task contract.
+    #[serde(default)]
+    pub force_standard_gridder: bool,
     /// Optional explicit `wproject` plane budget.
     #[serde(default)]
     pub w_project_planes: Option<usize>,
@@ -1005,7 +1015,10 @@ impl ImagerRunTaskRequest {
             phasecenter_field: config.phasecenter_field,
             phasecenter: config.phasecenter.clone(),
             ddid: config.ddid,
-            spw_selector: config.spw_selector.clone(),
+            spw_selector: config
+                .spw_selector
+                .clone()
+                .or_else(|| config.spw.map(|spw| spw.to_string())),
             channel_start: config.channel_start,
             channel_count: config.channel_count,
             data_column: config.datacolumn.clone(),
@@ -1021,7 +1034,7 @@ impl ImagerRunTaskRequest {
             spectral_mode: config.spectral_mode.into(),
             cube_axis: (&config.cube_axis).into(),
             weighting: config.weighting.into(),
-            per_channel_weight_density: config.per_channel_weight_density,
+            per_channel_weight_density: Some(config.per_channel_weight_density),
             use_pointing: config.use_pointing,
             uv_taper: config.uv_taper.map(Into::into),
             restoring_beam_mode: config.restoring_beam_mode.into(),
@@ -1049,6 +1062,7 @@ impl ImagerRunTaskRequest {
             mask_boxes: config.mask_boxes.clone(),
             mask_image: config.mask_image.clone(),
             w_term_mode: config.w_term_mode.into(),
+            force_standard_gridder: config.force_standard_gridder,
             w_project_planes: config.w_project_planes,
             dirty_only: config.dirty_only,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
@@ -1152,7 +1166,9 @@ impl ImagerRunTaskRequest {
             spectral_mode,
             cube_axis: self.cube_axis.clone().into_runtime(spectral_mode)?,
             weighting: self.weighting.clone().into(),
-            per_channel_weight_density: self.per_channel_weight_density,
+            per_channel_weight_density: self
+                .per_channel_weight_density
+                .unwrap_or_else(|| default_request_per_channel_weight_density(self.spectral_mode)),
             use_pointing: self.use_pointing,
             uv_taper: self.uv_taper.map(Into::into),
             restoring_beam_mode: self.restoring_beam_mode.into(),
@@ -1180,7 +1196,7 @@ impl ImagerRunTaskRequest {
             mask_boxes: self.mask_boxes.clone(),
             mask_image: self.mask_image.clone(),
             w_term_mode: self.w_term_mode.into(),
-            force_standard_gridder: false,
+            force_standard_gridder: self.force_standard_gridder,
             w_project_planes: self.w_project_planes,
             dirty_only: self.dirty_only,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
@@ -1203,7 +1219,7 @@ impl ImagerRunTaskRequest {
 
     /// Execute the imaging task and return the canonical run result.
     pub fn execute(&self) -> Result<ImagerRunTaskResult, String> {
-        let summary = run_from_config(&self.to_cli_config()?)?;
+        let summary = run_from_request(self)?;
         Ok(ImagerRunTaskResult::from_run(self.clone(), &summary))
     }
 
@@ -1611,7 +1627,7 @@ fn default_cyclefactor() -> f32 {
 }
 
 fn default_min_psf_fraction() -> f32 {
-    0.1
+    0.05
 }
 
 fn default_max_psf_fraction() -> f32 {
@@ -1620,6 +1636,10 @@ fn default_max_psf_fraction() -> f32 {
 
 fn default_write_preview_pngs() -> bool {
     true
+}
+
+fn default_request_per_channel_weight_density(spectral_mode: ImagerSpectralMode) -> bool {
+    matches!(spectral_mode, ImagerSpectralMode::Cube)
 }
 
 fn core_stage_timings(timings: &casa_imaging::ImagingStageTimings) -> ImagerCoreStageTimings {
@@ -1971,6 +1991,8 @@ mod tests {
             OsString::from("1,2,10,20"),
             OsString::from("--mask-image"),
             OsString::from("demo.mask"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
             OsString::from("--wterm"),
             OsString::from("wproject"),
             OsString::from("--wprojplanes"),
@@ -2000,10 +2022,35 @@ mod tests {
         assert_eq!(restored.use_mask, crate::CleanMaskMode::AutoMultiThreshold);
         assert_eq!(restored.auto_mask.sidelobe_threshold, 2.0);
         assert_eq!(restored.auto_mask.noise_threshold, 4.25);
+        assert!(restored.force_standard_gridder);
         assert_eq!(restored.w_term_mode, WTermMode::WProject);
         assert_eq!(restored.w_project_planes, Some(8));
         assert!(restored.dirty_only);
         assert!(!restored.write_preview_pngs);
+    }
+
+    #[test]
+    fn run_request_preserves_legacy_numeric_spw_without_selector() {
+        let mut config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+        ])
+        .unwrap();
+        config.spw = Some(3);
+        config.spw_selector = None;
+
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(request.spw_selector.as_deref(), Some("3"));
+
+        let restored = request.to_cli_config().unwrap();
+        assert_eq!(restored.spw, Some(3));
+        assert_eq!(restored.spw_selector.as_deref(), Some("3"));
     }
 
     #[test]
@@ -2028,7 +2075,7 @@ mod tests {
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
             weighting: Default::default(),
-            per_channel_weight_density: false,
+            per_channel_weight_density: None,
             use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
@@ -2048,7 +2095,7 @@ mod tests {
             write_pb: false,
             minor_cycle_length: 1000,
             cyclefactor: 1.0,
-            min_psf_fraction: 0.1,
+            min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             use_mask: ImagerCleanMaskMode::User,
@@ -2056,6 +2103,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -2078,7 +2126,14 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Natural);
         assert_eq!(config.deconvolver, Deconvolver::Hogbom);
         assert_eq!(config.spectral_mode, SpectralMode::Mfs);
+        assert!(!config.per_channel_weight_density);
         assert!(!config.use_pointing);
+
+        let cube = ImagerRunTaskRequest {
+            spectral_mode: ImagerSpectralMode::Cube,
+            ..request
+        };
+        assert!(cube.to_cli_config().unwrap().per_channel_weight_density);
     }
 
     #[test]
@@ -2103,7 +2158,7 @@ mod tests {
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
             weighting: ImagerWeighting::Briggs { robust: 0.5 },
-            per_channel_weight_density: false,
+            per_channel_weight_density: Some(false),
             use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
@@ -2123,7 +2178,7 @@ mod tests {
             write_pb: false,
             minor_cycle_length: 1000,
             cyclefactor: 1.0,
-            min_psf_fraction: 0.1,
+            min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             use_mask: ImagerCleanMaskMode::User,
@@ -2131,6 +2186,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -2361,7 +2417,7 @@ mod tests {
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
             weighting: Default::default(),
-            per_channel_weight_density: false,
+            per_channel_weight_density: Some(false),
             use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
@@ -2381,7 +2437,7 @@ mod tests {
             write_pb: false,
             minor_cycle_length: 1000,
             cyclefactor: 1.0,
-            min_psf_fraction: 0.1,
+            min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             use_mask: ImagerCleanMaskMode::User,
@@ -2389,6 +2445,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -2536,7 +2593,7 @@ mod tests {
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
             weighting: Default::default(),
-            per_channel_weight_density: false,
+            per_channel_weight_density: Some(false),
             use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
@@ -2556,7 +2613,7 @@ mod tests {
             write_pb: false,
             minor_cycle_length: 1000,
             cyclefactor: 1.0,
-            min_psf_fraction: 0.1,
+            min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             use_mask: ImagerCleanMaskMode::User,
@@ -2564,6 +2621,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
@@ -2696,7 +2754,7 @@ mod tests {
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
             weighting: Default::default(),
-            per_channel_weight_density: false,
+            per_channel_weight_density: Some(false),
             use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
@@ -2724,6 +2782,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,

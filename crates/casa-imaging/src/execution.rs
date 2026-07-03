@@ -20,14 +20,14 @@ use num_complex::{Complex32, Complex64};
 use crate::{
     ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsPairCollapseTransform,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutedSample, StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
     StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization, VisibilityBatch,
     gridder::{
         PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
         StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
     },
     profile,
-    types::StandardMfsRoutedSampleRunBlock,
+    types::{StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock},
 };
 #[cfg(all(target_os = "macos", not(coverage)))]
 use crate::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
@@ -10501,7 +10501,7 @@ struct MetalInitialDirtyGroupedPendingDispatch {
 /// replaying and repacking the same routed visibility runs for initial dirty
 /// and residual-refresh stages.
 #[derive(Debug, Default)]
-pub struct StandardMfsMetalGroupedInputCache {
+pub(crate) struct StandardMfsMetalGroupedInputCache {
     key: Option<MetalResidualGroupedInputCacheKey>,
     chunks: Vec<MetalResidualGroupedCachedChunk>,
     accumulation: StandardMfsTiledResidualAccumulation,
@@ -10544,7 +10544,7 @@ impl StandardMfsMetalGroupedInputCache {
 /// is already streaming the density pass. Finalization is delayed until the
 /// streaming weighting plan has computed Uniform/Briggs density statistics.
 #[cfg(all(target_os = "macos", not(coverage)))]
-pub struct StandardMfsMetalGroupedInputCachePrefill {
+pub(crate) struct StandardMfsMetalGroupedInputCachePrefill {
     gridder: StandardGridder,
     backend: MetalDirtyBackend,
     partition: MetalResidualGroupedTilePartition,
@@ -10592,8 +10592,7 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         )
     }
 
-    /// Append one borrowed routed row/channel span without allocating a run.
-    pub fn append_row_run(
+    fn append_row_run(
         &mut self,
         row: &StandardMfsRoutedVisibilityRow,
         source_slot_range: Range<usize>,
@@ -10855,12 +10854,12 @@ fn grouped_row_run_params_from_fill_and_chunk(
 #[cfg(any(not(target_os = "macos"), coverage))]
 /// Placeholder grouped input cache on platforms without Metal.
 #[derive(Debug, Default)]
-pub struct StandardMfsMetalGroupedInputCache;
+pub(crate) struct StandardMfsMetalGroupedInputCache;
 
 #[cfg(any(not(target_os = "macos"), coverage))]
 /// Placeholder grouped input cache prefill on platforms without Metal.
 #[derive(Debug)]
-pub struct StandardMfsMetalGroupedInputCachePrefill;
+pub(crate) struct StandardMfsMetalGroupedInputCachePrefill;
 
 #[cfg(any(not(target_os = "macos"), coverage))]
 impl StandardMfsMetalGroupedInputCachePrefill {
@@ -10875,18 +10874,6 @@ impl StandardMfsMetalGroupedInputCachePrefill {
     pub fn append_run(
         &mut self,
         _routed_run: &StandardMfsRoutedVisibilityRun,
-    ) -> Result<(), ImagingError> {
-        Err(ImagingError::Unsupported(
-            "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
-        ))
-    }
-
-    /// Return an unsupported error on non-macOS platforms.
-    pub fn append_row_run(
-        &mut self,
-        _row: &StandardMfsRoutedVisibilityRow,
-        _source_slot_range: Range<usize>,
-        _tap_centers: &[[u32; 2]],
     ) -> Result<(), ImagingError> {
         Err(ImagingError::Unsupported(
             "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),

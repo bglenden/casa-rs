@@ -89,6 +89,10 @@ RUST_STAGE_FIELDS = {
     "restore",
     "total",
 }
+RUST_STAGE_FIELD_ALIASES = {
+    "prepared_source_read": "get_ms_values_into_processing_buffer",
+    "prepared_source_prepare": "prepare_processing_buffer",
+}
 CASA_STAGE_FIELDS = {
     "parameter_setup",
     "construct_imager",
@@ -1888,17 +1892,17 @@ def build_rust_stage_breakdown(plan: dict[str, Any], stages: dict[str, float]) -
             ["prepare_plane_input"],
             "Visibility adaptation before entering the imaging core.",
         ),
-        "standard_mfs_buffer_load": stage_category(
+        "standard_mfs_source_read": stage_category(
             stages,
             ["get_ms_values_into_processing_buffer"],
-            "Owned standard-MFS processing-buffer loads from MS and table columns.",
+            "Prepared source reads from MS and table columns. Accepts the legacy raw timer key.",
             skipped="get_ms_values_into_processing_buffer" not in stages,
             skip_reason="not reported for this preparation path",
         ),
-        "standard_mfs_buffer_prepare": stage_category(
+        "standard_mfs_source_prepare": stage_category(
             stages,
             ["prepare_processing_buffer"],
-            "Standard-MFS processing-buffer adaptation into imaging batches.",
+            "Prepared-source adaptation into imaging batches.",
             skipped="prepare_processing_buffer" not in stages,
             skip_reason="not reported for this preparation path",
         ),
@@ -2237,6 +2241,8 @@ def parse_stage_section(text: str, heading: str) -> dict[str, float]:
     stages: dict[str, float] = {}
     for line in lines:
         for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
+            if heading == "Rust stage medians":
+                name = RUST_STAGE_FIELD_ALIASES.get(name, name)
             if heading == "Rust stage medians" and name not in RUST_STAGE_FIELDS:
                 continue
             if (

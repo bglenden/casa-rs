@@ -9,7 +9,9 @@ use std::{
     fmt,
 };
 
-use crate::imaging_worker_plan::{ImagingWorkerPlanInput, modeled_worker_runtime_cost_units};
+use casa_imaging::{
+    ImagingWorkerPlanInput, modeled_worker_runtime_cost_units, plan_imaging_worker_count,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
@@ -1933,10 +1935,7 @@ pub(crate) fn plan_spectral_memory(
         visibility_cache_bytes: best.visibility_cache_bytes,
         visibility_cache_source_channels: best.visibility_cache_source_channels,
         worker_count: best.worker_count,
-        worker_model: crate::imaging_worker_plan::plan_imaging_worker_count(
-            input.worker_plan_input,
-        )
-        .model,
+        worker_model: plan_imaging_worker_count(input.worker_plan_input).model,
         modeled_worker_runtime_cost_units: best.modeled_worker_runtime_cost_units,
         backend: "cpu_slab",
         memory_target_bytes: input.memory_target_bytes,
@@ -2543,7 +2542,7 @@ impl fmt::Display for SpectralPlaneDescriptorKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::imaging_worker_plan::{ImagingWorkerBackend, ImagingWorkerParallelism};
+    use casa_imaging::{ImagingWorkerBackend, ImagingWorkerParallelism};
 
     #[test]
     fn observability_log_line_uses_stable_labels() {

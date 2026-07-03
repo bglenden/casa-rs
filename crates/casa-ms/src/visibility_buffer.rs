@@ -5,12 +5,18 @@
 //! that want to reuse allocations across row blocks while reading only the
 //! source channels needed by a schedule candidate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use casa_tables::Table;
+use casa_imaging::{
+    GeometryRoutePlan, GridderRoutePlan, ImagingSourceBlockView, ModelRoutePlan,
+    PolarizationRoutePlan, SpectralRoutePlan, VisibilityBlockView, VisibilityComplexSamplesRef,
+    VisibilityFloatSamplesRef, VisibilitySourcePartition, VisibilitySourcePartitionId,
+    VisibilitySourceShape, WeightingRoutePlan,
+};
+use casa_tables::{RequiredScalarColumnValues, Table};
 use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType, ScalarValue};
 use ndarray::{Ix1, Ix2};
 use serde::Serialize;
@@ -106,6 +112,67 @@ impl VisibilityBufferRequest {
     }
 }
 
+/// Contiguous source-channel range read from channelized visibility columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisibilityChannelReadRange {
+    /// First source channel to read.
+    pub start: usize,
+    /// Number of source channels to read.
+    pub count: usize,
+}
+
+impl VisibilityChannelReadRange {
+    /// Create a contiguous source-channel read range.
+    pub fn new(start: usize, count: usize) -> Self {
+        Self { start, count }
+    }
+
+    /// Create a read range spanning a full source-channel axis.
+    pub fn full(channel_count: usize) -> Self {
+        Self {
+            start: 0,
+            count: channel_count,
+        }
+    }
+
+    /// Exclusive end of the read range.
+    pub fn end_exclusive(self) -> usize {
+        self.start.saturating_add(self.count)
+    }
+
+    /// Build a range when the provided channel indices are exactly contiguous.
+    pub fn from_contiguous_indices(indices: &[usize]) -> Option<Self> {
+        let &start = indices.first()?;
+        indices
+            .iter()
+            .enumerate()
+            .all(|(offset, &channel)| channel == start + offset)
+            .then_some(Self {
+                start,
+                count: indices.len(),
+            })
+    }
+
+    /// Build the smallest range covering the provided channel indices.
+    pub fn covering_indices<I>(indices: I) -> Option<Self>
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        let mut first_index = None::<usize>;
+        let mut last_index = None::<usize>;
+        for index in indices {
+            first_index = Some(first_index.map_or(index, |current| current.min(index)));
+            last_index = Some(last_index.map_or(index, |current| current.max(index)));
+        }
+        let start = first_index?;
+        let end = last_index.expect("first_index implies last_index");
+        Some(Self {
+            start,
+            count: end - start + 1,
+        })
+    }
+}
+
 /// Stable identity for a homogeneous MeasurementSet source partition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourcePartitionId(pub usize);
@@ -158,6 +225,174 @@ impl SourcePartition {
                 corr_count,
             },
         }
+    }
+
+    /// Convert this MeasurementSet partition into the imaging source contract.
+    pub fn to_visibility_source_partition(&self) -> VisibilitySourcePartition {
+        VisibilitySourcePartition {
+            id: VisibilitySourcePartitionId(self.id.0),
+            ms_id: self.ms_id,
+            data_desc_id: self.data_desc_id,
+            spectral_window_id: self.spw_id,
+            polarization_id: self.polarization_id,
+            shape: VisibilitySourceShape {
+                channel_count: self.shape.channel_count,
+                correlation_count: self.shape.corr_count,
+            },
+        }
+    }
+}
+
+/// Physical read plan for one homogeneous visibility block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibilityReadBlockPlan {
+    /// Homogeneous source partition represented by this block.
+    pub source_partition: SourcePartition,
+    /// Main-table row indices to read, in output order.
+    pub row_indices: Vec<usize>,
+    /// Source-channel range to read from channelized columns.
+    pub channel_range: VisibilityChannelReadRange,
+}
+
+impl VisibilityReadBlockPlan {
+    /// Create a block read plan from already-selected rows and channels.
+    pub fn new(
+        source_partition: SourcePartition,
+        row_indices: Vec<usize>,
+        channel_range: VisibilityChannelReadRange,
+    ) -> Self {
+        Self {
+            source_partition,
+            row_indices,
+            channel_range,
+        }
+    }
+
+    /// Convert this block plan into a visibility-buffer fill request.
+    pub fn to_buffer_request(
+        &self,
+        data_column: VisibilityDataColumn,
+        include_data: bool,
+    ) -> VisibilityBufferRequest {
+        let mut request = VisibilityBufferRequest::imaging(
+            data_column,
+            self.row_indices.clone(),
+            self.channel_range.start,
+            self.channel_range.count,
+        )
+        .with_source_partition(self.source_partition.clone());
+        request.include_data = include_data;
+        request
+    }
+}
+
+/// Request for physical MAIN-row selection before imaging-specific geometry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibilityRowSelectionRequest {
+    /// Mapping from `DATA_DESC_ID` to `(SPECTRAL_WINDOW_ID, POLARIZATION_ID)`.
+    pub(crate) ddid_to_spw_pol: Vec<Option<(usize, usize)>>,
+    /// DDIDs allowed by app-level selectors such as SPW.
+    pub(crate) allowed_ddids: Vec<bool>,
+    /// Optional explicit `DATA_DESC_ID` selector.
+    pub(crate) selected_ddid: Option<i32>,
+    /// Optional allowed `FIELD_ID` set.
+    pub(crate) allowed_field_ids: Option<BTreeSet<i32>>,
+    /// Include per-row `TIME` values in selected rows.
+    pub(crate) include_time: bool,
+    /// Track min/max selected row times.
+    pub(crate) track_time_bounds: bool,
+}
+
+impl VisibilityRowSelectionRequest {
+    /// Create a physical MAIN-row selection request.
+    pub fn new(
+        ddid_to_spw_pol: Vec<Option<(usize, usize)>>,
+        allowed_ddids: Vec<bool>,
+        selected_ddid: Option<i32>,
+        allowed_field_ids: Option<BTreeSet<i32>>,
+        include_time: bool,
+        track_time_bounds: bool,
+    ) -> Self {
+        Self {
+            ddid_to_spw_pol,
+            allowed_ddids,
+            selected_ddid,
+            allowed_field_ids,
+            include_time,
+            track_time_bounds,
+        }
+    }
+}
+
+/// One selected physical MAIN row with homogeneous DDID/SPW/polarization facts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilitySelectedMainRow {
+    /// MAIN table row index.
+    pub(crate) row_index: usize,
+    /// `FIELD_ID` as a non-negative index.
+    pub(crate) field_id: usize,
+    /// `DATA_DESC_ID` as a non-negative index.
+    pub(crate) data_desc_id: usize,
+    /// Spectral-window id resolved from `DATA_DESCRIPTION`.
+    pub(crate) spw_id: usize,
+    /// Polarization id resolved from `DATA_DESCRIPTION`.
+    pub(crate) polarization_id: usize,
+    /// Optional row time in MJD seconds.
+    pub(crate) time_mjd_seconds: Option<f64>,
+}
+
+impl VisibilitySelectedMainRow {
+    /// Return the row facts as copyable parts.
+    pub fn parts(&self) -> (usize, usize, usize, usize, usize, Option<f64>) {
+        (
+            self.row_index,
+            self.field_id,
+            self.data_desc_id,
+            self.spw_id,
+            self.polarization_id,
+            self.time_mjd_seconds,
+        )
+    }
+}
+
+/// Physical MAIN-row selection plan for visibility imaging reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibilityRowSelectionPlan {
+    /// Selected rows in MAIN-table order.
+    pub(crate) selected_rows: Vec<VisibilitySelectedMainRow>,
+    /// Homogeneous selected `DATA_DESC_ID`.
+    pub(crate) selected_ddid: usize,
+    /// Selected field ids.
+    pub(crate) selected_fields: BTreeSet<i32>,
+    /// Full `FLAG_ROW` column for selected-row fallback lookups.
+    pub(crate) flag_row: Vec<bool>,
+    /// First selected row time, when requested.
+    pub(crate) reference_row_time_mjd_sec: Option<f64>,
+    /// Selected row time bounds, when requested.
+    pub(crate) time_bounds_mjd_sec: Option<[f64; 2]>,
+}
+
+/// Decomposed physical row-selection facts.
+pub type VisibilityRowSelectionParts = (
+    Vec<VisibilitySelectedMainRow>,
+    usize,
+    BTreeSet<i32>,
+    Vec<bool>,
+    Option<f64>,
+    Option<[f64; 2]>,
+);
+
+impl VisibilityRowSelectionPlan {
+    /// Decompose this plan into the physical selection facts.
+    pub fn into_parts(self) -> VisibilityRowSelectionParts {
+        (
+            self.selected_rows,
+            self.selected_ddid,
+            self.selected_fields,
+            self.flag_row,
+            self.reference_row_time_mjd_sec,
+            self.time_bounds_mjd_sec,
+        )
     }
 }
 
@@ -214,6 +449,65 @@ impl VisibilityBuffer {
     /// Number of selected rows currently represented.
     pub fn row_count(&self) -> usize {
         self.row_indices.len()
+    }
+
+    /// Borrow this buffer as a validated neutral imaging visibility block.
+    pub fn as_visibility_block_view(&self) -> MsResult<VisibilityBlockView<'_>> {
+        let partition = self.source_partition.as_ref().ok_or_else(|| {
+            MsError::InvalidInput("visibility buffer requires a source partition".to_string())
+        })?;
+        let view = VisibilityBlockView {
+            partition: partition.to_visibility_source_partition(),
+            row_indices: &self.row_indices,
+            channel_start: self.channel_start,
+            channel_count: self.channel_count,
+            data: self
+                .data
+                .as_ref()
+                .map(VisibilityComplexSamples::as_visibility_ref),
+            flags: self.flags.as_deref(),
+            weights: self
+                .weights
+                .as_ref()
+                .map(VisibilityFloatSamples::as_visibility_ref),
+            weight_spectrum: self
+                .weight_spectrum
+                .as_ref()
+                .map(VisibilityFloatSamples::as_visibility_ref),
+            uvw_m: self.uvw.as_deref(),
+            flag_row: self.flag_row.as_deref(),
+            antenna1: self.antenna1.as_deref(),
+            antenna2: self.antenna2.as_deref(),
+            field_ids: self.field_ids.as_deref(),
+            time: self.time.as_deref(),
+        };
+        view.validate()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        Ok(view)
+    }
+
+    /// Borrow this buffer with imaging route plans attached.
+    pub fn as_imaging_source_block_view<'a>(
+        &'a self,
+        spectral: &'a SpectralRoutePlan,
+        polarization: &'a PolarizationRoutePlan,
+        geometry: &'a GeometryRoutePlan,
+        weighting: &'a WeightingRoutePlan,
+        gridder: &'a GridderRoutePlan,
+        model: Option<&'a ModelRoutePlan>,
+    ) -> MsResult<ImagingSourceBlockView<'a>> {
+        let view = ImagingSourceBlockView {
+            source: self.as_visibility_block_view()?,
+            spectral,
+            polarization,
+            geometry,
+            weighting,
+            gridder,
+            model,
+        };
+        view.validate()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        Ok(view)
     }
 
     fn clear_for_request(&mut self, request: &VisibilityBufferRequest) {
@@ -319,6 +613,14 @@ impl VisibilityComplexSamples {
         self.len() == 0
     }
 
+    /// Borrow samples through the neutral imaging visibility-block contract.
+    pub fn as_visibility_ref(&self) -> VisibilityComplexSamplesRef<'_> {
+        match self {
+            Self::Complex32(values) => VisibilityComplexSamplesRef::Complex32(values),
+            Self::Complex64(values) => VisibilityComplexSamplesRef::Complex64(values),
+        }
+    }
+
     fn capacity(&self) -> usize {
         match self {
             Self::Complex32(values) => values.capacity(),
@@ -355,6 +657,14 @@ impl VisibilityFloatSamples {
     /// Returns `true` when no real samples are stored.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Borrow samples through the neutral imaging visibility-block contract.
+    pub fn as_visibility_ref(&self) -> VisibilityFloatSamplesRef<'_> {
+        match self {
+            Self::Float32(values) => VisibilityFloatSamplesRef::Float32(values),
+            Self::Float64(values) => VisibilityFloatSamplesRef::Float64(values),
+        }
     }
 
     fn capacity(&self) -> usize {
@@ -462,6 +772,122 @@ pub struct VisibilityBufferAllocationReport {
 }
 
 impl MeasurementSet {
+    /// Select homogeneous physical MAIN rows for imaging visibility reads.
+    pub fn select_visibility_rows(
+        &self,
+        request: &VisibilityRowSelectionRequest,
+    ) -> MsResult<VisibilityRowSelectionPlan> {
+        let mut scalar_names = vec!["FIELD_ID", "DATA_DESC_ID", "FLAG_ROW"];
+        if request.include_time {
+            scalar_names.push("TIME");
+        }
+        let mut scalars = load_main_required_scalar_columns(self, &scalar_names)?;
+        let field_values = take_required_i32_main_column(&mut scalars, "FIELD_ID")?;
+        let ddid_values = take_required_i32_main_column(&mut scalars, "DATA_DESC_ID")?;
+        let flag_row = take_required_bool_main_column(&mut scalars, "FLAG_ROW")?;
+        let time_values = if request.include_time {
+            Some(take_required_f64_main_column(&mut scalars, "TIME")?)
+        } else {
+            None
+        };
+        let mut selected_fields = BTreeSet::<i32>::new();
+        let mut selected_ddid = None::<i32>;
+        let mut selected_rows = Vec::<VisibilitySelectedMainRow>::new();
+        let mut reference_row_time_mjd_sec = None::<f64>;
+        let mut time_bounds_mjd_sec = None::<[f64; 2]>;
+
+        for (row, (&field_id, &ddid)) in field_values.iter().zip(ddid_values.iter()).enumerate() {
+            if ddid < 0 {
+                continue;
+            }
+            if request
+                .allowed_field_ids
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(&field_id))
+            {
+                continue;
+            }
+            if request.selected_ddid.is_some_and(|value| value != ddid) {
+                continue;
+            }
+            if !request.allowed_ddids.is_empty()
+                && !request
+                    .allowed_ddids
+                    .get(ddid as usize)
+                    .copied()
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+
+            selected_fields.insert(field_id);
+            selected_ddid = combine_single_ddid(selected_ddid, ddid)?;
+            let field_id_usize = usize::try_from(field_id).map_err(|_| {
+                MsError::InvalidInput(format!(
+                    "FIELD_ID row {row} must be non-negative, found {field_id}"
+                ))
+            })?;
+            let row_time_mjd_sec = if request.include_time {
+                let row_time_mjd_sec = *time_values
+                    .as_ref()
+                    .and_then(|values| values.get(row))
+                    .ok_or_else(|| MsError::InvalidInput(format!("TIME row {row} is missing")))?;
+                reference_row_time_mjd_sec.get_or_insert(row_time_mjd_sec);
+                if request.track_time_bounds {
+                    match &mut time_bounds_mjd_sec {
+                        Some(bounds) => {
+                            bounds[0] = bounds[0].min(row_time_mjd_sec);
+                            bounds[1] = bounds[1].max(row_time_mjd_sec);
+                        }
+                        None => {
+                            time_bounds_mjd_sec = Some([row_time_mjd_sec, row_time_mjd_sec]);
+                        }
+                    }
+                }
+                Some(row_time_mjd_sec)
+            } else {
+                None
+            };
+            let (spw_id, polarization_id) = request
+                .ddid_to_spw_pol
+                .get(ddid as usize)
+                .copied()
+                .flatten()
+                .ok_or_else(|| {
+                    MsError::InvalidInput(format!("map DDID {ddid} to SPW/POLARIZATION"))
+                })?;
+            selected_rows.push(VisibilitySelectedMainRow {
+                row_index: row,
+                field_id: field_id_usize,
+                data_desc_id: ddid as usize,
+                spw_id,
+                polarization_id,
+                time_mjd_seconds: row_time_mjd_sec,
+            });
+        }
+
+        if selected_fields.is_empty() {
+            return Err(MsError::InvalidInput(
+                "selection resolved to no field".to_string(),
+            ));
+        }
+        if selected_rows.is_empty() {
+            return Err(MsError::InvalidInput(
+                "selection resolved to no rows".to_string(),
+            ));
+        }
+        let selected_ddid = selected_ddid
+            .ok_or_else(|| MsError::InvalidInput("selection resolved to no DDID".to_string()))?;
+        Ok(VisibilityRowSelectionPlan {
+            selected_rows,
+            selected_ddid: selected_ddid as usize,
+            selected_fields,
+            flag_row,
+            reference_row_time_mjd_sec,
+            time_bounds_mjd_sec,
+        })
+    }
+
     /// Fill caller-owned columnar visibility buffers for selected rows/channels.
     ///
     /// Channelized arrays (`DATA`, `FLAG`, and `WEIGHT_SPECTRUM`) use the
@@ -1804,6 +2230,93 @@ fn elapsed_ns(duration: Duration) -> u128 {
     duration.as_nanos()
 }
 
+fn load_main_required_scalar_columns(
+    ms: &MeasurementSet,
+    column_names: &[&'static str],
+) -> MsResult<HashMap<String, RequiredScalarColumnValues>> {
+    let row_count = ms.main_table().row_count();
+    let values = ms
+        .main_table()
+        .required_scalar_columns_owned(column_names)
+        .map_err(MsError::Table)?;
+    for &column_name in column_names {
+        let Some(column_values) = values.get(column_name) else {
+            return Err(MsError::InvalidInput(format!(
+                "scalar column {column_name} was not loaded"
+            )));
+        };
+        if column_values.len() != row_count {
+            return Err(MsError::InvalidInput(format!(
+                "{column_name} length {} does not match MAIN row count {}",
+                column_values.len(),
+                row_count
+            )));
+        }
+    }
+    Ok(values)
+}
+
+fn take_required_i32_main_column(
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    column_name: &'static str,
+) -> MsResult<Vec<i32>> {
+    let values = columns.remove(column_name).ok_or_else(|| {
+        MsError::InvalidInput(format!("scalar column {column_name} was not loaded"))
+    })?;
+    match values {
+        RequiredScalarColumnValues::Int32(values) => Ok(values),
+        other => Err(MsError::InvalidInput(format!(
+            "{column_name} must be Int32, found typed scalar column with {} rows",
+            other.len()
+        ))),
+    }
+}
+
+fn take_required_bool_main_column(
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    column_name: &'static str,
+) -> MsResult<Vec<bool>> {
+    let values = columns.remove(column_name).ok_or_else(|| {
+        MsError::InvalidInput(format!("scalar column {column_name} was not loaded"))
+    })?;
+    match values {
+        RequiredScalarColumnValues::Bool(values) => Ok(values),
+        other => Err(MsError::InvalidInput(format!(
+            "{column_name} must be Bool, found typed scalar column with {} rows",
+            other.len()
+        ))),
+    }
+}
+
+fn take_required_f64_main_column(
+    columns: &mut HashMap<String, RequiredScalarColumnValues>,
+    column_name: &'static str,
+) -> MsResult<Vec<f64>> {
+    let values = columns.remove(column_name).ok_or_else(|| {
+        MsError::InvalidInput(format!("scalar column {column_name} was not loaded"))
+    })?;
+    match values {
+        RequiredScalarColumnValues::Float64(values) => Ok(values),
+        RequiredScalarColumnValues::Float32(values) => {
+            Ok(values.into_iter().map(f64::from).collect())
+        }
+        other => Err(MsError::InvalidInput(format!(
+            "{column_name} must be Float64, found typed scalar column with {} rows",
+            other.len()
+        ))),
+    }
+}
+
+fn combine_single_ddid(current: Option<i32>, candidate: i32) -> MsResult<Option<i32>> {
+    match current {
+        None => Ok(Some(candidate)),
+        Some(existing) if existing == candidate => Ok(Some(existing)),
+        Some(existing) => Err(MsError::InvalidInput(format!(
+            "selection spans multiple DATA_DESC_ID values ({existing} and {candidate}); narrow it with --field/--ddid/--spw"
+        ))),
+    }
+}
+
 fn invalid_input(message: String) -> MsError {
     MsError::InvalidInput(message)
 }
@@ -1827,6 +2340,109 @@ mod tests {
     use crate::builder::MeasurementSetBuilder;
     use crate::schema::main_table::OptionalMainColumn;
     use crate::test_helpers::default_value;
+
+    #[test]
+    fn visibility_channel_read_range_tracks_contiguous_and_covering_ranges() {
+        assert_eq!(
+            VisibilityChannelReadRange::from_contiguous_indices(&[2, 3, 4]),
+            Some(VisibilityChannelReadRange::new(2, 3))
+        );
+        assert_eq!(
+            VisibilityChannelReadRange::from_contiguous_indices(&[2, 4]),
+            None
+        );
+        assert_eq!(
+            VisibilityChannelReadRange::covering_indices([4, 2, 7]),
+            Some(VisibilityChannelReadRange::new(2, 6))
+        );
+        assert_eq!(VisibilityChannelReadRange::full(5).end_exclusive(), 5);
+    }
+
+    #[test]
+    fn visibility_read_block_plan_builds_buffer_request() {
+        let source_partition = SourcePartition::new(SourcePartitionId(3), 1, 7, 8, 9, 16, 4);
+        let plan = VisibilityReadBlockPlan::new(
+            source_partition.clone(),
+            vec![11, 10],
+            VisibilityChannelReadRange::new(4, 6),
+        );
+
+        let request = plan.to_buffer_request(VisibilityDataColumn::CorrectedData, false);
+
+        assert_eq!(request.source_partition, Some(source_partition));
+        assert_eq!(request.data_column, VisibilityDataColumn::CorrectedData);
+        assert_eq!(request.row_indices, vec![11, 10]);
+        assert_eq!(request.channel_start, 4);
+        assert_eq!(request.channel_count, 6);
+        assert!(!request.include_data);
+        assert!(request.include_flags);
+        assert!(request.include_weights);
+        assert!(request.include_weight_spectrum);
+        assert!(request.include_uvw);
+    }
+
+    #[test]
+    fn select_visibility_rows_filters_fields_ddids_and_tracks_time() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_visibility_test_row(ms.main_table_mut(), 0);
+        add_visibility_test_row(ms.main_table_mut(), 1);
+
+        let plan = ms
+            .select_visibility_rows(&VisibilityRowSelectionRequest {
+                ddid_to_spw_pol: ddid_map(&[(3, (5, 6)), (13, (15, 16))]),
+                allowed_ddids: allowed_ddids(&[3]),
+                selected_ddid: None,
+                allowed_field_ids: Some(BTreeSet::from([4])),
+                include_time: true,
+                track_time_bounds: true,
+            })
+            .unwrap();
+
+        assert_eq!(plan.selected_ddid, 3);
+        assert_eq!(plan.selected_fields, BTreeSet::from([4]));
+        assert_eq!(plan.flag_row, vec![true, false]);
+        assert_eq!(plan.reference_row_time_mjd_sec, Some(1.0));
+        assert_eq!(plan.time_bounds_mjd_sec, Some([1.0, 1.0]));
+        assert_eq!(plan.selected_rows.len(), 1);
+        let row = &plan.selected_rows[0];
+        assert_eq!(row.row_index, 0);
+        assert_eq!(row.field_id, 4);
+        assert_eq!(row.data_desc_id, 3);
+        assert_eq!(row.spw_id, 5);
+        assert_eq!(row.polarization_id, 6);
+        assert_eq!(row.time_mjd_seconds, Some(1.0));
+    }
+
+    #[test]
+    fn select_visibility_rows_rejects_multi_ddid_selection() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_visibility_test_row(ms.main_table_mut(), 0);
+        add_visibility_test_row(ms.main_table_mut(), 1);
+
+        let error = ms
+            .select_visibility_rows(&VisibilityRowSelectionRequest {
+                ddid_to_spw_pol: ddid_map(&[(3, (5, 6)), (13, (15, 16))]),
+                allowed_ddids: allowed_ddids(&[3, 13]),
+                selected_ddid: None,
+                allowed_field_ids: None,
+                include_time: false,
+                track_time_bounds: false,
+            })
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("selection spans multiple DATA_DESC_ID values"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn fill_visibility_buffer_reads_selected_channels_columnar() {
@@ -1922,6 +2538,53 @@ mod tests {
         assert_eq!(buffer.observation_ids.as_deref(), Some(&[16, 6][..]));
         assert_eq!(buffer.scan_numbers.as_deref(), Some(&[17, 7][..]));
         assert_eq!(buffer.state_ids.as_deref(), Some(&[18, 8][..]));
+
+        let view = buffer.as_visibility_block_view().unwrap();
+        assert_eq!(view.partition.id, VisibilitySourcePartitionId(0));
+        assert_eq!(view.partition.shape.channel_count, 4);
+        assert_eq!(view.partition.shape.correlation_count, 2);
+        assert_eq!(view.row_indices, &[1, 0]);
+        assert_eq!(view.channel_range(), 1..3);
+        let Some(VisibilityComplexSamplesRef::Complex32(view_data)) = view.data else {
+            panic!("expected Complex32 view data");
+        };
+        assert_eq!(view_data.len(), data.len());
+        assert_eq!(
+            view_data[view.channel_row_corr_index(1, 1, 1)],
+            Complex32::new(21.0, -21.0)
+        );
+        let Some(VisibilityFloatSamplesRef::Float32(view_weights)) = view.weights else {
+            panic!("expected Float32 view weights");
+        };
+        assert_eq!(view_weights, &[11.0, 12.0, 1.0, 2.0]);
+        let spectral = SpectralRoutePlan::identity_for_block(view);
+        let polarization = PolarizationRoutePlan {
+            output_stokes: casa_imaging::PlaneStokes::I,
+        };
+        let geometry = GeometryRoutePlan {
+            geometry: casa_imaging::ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            },
+        };
+        let weighting = WeightingRoutePlan {
+            weighting: casa_imaging::WeightingMode::Natural,
+        };
+        let gridder = GridderRoutePlan {
+            gridder_mode: casa_imaging::GridderMode::Standard,
+        };
+        let imaging_view = buffer
+            .as_imaging_source_block_view(
+                &spectral,
+                &polarization,
+                &geometry,
+                &weighting,
+                &gridder,
+                None,
+            )
+            .unwrap();
+        assert_eq!(imaging_view.spectral.channel_route_count(), 2);
+        assert_eq!(imaging_view.source.channel_range(), 1..3);
 
         let second_report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
         assert!(second_report.allocation.reused_buffers > 0);
@@ -2047,5 +2710,23 @@ mod tests {
         corr_count: usize,
     ) -> usize {
         (channel_slot * row_count + row_slot) * corr_count + corr_slot
+    }
+
+    fn ddid_map(entries: &[(usize, (usize, usize))]) -> Vec<Option<(usize, usize)>> {
+        let max_ddid = entries.iter().map(|(ddid, _)| *ddid).max().unwrap_or(0);
+        let mut values = vec![None; max_ddid + 1];
+        for &(ddid, mapping) in entries {
+            values[ddid] = Some(mapping);
+        }
+        values
+    }
+
+    fn allowed_ddids(ddids: &[usize]) -> Vec<bool> {
+        let max_ddid = ddids.iter().copied().max().unwrap_or(0);
+        let mut values = vec![false; max_ddid + 1];
+        for &ddid in ddids {
+            values[ddid] = true;
+        }
+        values
     }
 }

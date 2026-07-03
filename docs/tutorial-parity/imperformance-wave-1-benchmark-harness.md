@@ -1,6 +1,6 @@
 # ImPerformance Wave 1 Benchmark Harness
 
-Truth class: current descriptive
+Truth class: historical evidence snapshot
 Last reality check: 2026-05-20
 Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `CASA_RS_BENCH_MS_STAGING=direct CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --dry-run --repeats 1 --run-label wave2-positive-compact-clean-niter2 --storage-label external-ssd-wave2-medium-direct --output-dir target/imperformance-wave2/positive-compact-clean-niter2-dry-run target/imperformance-wave2/medium-plan-current/workloads/wave1-vla-single-medium-standard-mfs-clean-niter2.json`; `just docs-check`
 

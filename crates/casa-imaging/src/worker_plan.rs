@@ -2,17 +2,22 @@
 
 /// The unitless worker-concurrency plan used by imaging runtime planners.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ImagingWorkerPlan {
-    pub(crate) worker_count: usize,
-    pub(crate) modeled_cost_units: u128,
-    pub(crate) model: &'static str,
-    pub(crate) candidate_costs: String,
-    pub(crate) backend_command_target_ms: Option<u64>,
+pub struct ImagingWorkerPlan {
+    /// Selected worker count.
+    pub worker_count: usize,
+    /// Modeled wall-time cost in arbitrary units for comparing candidates.
+    pub modeled_cost_units: u128,
+    /// Stable label for the cost model used to select the worker count.
+    pub model: &'static str,
+    /// Bounded diagnostic string containing the first candidate costs.
+    pub candidate_costs: String,
+    /// Optional backend command-buffer target, currently used by Metal multiscale clean.
+    pub backend_command_target_ms: Option<u64>,
 }
 
 /// The parallelism shape being planned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImagingWorkerParallelism {
+pub enum ImagingWorkerParallelism {
     /// Workers split one image plane internally.
     IntraPlane,
     /// Workers own independent image planes.
@@ -21,24 +26,36 @@ pub(crate) enum ImagingWorkerParallelism {
 
 /// The backend family whose scaling curve is being modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImagingWorkerBackend {
+pub enum ImagingWorkerBackend {
+    /// Scalar CPU execution.
     Cpu,
+    /// CPU execution with W-projection work in each planned unit.
     WProjectCpu,
+    /// Metal GPU execution where the CPU plans plane-level work.
     Metal,
+    /// Metal multiscale minor-cycle execution with command-buffer chunking.
     MetalMultiscaleMinorCycle,
 }
 
 /// Shape and backend inputs for the shared imaging worker-count planner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ImagingWorkerPlanInput {
-    pub(crate) output_planes: usize,
-    pub(crate) image_pixels: usize,
-    pub(crate) work_iterations_per_plane: usize,
-    pub(crate) scale_count: usize,
-    pub(crate) max_workers: usize,
-    pub(crate) hardware_threads: usize,
-    pub(crate) parallelism: ImagingWorkerParallelism,
-    pub(crate) backend: ImagingWorkerBackend,
+pub struct ImagingWorkerPlanInput {
+    /// Number of output image planes in the planned work unit.
+    pub output_planes: usize,
+    /// Pixel count per image plane.
+    pub image_pixels: usize,
+    /// Iteration-like work multiplier per plane.
+    pub work_iterations_per_plane: usize,
+    /// Number of active multiscale kernels or equivalent scale count.
+    pub scale_count: usize,
+    /// Maximum workers the caller is willing to use.
+    pub max_workers: usize,
+    /// Hardware thread count available to the caller.
+    pub hardware_threads: usize,
+    /// Parallelism shape being planned.
+    pub parallelism: ImagingWorkerParallelism,
+    /// Backend family whose scaling curve should be modeled.
+    pub backend: ImagingWorkerBackend,
 }
 
 const METAL_MULTISCALE_WAVE_TAIL_MILLI: u128 = 200;
@@ -76,7 +93,7 @@ impl ImagingWorkerPlanInput {
 /// modeled wall-time cost. The coefficients are deliberately local to this
 /// model so later calibration can replace them without touching every imaging
 /// mode's runtime planner.
-pub(crate) fn plan_imaging_worker_count(input: ImagingWorkerPlanInput) -> ImagingWorkerPlan {
+pub fn plan_imaging_worker_count(input: ImagingWorkerPlanInput) -> ImagingWorkerPlan {
     let input = input.normalized();
     let mut best = None::<WorkerCandidate>;
     let mut fragments = Vec::new();
@@ -125,14 +142,16 @@ pub(crate) fn plan_imaging_worker_count(input: ImagingWorkerPlanInput) -> Imagin
 
 /// Model the cost contribution for a worker count inside a larger planner that
 /// already enumerates memory and I/O candidates.
-pub(crate) fn modeled_worker_runtime_cost_units(
+pub fn modeled_worker_runtime_cost_units(
     input: ImagingWorkerPlanInput,
     worker_count: usize,
 ) -> u128 {
     model_worker_candidate(input.normalized(), worker_count.max(1)).cost_units
 }
 
-pub(crate) fn planned_backend_command_target_ms(
+/// Return the backend command-buffer target implied by a worker count, when the
+/// backend has a tunable command target.
+pub fn planned_backend_command_target_ms(
     input: ImagingWorkerPlanInput,
     worker_count: usize,
 ) -> Option<u64> {

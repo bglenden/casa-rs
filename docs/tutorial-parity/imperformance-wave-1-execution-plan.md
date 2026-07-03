@@ -1,6 +1,6 @@
 # ImPerformance Wave 1 Execution Plan Structure
 
-Truth class: current descriptive
+Truth class: historical evidence snapshot
 Last reality check: 2026-05-19
 Verification: `cargo test -p casa-imaging standard_mfs`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks reserved_streaming_dirty_backend_fails_before_workspace_creation`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path`; `tools/perf/imager/run_workload.py --repeats 1 --run-label wave1-execution-plan-smoke --storage-label local-casatestdata --output-dir target/imperformance-wave1/issue250-execution-plan-smoke tools/perf/imager/workloads/wave1-standard-mfs-dirty-smoke.json`; `just docs-check`; `just quick`
 
