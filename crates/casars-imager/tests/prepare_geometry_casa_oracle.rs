@@ -303,6 +303,7 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         standard_mfs_tile_anchor: None,
         standard_mfs_residual_backend: None,
         standard_mfs_initial_dirty_backend: None,
+        standard_mfs_metal_minor_cycle_chunk: None,
         standard_mfs_metal_grouped_input_cache: None,
         standard_mfs_memory_target_mb: None,
         standard_mfs_prepare_buffer_mb: None,
