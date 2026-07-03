@@ -1570,6 +1570,8 @@ fn infer_task_parameter_type(
         "out" if matches!(task_id, "simobserve" | "mstransform" | "split") => {
             "output_measurement_set_path"
         }
+        "output_ms" if task_id == "simobserve" => "output_measurement_set_path",
+        "request_json" if task_id == "simobserve" => "output_json_path",
         "output_measurement_set" | "outputms" | "outputvis" | "concatvis" => {
             "output_measurement_set_path"
         }
@@ -1658,6 +1660,18 @@ fn infer_task_parameter_type(
         "parameter" => "gencal_parameter_list",
         "solve_mode" => "solve_mode",
         "gain_mode" | "bandpass_mode" => "corruption_mode",
+        "request_kind" if task_id == "simobserve" => "simobserve_request_kind",
+        "source_model" if task_id == "simobserve" => "json_object",
+        "telescope" if task_id == "simobserve" => "telescope_family",
+        "array_config" if task_id == "simobserve" => "array_configuration",
+        "band" if task_id == "simobserve" => "receiver_band",
+        "target_ms_size_gib" if task_id == "simobserve" => "data_size_gib",
+        "ms_channels" | "image_channels" | "pointing_count" if task_id == "simobserve" => {
+            "integer_count"
+        }
+        "worker_policy" if task_id == "simobserve" => "worker_policy",
+        "row_workers" | "channel_workers" if task_id == "simobserve" => "integer_count",
+        "measure_actual_size" if task_id == "simobserve" => "boolean",
         "specmode" => "spectral_mode",
         "deconvolver" => "deconvolver",
         "weighting" => "weighting",
@@ -5632,6 +5646,32 @@ mod tests {
             argument["parameter_type"]
                 .as_str()
                 .is_some_and(|parameter_type| !parameter_type.is_empty())
+        }));
+
+        let simobserve_schema_json =
+            task_ui_schema_json("simobserve".to_string()).expect("simobserve schema");
+        let simobserve_schema: serde_json::Value =
+            serde_json::from_str(&simobserve_schema_json).expect("simobserve schema json");
+        let simobserve_arguments = simobserve_schema["arguments"]
+            .as_array()
+            .expect("simobserve arguments");
+        assert!(simobserve_arguments.iter().any(|argument| {
+            argument["id"] == "request_kind"
+                && argument["parameter_type"] == "simobserve_request_kind"
+                && argument["parser"]["choices"]
+                    .as_array()
+                    .expect("request_kind choices")
+                    .contains(&serde_json::json!("family"))
+        }));
+        assert!(simobserve_arguments.iter().any(|argument| {
+            argument["id"] == "source_model" && argument["parameter_type"] == "json_object"
+        }));
+        assert!(simobserve_arguments.iter().any(|argument| {
+            argument["id"] == "output_ms"
+                && argument["parameter_type"] == "output_measurement_set_path"
+        }));
+        assert!(simobserve_arguments.iter().any(|argument| {
+            argument["id"] == "worker_policy" && argument["parameter_type"] == "worker_policy"
         }));
 
         let split_schema_json = task_ui_schema_json("split".to_string()).expect("split schema");

@@ -2112,6 +2112,9 @@ fn run_single_image_from_config_with_gridder_override(
                 ms_paths.len(),
             ))
         };
+    if can_run_mfs_mosaic_multi_ms_materialized(config, force_standard_gridder, ms_paths.len()) {
+        return run_mfs_mosaic_multi_ms_materialized_from_paths(config, &ms_paths, total_start);
+    }
     let ms = MeasurementSet::open(
         ms_paths
             .first()
@@ -2364,6 +2367,28 @@ fn can_run_mfs_mosaic_from_single_plane_stream(
         && config.start_model.is_none()
         && config.outlier_file.is_none()
         && config.use_mask != CleanMaskMode::AutoMultiThreshold
+        && config.uv_taper.is_none()
+        && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
+        && matches!(config.w_term_mode, WTermMode::None)
+        && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
+        && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
+}
+
+fn can_run_mfs_mosaic_multi_ms_materialized(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count > 1
+        && !force_standard_gridder
+        && !config.force_standard_gridder
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
         && matches!(config.w_term_mode, WTermMode::None)
@@ -3933,6 +3958,164 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     let stage_start = Instant::now();
     write_products(
         output_config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
+}
+
+fn run_mfs_mosaic_multi_ms_materialized_from_paths(
+    config: &CliConfig,
+    ms_paths: &[PathBuf],
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let stage_start = Instant::now();
+    let measurement_sets = ms_paths
+        .iter()
+        .map(|path| MeasurementSet::open(path).map_err(|error| format!("open MS: {error}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let open_measurement_set = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "open_measurement_set",
+        open_measurement_set,
+        total_start.elapsed(),
+    );
+
+    let prepare_started = Instant::now();
+    let mut prepared_inputs = Vec::<PreparedInput>::with_capacity(measurement_sets.len());
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    for (index, ms) in measurement_sets.iter().enumerate() {
+        let data_column = resolve_data_column(ms, config.datacolumn.as_deref())?;
+        let (prepared, trace, timings) =
+            prepare_plane_input_inner(ms, config, data_column, false, None)?;
+        if trace.is_some() {
+            return Err(format!(
+                "multi-MS MFS mosaic input {index} unexpectedly required trace materialization"
+            ));
+        }
+        prepare_stage_timings.add(timings);
+        prepared_inputs.push(prepared);
+    }
+    let prepared = merge_mfs_mosaic_prepared_inputs(prepared_inputs)?;
+    let PreparedInput::Mfs(plane) = prepared else {
+        return Err("multi-MS MFS mosaic preparation produced cube input".to_string());
+    };
+    if !matches!(plane.gridder_mode, GridderMode::Mosaic(_)) {
+        return Err("multi-MS MFS mosaic preparation produced standard gridder".to_string());
+    }
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        true,
+    )?;
+    let prepare_plane_time = prepare_started.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let phase_center = plane.phase_center.clone();
+    let freq_ref = plane.freq_ref;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: plane.batches,
+        gridder_mode: plane.gridder_mode,
+        plane_stokes: plane.plane_stokes,
+        weighting: config.weighting,
+        reffreq_hz: plane.reffreq_hz,
+        selected_frequency_range_hz: plane.selected_frequency_range_hz,
+        deconvolver: config.deconvolver,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        clean: CleanConfig {
+            niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
+            gain: config.gain,
+            threshold_jy_per_beam: config.threshold_jy,
+            nsigma: config.nsigma,
+            psf_cutoff: config.psf_cutoff,
+            minor_cycle_length: config.minor_cycle_length,
+            cyclefactor: config.cyclefactor,
+            min_psf_fraction: config.min_psf_fraction,
+            max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
+        },
+        clean_mask: clean_mask.clone(),
+        initial_model: None,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+
+    let stage_start = Instant::now();
+    let result = run_imaging(&request).map_err(|error| error.to_string())?;
+    let run_imaging_time = stage_start.elapsed();
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let run_result = RunProducts::Mfs(result);
+    let stage_start = Instant::now();
+    let coords = build_image_coordinate_system(
+        config.imsize,
+        phase_center.angles_rad,
+        config.cell_arcsec,
+        run_result.coordinate_freq_ref(freq_ref),
+        phase_center.reference,
+        run_result.plane_stokes(),
+        run_result.channel_frequencies_hz(),
+        run_result.spectral_delta_hz(),
+        config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
+    );
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let effective_clean_mask = clean_mask
+        .as_ref()
+        .map(|mask| EffectiveCleanMask::Plane(mask.clone()));
+    let stage_start = Instant::now();
+    write_products(
+        config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),

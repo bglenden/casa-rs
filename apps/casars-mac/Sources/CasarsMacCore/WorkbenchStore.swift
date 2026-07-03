@@ -3545,6 +3545,103 @@ public final class WorkbenchStore: ObservableObject {
         return "\(sanitizedPathComponent(state.activeTaskID))-result.\(extensionName)"
     }
 
+    public func taskRequestSaveDirectory() -> String {
+        if !state.project.rootPath.isEmpty {
+            return state.project.rootPath
+        }
+        return FileManager.default.currentDirectoryPath
+    }
+
+    public func taskRequestSaveFilename() -> String {
+        "\(sanitizedPathComponent(state.activeTaskID))-family-request.json"
+    }
+
+    public func hasSaveableActiveGenericTaskRequest() -> Bool {
+        activeGenericTaskRequest() != nil
+    }
+
+    public func saveActiveGenericTaskRequest(to path: String) {
+        guard let request = activeGenericTaskRequest() else {
+            state.lastErrors.append("No task request is available to save.")
+            return
+        }
+        do {
+            let data = try ProcessGenericTaskClient.savedJSONRequestData(for: request)
+            let url = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            setGenericTaskValue(taskID: request.task.id, argumentID: "request_json", value: url.path)
+            state.taskRun.logLines.append("Saved request: \(url.path)")
+            state.history.append(ProcessingHistoryEvent(
+                id: "hist-save-task-request-\(state.history.count + 1)",
+                timestamp: currentTimestamp(),
+                title: "Saved \(request.task.id) request",
+                reason: "User saved the current \(request.task.id) task request.",
+                affectedPaths: [url.path],
+                approval: "user"
+            ))
+        } catch {
+            state.lastErrors.append("Save \(state.activeTaskID) request: \(error)")
+        }
+    }
+
+    public func loadGenericTaskRequest(from path: String, tabID: String? = nil) {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let data = try Data(contentsOf: url)
+            let object = try JSONSerialization.jsonObject(with: data)
+            guard let envelope = object as? [String: Any],
+                  envelope["kind"] as? String == "family",
+                  let request = envelope["request"] as? [String: Any]
+            else {
+                state.lastErrors.append("Open task request: expected a canonical simobserve family envelope.")
+                return
+            }
+            selectTask("simobserve", tabID: tabID)
+            setGenericTaskValue(taskID: "simobserve", argumentID: "request_kind", value: "family")
+            setGenericTaskValue(taskID: "simobserve", argumentID: "request_json", value: url.path)
+            if let sourceModel = request["source_model"] {
+                let sourceData = try JSONSerialization.data(withJSONObject: sourceModel, options: [.sortedKeys])
+                setGenericTaskValue(
+                    taskID: "simobserve",
+                    argumentID: "source_model",
+                    value: String(decoding: sourceData, as: UTF8.self)
+                )
+            }
+            for key in [
+                "telescope",
+                "array_config",
+                "band",
+                "imaging_mode",
+                "worker_policy",
+                "output_ms"
+            ] {
+                if let value = request[key] as? String {
+                    setGenericTaskValue(taskID: "simobserve", argumentID: key, value: value)
+                }
+            }
+            for key in [
+                "target_ms_size_gib",
+                "polarizations",
+                "ms_channels",
+                "image_channels",
+                "pointing_count",
+                "row_workers",
+                "channel_workers"
+            ] {
+                if let value = request[key] {
+                    setGenericTaskValue(taskID: "simobserve", argumentID: key, value: "\(value)")
+                }
+            }
+            if let value = request["measure_actual_size"] as? Bool {
+                setGenericTaskValue(taskID: "simobserve", argumentID: "measure_actual_size", value: value ? "true" : "false")
+            }
+            state.taskRun.logLines.append("Opened request: \(url.path)")
+        } catch {
+            state.lastErrors.append("Open task request \(path): \(error)")
+        }
+    }
+
     public func hasSaveableActiveTaskOutput() -> Bool {
         activeTaskOutput() != nil
     }
@@ -3589,6 +3686,26 @@ public final class WorkbenchStore: ObservableObject {
             return false
         }
         return (try? JSONSerialization.jsonObject(with: data)) != nil
+    }
+
+    private func activeGenericTaskRequest() -> GenericTaskRequest? {
+        let taskID = state.activeTaskID
+        let requestKind = state.genericTaskValues[taskID]?["request_kind"]
+            ?? state.taskUISchemas[taskID]?.arguments.first { $0.id == "request_kind" }?.default
+        guard let task = state.taskCatalog.first(where: { $0.id == taskID }),
+              let schema = state.taskUISchemas[taskID],
+              requestKind == "family"
+        else {
+            return nil
+        }
+        return GenericTaskRequest(
+            runID: "save-\(taskID)",
+            task: task,
+            schema: schema,
+            values: state.genericTaskValues[taskID] ?? [:],
+            toggles: state.genericTaskToggles[taskID] ?? [:],
+            workingDirectoryPath: state.project.rootPath
+        )
     }
 
     private func spectralWindowSelectorValue(_ label: String) -> String {
@@ -4107,6 +4224,7 @@ public final class WorkbenchStore: ObservableObject {
                         )
                     } else {
                         let genericProducts = genericTaskProducts(from: result)
+                        let outputPaths = ([result.requestJSONPath] + genericProducts.map(\.path)).compactMap { $0 }
                         state.taskRun = TaskRun(
                             runID: runID,
                             state: .succeeded,
@@ -4115,7 +4233,7 @@ public final class WorkbenchStore: ObservableObject {
                             warnings: result.stderr.isEmpty ? [] : [result.stderr],
                             products: genericProducts.map(\.path),
                             diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
-                            outputPaths: genericProducts.map(\.path),
+                            outputPaths: outputPaths,
                             requestSummary: state.taskRun.requestSummary
                         )
                     }
@@ -4128,7 +4246,7 @@ public final class WorkbenchStore: ObservableObject {
                 } else {
                     let products = appendProducedDatasets(from: genericTaskProducts(from: result), runID: runID)
                     recordGenericRunProductGroup(runID: runID, taskID: result.taskID, products: products)
-                    affectedPaths = products.map(\.path)
+                    affectedPaths = ([result.requestJSONPath] + products.map(\.path)).compactMap { $0 }
                 }
                 state.history.append(ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
@@ -4218,12 +4336,20 @@ public final class WorkbenchStore: ObservableObject {
             return ["output"]
         case "feather":
             return ["imagename"]
+        case "simobserve":
+            return ["output_ms", "manifest_path"]
         default:
             return ["outfile"]
         }
     }
 
     private func genericTaskProductKind(taskID: String, key: String, path: String) -> String {
+        if taskID == "simobserve" && key == "output_ms" {
+            return "measurement-set"
+        }
+        if taskID == "simobserve" && key == "manifest_path" {
+            return "json"
+        }
         if taskID == "exportfits" || ["fits", "fit", "fts"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
             return "fits"
         }

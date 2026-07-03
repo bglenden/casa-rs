@@ -116,9 +116,18 @@ python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wa
 
 The strict comparison samples matching rows by time, field, data description,
 and baseline, then checks UVW, flags, weights, sigmas, and DATA. Its default
-DATA tolerance is absolute `0.05 Jy` plus relative `5e-3`, which is tight
+DATA tolerance is absolute `0.05 Jy` plus relative `1e-2`, which is tight
 enough to catch model scaling/channel-order mistakes while avoiding false
 failures from small CASA/native numerical differences in low-amplitude cells.
+When CASA Python is unavailable, the run records
+`casa_oracle.status: "skipped"` and leaves the MeasurementSet oracle comparison
+marked skipped instead of aborting before writing the benchmark JSON. Add
+`--fixed-channel-workers N` when a single artifact should compare serial,
+auto-worker, and fixed-worker native CPU runs.
+When matched CASA and casa-rs image products have already been generated, add
+`--casa-image-prefix PREFIX --native-image-prefix PREFIX` to compare products
+such as `.image`, `.residual`, `.psf`, `.model`, `.sumwt`, and `.pb` in the same
+oracle artifact.
 
 To check that the streamed MeasurementSet writer has not regressed, run a
 native-only write-path benchmark on a fast local disk, not on

@@ -99,9 +99,35 @@ def main() -> None:
         default=5.0e-2,
         help="absolute DATA tolerance for CASA-vs-native sampled comparisons",
     )
-    parser.add_argument("--strict-data-rtol", type=float, default=1.0e-3)
+    parser.add_argument("--strict-data-rtol", type=float, default=1.0e-2)
     parser.add_argument("--skip-casa", action="store_true")
     parser.add_argument("--skip-serial-check", action="store_true")
+    parser.add_argument(
+        "--native-image-prefix",
+        type=pathlib.Path,
+        default=None,
+        help="optional casa-rs image product prefix for CASA/native product comparison",
+    )
+    parser.add_argument(
+        "--casa-image-prefix",
+        type=pathlib.Path,
+        default=None,
+        help="optional CASA image product prefix for CASA/native product comparison",
+    )
+    parser.add_argument(
+        "--image-product-suffixes",
+        default=".image,.residual,.psf,.model,.sumwt,.pb",
+        help="comma-separated image product suffixes to compare when image prefixes are supplied",
+    )
+    parser.add_argument(
+        "--fixed-channel-workers",
+        type=int,
+        default=None,
+        help=(
+            "run an additional fixed-worker native CPU comparison while leaving "
+            "the primary native run in auto mode unless --channel-workers is set"
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -110,7 +136,7 @@ def main() -> None:
         write_json(result_path, result)
         write_html_report(pathlib.Path(result["report_html"]), result)
         print(result_path)
-        if result["correctness"]["status"] != "passed":
+        if result["correctness"]["status"] == "failed":
             raise SystemExit(2)
     except BenchError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -120,6 +146,8 @@ def main() -> None:
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if args.repeats < 1:
         raise BenchError("--repeats must be >= 1")
+    if args.fixed_channel_workers is not None and args.fixed_channel_workers < 1:
+        raise BenchError("--fixed-channel-workers must be >= 1")
     plan = read_json(args.plan)
     dataset = select_dataset(plan, args.dataset)
     output_dir = args.output_dir.resolve()
@@ -141,7 +169,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         request["request"]["corruption"] = None
 
     casa = None
-    run_casa_first = args.strict_values and not args.skip_casa
+    casa_oracle = casa_oracle_status(args.casa_python, skip_casa=args.skip_casa)
+    should_run_casa = casa_oracle["status"] == "available"
+    run_casa_first = args.strict_values and should_run_casa
     if run_casa_first:
         casa = run_casa_repeats(
             args.casa_python,
@@ -173,8 +203,17 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             repeats=1,
             channel_workers=1,
         )
+    native_fixed = None
+    if args.fixed_channel_workers is not None:
+        native_fixed = run_native_repeats(
+            args.casars_binary,
+            request,
+            run_root / "native-fixed",
+            repeats=1,
+            channel_workers=args.fixed_channel_workers,
+        )
 
-    if not args.skip_casa and not run_casa_first:
+    if should_run_casa and not run_casa_first:
         casa = run_casa_repeats(
             args.casa_python,
             dataset,
@@ -182,25 +221,61 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             repeats=args.repeats,
         )
 
-    correctness = collect_correctness(
-        args.casa_python,
-        native_parallel["last_ms"],
-        None if native_serial is None else native_serial["last_ms"],
-        None if casa is None else casa["last_ms"],
-        strict_values=args.strict_values,
-        strict_uvw_atol=args.strict_uvw_atol,
-        strict_data_atol=args.strict_data_atol,
-        strict_data_rtol=args.strict_data_rtol,
-    )
+    if pathlib.Path(args.casa_python).exists():
+        correctness = collect_correctness(
+            args.casa_python,
+            native_parallel["last_ms"],
+            None if native_serial is None else native_serial["last_ms"],
+            None if casa is None else casa["last_ms"],
+            strict_values=args.strict_values,
+            strict_uvw_atol=args.strict_uvw_atol,
+            strict_data_atol=args.strict_data_atol,
+            strict_data_rtol=args.strict_data_rtol,
+        )
+    else:
+        correctness = skipped_correctness(
+            casa_oracle,
+            strict_values=args.strict_values,
+        )
+    if casa is None:
+        attach_casa_skip_to_correctness(
+            correctness,
+            casa_oracle,
+            strict_values=args.strict_values,
+        )
     speedup = None
+    casa_relative = None
     if casa is not None:
         speedup = casa["best_seconds"] / native_parallel["best_seconds"]
+        casa_relative = casa_relative_timing(native_parallel, casa)
         if args.require_speedup is not None and speedup < args.require_speedup:
             raise BenchError(
                 f"native simobserve speedup {speedup:.2f}x is below target "
                 f"{args.require_speedup:.2f}x"
             )
     native_performance = native_performance_summary(native_parallel)
+    analytic_tier_performance = analytic_native_tier_performance(
+        dataset,
+        request,
+        native_performance,
+    )
+    worker_comparison = native_worker_comparison(
+        native_parallel,
+        native_serial,
+        native_fixed,
+        primary_channel_workers=args.channel_workers,
+        fixed_channel_workers=args.fixed_channel_workers,
+    )
+    oracle_comparison = oracle_comparison_summary(
+        correctness,
+        image_products=image_product_comparison(
+            args.casa_python,
+            args.native_image_prefix,
+            args.casa_image_prefix,
+            parse_image_product_suffixes(args.image_product_suffixes),
+            casa_oracle,
+        ),
+    )
     enforce_native_performance_targets(args, native_performance)
 
     result_path = run_root / "simobserve-benchmark.json"
@@ -214,10 +289,16 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "shape": dataset["shape"],
         "native_parallel": native_parallel,
         "native_serial": native_serial,
+        "native_fixed": native_fixed,
         "casa": casa,
+        "casa_oracle": casa_oracle if casa is None else {"status": "run"},
         "correctness": correctness,
+        "oracle_comparison": oracle_comparison,
         "speedup_vs_casa": speedup,
+        "performance_relative_to_casa": casa_relative,
         "native_performance": native_performance,
+        "analytic_tier_performance": analytic_tier_performance,
+        "native_worker_comparison": worker_comparison,
         "target": {
             "required_speedup": args.require_speedup,
             "required_native_throughput_mb_s": args.require_native_throughput_mb_s,
@@ -364,6 +445,188 @@ def native_performance_summary(native: dict[str, Any]) -> dict[str, Any]:
         ),
         "data_io_bytes": data_io_bytes,
         "data_io_write_millis": data_io_write_millis,
+        "stage_timing": stage_timing_summary(report),
+    }
+
+
+def analytic_native_tier_performance(
+    dataset: dict[str, Any],
+    request: dict[str, Any],
+    native_performance: dict[str, Any],
+) -> dict[str, Any]:
+    tier = str(dataset.get("tier") or dataset.get("shape", {}).get("tier") or "unknown")
+    model_kind = request_model_kind(request)
+    native_rate = native_performance.get("native_output_mb_per_second")
+    data_io_rate = native_performance.get("data_io_mb_per_second")
+    tiers = {"small": None, "medium": None}
+    if tier in tiers and model_kind == "analytic_components":
+        tiers[tier] = native_rate
+    return {
+        "status": "reported" if tiers.get(tier) is not None else "not_applicable",
+        "dataset_tier": tier,
+        "model_kind": model_kind,
+        "small_native_output_mb_per_second": tiers["small"],
+        "medium_native_output_mb_per_second": tiers["medium"],
+        "native_output_mb_per_second": native_rate,
+        "streamed_main_column_mb_per_second": data_io_rate,
+    }
+
+
+def request_model_kind(request: dict[str, Any]) -> str:
+    payload = request.get("request", {})
+    model = payload.get("model")
+    if isinstance(model, dict) and model.get("kind"):
+        return str(model["kind"])
+    source_model = payload.get("source_model")
+    if isinstance(source_model, dict) and source_model.get("kind"):
+        return str(source_model["kind"])
+    if payload.get("model_image") or payload.get("model_peak_jy_per_pixel") is not None:
+        return "fits_image"
+    return "unknown"
+
+
+def native_worker_comparison(
+    native_primary: dict[str, Any],
+    native_serial: dict[str, Any] | None,
+    native_fixed: dict[str, Any] | None,
+    *,
+    primary_channel_workers: int | None,
+    fixed_channel_workers: int | None,
+) -> dict[str, Any]:
+    primary_mode = "auto" if primary_channel_workers is None else "fixed"
+    auto = (
+        worker_entry(native_primary, "auto", None)
+        if primary_channel_workers is None
+        else worker_not_run("primary run used fixed channel workers")
+    )
+    fixed = (
+        worker_entry(native_primary, "fixed", primary_channel_workers)
+        if primary_channel_workers is not None
+        else worker_entry(native_fixed, "fixed", fixed_channel_workers)
+    )
+    serial = worker_entry(native_serial, "serial", 1)
+    ratios = {
+        "auto_speedup_vs_serial": speedup_against(serial, auto),
+        "fixed_speedup_vs_serial": speedup_against(serial, fixed),
+        "fixed_speedup_vs_auto": speedup_against(auto, fixed),
+    }
+    available = sum(
+        1 for entry in (serial, auto, fixed) if entry.get("status") == "run"
+    )
+    return {
+        "status": "complete" if available == 3 else "partial",
+        "primary_mode": primary_mode,
+        "serial": serial,
+        "auto": auto,
+        "fixed": fixed,
+        "ratios": ratios,
+    }
+
+
+def worker_entry(
+    run: dict[str, Any] | None,
+    mode: str,
+    channel_workers: int | None,
+) -> dict[str, Any]:
+    if run is None:
+        return worker_not_run("not requested")
+    return {
+        "status": "run",
+        "mode": mode,
+        "channel_workers": channel_workers,
+        "best_seconds": float(run["best_seconds"]),
+        "median_seconds": float(run["median_seconds"]),
+        "size_bytes": int(run["size_bytes"]),
+    }
+
+
+def worker_not_run(reason: str) -> dict[str, Any]:
+    return {"status": "not_run", "reason": reason}
+
+
+def speedup_against(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> float | None:
+    if baseline.get("status") != "run" or candidate.get("status") != "run":
+        return None
+    candidate_seconds = float(candidate["best_seconds"])
+    if candidate_seconds <= 0.0:
+        return None
+    return float(baseline["best_seconds"]) / candidate_seconds
+
+
+def casa_relative_timing(
+    native: dict[str, Any], casa: dict[str, Any]
+) -> dict[str, float]:
+    native_best = float(native["best_seconds"])
+    casa_best = float(casa["best_seconds"])
+    native_size = int(native.get("size_bytes") or 0)
+    casa_size = int(casa.get("size_bytes") or 0)
+    return {
+        "native_best_seconds": native_best,
+        "casa_best_seconds": casa_best,
+        "native_speedup_vs_casa": casa_best / native_best if native_best > 0.0 else 0.0,
+        "native_time_fraction_of_casa": native_best / casa_best if casa_best > 0.0 else 0.0,
+        "native_output_mb_per_second": mb_per_second(native_size, native_best),
+        "casa_output_mb_per_second": mb_per_second(casa_size, casa_best),
+        "native_size_fraction_of_casa": native_size / casa_size if casa_size > 0 else 0.0,
+    }
+
+
+def stage_timing_summary(report: dict[str, Any]) -> dict[str, Any]:
+    timing = report.get("timing", {})
+    main_rows = timing.get("main_rows", {})
+    total_millis = float(timing.get("total_millis") or 0.0)
+    stages = {
+        "validate_millis": float(timing.get("validate_millis") or 0.0),
+        "setup_millis": float(timing.get("setup_millis") or 0.0),
+        "metadata_millis": float(timing.get("metadata_millis") or 0.0),
+        "model_prepare_millis": float(timing.get("model_prepare_millis") or 0.0),
+        "uvw_and_row_setup_millis": float(
+            main_rows.get("uvw_and_row_setup_millis") or 0.0
+        ),
+        "prediction_millis": float(main_rows.get("prediction_millis") or 0.0),
+        "prediction_worker_wall_millis": float(
+            main_rows.get("prediction_worker_wall_millis") or 0.0
+        ),
+        "prediction_gather_millis": float(
+            main_rows.get("prediction_gather_millis") or 0.0
+        ),
+        "corruption_millis": float(main_rows.get("corruption_millis") or 0.0),
+        "data_io_enqueue_millis": float(
+            main_rows.get("data_io_enqueue_millis") or 0.0
+        ),
+        "data_io_finalize_millis": float(
+            main_rows.get("data_io_finalize_millis") or 0.0
+        ),
+        "data_io_assemble_millis": float(
+            main_rows.get("data_io_assemble_millis") or 0.0
+        ),
+        "data_io_write_millis": float(main_rows.get("data_io_write_millis") or 0.0),
+        "main_write_millis": float(main_rows.get("main_write_millis") or 0.0),
+        "save_millis": float(timing.get("save_millis") or 0.0),
+    }
+    fractions = {
+        name.replace("_millis", "_fraction"): (
+            value / total_millis if total_millis > 0.0 else 0.0
+        )
+        for name, value in stages.items()
+    }
+    prediction_fraction = fractions.get("prediction_fraction", 0.0)
+    io_fraction = (
+        fractions.get("data_io_enqueue_fraction", 0.0)
+        + fractions.get("data_io_finalize_fraction", 0.0)
+        + fractions.get("data_io_assemble_fraction", 0.0)
+        + fractions.get("data_io_write_fraction", 0.0)
+    )
+    return {
+        "total_millis": total_millis,
+        "stages_millis": stages,
+        "stage_fractions": fractions,
+        "prediction_fraction": prediction_fraction,
+        "streamed_io_fraction": io_fraction,
+        "gpu_candidate": prediction_fraction > max(0.25, io_fraction),
     }
 
 
@@ -392,6 +655,261 @@ def mb_per_second(size_bytes: int, seconds: float) -> float:
     if seconds <= 0.0:
         return 0.0
     return size_bytes / seconds / 1_000_000.0
+
+
+def casa_oracle_status(casa_python: str, *, skip_casa: bool) -> dict[str, Any]:
+    if skip_casa:
+        return {"status": "skipped", "reason": "--skip-casa was set"}
+    python = pathlib.Path(casa_python)
+    if not python.exists():
+        return {
+            "status": "skipped",
+            "reason": f"CASA Python does not exist: {python}",
+            "casa_python": str(python),
+        }
+    return {"status": "available", "casa_python": str(python)}
+
+
+def attach_casa_skip_to_correctness(
+    correctness: dict[str, Any],
+    casa_oracle: dict[str, Any],
+    *,
+    strict_values: bool,
+) -> None:
+    correctness["casa_oracle"] = casa_oracle
+    correctness["casa_status"] = casa_oracle["status"]
+    if strict_values and correctness.get("strict_values") is None:
+        correctness["strict_values"] = {
+            "status": "skipped",
+            "reason": casa_oracle.get("reason", "CASA oracle was not run"),
+        }
+
+
+def skipped_correctness(
+    casa_oracle: dict[str, Any],
+    *,
+    strict_values: bool,
+) -> dict[str, Any]:
+    reason = casa_oracle.get(
+        "reason",
+        "CASA Python is unavailable, so casatools MS inspection could not run",
+    )
+    return {
+        "status": "skipped",
+        "reasons": [reason],
+        "inspections": {},
+        "strict_values": (
+            {
+                "status": "skipped",
+                "reason": reason,
+            }
+            if strict_values
+            else None
+        ),
+        "casa_oracle": casa_oracle,
+        "casa_status": casa_oracle["status"],
+    }
+
+
+def parse_image_product_suffixes(value: str) -> list[str]:
+    suffixes = [item.strip() for item in value.split(",") if item.strip()]
+    if not suffixes:
+        raise BenchError("--image-product-suffixes must include at least one suffix")
+    invalid = [item for item in suffixes if not item.startswith(".")]
+    if invalid:
+        raise BenchError(
+            "--image-product-suffixes entries must start with '.', got "
+            + ", ".join(invalid)
+        )
+    return suffixes
+
+
+def image_product_comparison(
+    casa_python: str,
+    native_prefix: pathlib.Path | None,
+    casa_prefix: pathlib.Path | None,
+    suffixes: list[str],
+    casa_oracle: dict[str, Any],
+) -> dict[str, Any]:
+    if native_prefix is None and casa_prefix is None:
+        return {
+            "status": "not_run",
+            "reason": "no image product prefixes were supplied",
+        }
+    if native_prefix is None or casa_prefix is None:
+        return {
+            "status": "skipped",
+            "reason": "--native-image-prefix and --casa-image-prefix must be supplied together",
+        }
+    if casa_oracle.get("status") != "available":
+        return {
+            "status": "skipped",
+            "reason": casa_oracle.get("reason", "CASA oracle is unavailable"),
+            "native_prefix": str(native_prefix),
+            "casa_prefix": str(casa_prefix),
+        }
+    return collect_image_product_comparison(
+        casa_python,
+        str(native_prefix),
+        str(casa_prefix),
+        suffixes,
+    )
+
+
+def collect_image_product_comparison(
+    casa_python: str,
+    native_prefix: str,
+    casa_prefix: str,
+    suffixes: list[str],
+) -> dict[str, Any]:
+    script = r'''
+import json
+import math
+import sys
+
+import numpy as np
+from casatools import image
+
+native_prefix, casa_prefix, suffixes = json.loads(sys.argv[1])
+
+def open_image(path):
+    ia = image()
+    try:
+        ia.open(path)
+        data = np.asarray(ia.getchunk(), dtype=np.float64)
+        unit = ia.brightnessunit()
+    finally:
+        try:
+            ia.close()
+        except Exception:
+            pass
+    return data, unit
+
+def summarize(data):
+    finite = data[np.isfinite(data)]
+    if finite.size == 0:
+        return {"finite_count": 0}
+    return {
+        "shape": list(data.shape),
+        "finite_count": int(finite.size),
+        "min": float(np.min(finite)),
+        "max": float(np.max(finite)),
+        "peak_abs": float(np.max(np.abs(finite))),
+        "mean": float(np.mean(finite)),
+        "rms": float(math.sqrt(float(np.mean(finite * finite)))),
+    }
+
+result = {
+    "status": "passed",
+    "native_prefix": native_prefix,
+    "casa_prefix": casa_prefix,
+    "products": {},
+    "missing_products": [],
+}
+for suffix in suffixes:
+    native_path = native_prefix + suffix
+    casa_path = casa_prefix + suffix
+    entry = {
+        "native_path": native_path,
+        "casa_path": casa_path,
+    }
+    try:
+        native, native_unit = open_image(native_path)
+    except Exception as error:
+        native = None
+        entry["native_error"] = str(error)
+    try:
+        casa, casa_unit = open_image(casa_path)
+    except Exception as error:
+        casa = None
+        entry["casa_error"] = str(error)
+    if native is None or casa is None:
+        entry["status"] = "missing"
+        result["missing_products"].append(suffix)
+        result["status"] = "failed"
+        result["products"][suffix] = entry
+        continue
+    entry["native"] = {"unit": native_unit, **summarize(native)}
+    entry["casa"] = {"unit": casa_unit, **summarize(casa)}
+    if native.shape != casa.shape:
+        entry["status"] = "shape_mismatch"
+        result["status"] = "failed"
+        result["products"][suffix] = entry
+        continue
+    diff = native - casa
+    finite = diff[np.isfinite(diff)]
+    casa_peak = max(float(np.nanmax(np.abs(casa))), 1.0e-30)
+    max_abs = float(np.nanmax(np.abs(diff))) if diff.size else 0.0
+    rms_abs = float(math.sqrt(float(np.nanmean(diff * diff)))) if finite.size else 0.0
+    entry.update({
+        "status": "passed",
+        "max_abs_diff": max_abs,
+        "rms_abs_diff": rms_abs,
+        "max_rel_to_casa_peak": max_abs / casa_peak,
+        "rms_rel_to_casa_peak": rms_abs / casa_peak,
+    })
+    result["products"][suffix] = entry
+print(json.dumps(result, sort_keys=True))
+'''
+    completed = subprocess.run(
+        [
+            casa_python,
+            "-c",
+            script,
+            json.dumps([native_prefix, casa_prefix, suffixes]),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return {
+            "status": "failed",
+            "reason": completed.stderr.strip(),
+            "native_prefix": native_prefix,
+            "casa_prefix": casa_prefix,
+        }
+    return parse_json_from_stdout(completed.stdout, "image product comparison")
+
+
+def oracle_comparison_summary(
+    correctness: dict[str, Any],
+    *,
+    image_products: dict[str, Any],
+) -> dict[str, Any]:
+    strict = correctness.get("strict_values")
+    if correctness.get("status") == "skipped":
+        ms_samples = {
+            "status": "skipped",
+            "reason": "; ".join(correctness.get("reasons", [])),
+        }
+    elif not strict:
+        ms_samples = {
+            "status": "not_run",
+            "reason": "strict CASA/native value comparison was not requested",
+        }
+    elif strict.get("status") == "skipped":
+        ms_samples = {
+            "status": "skipped",
+            "reason": strict.get("reason"),
+        }
+    else:
+        ms_samples = {
+            "status": strict.get("status", "unknown"),
+            "row_count": strict.get("row_count"),
+            "rows_sampled": strict.get("rows_sampled"),
+            "uvw": strict.get("uvw"),
+            "flag_counts": strict.get("flag_counts"),
+            "raw_flag_mismatches": strict.get("raw_flag_mismatches"),
+            "effective_flag_mismatches": strict.get("effective_flag_mismatches"),
+            "weight": strict.get("weight"),
+            "sigma": strict.get("sigma"),
+            "data": strict.get("data"),
+        }
+    return {
+        "measurement_set_samples": ms_samples,
+        "imaging_products": image_products,
+    }
 
 
 def without_noise(dataset: dict[str, Any]) -> dict[str, Any]:

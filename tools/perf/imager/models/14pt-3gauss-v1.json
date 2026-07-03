@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "name": "14pt-3gauss-v1",
+  "components": [
+    {
+      "kind": "point",
+      "name": "pt00_core",
+      "l_rad": 0.0,
+      "m_rad": 0.0,
+      "spectrum": { "flux_jy": 1.0, "spectral_index": -0.65 }
+    },
+    {
+      "kind": "point",
+      "name": "pt01_ne",
+      "l_rad": 0.000045,
+      "m_rad": 0.000035,
+      "spectrum": { "flux_jy": 0.83, "spectral_index": -0.2 }
+    },
+    {
+      "kind": "point",
+      "name": "pt02_sw_line",
+      "l_rad": -0.000052,
+      "m_rad": -0.000041,
+      "spectrum": {
+        "flux_jy": 0.71,
+        "spectral_index": 0.15,
+        "line_peak_jy": 0.9,
+        "line_center_fraction": 0.18,
+        "line_sigma_fraction": 0.035
+      }
+    },
+    {
+      "kind": "point",
+      "name": "pt03_n",
+      "l_rad": -0.000018,
+      "m_rad": 0.000075,
+      "spectrum": { "flux_jy": 0.62, "spectral_index": -1.1 }
+    },
+    {
+      "kind": "point",
+      "name": "pt04_s_abs",
+      "l_rad": 0.000022,
+      "m_rad": -0.000083,
+      "spectrum": {
+        "flux_jy": 0.55,
+        "spectral_index": -0.4,
+        "absorption_peak_jy": 0.28,
+        "absorption_center_fraction": 0.48,
+        "absorption_sigma_fraction": 0.08
+      }
+    },
+    {
+      "kind": "point",
+      "name": "pt05_e",
+      "l_rad": 0.000102,
+      "m_rad": -0.000011,
+      "spectrum": { "flux_jy": 0.49, "spectral_index": 0.0 }
+    },
+    {
+      "kind": "point",
+      "name": "pt06_w",
+      "l_rad": -0.000112,
+      "m_rad": 0.000016,
+      "spectrum": { "flux_jy": 0.43, "spectral_index": -0.8 }
+    },
+    {
+      "kind": "point",
+      "name": "pt07_outer_ne_line",
+      "l_rad": 0.00016,
+      "m_rad": 0.00011,
+      "spectrum": {
+        "flux_jy": 0.38,
+        "spectral_index": 0.25,
+        "line_peak_jy": 0.55,
+        "line_center_fraction": 0.72,
+        "line_sigma_fraction": 0.04
+      }
+    },
+    {
+      "kind": "point",
+      "name": "pt08_outer_nw",
+      "l_rad": -0.00017,
+      "m_rad": 0.00012,
+      "spectrum": { "flux_jy": 0.33, "spectral_index": -0.95 }
+    },
+    {
+      "kind": "point",
+      "name": "pt09_outer_se",
+      "l_rad": 0.00018,
+      "m_rad": -0.00013,
+      "spectrum": { "flux_jy": 0.29, "spectral_index": -0.1 }
+    },
+    {
+      "kind": "point",
+      "name": "pt10_outer_sw",
+      "l_rad": -0.00019,
+      "m_rad": -0.00014,
+      "spectrum": { "flux_jy": 0.25, "spectral_index": -1.3 }
+    },
+    {
+      "kind": "point",
+      "name": "pt11_mosaic_ne",
+      "l_rad": 0.00029,
+      "m_rad": 0.00021,
+      "spectrum": { "flux_jy": 0.21, "spectral_index": -0.55 }
+    },
+    {
+      "kind": "point",
+      "name": "pt12_mosaic_w",
+      "l_rad": -0.00034,
+      "m_rad": 0.00002,
+      "spectrum": { "flux_jy": 0.18, "spectral_index": 0.35 }
+    },
+    {
+      "kind": "point",
+      "name": "pt13_mosaic_s_line",
+      "l_rad": 0.00003,
+      "m_rad": -0.00036,
+      "spectrum": {
+        "flux_jy": 0.15,
+        "spectral_index": -0.25,
+        "line_peak_jy": 0.4,
+        "line_center_fraction": 0.9,
+        "line_sigma_fraction": 0.06
+      }
+    },
+    {
+      "kind": "gaussian",
+      "name": "gauss00_compact",
+      "l_rad": 0.00007,
+      "m_rad": -0.00003,
+      "major_fwhm_rad": 0.000035,
+      "minor_fwhm_rad": 0.00002,
+      "position_angle_rad": 0.4,
+      "spectrum": {
+        "flux_jy": 0.52,
+        "spectral_index": -0.45,
+        "line_peak_jy": 0.38,
+        "line_center_fraction": 0.32,
+        "line_sigma_fraction": 0.09
+      }
+    },
+    {
+      "kind": "gaussian",
+      "name": "gauss01_extended_broad",
+      "l_rad": -0.00009,
+      "m_rad": 0.000055,
+      "major_fwhm_rad": 0.000085,
+      "minor_fwhm_rad": 0.000052,
+      "position_angle_rad": -0.7,
+      "spectrum": {
+        "flux_jy": 0.46,
+        "spectral_index": 0.1,
+        "line_peak_jy": 0.7,
+        "line_center_fraction": 0.58,
+        "line_sigma_fraction": 0.16
+      }
+    },
+    {
+      "kind": "gaussian",
+      "name": "gauss02_absorption",
+      "l_rad": 0.00023,
+      "m_rad": -0.00019,
+      "major_fwhm_rad": 0.00013,
+      "minor_fwhm_rad": 0.00007,
+      "position_angle_rad": 1.1,
+      "spectrum": {
+        "flux_jy": 0.31,
+        "spectral_index": -0.9,
+        "absorption_peak_jy": 0.18,
+        "absorption_center_fraction": 0.42,
+        "absorption_sigma_fraction": 0.11
+      }
+    }
+  ]
+}

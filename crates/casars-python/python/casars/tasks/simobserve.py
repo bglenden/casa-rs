@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import json
 from os import PathLike
+from pathlib import Path
 from typing import Any, TypeAlias
 
 from .._task_runtime import (
@@ -12,6 +14,7 @@ from .._task_runtime import (
     fetch_simobserve_schema,
     get_simobserve_protocol_info,
     invoke_simobserve_task,
+    invoke_simobserve_task_file,
 )
 
 StrPath: TypeAlias = str | PathLike[str]
@@ -42,6 +45,35 @@ def run(request: dict[str, Any], *, binary: StrPath | None = None) -> TaskResult
     return invoke_simobserve_task(kind="run", request=request, binary=binary)
 
 
+def family(request: dict[str, Any], *, binary: StrPath | None = None) -> TaskResult:
+    """Execute one canonical synthetic-MS family request."""
+
+    return invoke_simobserve_task(kind="family", request=request, binary=binary)
+
+
+def run_file(source: StrPath, *, binary: StrPath | None = None) -> TaskResult:
+    """Execute a saved canonical ``simobserve`` JSON request file."""
+
+    return invoke_simobserve_task_file(source, binary=binary)
+
+
+def save_request(path: StrPath, *, kind: str, request: dict[str, Any]) -> None:
+    """Save a canonical ``simobserve`` request envelope."""
+
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps({"kind": kind, "request": request}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def load_request(path: StrPath) -> dict[str, Any]:
+    """Load a canonical ``simobserve`` request envelope."""
+
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
 def vla_ppdisk(
     model_image: StrPath,
     output_ms: StrPath,
@@ -59,8 +91,14 @@ def vla_ppdisk(
     start_frequency_hz: float = 44.0e9,
     channel_width_hz: float = 128.0e6,
     channel_count: int = 1,
+    polarization_setup: dict[str, Any] | None = None,
+    polarizations: int = 2,
+    polarization_basis: str = "circular",
     predict_model: bool = True,
     corruption: dict[str, Any] | None = None,
+    worker_policy: str = "auto",
+    row_workers: int | None = None,
+    channel_workers: int | None = None,
     binary: StrPath | None = None,
 ) -> TaskResult:
     """Generate a VLA protoplanetary-disk synthetic MeasurementSet."""
@@ -86,7 +124,12 @@ def vla_ppdisk(
             "channel_width_hz": channel_width_hz,
             "channel_count": channel_count,
         },
+        "polarization_setup": polarization_setup
+        or {"basis": polarization_basis, "correlation_count": polarizations},
         "predict_model": predict_model,
         "corruption": corruption,
+        "worker_policy": worker_policy,
+        "row_workers": row_workers,
+        "channel_workers": channel_workers,
     }
     return run(request, binary=binary)

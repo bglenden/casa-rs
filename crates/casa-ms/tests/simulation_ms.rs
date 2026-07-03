@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native synthetic-observation MS writer tests.
 
+use casa_ms::columns::main_ids;
 use casa_ms::{
-    MeasurementSet, SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
-    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationRequest,
-    SyntheticPointingCorruption, SyntheticPolarizationLeakageCorruption,
-    SyntheticPolarizationLeakageMode, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
+    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
+    SyntheticBandpassCorruption, SyntheticBandpassMode, SyntheticCorruptionConfig, SyntheticField,
+    SyntheticGainCorruption, SyntheticGainMode, SyntheticNoiseCorruption, SyntheticNoiseMode,
+    SyntheticObservationMode, SyntheticObservationRequest, SyntheticPointingCorruption,
+    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
+    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
+    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
 use casa_types::measures::position::MPosition;
@@ -111,6 +113,254 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
 }
 
 #[test]
+fn analytic_component_model_generates_predicted_ms_data() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        temp.path().join("unused.fits"),
+        temp.path().join("analytic.synthetic.ms"),
+        antennas(),
+    );
+    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+        path: None,
+        schema_version: Some(1),
+        name: Some("inline-analytic".to_string()),
+        components: vec![
+            SyntheticAnalyticComponent::Point {
+                name: Some("line-core".to_string()),
+                l_rad: 0.0,
+                m_rad: 0.0,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 1.0,
+                    spectral_index: 0.0,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 3.0,
+                    line_center_fraction: 0.0,
+                    line_sigma_fraction: 0.08,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            },
+            SyntheticAnalyticComponent::Gaussian {
+                name: Some("broad-extended".to_string()),
+                l_rad: 4.0e-5,
+                m_rad: -2.0e-5,
+                major_fwhm_rad: 8.0e-5,
+                minor_fwhm_rad: 4.0e-5,
+                position_angle_rad: 0.3,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 0.4,
+                    spectral_index: -0.5,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 0.0,
+                    line_center_fraction: 0.5,
+                    line_sigma_fraction: 0.1,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            },
+        ],
+    });
+    request.phase_center_rad = [1.23, -0.45];
+    request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+    request.duration_seconds = 10.0;
+    request.integration_seconds = 10.0;
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "analytic-band".to_string(),
+        start_frequency_hz: 44.0e9,
+        channel_width_hz: 1.0e6,
+        channel_count: 4,
+    };
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+
+    assert_eq!(report.model_kind, "analytic_components");
+    assert!(report.nonzero_visibility_count > 0);
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    assert!(ms.validate().unwrap().is_empty());
+    let data = ms
+        .main_table()
+        .cell_accessor(0, "DATA")
+        .unwrap()
+        .value()
+        .unwrap();
+    match data {
+        Some(Value::Array(ArrayValue::Complex32(values))) => {
+            assert_eq!(values.shape(), &[2, 4]);
+            assert_ne!(values[[0, 0]], values[[0, 3]]);
+        }
+        other => panic!("expected Complex32 DATA array, got {other:?}"),
+    }
+}
+
+#[test]
+fn total_power_mode_generates_autocorrelation_rows() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        temp.path().join("unused.fits"),
+        temp.path().join("tp.synthetic.ms"),
+        vec![SyntheticAntenna {
+            name: "CM01".to_string(),
+            station: "CM01".to_string(),
+            position_m: [-2_223_990.194, -5_440_045.461, -2_481_682.086],
+            dish_diameter_m: 7.0,
+        }],
+    );
+    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+        path: None,
+        schema_version: Some(1),
+        name: Some("tp-point".to_string()),
+        components: vec![SyntheticAnalyticComponent::Point {
+            name: Some("center".to_string()),
+            l_rad: 0.0,
+            m_rad: 0.0,
+            spectrum: SyntheticAnalyticSpectrum {
+                flux_jy: 1.25,
+                spectral_index: 0.0,
+                reference_frequency_hz: None,
+                line_peak_jy: 0.0,
+                line_center_fraction: 0.5,
+                line_sigma_fraction: 0.1,
+                absorption_peak_jy: 0.0,
+                absorption_center_fraction: 0.5,
+                absorption_sigma_fraction: 0.1,
+            },
+        }],
+    });
+    request.telescope_name = "ACA".to_string();
+    request.observation_mode = SyntheticObservationMode::TotalPower;
+    request.polarization_setup =
+        SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 2).unwrap();
+    request.phase_center_rad = [0.011_028_274_098_247_087, -0.605_894_714_943_707_3];
+    request.fields = vec![
+        SyntheticField {
+            name: "tp_0".to_string(),
+            phase_center_rad: request.phase_center_rad,
+        },
+        SyntheticField {
+            name: "tp_1".to_string(),
+            phase_center_rad: [
+                request.phase_center_rad[0] + 1.0e-5,
+                request.phase_center_rad[1],
+            ],
+        },
+    ];
+    request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+    request.duration_seconds = 30.0;
+    request.integration_seconds = 10.0;
+    request.allow_below_elevation_limit = true;
+    request.elevation_limit_rad = (-89.0_f64).to_radians();
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "band3".to_string(),
+        start_frequency_hz: 330.076e9,
+        channel_width_hz: 50.0e6,
+        channel_count: 1,
+    };
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+
+    assert_eq!(
+        report.observation_mode,
+        SyntheticObservationMode::TotalPower
+    );
+    assert_eq!(report.antenna_count, 1);
+    assert_eq!(report.baseline_count, 1);
+    assert_eq!(report.time_sample_count, 3);
+    assert_eq!(report.main_row_count, 3);
+
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    assert!(ms.validate().unwrap().is_empty());
+    assert_eq!(ms.row_count(), 3);
+    assert_eq!(ms.processor().unwrap().row_count(), 0);
+    assert_eq!(ms.field().unwrap().row_count(), 2);
+    assert_eq!(ms.pointing().unwrap().row_count(), 3);
+    assert_eq!(
+        ms.polarization().unwrap().corr_type(0).unwrap(),
+        vec![9, 12]
+    );
+    assert_eq!(main_ids::antenna1(ms.main_table()).get(0).unwrap(), 0);
+    assert_eq!(main_ids::antenna2(ms.main_table()).get(0).unwrap(), 0);
+    assert_eq!(main_ids::field_id(ms.main_table()).get(0).unwrap(), 0);
+    assert_eq!(main_ids::field_id(ms.main_table()).get(1).unwrap(), 1);
+    assert_eq!(main_ids::field_id(ms.main_table()).get(2).unwrap(), 0);
+    assert_eq!(main_ids::scan_number(ms.main_table()).get(0).unwrap(), 1);
+    assert_eq!(main_ids::scan_number(ms.main_table()).get(1).unwrap(), 2);
+    assert_eq!(main_ids::scan_number(ms.main_table()).get(2).unwrap(), 3);
+
+    let data = ms
+        .main_table()
+        .cell_accessor(0, "DATA")
+        .unwrap()
+        .value()
+        .unwrap();
+    match data {
+        Some(Value::Array(ArrayValue::Complex32(values))) => {
+            assert_eq!(values.shape(), &[2, 1]);
+            assert!(values.iter().all(|value| value.im.abs() < 1.0e-6));
+            assert!(values.iter().all(|value| value.re > 0.0));
+        }
+        other => panic!("expected Complex32 DATA array, got {other:?}"),
+    }
+
+    let uvw = ms
+        .main_table()
+        .cell_accessor(0, "UVW")
+        .unwrap()
+        .value()
+        .unwrap();
+    match uvw {
+        Some(Value::Array(ArrayValue::Float64(values))) => {
+            assert_eq!(values.shape(), &[3]);
+            assert!(values.iter().all(|value| *value == 0.0));
+        }
+        other => panic!("expected Float64 UVW array, got {other:?}"),
+    }
+}
+
+#[test]
+fn requested_four_correlations_drive_ms_metadata_and_main_shapes() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = request(temp.path());
+    request.polarization_setup =
+        SyntheticPolarizationSetup::new(SyntheticPolarizationBasis::Linear, 4).unwrap();
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+
+    assert_eq!(report.correlation_count, 4);
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    assert!(ms.validate().unwrap().is_empty());
+    let polarization = ms.polarization().unwrap();
+    assert_eq!(polarization.num_corr(0).unwrap(), 4);
+    assert_eq!(polarization.corr_type(0).unwrap(), vec![9, 10, 11, 12]);
+
+    let data = ms
+        .main_table()
+        .cell_accessor(0, "DATA")
+        .unwrap()
+        .value()
+        .unwrap();
+    match data {
+        Some(Value::Array(ArrayValue::Complex32(values))) => {
+            assert_eq!(values.shape(), &[4, 4]);
+        }
+        other => panic!("expected Complex32 DATA array, got {other:?}"),
+    }
+    let weight = ms
+        .main_table()
+        .cell_accessor(0, "WEIGHT")
+        .unwrap()
+        .value()
+        .unwrap();
+    match weight {
+        Some(Value::Array(ArrayValue::Float32(values))) => {
+            assert_eq!(values.shape(), &[4]);
+        }
+        other => panic!("expected Float32 WEIGHT array, got {other:?}"),
+    }
+}
+
+#[test]
 fn zenith_transit_schedule_writes_unflagged_vla_track() {
     let temp = tempfile::tempdir().unwrap();
     let model = temp.path().join("ppdisk672_GHz_50pc.fits");
@@ -175,7 +425,7 @@ fn multi_field_synthetic_ms_cycles_field_ids_and_writes_pointings() {
     assert_eq!(ms.field().unwrap().row_count(), 2);
     assert_eq!(ms.field().unwrap().name(0).unwrap(), "mosaic_0");
     assert_eq!(ms.field().unwrap().name(1).unwrap(), "mosaic_1");
-    assert_eq!(ms.pointing().unwrap().row_count(), 6);
+    assert_eq!(ms.pointing().unwrap().row_count(), 12);
 
     assert_eq!(main_i32_cell(&ms, 0, "FIELD_ID"), 0);
     assert_eq!(main_i32_cell(&ms, 3, "FIELD_ID"), 1);
@@ -405,7 +655,8 @@ fn invalid_antenna_configuration_fails_clearly() {
     let error = generate_synthetic_observation_ms(&request)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("at least two antennas"));
+    assert!(error.contains("at least 2 antennas"));
+    assert!(error.contains("interferometric"));
 }
 
 #[test]

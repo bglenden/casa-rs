@@ -161,7 +161,8 @@ def create_model_image(dataset: dict[str, Any], *, overwrite: bool = False) -> p
         type="direction",
     )
     cs.setreferencepixel([pixels / 2.0 - 0.5, pixels / 2.0 - 0.5], type="direction")
-    cs.setreferencevalue([270.000129, -22.999889], type="direction")
+    ra_deg, dec_deg = stage.phase_center_deg(dataset["instrument"], 0.0, 0.0)
+    cs.setreferencevalue([ra_deg, dec_deg], type="direction")
     cs.setreferencevalue(f"{start_frequency_hz(dataset['instrument'])}Hz", type="spectral")
     cs.setincrement(f"{channel_width_hz(dataset['instrument'])}Hz", type="spectral")
     ia = image()
@@ -208,7 +209,10 @@ def write_pointings(dataset: dict[str, Any], casa_dir: pathlib.Path) -> pathlib.
     out = casa_dir / f"{dataset['id']}.ptg.txt"
     lines = []
     for dra_arcsec, ddec_arcsec in offsets[:count]:
-        lines.append(format_direction(270.000129 + dra_arcsec / 3600.0, -22.999889 + ddec_arcsec / 3600.0))
+        ra_deg, dec_deg = stage.phase_center_deg(
+            dataset["instrument"], dra_arcsec, ddec_arcsec
+        )
+        lines.append(format_direction(ra_deg, dec_deg))
     out.write_text("\n".join(lines) + "\n", encoding="ascii")
     return out
 

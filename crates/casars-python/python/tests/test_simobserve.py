@@ -74,6 +74,8 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         duration_seconds=30.0,
         integration_seconds=10.0,
         channel_count=4,
+        polarizations=4,
+        polarization_basis="linear",
         predict_model=False,
         corruption={
             "seed": 42,
@@ -108,6 +110,7 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["duration_seconds"] == 30.0
     assert request["integration_seconds"] == 10.0
     assert request["spectral_setup"]["channel_count"] == 4
+    assert request["polarization_setup"] == {"basis": "linear", "correlation_count": 4}
     assert request["predict_model"] is False
     assert request["corruption"]["seed"] == 42
     assert request["corruption"]["noise"]["simplenoise_jy"] == 0.001
@@ -117,11 +120,77 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["corruption"]["pointing"]["offset_rad"] == [1.0e-5, -2.0e-5]
 
 
+def test_family_wrapper_encodes_canonical_request(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "simobserve", version="ok")
+
+    result = simobserve.family(
+        {
+            "source_model": {
+                "kind": "analytic_components",
+                "components": [
+                    {
+                        "kind": "point",
+                        "l_rad": 0.0,
+                        "m_rad": 0.0,
+                        "spectrum": {"flux_jy": 1.0},
+                    }
+                ],
+            },
+            "telescope": "ALMA",
+            "array_config": "synthetic-aca",
+            "band": "Band 3",
+            "target_ms_size_gib": 0.01,
+            "polarizations": 4,
+            "ms_channels": 8,
+            "image_channels": 2,
+            "pointing_count": 7,
+            "imaging_mode": "mosaic",
+            "output_ms": "family.ms",
+        },
+        binary=binary,
+    )
+
+    assert result["kind"] == "family"
+    request = result["result"]["request"]
+    assert request["source_model"]["kind"] == "analytic_components"
+    assert request["telescope"] == "ALMA"
+    assert request["array_config"] == "synthetic-aca"
+    assert request["band"] == "Band 3"
+    assert request["polarizations"] == 4
+    assert request["pointing_count"] == 7
+
+
+def test_saved_request_round_trip_runs_json_file(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "simobserve", version="ok")
+    request_path = tmp_path / "requests" / "family.json"
+    request = {
+        "source_model": {"kind": "fits_image", "path": "model.fits"},
+        "telescope": "VLA",
+        "array_config": "synthetic-vla-d",
+        "band": "Q",
+        "target_ms_size_gib": 0.01,
+        "polarizations": 2,
+        "ms_channels": 4,
+        "image_channels": 1,
+        "pointing_count": 1,
+        "imaging_mode": "mfs",
+        "output_ms": "family.ms",
+    }
+
+    simobserve.save_request(request_path, kind="family", request=request)
+    loaded = simobserve.load_request(request_path)
+    result = simobserve.run_file(request_path, binary=binary)
+
+    assert loaded == {"kind": "family", "request": request}
+    assert result["kind"] == "family"
+    assert result["result"]["request"]["array_config"] == "synthetic-vla-d"
+
+
 def _write_stub_binary(
     path: Path,
     *,
     version: str,
-    protocol_version: int = 1,
+    protocol_version: int = 2,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     script = textwrap.dedent(
@@ -140,7 +209,12 @@ def _write_stub_binary(
             raise SystemExit(0)
 
         if "--json-run" in sys.argv:
-            payload = json.load(sys.stdin)
+            source = sys.argv[sys.argv.index("--json-run") + 1]
+            if source == "-":
+                payload = json.load(sys.stdin)
+            else:
+                with open(source, encoding="utf-8") as handle:
+                    payload = json.load(handle)
             print(json.dumps({{
                 "kind": payload["kind"],
                 "result": {{
