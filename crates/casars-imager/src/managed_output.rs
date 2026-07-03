@@ -235,7 +235,7 @@ impl ManagedImagingOutput {
                 dirty_only: request.dirty_only,
                 write_preview_pngs: request.write_preview_pngs,
                 write_pb: request.write_pb,
-                per_channel_weight_density: request.per_channel_weight_density,
+                per_channel_weight_density: managed_request_per_channel_weight_density(request),
                 nterms: request.nterms,
                 output_channels: result.run.channels.len(),
                 correlation: request
@@ -551,6 +551,14 @@ fn stage_timings_from_frontend(timings: FrontendStageTimings) -> ManagedImagingS
             ("total".to_string(), timings.total.as_nanos() as u64),
         ],
     }
+}
+
+fn managed_request_per_channel_weight_density(
+    request: &crate::task_contract::ImagerRunTaskRequest,
+) -> bool {
+    request
+        .per_channel_weight_density
+        .unwrap_or(matches!(request.spectral_mode, ImagerSpectralMode::Cube))
 }
 
 fn channel_run_from_summary(summary: &ChannelRunSummary) -> ManagedImagingChannelRun {
@@ -927,7 +935,7 @@ mod tests {
                 spectral_mode: ImagerSpectralMode::Cube,
                 cube_axis: Default::default(),
                 weighting: ImagerWeighting::Briggs { robust: -0.25 },
-                per_channel_weight_density: true,
+                per_channel_weight_density: Some(true),
                 use_pointing: true,
                 uv_taper: None,
                 restoring_beam_mode: ImagerRestoringBeamMode::PerPlane,
@@ -955,6 +963,7 @@ mod tests {
                 mask_boxes: vec![[1, 2, 3, 4]],
                 mask_image: None,
                 w_term_mode: ImagerWTermMode::Wproject,
+                force_standard_gridder: true,
                 w_project_planes: Some(32),
                 dirty_only: true,
                 standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,

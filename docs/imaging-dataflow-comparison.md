@@ -77,7 +77,7 @@ layer, not in the pure core boundary.
 
 ```mermaid
 flowchart TB
-    surface["Task/API surfaces<br/>Python mfs(), CLI/JSON, GUI task tab"] --> runconfig["Request validation and mode dispatch<br/>casars-imager::run_from_config()"]
+    surface["Task/API surfaces<br/>Python mfs(), CLI/JSON, GUI task tab"] --> runconfig["Canonical request validation and mode dispatch<br/>casars-imager::run_from_request()"]
     runconfig --> readms["Bounded MS source stream<br/>read_visibility_source_columns()<br/>DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW"]
     readms --> prep["Bounded visibility blocks<br/>MFS or cube adapters<br/>uvw, frequency, Stokes, PB metadata"]
     prep --> dispatch["Processing-mode dispatch<br/>adapter-owned control-flow split"]

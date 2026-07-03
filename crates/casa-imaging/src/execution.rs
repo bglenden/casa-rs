@@ -10592,8 +10592,7 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         )
     }
 
-    /// Append one borrowed routed row/channel span without allocating a run.
-    pub fn append_row_run(
+    fn append_row_run(
         &mut self,
         row: &StandardMfsRoutedVisibilityRow,
         source_slot_range: Range<usize>,
@@ -10875,18 +10874,6 @@ impl StandardMfsMetalGroupedInputCachePrefill {
     pub fn append_run(
         &mut self,
         _routed_run: &StandardMfsRoutedVisibilityRun,
-    ) -> Result<(), ImagingError> {
-        Err(ImagingError::Unsupported(
-            "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
-        ))
-    }
-
-    /// Return an unsupported error on non-macOS platforms.
-    pub fn append_row_run(
-        &mut self,
-        _row: &StandardMfsRoutedVisibilityRow,
-        _source_slot_range: Range<usize>,
-        _tap_centers: &[[u32; 2]],
     ) -> Result<(), ImagingError> {
         Err(ImagingError::Unsupported(
             "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),

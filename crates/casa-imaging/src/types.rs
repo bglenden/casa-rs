@@ -175,6 +175,87 @@ impl WeightingMode {
     }
 }
 
+/// Request for planning the standard-MFS density-source channel domain.
+///
+/// This keeps CASA cube `perchanweightdensity=false` behavior in the reusable
+/// imaging layer while frontends remain responsible for adapting the resulting
+/// channel domain to their MeasurementSet readers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsDensitySourcePlanRequest {
+    /// True when the target image behaves like a CASA spectral cube or cubedata
+    /// plane rather than continuum MFS.
+    pub cube_like: bool,
+    /// True when this target is dirty-only, either by explicit dirty mode or
+    /// because CLEAN has zero minor-cycle iterations.
+    pub dirty_only: bool,
+    /// Optional selected-channel count for the target image.
+    pub target_channel_count: Option<usize>,
+    /// Total source-channel count available from the selected SPW/DDID.
+    pub full_source_channel_count: usize,
+    /// CASA `perchanweightdensity` state.
+    pub per_channel_weight_density: bool,
+    /// Weighting mode requested for the standard-MFS plane.
+    pub weighting: WeightingMode,
+}
+
+/// Planned channel domain for standard-MFS density weighting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StandardMfsDensitySourcePlan {
+    /// Estimated target image channel count after frontend selection.
+    pub target_channel_count: usize,
+    /// Channel start to use for density accumulation. `None` means the full
+    /// selected SPW/DDID domain.
+    pub density_channel_start: Option<usize>,
+    /// Channel count to use for density accumulation. `None` means the full
+    /// selected SPW/DDID domain.
+    pub density_channel_count: Option<usize>,
+    /// Estimated density-source channel count.
+    pub density_channel_count_estimate: usize,
+    /// True when density weighting intentionally uses a channel domain different
+    /// from the target image.
+    pub uses_distinct_density_source: bool,
+}
+
+/// Plan the source-channel domain used by standard-MFS density weighting.
+pub fn plan_standard_mfs_density_source(
+    request: StandardMfsDensitySourcePlanRequest,
+) -> StandardMfsDensitySourcePlan {
+    let full_source_channel_count = request.full_source_channel_count.max(1);
+    let target_channel_count = request
+        .target_channel_count
+        .unwrap_or(full_source_channel_count)
+        .max(1);
+    let density_weighting = matches!(
+        request.weighting,
+        WeightingMode::Uniform | WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. }
+    );
+    let uses_distinct_density_source = request.dirty_only
+        && request.cube_like
+        && request.target_channel_count == Some(1)
+        && !request.per_channel_weight_density
+        && density_weighting;
+    let (density_channel_start, density_channel_count, density_channel_count_estimate) =
+        if uses_distinct_density_source {
+            (None, None, full_source_channel_count)
+        } else {
+            (
+                None,
+                request.target_channel_count,
+                request
+                    .target_channel_count
+                    .unwrap_or(full_source_channel_count)
+                    .max(1),
+            )
+        };
+    StandardMfsDensitySourcePlan {
+        target_channel_count,
+        density_channel_start,
+        density_channel_count,
+        density_channel_count_estimate,
+        uses_distinct_density_source,
+    }
+}
+
 /// Imaging gridder family used for one MFS plane.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GridderMode {
@@ -3523,5 +3604,46 @@ mod source_view_tests {
             error.to_string().contains("max_resident_visibility_bytes"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn standard_mfs_density_source_plan_uses_full_cube_domain_for_combined_dirty_briggs() {
+        let plan = plan_standard_mfs_density_source(StandardMfsDensitySourcePlanRequest {
+            cube_like: true,
+            dirty_only: true,
+            target_channel_count: Some(1),
+            full_source_channel_count: 16,
+            per_channel_weight_density: false,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+        });
+
+        assert_eq!(plan.target_channel_count, 1);
+        assert_eq!(plan.density_channel_start, None);
+        assert_eq!(plan.density_channel_count, None);
+        assert_eq!(plan.density_channel_count_estimate, 16);
+        assert!(plan.uses_distinct_density_source);
+    }
+
+    #[test]
+    fn standard_mfs_density_source_plan_keeps_target_domain_without_density_weighting_switch() {
+        for (weighting, per_channel_weight_density) in [
+            (WeightingMode::Natural, false),
+            (WeightingMode::Briggs { robust: 0.5 }, true),
+        ] {
+            let plan = plan_standard_mfs_density_source(StandardMfsDensitySourcePlanRequest {
+                cube_like: true,
+                dirty_only: true,
+                target_channel_count: Some(1),
+                full_source_channel_count: 16,
+                per_channel_weight_density,
+                weighting,
+            });
+
+            assert_eq!(plan.target_channel_count, 1);
+            assert_eq!(plan.density_channel_start, None);
+            assert_eq!(plan.density_channel_count, Some(1));
+            assert_eq!(plan.density_channel_count_estimate, 1);
+            assert!(!plan.uses_distinct_density_source);
+        }
     }
 }

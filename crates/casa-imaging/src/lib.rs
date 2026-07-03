@@ -358,17 +358,18 @@ pub use types::{
     ModelRoutePlan, MosaicGridderConfig, MtmfsRequest, MtmfsResult, OutputPlaneContribution,
     ParallelHandBatch, PlaneStokes, PolarizationRoutePlan, PrimaryBeamModel, PsfBeamFitResult,
     ReplayCapability, ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode,
-    ScalarVisibilitySample, SourceChannelRoute, SpectralRoutePlan,
-    StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBlock,
-    StandardMfsRoutedVisibilityAppendCounts, StandardMfsRoutedVisibilityBlock,
-    StandardMfsVisibilityPolarization, StandardMfsVisibilityRow, UvTaperSize, VisibilityBatch,
-    VisibilityBlockStream, VisibilityBlockView, VisibilityComplexSamplesRef,
-    VisibilityFloatSamplesRef, VisibilityMetadataBatch, VisibilitySampleRange, VisibilitySource,
-    VisibilitySourcePartition, VisibilitySourcePartitionId, VisibilitySourceShape,
-    VisibilityStreamBounds, VisibilityStreamTelemetry, WProjectDiagnostics,
-    WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics, WProjectSkipReason,
-    WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode, WeightingDiagnostics,
-    WeightingMode, WeightingRoutePlan, WeightingSampleDiagnostics,
+    ScalarVisibilitySample, SourceChannelRoute, SpectralRoutePlan, StandardMfsDensitySourcePlan,
+    StandardMfsDensitySourcePlanRequest, StandardMfsPairCollapseTransform,
+    StandardMfsPlannedSampleBlock, StandardMfsRoutedVisibilityAppendCounts,
+    StandardMfsRoutedVisibilityBlock, StandardMfsVisibilityPolarization, StandardMfsVisibilityRow,
+    UvTaperSize, VisibilityBatch, VisibilityBlockStream, VisibilityBlockView,
+    VisibilityComplexSamplesRef, VisibilityFloatSamplesRef, VisibilityMetadataBatch,
+    VisibilitySampleRange, VisibilitySource, VisibilitySourcePartition,
+    VisibilitySourcePartitionId, VisibilitySourceShape, VisibilityStreamBounds,
+    VisibilityStreamTelemetry, WProjectDiagnostics, WProjectKernelDiagnostics,
+    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
+    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingRoutePlan,
+    WeightingSampleDiagnostics, plan_standard_mfs_density_source,
 };
 use types::{
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
@@ -1046,10 +1047,10 @@ pub struct StandardMfsExecutionConfig {
     pub fixed_tile_max_live_row_blocks: usize,
     /// Route fixed-tile sample replay through planned run blocks.
     ///
-    /// This is an experimental scalar-run interface. The default remains the
-    /// thresholded scalar inbox path until run-shaped work units improve wall
-    /// time or carry row-shaped worker semantics.
-    pub fixed_tile_use_planned_run_blocks: bool,
+    /// This is selected by public standard-MFS plan variants, not by frontends.
+    /// Keeping it private prevents an internal replay shape from becoming
+    /// application API.
+    fixed_tile_use_planned_run_blocks: bool,
     /// Reuse finalized host-side grouped Metal residual input chunks across
     /// major-cycle refreshes.
     ///
@@ -27877,37 +27878,37 @@ mod tests {
         PrimaryBeamWeightSample, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
         StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-        StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
-        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
-        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-        add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
-        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
-        build_image_coordinate_system, build_image_spectral_coordinate,
-        build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
-        clean_cycle_threshold, clean_mask_image_product, clean_mask_pixel_count,
-        collapse_primary_beam_weight_samples, compute_dirty_psf_and_residual_standard, compute_psf,
-        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, extract_mfs_plane_product, kernel_nonzero_support,
-        make_multiscale_kernel, mean_stddev, mfs_image_product_peak_abs_masked,
-        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
-        mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
-        mosaic_projector_sampling, normalized_weighted_primary_beam_product,
-        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
+        StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlan,
+        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
+        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsWeightedSample, VisibilityBatch,
+        VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample, WProjectSkipReason,
+        WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
+        add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
+        build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
+        build_image_spectral_coordinate, build_multiscale_scale_masks,
+        casa_multiscale_divergence_stop_reason, clean_cycle_threshold, clean_mask_image_product,
+        clean_mask_pixel_count, collapse_primary_beam_weight_samples,
+        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
+        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        extract_mfs_plane_product, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
+        mfs_image_product_peak_abs_masked, minor_cycle_stop_reason,
+        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
+        mosaic_primary_beam_product_from_weight_product, mosaic_projector_sampling,
+        normalized_weighted_primary_beam_product, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
+        peak_location_masked_in_window, phase_rotate_visibility,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_correct_alpha_product, primary_beam_correct_image_product,
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
         primary_beam_support_mask_product, primary_beam_voltage_pattern_for_offsets,
         run_clark_cotton_schwab, run_clark_minor_cycle, run_hogbom_minor_cycle,
         run_hogbom_plane_minor_cycle, run_imaging, run_imaging_owned,
-        run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_plan,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
-        run_standard_mfs_weighted_streaming_with_execution_config, single_plane_image_product,
-        skip_standard_mfs_prepared_clean_plane_with_cycle_threshold, tolerant_clean_stop_reason,
-        trace_cube_channel_residual_refresh,
+        single_plane_image_product, skip_standard_mfs_prepared_clean_plane_with_cycle_threshold,
+        tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
@@ -29940,26 +29941,24 @@ mod tests {
         let retained = run_imaging(&request).unwrap();
         let mut streaming_request = request.clone();
         streaming_request.visibility_batches.clear();
-        let streaming = run_standard_mfs_weighted_streaming_with_execution_config(
+        let execution_config = StandardMfsExecutionConfig {
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            fixed_tile_resident_bytes: Some(usize::MAX),
+            fixed_tile_edge: Some(16),
+            fixed_tile_center_boundary: false,
+            fixed_tile_max_live_row_blocks: 1,
+            ..StandardMfsExecutionConfig::default()
+        };
+        let streaming = run_standard_mfs_plan(StandardMfsPlan::weighted_batches(
             streaming_request,
-            StandardMfsExecutionConfig {
-                minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-                fixed_tile_resident_bytes: Some(usize::MAX),
-                fixed_tile_edge: Some(16),
-                fixed_tile_center_boundary: false,
-                fixed_tile_max_live_row_blocks: 1,
-                fixed_tile_use_planned_run_blocks: false,
-                metal_grouped_input_cache: false,
-                materialized_sample_plan_max_samples: None,
-                w_project_max_abs_w_lambda: None,
-            },
+            execution_config,
             |consumer| {
                 for batch in &weighted_batches {
                     consumer(vec![batch.clone()])?;
                 }
                 Ok(())
             },
-        )
+        ))
         .unwrap();
 
         assert_array4_close(&streaming.psf, &retained.psf, 1.0e-5);
@@ -29978,6 +29977,9 @@ mod tests {
 
     #[test]
     fn sample_streaming_weighted_standard_mfs_clean_matches_batch_streaming() {
+        // Internal adapter coverage: public callers enter through
+        // StandardMfsPlan, while these test-only helpers prove the scalar
+        // sample adapters remain equivalent to the public weighted-batch path.
         let geometry = ImageGeometry {
             image_shape: [64, 64],
             cell_size_rad: [1.0e-4, 1.0e-4],
@@ -30026,12 +30028,9 @@ mod tests {
             fixed_tile_edge: Some(16),
             fixed_tile_center_boundary: false,
             fixed_tile_max_live_row_blocks: 1,
-            fixed_tile_use_planned_run_blocks: false,
-            metal_grouped_input_cache: false,
-            materialized_sample_plan_max_samples: None,
-            w_project_max_abs_w_lambda: None,
+            ..StandardMfsExecutionConfig::default()
         };
-        let batch_streaming = run_standard_mfs_weighted_streaming_with_execution_config(
+        let batch_streaming = run_standard_mfs_plan(StandardMfsPlan::weighted_batches(
             request.clone(),
             execution_config,
             |consumer| {
@@ -30040,7 +30039,7 @@ mod tests {
                 }
                 Ok(())
             },
-        )
+        ))
         .unwrap();
         let block_streaming =
             run_standard_mfs_weighted_sample_block_streaming_with_execution_config(

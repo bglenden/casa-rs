@@ -160,7 +160,7 @@ in `casa-ms`, and single-plane execution/product planning now lives in
 
 | Item or family | Current status | Disposition | Replacement guidance |
 |---|---:|---|---|
-| `run_with_cli_args`, `run_from_config`, `CliConfig`, `RunSummary` | Public | Keep public | User-facing app/runtime boundary. |
+| `run_with_cli_args`, `run_from_request`, `ImagerRunTaskRequest`, `run_from_config`, `CliConfig`, `RunSummary` | Public | Keep public | `ImagerRunTaskRequest`/`run_from_request` is the canonical task execution contract; `CliConfig`/`run_from_config` is the retained command-line parser compatibility wrapper. |
 | Task contract and schema exports | Public | Keep public | Contract surface; do not change in API consolidation cleanup. |
 | Oracle and managed-output exports | Public | Keep public | Test/oracle and output-management boundary. |
 | Standard-MFS calls into `casa-imaging` | Private app orchestration | Merge behind smaller public abstraction | Calls now use `StandardMfsPlan`, `StandardMfsDirtyPlan`, and `StandardMfsCleanSession`. |

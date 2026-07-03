@@ -431,8 +431,8 @@
         <text class="curtext" x="52" y="79">CLI, JSON, Python</text>
 
         <rect class="curbox curapp" x="232" y="38" width="180" height="58"></rect>
-        <text class="curtitle" x="250" y="61">run_from_config</text>
-        <text class="curtext" x="250" y="79">validation and routing</text>
+        <text class="curtitle" x="250" y="61">run_from_request</text>
+        <text class="curtext" x="250" y="79">canonical run contract</text>
 
         <rect class="curbox curapp" x="445" y="38" width="185" height="58"></rect>
         <text class="curtitle" x="463" y="61">capability gates</text>
@@ -894,7 +894,7 @@
         <text class="proptitle" x="44" y="490">persistence boundary</text>
 
         <rect class="propbox propapp" x="230" y="48" width="175" height="42"></rect>
-        <text class="proptext" x="248" y="66">ImagingJobRequest</text>
+        <text class="proptext" x="248" y="66">ImagerRunTaskRequest</text>
         <text class="propsmall" x="248" y="82">task schema and defaults</text>
 
         <rect class="propbox propapp" x="438" y="48" width="160" height="42"></rect>
@@ -1256,7 +1256,7 @@
         <text class="label2" x="38" y="364">product writer</text>
 
         <rect class="box2 app2" x="230" y="50" width="170" height="34"></rect>
-        <text class="small2" x="246" y="72">ImagingJobRequest</text>
+        <text class="small2" x="246" y="72">ImagerRunTaskRequest</text>
 
         <rect class="box2 app2" x="430" y="50" width="170" height="34"></rect>
         <text class="small2" x="450" y="72">progress/summary</text>
@@ -1317,8 +1317,8 @@
             <td>
               User/runtime boundary: <code>SpectralMode</code>,
               <code>GridderRequest</code>, <code>CliConfig</code>,
-              <code>run_from_config</code>, task contract, managed-output, oracle,
-              and run-summary types.
+              <code>ImagerRunTaskRequest</code>, <code>run_from_request</code>,
+              task contract, managed-output, oracle, and run-summary types.
             </td>
             <td>
               Mode dispatch plus heavy helpers for row selection, channel reads,
@@ -1326,8 +1326,10 @@
               coordinate building, output writing, and outlier clean control.
             </td>
             <td>
-              <code>ImagingJobRequest</code>, <code>run_from_config</code>,
-              task-schema bindings, progress callbacks, and run summaries.
+              <code>ImagerRunTaskRequest</code>, <code>run_from_request</code>,
+              task-schema bindings, progress callbacks, run summaries, and the
+              retained <code>CliConfig</code>/<code>run_from_config</code> parser
+              compatibility wrapper.
             </td>
             <td>
               Parse/validate config, map task aliases, choose default policies,
@@ -2338,7 +2340,7 @@
         </thead>
         <tbody>
           <tr>
-            <td><code>ImagingJobRequest</code></td>
+            <td><code>ImagerRunTaskRequest</code></td>
             <td><code>casars-imager</code></td>
             <td>User-visible task options, aliases, defaults, progress policy, output naming.</td>
             <td>MS column layout, sample routing, gridding backend details.</td>
@@ -2652,54 +2654,56 @@
     <ul class="refs">
       <li>
         Current app public entrypoints:
-        <a href="../crates/casars-imager/src/lib.rs#L239"><code>SpectralMode</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L257"><code>GridderRequest</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L2252"><code>run_from_config</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L15463"><code>CliConfig</code></a>.
+        <a href="../crates/casars-imager/src/lib.rs"><code>SpectralMode</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>GridderRequest</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>run_from_request</code></a>,
+        <a href="../crates/casars-imager/src/task_contract.rs"><code>ImagerRunTaskRequest</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>CliConfig</code></a>.
       </li>
       <li>
         App private computation examples:
-        <a href="../crates/casars-imager/src/lib.rs#L3336"><code>prepare_source_row_block_plane_inner</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L13252"><code>run_joint_outlier_hogbom</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L18058"><code>read_columnar_prepared_source</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L20903"><code>read_visibility_source_columns</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L22384"><code>select_main_rows</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L35765"><code>write_products</code></a>.
+        <a href="../crates/casars-imager/src/lib.rs"><code>prepare_source_row_block_plane_inner</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>run_joint_outlier_hogbom</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>read_columnar_prepared_source</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>read_visibility_source_columns</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>select_main_rows</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>write_products</code></a>.
       </li>
       <li>
         App private imaging math examples:
-        <a href="../crates/casars-imager/src/lib.rs#L23215"><code>accumulate_standard_mfs_density_rows_without_data_parallel</code></a>,
-        <a href="../crates/casars-imager/src/lib.rs#L39334"><code>interpolate_explicit_cube_output_sample_from_rows</code></a>.
+        <a href="../crates/casars-imager/src/lib.rs"><code>accumulate_standard_mfs_density_rows_without_data_parallel</code></a>,
+        <a href="../crates/casars-imager/src/lib.rs"><code>interpolate_explicit_cube_output_sample_from_rows</code></a>.
       </li>
       <li>
         Core imaging types:
-        <a href="../crates/casa-imaging/src/types.rs#L98"><code>GridderMode</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L451"><code>Deconvolver</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L473"><code>WTermMode</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L618"><code>VisibilityBlockView</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L852"><code>VisibilityBatch</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L75"><code>PlaneStokes::derive_pair_selection</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L1083"><code>StandardMfsPairCollapseTransform::collapse</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L1515"><code>ParallelHandBatch::collapse_with_transform</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L1885"><code>CubeAutoMultiThresholdConfig::build_cube_clean_mask</code></a>,
-        <a href="../crates/casa-imaging/src/types.rs#L1548"><code>ImagingRequest</code></a>.
+        <a href="../crates/casa-imaging/src/types.rs"><code>GridderMode</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>Deconvolver</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>WTermMode</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>VisibilityBlockView</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>VisibilityBatch</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>PlaneStokes::derive_pair_selection</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>StandardMfsDensitySourcePlan</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>StandardMfsPairCollapseTransform::collapse</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>ParallelHandBatch::collapse_with_transform</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>CubeAutoMultiThresholdConfig::build_cube_clean_mask</code></a>,
+        <a href="../crates/casa-imaging/src/types.rs"><code>ImagingRequest</code></a>.
       </li>
       <li>
         Core public execution APIs:
-        <a href="../crates/casa-imaging/src/lib.rs#L722"><code>run_standard_mfs_plan</code></a>,
-        <a href="../crates/casa-imaging/src/lib.rs#L784"><code>run_standard_mfs_dirty_plan</code></a>,
-        <a href="../crates/casa-imaging/src/lib.rs#L859"><code>StandardMfsCleanSession</code></a>,
-        <a href="../crates/casa-imaging/src/lib.rs#L1231"><code>run_imaging</code></a>,
-        <a href="../crates/casa-imaging/src/lib.rs#L1964"><code>run_mosaic_mfs_from_single_plane_stream</code></a>,
-        <a href="../crates/casa-imaging/src/lib.rs#L5859"><code>run_mtmfs</code></a>.
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_standard_mfs_plan</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_standard_mfs_dirty_plan</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs"><code>StandardMfsCleanSession</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_imaging</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_mosaic_mfs_from_single_plane_stream</code></a>,
+        <a href="../crates/casa-imaging/src/lib.rs"><code>run_mtmfs</code></a>.
       </li>
       <li>
         MS visibility and spectral APIs:
-        <a href="../crates/casa-ms/src/visibility_buffer.rs#L24"><code>VisibilityBufferRequest</code></a>,
-        <a href="../crates/casa-ms/src/visibility_buffer.rs#L124"><code>SourcePartition</code></a>,
-        <a href="../crates/casa-ms/src/visibility_buffer.rs#L166"><code>VisibilityBuffer</code></a>,
-        <a href="../crates/casa-ms/src/spectral_selection.rs#L212"><code>CubeSpectralSetup</code></a>,
-        <a href="../crates/casa-ms/src/spectral_selection.rs#L657"><code>resolve_contiguous_channel_selection</code></a>.
+        <a href="../crates/casa-ms/src/visibility_buffer.rs"><code>VisibilityBufferRequest</code></a>,
+        <a href="../crates/casa-ms/src/visibility_buffer.rs"><code>SourcePartition</code></a>,
+        <a href="../crates/casa-ms/src/visibility_buffer.rs"><code>VisibilityBuffer</code></a>,
+        <a href="../crates/casa-ms/src/spectral_selection.rs"><code>CubeSpectralSetup</code></a>,
+        <a href="../crates/casa-ms/src/spectral_selection.rs"><code>resolve_contiguous_channel_selection</code></a>.
       </li>
       <li>
         Existing architecture docs:
@@ -2708,25 +2712,25 @@
       </li>
       <li>
         LibRA high-level interface references:
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/README.md#L9"><code>libRA/README.md</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/README.md#L5"><code>frameworks/htcimager/README.md</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/jobmode.py#L27"><code>jobmode.py</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/libra_cl_imager.py#L60"><code>libra_cl_imager.py</code></a>.
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/README.md"><code>libRA/README.md</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/README.md"><code>frameworks/htcimager/README.md</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/jobmode.py"><code>jobmode.py</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/libra_cl_imager.py"><code>libra_cl_imager.py</code></a>.
       </li>
       <li>
         LibRA core interface references:
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/Parallel/Algorithm.h#L88"><code>Algorithm.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/FTMachine.h#L120"><code>FTMachine.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/VisibilityResamplerBase.h#L72"><code>VisibilityResamplerBase.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.h#L48"><code>MultiThreadedVisResampler.h</code></a>.
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/Parallel/Algorithm.h"><code>Algorithm.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/FTMachine.h"><code>FTMachine.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/VisibilityResamplerBase.h"><code>VisibilityResamplerBase.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/MeasurementComponents/MultiThreadedVisResampler.h"><code>MultiThreadedVisResampler.h</code></a>.
       </li>
       <li>
         LibRA visibility and app-function references:
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/DataIterations.h#L114"><code>DataIterations.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/DataBase.h#L56"><code>DataBase.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/rWeightor.h#L59"><code>rWeightor.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/apps/src/RoadRunner/roadrunner.h#L201"><code>roadrunner.h</code></a>,
-        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/apps/src/Hummbee/hummbee.h#L81"><code>hummbee.h</code></a>.
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/DataIterations.h"><code>DataIterations.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/DataBase.h"><code>DataBase.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/src/libracore/rWeightor.h"><code>rWeightor.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/apps/src/RoadRunner/roadrunner.h"><code>roadrunner.h</code></a>,
+        <a href="file:///Users/brianglendenning/SoftwareProjects/libRA/apps/src/Hummbee/hummbee.h"><code>hummbee.h</code></a>.
       </li>
     </ul>
   </section>

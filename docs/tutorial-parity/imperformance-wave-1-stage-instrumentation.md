@@ -1,6 +1,6 @@
 # ImPerformance Wave 1 Stage Instrumentation
 
-Truth class: current descriptive
+Truth class: historical evidence snapshot
 Last reality check: 2026-05-18
 Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `cargo test -p casars-imager --lib managed_output -- --nocapture`; `cargo check -p casars-imager --example profile_imager`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke`; `CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke`
 
@@ -38,8 +38,8 @@ The normalized Rust timing categories are:
 |---|---|---|
 | `frontend_ms_preparation` | `open_measurement_set`, `prepare_plane_input`, `extract_phase_center` | MS open, selection, row adaptation, and phase-center resolution. |
 | `visibility_adaptation_and_chunking` | `prepare_plane_input` | Visibility adaptation before pure imaging. |
-| `standard_mfs_buffer_load` | `get_ms_values_into_processing_buffer` | Standard-gridder MFS owned-buffer loading from MAIN data, flag, weight, optional weight-spectrum, and geometry inputs. |
-| `standard_mfs_buffer_prepare` | `prepare_processing_buffer` | Standard-gridder MFS owned-buffer adaptation into imaging visibility batches. |
+| `standard_mfs_source_read` | `get_ms_values_into_processing_buffer` | Standard-gridder MFS prepared-source reads from MAIN data, flag, weight, optional weight-spectrum, and geometry inputs. |
+| `standard_mfs_source_prepare` | `prepare_processing_buffer` | Standard-gridder MFS prepared-source adaptation into imaging visibility batches. |
 | `weighting_density_setup` | `weighting` | Imaging weights, density grids, and taper setup. |
 | `projection_pb_cf_preparation` | none yet | Explicit non-zero-free placeholder; projection/PB setup currently lives inside lower-level selected-mode paths. |
 | `gridding_degridding` | `psf_grid`, `residual_degrid_grid` | PSF gridding plus residual degrid/grid work. |

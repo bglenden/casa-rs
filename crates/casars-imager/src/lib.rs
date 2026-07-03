@@ -37,10 +37,11 @@ use casa_imaging::{
     MinorCycleTrace, MosaicGridderConfig, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
     PrimaryBeamProductRequest, PrimaryBeamWeightSample, ResidualRefreshDiagnostics,
     RestoringBeamMode, ScalarVisibilitySample, StandardMfsCleanFinishPlan, StandardMfsCleanPlan,
-    StandardMfsCleanSession, StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
-    StandardMfsDirtyPlan, StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
-    StandardMfsModelPredictor, StandardMfsPairCollapseTransform, StandardMfsPlan,
-    StandardMfsPlannedSampleBlock, StandardMfsPlannedSampleBuilder, StandardMfsRoutedGridSample,
+    StandardMfsCleanSession, StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest,
+    StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyPlan,
+    StandardMfsExecutionConfig, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
+    StandardMfsPairCollapseTransform, StandardMfsPlan, StandardMfsPlannedSampleBlock,
+    StandardMfsPlannedSampleBuilder, StandardMfsRoutedGridSample,
     StandardMfsRoutedInputCachePrefill, StandardMfsRoutedVisibilityBlock,
     StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization, StandardMfsVisibilityRow,
     UvTaperSize, VisibilityBatch, VisibilityBlockView, VisibilityMetadataBatch,
@@ -53,7 +54,7 @@ use casa_imaging::{
     clean_peak_location_masked_with_relative_tolerance, cube_image_product_set,
     estimate_psf_sidelobe_from_psf, extract_mfs_plane_product, mfs_image_product_peak_abs_masked,
     mfs_image_product_set, mtmfs_image_product_set, phase_rotate_visibility,
-    plan_imaging_worker_count, planned_backend_command_target_ms,
+    plan_imaging_worker_count, plan_standard_mfs_density_source, planned_backend_command_target_ms,
     primary_beam_correct_alpha_product, primary_beam_output_products, primary_beam_product,
     restore_standard_mfs_model, run_hogbom_plane_minor_cycle, run_imaging,
     run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_plan,
@@ -952,10 +953,10 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     }
     let request = ImagerRunTaskRequest::from_cli_config(&config);
     let cli_started_at = Instant::now();
-    let summary = run_from_config(&config)?;
+    let summary = run_from_request(&request)?;
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "frontend stage=cli/run_from_config_return stage_elapsed_s={:.3}",
+            "frontend stage=cli/run_from_request_return stage_elapsed_s={:.3}",
             cli_started_at.elapsed().as_secs_f64(),
         );
     }
@@ -1435,14 +1436,15 @@ pub fn export_standard_mfs_metal_fixture_from_config(
         geometry,
         derived_engine.as_ref(),
     )?;
-    let (selected_channel_count, mut density_selected_channel_count) =
-        standard_mfs_target_and_density_channel_counts(config, &table_values);
+    let density_source_plan = standard_mfs_density_source_plan(config, &table_values);
+    let selected_channel_count = density_source_plan.target_channel_count;
+    let mut density_selected_channel_count = density_source_plan.density_channel_count_estimate;
     if let Some((_, density_read_range)) = cube_one_channel_briggs_streaming.as_ref() {
         density_selected_channel_count = density_read_range.count;
     }
     let channel_read_range =
         selected_channel_read_range_for_shared_single_plane_acceleration(config, &table_values)?;
-    let density_config = standard_mfs_density_source_config(config);
+    let density_config = standard_mfs_density_source_config(config, density_source_plan);
     let density_channel_read_range =
         selected_channel_read_range_for_shared_single_plane_acceleration(
             &density_config,
@@ -1504,7 +1506,7 @@ pub fn export_standard_mfs_metal_fixture_from_config(
     .map_err(|error| error.to_string())?;
     if weighting_plan.needs_density_pass() {
         let mut density_stats = StandardMfsStreamingPassStats::new("metal_fixture_density", 0);
-        let distinct_density_source = standard_mfs_uses_distinct_density_source(config);
+        let distinct_density_source = density_source_plan.uses_distinct_density_source;
         if !distinct_density_source {
             let weighting_started_at = Instant::now();
             weighting_plan.accumulate_density_batches(&first_plane.batches);
@@ -2039,8 +2041,23 @@ pub fn write_prepare_plane_oracle_bundle_from_config_with_overrides(
     Ok(manifest)
 }
 
-/// Execute the imager using an already-parsed configuration.
+/// Execute the imager using an already-parsed CLI configuration.
+///
+/// `CliConfig` remains the command-line parser surface; run semantics are
+/// normalized through `ImagerRunTaskRequest` so the task contract is the
+/// authoritative request shape.
 pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    let request = ImagerRunTaskRequest::from_cli_config(config);
+    run_from_request(&request)
+}
+
+/// Execute the canonical imager task request.
+pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, String> {
+    let config = request.to_cli_config()?;
+    run_from_cli_config(&config)
+}
+
+fn run_from_cli_config(config: &CliConfig) -> Result<RunSummary, String> {
     if config.outlier_file.is_some() {
         return run_outlier_file_from_config(config);
     }
@@ -4871,7 +4888,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         );
         if frontend_progress_enabled() {
             eprintln!(
-                "frontend stage=prepare_plane_input/mosaic_cube_briggs_density rows_done={} rows_total={} blocks={} samples={} metadata_groups={} metadata_ranges={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} adapt_samples_ms={:.3} sample_rate_sps={:.3} total_elapsed_s={:.3}",
+                "frontend stage=prepare_plane_input/mosaic_cube_briggs_density rows_done={} rows_total={} blocks={} samples={} metadata_groups={} metadata_ranges={} source_read_ms={:.3} source_prepare_ms={:.3} adapt_samples_ms={:.3} sample_rate_sps={:.3} total_elapsed_s={:.3}",
                 (density_blocks * row_block_rows).min(active_selected_rows.len()),
                 active_selected_rows.len(),
                 density_blocks,
@@ -5051,7 +5068,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                     );
                     if frontend_progress_enabled() {
                         eprintln!(
-                            "frontend stage=run_imaging/mosaic_cube_bounded_stream_replay invocation={} pass={} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} block_samples={} batches={} metadata_groups={} metadata_ranges={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} adapt_samples_ms={:.3} preweight_ms={:.3} consumer_ms={:.3} block_rate_sps={:.3} elapsed_s={:.3}",
+                            "frontend stage=run_imaging/mosaic_cube_bounded_stream_replay invocation={} pass={} load_visibility_values={} rows_done={} rows_total={} blocks={} samples={} block_samples={} batches={} metadata_groups={} metadata_ranges={} source_read_ms={:.3} source_prepare_ms={:.3} adapt_samples_ms={:.3} preweight_ms={:.3} consumer_ms={:.3} block_rate_sps={:.3} elapsed_s={:.3}",
                             ordinal,
                             pass.label(),
                             load_visibility_values,
@@ -5368,14 +5385,15 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         geometry,
         derived_engine.as_ref(),
     )?;
-    let (selected_channel_count, mut density_selected_channel_count) =
-        standard_mfs_target_and_density_channel_counts(config, &table_values);
+    let density_source_plan = standard_mfs_density_source_plan(config, &table_values);
+    let selected_channel_count = density_source_plan.target_channel_count;
+    let mut density_selected_channel_count = density_source_plan.density_channel_count_estimate;
     if let Some((_, density_read_range)) = cube_one_channel_briggs_streaming.as_ref() {
         density_selected_channel_count = density_read_range.count;
     }
     let channel_read_range =
         selected_channel_read_range_for_shared_single_plane_acceleration(config, &table_values)?;
-    let density_config = standard_mfs_density_source_config(config);
+    let density_config = standard_mfs_density_source_config(config, density_source_plan);
     let density_channel_read_range =
         selected_channel_read_range_for_shared_single_plane_acceleration(
             &density_config,
@@ -5520,7 +5538,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 || standard_cube_one_channel_streaming)
             && env_standard_mfs_grid_threads().is_some_and(|threads| threads > 1)
             && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_ROUTED_WEIGHTING").is_none();
-    let distinct_density_source = standard_mfs_uses_distinct_density_source(config);
+    let distinct_density_source = density_source_plan.uses_distinct_density_source;
     let cache_routed_replays = if cube_one_channel_briggs_preweighted_streaming {
         use_routed_tile_weighting
             && env_flag_override("CASA_RS_STANDARD_MFS_ROUTED_REPLAY_CACHE") == Some(true)
@@ -16191,7 +16209,7 @@ impl MosaicCubeBoundedStreamPassStats {
         }
         let elapsed = self.started_at.elapsed();
         eprintln!(
-            "mosaic_cube_stream_pass_summary ordinal={} pass={} load_visibility_values={} density_mode={:?} row_blocks={} rows={} rows_total={} row_block_rows={} selected_channels={} samples={} sample_rate_sps={:.3} target_sample_rate_sps={:.3} batches={} metadata_groups={} metadata_ranges={} fields={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} cube_spectral_cache_hits={} cube_spectral_cache_misses={} cube_source_frequency_cache_hits={} cube_source_frequency_cache_misses={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_source_frequency_lookup_ms={:.3} cube_density_sidecar_ms={:.3} cube_density_weight_ms={:.3} cube_density_cell_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} preweight_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            "mosaic_cube_stream_pass_summary ordinal={} pass={} load_visibility_values={} density_mode={:?} row_blocks={} rows={} rows_total={} row_block_rows={} selected_channels={} samples={} sample_rate_sps={:.3} target_sample_rate_sps={:.3} batches={} metadata_groups={} metadata_ranges={} fields={} source_read_ms={:.3} source_prepare_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} cube_spectral_cache_hits={} cube_spectral_cache_misses={} cube_source_frequency_cache_hits={} cube_source_frequency_cache_misses={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} cube_spectral_lookup_ms={:.3} cube_source_frequency_lookup_ms={:.3} cube_density_sidecar_ms={:.3} cube_density_weight_ms={:.3} cube_density_cell_ms={:.3} cube_density_grid_update_ms={:.3} cube_visibility_sample_ms={:.3} cube_visibility_push_ms={:.3} cube_metadata_ms={:.3} preweight_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
             self.ordinal,
             self.pass.label(),
             load_visibility_values,
@@ -17100,7 +17118,7 @@ impl StandardMfsStreamingPassStats {
             return;
         }
         eprintln!(
-            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} planned_candidates={} planned_samples={} planning_rejected={} planned_tap_visits={} get_ms_values_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} planned_local_channel_ms={:.3} planned_flag_lookup_ms={:.3} planned_visibility_lookup_ms={:.3} planned_weight_lookup_ms={:.3} planned_finite_check_ms={:.3} planned_final_weight_ms={:.3} planned_plan_sample_ms={:.3} planned_consume_ms={:.3} routed_frequency_scale_ms={:.3} routed_row_payload_ms={:.3} routed_tap_center_ms={:.3} routed_consume_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} planned_candidates={} planned_samples={} planning_rejected={} planned_tap_visits={} source_read_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} source_prepare_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} planned_local_channel_ms={:.3} planned_flag_lookup_ms={:.3} planned_visibility_lookup_ms={:.3} planned_weight_lookup_ms={:.3} planned_finite_check_ms={:.3} planned_final_weight_ms={:.3} planned_plan_sample_ms={:.3} planned_consume_ms={:.3} routed_frequency_scale_ms={:.3} routed_row_payload_ms={:.3} routed_tap_center_ms={:.3} routed_consume_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
             self.pass,
             self.ordinal,
             self.row_blocks,
@@ -26197,20 +26215,17 @@ struct FixedTileResidencyEstimate {
 
 fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConfig {
     let fixed_tile_resident = estimated_fixed_tile_residency(config);
-    StandardMfsExecutionConfig {
-        minor_cycle_backend: standard_mfs_minor_cycle_backend_for_config(config),
-        fixed_tile_resident_bytes: Some(fixed_tile_resident.bytes).filter(|bytes| *bytes > 0),
-        fixed_tile_edge: Some(fixed_tile_resident.tile_edge).filter(|edge| *edge > 0),
-        fixed_tile_center_boundary: fixed_tile_resident.center_boundary_anchor,
-        fixed_tile_max_live_row_blocks: env_usize("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS")
-            .filter(|value| *value > 0)
-            .map(|value| value.min(2))
-            .unwrap_or(1),
-        fixed_tile_use_planned_run_blocks: false,
-        metal_grouped_input_cache: false,
-        materialized_sample_plan_max_samples: None,
-        w_project_max_abs_w_lambda: None,
-    }
+    let mut execution = StandardMfsExecutionConfig::default();
+    execution.minor_cycle_backend = standard_mfs_minor_cycle_backend_for_config(config);
+    execution.fixed_tile_resident_bytes =
+        Some(fixed_tile_resident.bytes).filter(|bytes| *bytes > 0);
+    execution.fixed_tile_edge = Some(fixed_tile_resident.tile_edge).filter(|edge| *edge > 0);
+    execution.fixed_tile_center_boundary = fixed_tile_resident.center_boundary_anchor;
+    execution.fixed_tile_max_live_row_blocks = env_usize("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS")
+        .filter(|value| *value > 0)
+        .map(|value| value.min(2))
+        .unwrap_or(1);
+    execution
 }
 
 fn standard_mfs_execution_config_with_plan(
@@ -26574,41 +26589,34 @@ fn selected_channel_count_estimate_from_table_values(
     table_values.spw_freqs_hz.len().max(1)
 }
 
-fn standard_mfs_uses_distinct_density_source(config: &CliConfig) -> bool {
-    clean_is_dirty(config)
-        && config.spectral_mode.is_cube_like()
-        && config.channel_count == Some(1)
-        && !effective_per_channel_weight_density(config)
-        && matches!(
-            config.weighting,
-            WeightingMode::Uniform
-                | WeightingMode::Briggs { .. }
-                | WeightingMode::BriggsBwTaper { .. }
-        )
+fn standard_mfs_density_source_plan(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+) -> StandardMfsDensitySourcePlan {
+    plan_standard_mfs_density_source(StandardMfsDensitySourcePlanRequest {
+        cube_like: config.spectral_mode.is_cube_like(),
+        dirty_only: clean_is_dirty(config),
+        target_channel_count: config.channel_count,
+        full_source_channel_count: table_values.spw_freqs_hz.len(),
+        per_channel_weight_density: effective_per_channel_weight_density(config),
+        weighting: config.weighting,
+    })
 }
 
-fn standard_mfs_density_source_config(config: &CliConfig) -> CliConfig {
+fn standard_mfs_density_source_config(
+    config: &CliConfig,
+    plan: StandardMfsDensitySourcePlan,
+) -> CliConfig {
     let mut density_config = config.clone();
-    if standard_mfs_uses_distinct_density_source(config) {
+    if plan.uses_distinct_density_source {
         // CASA cube weighting with perchanweightdensity=false derives one
         // shared density grid from the selected SPW channel domain, even when
         // the target cube has a single output channel.
         density_config.spectral_mode = SpectralMode::Mfs;
-        density_config.channel_start = None;
-        density_config.channel_count = None;
+        density_config.channel_start = plan.density_channel_start;
+        density_config.channel_count = plan.density_channel_count;
     }
     density_config
-}
-
-fn standard_mfs_target_and_density_channel_counts(
-    config: &CliConfig,
-    table_values: &PreparedSelectionTableValues,
-) -> (usize, usize) {
-    let target_count = selected_channel_count_estimate_from_table_values(config, table_values);
-    let density_config = standard_mfs_density_source_config(config);
-    let density_count =
-        selected_channel_count_estimate_from_table_values(&density_config, table_values);
-    (target_count, density_count)
 }
 
 type SelectedChannelReadRange = VisibilityChannelReadRange;
@@ -40005,17 +40013,12 @@ mod tests {
         assert!(enabled.tile_limit > 0);
         assert_eq!(enabled.tile_edge, 32);
         assert!(enabled.center_boundary_anchor);
-        let execution = StandardMfsExecutionConfig {
-            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
-            fixed_tile_resident_bytes: Some(enabled.bytes),
-            fixed_tile_edge: Some(enabled.tile_edge),
-            fixed_tile_center_boundary: enabled.center_boundary_anchor,
-            fixed_tile_max_live_row_blocks: 1,
-            fixed_tile_use_planned_run_blocks: false,
-            metal_grouped_input_cache: false,
-            materialized_sample_plan_max_samples: None,
-            w_project_max_abs_w_lambda: None,
-        };
+        let mut execution = StandardMfsExecutionConfig::default();
+        execution.minor_cycle_backend = StandardMfsMinorCycleBackend::Cpu;
+        execution.fixed_tile_resident_bytes = Some(enabled.bytes);
+        execution.fixed_tile_edge = Some(enabled.tile_edge);
+        execution.fixed_tile_center_boundary = enabled.center_boundary_anchor;
+        execution.fixed_tile_max_live_row_blocks = 1;
         assert_eq!(execution.fixed_tile_resident_bytes, Some(enabled.bytes));
         assert_eq!(execution.fixed_tile_edge, Some(32));
         assert!(execution.fixed_tile_center_boundary);

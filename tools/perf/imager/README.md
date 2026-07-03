@@ -282,7 +282,7 @@ If a completed benchmark log omits one timing section, the corresponding side is
 reported as `status: missing` with an explanatory reason instead of `ran`; only a
 side with a median wallclock is reported as `ran`.
 
-The active Wave 8 clean cube gate can now be reproduced directly through the
+The historical Wave 8 clean cube gate can be reproduced directly through the
 same harness by setting, for example:
 
 ```sh
