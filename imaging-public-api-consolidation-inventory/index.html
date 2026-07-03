@@ -501,78 +501,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#audit-method" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Audit Method
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#disposition-legend" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Disposition Legend
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#current-public-surface-snapshot" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Current Public Surface Snapshot
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Current Public Surface Snapshot">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#casa-imaging" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        casa-imaging
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#casa-imagingsrcexecutionrs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        casa-imaging/src/execution.rs
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#casars-imager" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        casars-imager
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -592,24 +520,28 @@
 
 <h1 id="imaging-public-api-consolidation-inventory">Imaging Public API Consolidation Inventory<a class="headerlink" href="#imaging-public-api-consolidation-inventory" title="Permanent link">&para;</a></h1>
 <p>Truth class: implementation inventory
-Last reality check: 2026-06-12
-Verification: targeted <code>rg</code> call-site searches; <code>just quick</code>; <code>just verify</code></p>
+Last reality check: 2026-07-03
+Verification: targeted <code>rg</code> call-site searches; <code>python3 -m py_compile tools/perf/imager/imaging_interface_metrics.py</code>; <code>python3 tools/perf/imager/imaging_interface_metrics.py --base origin/main --format markdown</code>; <code>cargo fmt --all -- --check</code>; <code>cargo check -p casa-imaging -p casa-ms -p casars-imager</code>; focused <code>casa-imaging</code>, <code>casa-ms</code>, and <code>casars-imager</code> regression tests for source views, auto-multithresh, PB products, coordinate systems, density translation, product-plane helpers, cube-Briggs formulas, clean-cycle/Hogbom helpers, and standard-MFS/mosaic/PB app routes; <code>just quick</code>; <code>just docs-check</code>; <code>just verify</code>; <code>tools/perf/imager/run_workload.py --artifact-root target/imperformance-interface-consolidation-final-r3/artifacts --repeats 3 --run-label imaging-interface-consolidation-final-r3 --storage-label local-testdata --output-dir target/imperformance-interface-consolidation-final-r3/smoke wave1-standard-mfs-dirty-smoke</code>; same three-repeat workload at <code>origin/main</code> commit <code>e5df883d1b465f87661322fec875dacd05e5fc0f</code> in <code>/private/tmp/casa-rs-origin-imaging-interface-20260702</code></p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
-<p>This inventory records the Wave 3 imaging execution and orchestration surface
-that is variant-heavy enough to need deliberate public API shrinkage. It covers:</p>
+<p>This inventory records the standard-MFS imaging execution surface after issue</p>
+<h1 id="319-it-focuses-on-the-places-where-the-rust-publicprivate-boundary-had">319. It focuses on the places where the Rust public/private boundary had<a class="headerlink" href="#319-it-focuses-on-the-places-where-the-rust-publicprivate-boundary-had" title="Permanent link">&para;</a></h1>
+<p>grown around implementation variants instead of domain concepts:</p>
 <ul>
 <li><code>crates/casa-imaging/src/lib.rs</code></li>
 <li><code>crates/casa-imaging/src/execution.rs</code></li>
+<li><code>crates/casa-imaging/src/types.rs</code></li>
 <li><code>crates/casars-imager/src/lib.rs</code></li>
+<li><code>crates/casa-ms/src/visibility_buffer.rs</code></li>
+<li><code>crates/casa-ms/src/spectral_selection.rs</code></li>
 </ul>
-<p>The dispositions here apply only to Rust public or crate-visible implementation
-surface. Provider contracts, persisted image/MS formats, CLI flags, task JSON,
-output product names, and numerical algorithms are unchanged.</p>
+<p>Provider contracts, persisted image/MS formats, CLI flags, task JSON, output
+product names, and numerical algorithms are unchanged.</p>
 <h2 id="audit-method">Audit Method<a class="headerlink" href="#audit-method" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Enumerated public items with <code>rg -n "^pub (fn|struct|enum|trait|type|const|static|mod|use)\b|^\s*pub\(crate\)" crates/casa-imaging/src/lib.rs crates/casa-imaging/src/execution.rs crates/casars-imager/src/lib.rs</code>.</li>
-<li>Searched workspace call sites for the standard-MFS, <code>casars-imager</code>,
-  mosaic, and W-projection functions listed in issues #289 through #292.</li>
+<li>Enumerated public and crate-visible items with:
+  <code>rg -n "^pub (fn|struct|enum|trait|type|const|static|mod|use)\b|^\s*pub\(crate\)" crates/casa-imaging/src/lib.rs crates/casa-imaging/src/execution.rs crates/casa-imaging/src/types.rs crates/casars-imager/src/lib.rs crates/casa-ms/src/visibility_buffer.rs crates/casa-ms/src/spectral_selection.rs</code>.</li>
+<li>Searched workspace call sites for each old standard-MFS runner, source trait,
+  prepared clean type, routed sample type, and new canonical facade.</li>
 <li>Treated same-name <code>cfg</code> alternatives as platform variants, not duplicates
   eligible for naive deletion.</li>
 </ul>
@@ -639,14 +571,98 @@ output product names, and numerical algorithms are unchanged.</p>
 <td>Internal variant; no replacement beyond the retained concept API.</td>
 </tr>
 <tr>
-<td>Recorded remaining debt</td>
-<td>Related duplicate family outside this wave's implemented boundary.</td>
+<td>Transitional public</td>
+<td>Still app-facing because a broader source/planning boundary is needed before demotion.</td>
 </tr>
 </tbody>
 </table>
+<h2 id="issue-319-current-progress">Issue #319 Current Progress<a class="headerlink" href="#issue-319-current-progress" title="Permanent link">&para;</a></h2>
+<p>Issue #319 is now the full imaging architecture consolidation wave. The first
+implemented slice replaced the standard-MFS route-specific function boundary
+with a small plan/session facade:</p>
+<table>
+<thead>
+<tr>
+<th>New facade</th>
+<th>Purpose</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StandardMfsPlan</code> and <code>run_standard_mfs_plan</code></td>
+<td>Canonical standard-MFS runner for weighted batches, planned sample run blocks, and routed visibility runs.</td>
+<td>Public concept boundary.</td>
+</tr>
+<tr>
+<td><code>StandardMfsDirtyPlan</code> and <code>run_standard_mfs_dirty_plan</code></td>
+<td>Dirty-only standard-MFS runner for planned sample blocks.</td>
+<td>Public concept boundary.</td>
+</tr>
+<tr>
+<td><code>StandardMfsCleanPlan</code>, <code>StandardMfsCleanFinishPlan</code>, and <code>StandardMfsCleanSession</code></td>
+<td>Prepared clean session boundary for clean-plane preparation, skip-threshold handling, full finish, and one-major-cycle finish.</td>
+<td>Public concept boundary.</td>
+</tr>
+</tbody>
+</table>
+<p>The old route-specific public runners now survive only as private
+implementation functions inside <code>casa-imaging</code>. App code calls the facade and
+does not cross the crate boundary through prepared clean internals or source
+traits. The current source-boundary slice also introduced neutral
+<code>VisibilitySource</code> / <code>VisibilityBlockStream</code> / <code>VisibilityBlockView</code> vocabulary
+and moved the <code>VisibilityBuffer</code> to imaging-block adapter into <code>casa-ms</code>. The
+tested auto-multithresh clean-mask builder has also moved from app-private test
+helpers into <code>CubeAutoMultiThresholdConfig</code>, leaving CLI mask parsing in the
+app and array/beam mask computation in the imaging library. The app-local
+paired-hand collapse enum and helper are now folded into
+<code>StandardMfsPairCollapseTransform</code>, <code>ParallelHandBatch</code>, and <code>PlaneStokes</code>
+methods, including the correlation-pair selection rule.</p>
+<p>The same source-boundary slice removed the app-local <code>VisibilitySourceBlock</code>
+row adapter, both <code>get_ms_values_into_*_processing_buffer</code> wrappers, and the
+single-implementation <code>VisibilitySourceRows</code> trait. The standard-MFS, mosaic,
+one-channel cube, and trace source-row routes now read through the
+<code>VisibilityBuffer</code>/<code>ColumnarPreparedSource</code> path. <code>casa-ms</code> also owns the
+physical MAIN-row selection plan and bounded read-block request vocabulary
+through <code>VisibilityRowSelectionRequest</code>, <code>VisibilityRowSelectionPlan</code>,
+<code>VisibilityChannelReadRange</code>, and <code>VisibilityReadBlockPlan</code>. The one-channel
+cube Briggs and mosaic density essentials readers now also adapt from the
+shared <code>VisibilityBuffer</code> path with data omitted. The remaining
+<code>read_visibility_source_columns</code> usage is the older essentials/routed reader,
+but its standard-MFS handoff now goes through public row/block/cache facade
+contracts rather than public backend payloads.</p>
+<p>The route-plan vocabulary has also been tightened: <code>SpectralRoutePlan</code>,
+<code>SourceChannelRoute</code>, and <code>OutputPlaneContribution</code> no longer expose public
+mutable fields. The pure geometric <code>phase_rotate_visibility</code> helper now lives
+in <code>casa-imaging</code>, leaving the app to call shared imaging math rather than own
+that computation locally. <code>StandardMfsWeightedSample</code>,
+<code>StandardMfsPlannedWeightedSample*</code>, <code>StandardMfsRoutedVisibility*</code>, and
+<code>StandardMfsMetalGroupedInputCache*</code> are now private backend IR. The app uses
+<code>ScalarVisibilitySample</code>, <code>StandardMfsPlannedSampleBlock</code>,
+<code>StandardMfsVisibilityRow</code>, <code>StandardMfsRoutedVisibilityBlock</code>, and
+<code>StandardMfsRoutedInputCache*</code> as the public source/cache facade. Primary-beam
+product math and CASA-compatible coordinate-system construction have also moved into
+<code>casa-imaging</code>; the app still infers MS-specific PB metadata and owns filenames,
+writer calls, previews, and product replacement policy. Standard-MFS density row
+translation has also moved into <code>casa-imaging</code> through row-major and
+<code>VisibilityBlockView</code> helpers; the app retains MS row streaming, worker-local
+density accumulator orchestration, and timing/progress reporting. Product-side
+PB support masks, pbcor products, alpha PB correction, and clean-mask product
+materialization now use <code>casa-imaging</code> helpers. Product membership, units, beam
+metadata, default masks, and derived side products now flow through
+<code>ImageProductSet</code>, <code>ImageProduct</code>, and <code>ImageProductMetadata</code>; the app remains
+responsible for filenames, <code>PagedImage</code> writes, previews, and replacement
+policy. MFS product plane extraction/expansion, masked MFS peak measurement,
+and clean-mask pixel counting are also library helpers now. Joint-outlier Hogbom now also uses the
+shared finite masked peak search, plane minor-cycle loop, PSF subtraction,
+CASA-inclusive iteration accounting, and clean-cycle threshold calculation from
+<code>casa-imaging</code>. CASA cube-Briggs density-cell lookup, robust scale, and
+preweighting denominator formulas are also library helpers now. Worker-count
+planning and single-plane execution/product/capability planning have moved to
+<code>casa-imaging</code>; the app maps CLI flags and runtime facts into those contracts.
+App code keeps the MS/source grouping and streaming orchestration.</p>
 <h2 id="current-public-surface-snapshot">Current Public Surface Snapshot<a class="headerlink" href="#current-public-surface-snapshot" title="Permanent link">&para;</a></h2>
 <h3 id="casa-imaging"><code>casa-imaging</code><a class="headerlink" href="#casa-imaging" title="Permanent link">&para;</a></h3>
-<p>The public execution/orchestration surface is concentrated around these items:</p>
 <table>
 <thead>
 <tr>
@@ -666,123 +682,193 @@ output product names, and numerical algorithms are unchanged.</p>
 <td>Primary concept-oriented imaging entrypoints.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_weighted_streaming_with_execution_config</code></td>
+<td><code>run_standard_mfs_plan</code> / <code>StandardMfsPlan</code></td>
 <td style="text-align: right;">Public</td>
-<td><code>casa-imaging</code> tests, <code>casars-imager</code> dirty path</td>
-<td>Keep public for now</td>
-<td>Streaming standard-MFS concept API. Later wave may rename or wrap with a smaller request type.</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Canonical standard-MFS facade for weighted, planned-run-block, and routed-visibility execution.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_weighted_sample_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Test-only private as of this inventory</td>
-<td><code>casa-imaging</code> tests only</td>
-<td>Remove without replacement</td>
-<td>Internal scalar sample variant; use retained streaming or source-block APIs.</td>
+<td><code>run_standard_mfs_dirty_plan</code> / <code>StandardMfsDirtyPlan</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Canonical dirty-only facade where the app already has planned sample blocks.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_weighted_sample_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Test-only private as of this inventory</td>
-<td><code>casa-imaging</code> tests only</td>
-<td>Remove without replacement</td>
-<td>Internal row-block sample variant; use retained streaming or source-block APIs.</td>
+<td><code>StandardMfsCleanSession</code> with <code>StandardMfsCleanPlan</code> / <code>StandardMfsCleanFinishPlan</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code> clean and resident cube paths</td>
+<td>Keep public</td>
+<td>Session facade replaces prepared-clean free functions and hides <code>StandardMfsPreparedCleanPlane</code>.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_planned_sample_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Test-only private as of this inventory</td>
-<td><code>casa-imaging</code> tests only</td>
-<td>Remove without replacement</td>
-<td>Internal planned-sample variant; source-block API remains the cross-crate boundary.</td>
+<td><code>run_standard_mfs_weighted_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>casa-imaging</code> facade only</td>
+<td>Make private</td>
+<td>Use <code>run_standard_mfs_plan(StandardMfsPlan::weighted_batches(...))</code>.</td>
 </tr>
 <tr>
 <td><code>run_standard_mfs_planned_sample_run_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> clean path</td>
-<td>Keep public for now</td>
-<td>Retained app/library boundary; now routes through the private <code>StandardMfsReplayPlan</code>.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_routed_sample_run_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed as of #290</td>
-<td>no external workspace caller found</td>
-<td>Remove without replacement</td>
-<td>Internal routed-sample run-block variant; routed visibility-run API remains the live boundary.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_routed_visibility_run_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed as of #290</td>
-<td>no external workspace caller found</td>
-<td>Remove without replacement</td>
-<td>Internal block adapter; no replacement beyond retained routed visibility-run API.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed as of #290</td>
-<td>no external workspace caller found</td>
-<td>Remove without replacement</td>
-<td>Internal no-cache adapter; Metal-cache-capable sibling is the app boundary.</td>
+<td style="text-align: right;">Private</td>
+<td><code>casa-imaging</code> facade only</td>
+<td>Make private</td>
+<td>Use <code>run_standard_mfs_plan(StandardMfsPlan::planned_sample_run_blocks(...))</code>.</td>
 </tr>
 <tr>
 <td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> Metal path</td>
-<td>Keep public for now</td>
-<td>Retained app/library boundary; now routes through the private <code>StandardMfsReplayPlan</code>.</td>
+<td style="text-align: right;">Private</td>
+<td><code>casa-imaging</code> facade only</td>
+<td>Make private</td>
+<td>Use <code>run_standard_mfs_plan(StandardMfsPlan::routed_visibility_runs(...))</code>.</td>
 </tr>
 <tr>
 <td><code>run_standard_mfs_planned_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>casa-imaging</code> facade/session only</td>
+<td>Make private</td>
+<td>Use <code>run_standard_mfs_dirty_plan(...)</code> or <code>StandardMfsCleanSession</code>.</td>
+</tr>
+<tr>
+<td>Prepared-clean free functions</td>
+<td style="text-align: right;">Private</td>
+<td><code>casa-imaging</code> session only</td>
+<td>Make private</td>
+<td>Use <code>StandardMfsCleanSession::{prepare, skip_with_cycle_threshold, finish, finish_one_major_cycle}</code>.</td>
+</tr>
+<tr>
+<td><code>VisibilitySource</code>, <code>VisibilityBlockStream</code>, <code>VisibilityBlockView</code>, <code>ReplayCapability</code>, <code>VisibilityStreamBounds</code></td>
 <td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> clean path</td>
-<td>Keep public for now</td>
-<td>Retained app/library boundary; now routes through the private <code>StandardMfsReplayPlan</code>.</td>
+<td><code>casa-ms</code>, <code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Neutral bounded source contract with replay and residency semantics.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_routed_visibility_run_block_source_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed as of #290</td>
-<td>no external workspace caller found</td>
-<td>Remove without replacement</td>
-<td>Internal source-block adapter; no replacement.</td>
+<td><code>StandardMfsPlannedSampleBlockSource</code>, <code>StandardMfsRoutedVisibilityRunSource</code></td>
+<td style="text-align: right;"><code>pub(crate)</code></td>
+<td><code>casa-imaging</code> only</td>
+<td>Make private</td>
+<td>Source traits are implementation adapters behind the facade.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed as of #290</td>
-<td>no external workspace caller found</td>
-<td>Remove without replacement</td>
-<td>Internal no-cache source adapter; no replacement.</td>
+<td><code>StandardMfsPreparedCleanPlane</code></td>
+<td style="text-align: right;"><code>pub(crate)</code></td>
+<td><code>casa-imaging</code> session only</td>
+<td>Make private</td>
+<td>Session object is the public handle.</td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_routed_sample_block_source_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed as of #290</td>
-<td>no external workspace caller found</td>
+<td><code>StandardMfsRoutedSample</code>, <code>StandardMfsRoutedSampleRunBlock</code></td>
+<td style="text-align: right;"><code>pub(crate)</code></td>
+<td><code>casa-imaging</code> only</td>
+<td>Make private</td>
+<td>Routed-sample backend IR is not crate-root API.</td>
+</tr>
+<tr>
+<td><code>StandardMfsRoutableSample</code></td>
+<td style="text-align: right;">Removed</td>
+<td>none</td>
 <td>Remove without replacement</td>
-<td>Internal routed-sample source-block variant; no replacement.</td>
+<td>Dead compatibility shape.</td>
+</tr>
+<tr>
+<td><code>StandardMfsRoutedVisibilityRunBlock</code>, <code>StandardMfsRoutedVisibilityRunBlockSource</code></td>
+<td style="text-align: right;">Removed</td>
+<td>none</td>
+<td>Remove without replacement</td>
+<td>Dead row-run block wrapper after the routed-run source facade moved to direct runs.</td>
 </tr>
 <tr>
 <td><code>StandardMfsExecutionConfig</code></td>
 <td style="text-align: right;">Public</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td>Keep public for now</td>
-<td>User-visible backend knobs currently cross the app/library boundary.</td>
+<td>Keep public</td>
+<td>User-visible execution knobs still cross the app/library boundary.</td>
 </tr>
 <tr>
-<td><code>StandardMfsPlannedSampleBuilder</code> and source traits</td>
-<td style="text-align: right;">Public</td>
-<td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td>Merge behind smaller public abstraction</td>
-<td>Retained app/library source-build boundary; not changed by this wave.</td>
+<td><code>PlaneStokes::derive_pair_selection</code>, <code>StandardMfsPairCollapseTransform::collapse</code>, <code>ParallelHandBatch::collapse_with_transform</code>, <code>PlaneStokes::paired_sumwt_factor</code></td>
+<td style="text-align: right;">Public methods</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Paired-hand Stokes-like collapse is imaging math; apps should select a transform, not duplicate the pair-selection rule, operation, or batch reduction.</td>
 </tr>
 <tr>
-<td><code>StandardMfsDirtyAccumulator*</code></td>
+<td><code>ScalarVisibilitySample</code>, <code>StandardMfsPlannedSampleBlock</code>, <code>StandardMfsVisibilityRow</code>, <code>StandardMfsRoutedVisibilityBlock</code>, <code>StandardMfsRoutedInputCache*</code></td>
 <td style="text-align: right;">Public</td>
-<td><code>casa-imaging</code> and app export tooling</td>
-<td>Keep public for now</td>
-<td>Fixture/export path still uses this as a boundary object.</td>
+<td><code>casars-imager</code> streaming/replay paths</td>
+<td>Keep public</td>
+<td>Explicit source/cache facade replaces public standard-MFS backend payloads while preserving bounded replay and Metal prefill performance.</td>
 </tr>
 <tr>
-<td><code>StandardMfsMetalGroupedInputCache*</code></td>
+<td><code>StandardMfsWeightedSample</code>, <code>StandardMfsPlannedWeightedSample*</code>, <code>StandardMfsRoutedVisibility*</code>, <code>StandardMfsMetalGroupedInputCache*</code></td>
+<td style="text-align: right;"><code>pub(crate)</code></td>
+<td><code>casa-imaging</code> only</td>
+<td>Make private</td>
+<td>Backend IR is internal; apps append scalar/row inputs to opaque planned/routed/cache blocks.</td>
+</tr>
+<tr>
+<td><code>CubeAutoMultiThresholdConfig::build_cube_clean_mask</code></td>
+<td style="text-align: right;">Public method</td>
+<td>tests, future shared CLEAN controllers</td>
+<td>Keep public</td>
+<td>Clean-mask array generation is imaging computation; apps should pass parameters and selected beams, not own the threshold/grow/prune algorithm.</td>
+</tr>
+<tr>
+<td><code>PrimaryBeamProductRequest</code> / <code>primary_beam_product</code> and PB cutoff helpers</td>
 <td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> Metal prefill/export paths</td>
-<td>Merge behind backend abstraction</td>
-<td>Keep until Metal grouped-input cache is represented as private backend strategy.</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>PB array generation, support masks, pbcor division, and alpha PB products are imaging math; apps should keep MS inference and file writing.</td>
+</tr>
+<tr>
+<td><code>SinglePlaneExecutionPlan</code> and <code>SinglePlaneExecutionPlanInput</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Library-owned projection/product/backend-capability plan; app only maps CLI/runtime facts into the input.</td>
+</tr>
+<tr>
+<td><code>ImagingWorkerPlan</code> and <code>ImagingWorkerPlanInput</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, spectral slab planner tests</td>
+<td>Keep public</td>
+<td>Shared worker-count and backend-command-target model used by app/runtime planners.</td>
+</tr>
+<tr>
+<td>MFS image-product plane helpers and <code>ImageProductSet</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Product-plane extraction/expansion, masked peak measurement, clean-mask pixel counting, product membership, and product metadata are product semantics; the app serializes supplied products rather than owning product-selection logic.</td>
+</tr>
+<tr>
+<td>CASA cube-Briggs formula helpers</td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>Cube Briggs density-cell lookup, f2, and preweighting denominator formulas are imaging weighting math; apps should not duplicate them.</td>
+</tr>
+<tr>
+<td><code>clean_cycle_threshold</code> and <code>run_hogbom_plane_minor_cycle</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Transitional public</td>
+<td>Shared clean-control policy and the finite masked Hogbom plane loop now live with the deconvolution code; a future concept-level clean session should absorb these helpers.</td>
+</tr>
+<tr>
+<td><code>build_image_coordinate_system</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Keep public</td>
+<td>CASA-compatible image coordinate metadata belongs with imaging product semantics, not the application writer.</td>
+</tr>
+<tr>
+<td><code>accumulate_standard_mfs_density_row_from_arrays</code> / <code>accumulate_standard_mfs_density_row_from_visibility_block</code></td>
+<td style="text-align: right;">Public</td>
+<td><code>casars-imager</code>, tests</td>
+<td>Transitional public</td>
+<td>Standard-MFS density row math is library computation; app still owns MS streaming and worker scheduling until the neutral source boundary moves farther down.</td>
 </tr>
 <tr>
 <td><code>SinglePlaneVisibilityBlock</code>, <code>SinglePlaneStreamPass</code>, <code>SinglePlaneGridderMetadata</code></td>
@@ -809,352 +895,294 @@ output product names, and numerical algorithms are unchanged.</p>
 <td><code>standard_mfs_metal_device_available</code></td>
 <td style="text-align: right;">Public</td>
 <td><code>casars-imager</code> policy/export paths</td>
-<td>Keep public</td>
-<td>Capability query, not an implementation duplicate.</td>
-</tr>
-</tbody>
-</table>
-<h3 id="casa-imagingsrcexecutionrs"><code>casa-imaging/src/execution.rs</code><a class="headerlink" href="#casa-imagingsrcexecutionrs" title="Permanent link">&para;</a></h3>
-<p>Most execution-layer types and functions are already <code>pub(crate)</code>. This is the
-right direction: fixed-tile planning, tile buckets, planned samples, workspace
-state, CPU/Metal executors, visibility plans, and accumulation helpers are
-implementation details owned by <code>casa-imaging</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Item or family</th>
-<th style="text-align: right;">Current status</th>
-<th>In-repo callers</th>
-<th>Disposition</th>
-<th>Replacement guidance</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>StandardMfsBackend</code>, CPU/Metal executor types, tile partitioning, tile buckets</td>
-<td style="text-align: right;"><code>pub(crate)</code></td>
-<td><code>casa-imaging</code> only</td>
-<td>Keep crate-private</td>
-<td>No public replacement.</td>
-</tr>
-<tr>
-<td>Replay accumulation helpers for dirty, PSF, and residual</td>
-<td style="text-align: right;"><code>pub(crate)</code> methods</td>
-<td><code>casa-imaging</code> only</td>
-<td>Merge behind internal request/plan</td>
-<td>Planned-sample and routed-visibility sources now share <code>StandardMfsReplayPlan</code>; weighted-batch streaming remains separate because it also owns W-projection replay.</td>
-</tr>
-<tr>
-<td><code>StandardMfsVisibilityPlan</code>, <code>StandardMfsPlannedSample</code>, <code>StandardMfsWorkspace</code></td>
-<td style="text-align: right;"><code>pub(crate)</code></td>
-<td><code>casa-imaging</code> only</td>
-<td>Keep crate-private</td>
-<td>No public replacement.</td>
-</tr>
-<tr>
-<td><code>StandardMfsMetalGroupedInputCache*</code></td>
-<td style="text-align: right;">Public type exported by <code>lib.rs</code></td>
-<td><code>casars-imager</code> Metal paths</td>
-<td>Merge behind backend abstraction</td>
-<td>Keep only until Metal grouped-input cache is no longer an app-facing implementation type.</td>
+<td>Keep public for now</td>
+<td>Capability query, not an implementation duplicate; broader execution-capability API remains future work.</td>
 </tr>
 </tbody>
 </table>
 <h3 id="casars-imager"><code>casars-imager</code><a class="headerlink" href="#casars-imager" title="Permanent link">&para;</a></h3>
-<p><code>casars-imager</code> exports user-facing config, task contract, oracle, managed
-output, and run-summary types. The row-block and streaming functions listed in</p>
-<h1 id="291-are-private-today-so-the-consolidation-target-is-code-duplication-and">291 are private today, so the consolidation target is code duplication and<a class="headerlink" href="#291-are-private-today-so-the-consolidation-target-is-code-duplication-and" title="Permanent link">&para;</a></h1>
-<p>crate-visible churn rather than Rust public API removal.</p>
+<p><code>casars-imager</code> still exports user-facing config, task contract, oracle,
+managed-output, and run-summary types. It no longer calls the old
+route-specific standard-MFS public functions. It still owns substantial
+essentials/routed source shaping, density planning, routed visibility grouping,
+product assembly, and writer-policy code; physical MAIN-row selection now lives
+in <code>casa-ms</code>, and single-plane execution/product planning now lives in
+<code>casa-imaging</code>.</p>
 <table>
 <thead>
 <tr>
 <th>Item or family</th>
 <th style="text-align: right;">Current status</th>
-<th>In-repo callers</th>
 <th>Disposition</th>
 <th>Replacement guidance</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>run_with_cli_args</code>, <code>run_from_config</code>, <code>CliConfig</code>, <code>RunSummary</code></td>
+<td><code>run_with_cli_args</code>, <code>run_from_request</code>, <code>ImagerRunTaskRequest</code>, <code>run_from_config</code>, <code>CliConfig</code>, <code>RunSummary</code></td>
 <td style="text-align: right;">Public</td>
-<td>binary, tests, examples</td>
 <td>Keep public</td>
-<td>User-facing app/runtime boundary.</td>
+<td><code>ImagerRunTaskRequest</code>/<code>run_from_request</code> is the canonical task execution contract; <code>CliConfig</code>/<code>run_from_config</code> is the retained command-line parser compatibility wrapper.</td>
 </tr>
 <tr>
 <td>Task contract and schema exports</td>
 <td style="text-align: right;">Public</td>
-<td>Python/frontend/task callers</td>
 <td>Keep public</td>
-<td>Contract surface; do not change in stabilization cleanup.</td>
+<td>Contract surface; do not change in API consolidation cleanup.</td>
 </tr>
 <tr>
 <td>Oracle and managed-output exports</td>
 <td style="text-align: right;">Public</td>
-<td>examples/tests</td>
 <td>Keep public</td>
 <td>Test/oracle and output-management boundary.</td>
 </tr>
 <tr>
-<td>Source row-block prep functions</td>
-<td style="text-align: right;">Private</td>
-<td><code>casars-imager</code> only</td>
-<td>Merge behind smaller internal abstraction</td>
-<td>Shared through private <code>SourceRowBlockPlaneDescriptor</code>; no public replacement.</td>
+<td>Standard-MFS calls into <code>casa-imaging</code></td>
+<td style="text-align: right;">Private app orchestration</td>
+<td>Merge behind smaller public abstraction</td>
+<td>Calls now use <code>StandardMfsPlan</code>, <code>StandardMfsDirtyPlan</code>, and <code>StandardMfsCleanSession</code>.</td>
 </tr>
 <tr>
-<td>Open-MS mode orchestration functions</td>
-<td style="text-align: right;">Private</td>
-<td><code>run_from_config</code> only</td>
-<td>Recorded remaining debt</td>
-<td>Keep user-visible modes explicit; #291 consolidated the shared row-block preparation cluster.</td>
-</tr>
-<tr>
-<td>Standard-MFS density/planned/routed streaming stages</td>
-<td style="text-align: right;">Private</td>
-<td><code>casars-imager</code> only</td>
-<td>Merge behind smaller internal abstraction</td>
-<td>Dead routed-sample run-block stage removed; retained planned and routed-visibility stages feed the reduced <code>casa-imaging</code> APIs.</td>
+<td>Source row-block prep, channel routing, density planning, product assembly</td>
+<td style="text-align: right;">Private app implementation</td>
+<td>Transitional debt</td>
+<td>Standard MFS, mosaic, one-channel cube, and trace row-block reads now share <code>VisibilityBuffer</code>; physical row selection is in <code>casa-ms</code>; remaining essentials/routed readers move next toward bounded reads and <code>casa-imaging</code> source/product semantics.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="standard-mfs-variant-families">Standard-MFS Variant Families<a class="headerlink" href="#standard-mfs-variant-families" title="Permanent link">&para;</a></h2>
+<h3 id="casa-ms"><code>casa-ms</code><a class="headerlink" href="#casa-ms" title="Permanent link">&para;</a></h3>
+<p><code>casa-ms</code> already owns reusable measurement-set selection and bounded buffer
+building primitives such as <code>MsSelection</code>, channel-selection resolution,
+<code>VisibilityBufferRequest</code>, <code>VisibilityBuffer</code>, and source partitions. The
+current wave adds <code>VisibilityBuffer::as_visibility_block_view()</code>, physical
+<code>VisibilityRowSelectionPlan</code> construction, <code>VisibilityChannelReadRange</code>, and
+<code>VisibilityReadBlockPlan</code> so selected MS rows and filled buffers can cross into
+the neutral imaging source contract without app-private adapter code.</p>
+<p>Remaining source-boundary debt: the older essentials/routed column-read
+orchestration still lives in <code>casars-imager</code>; the active row-block source
+routes now share <code>VisibilityBuffer</code>, but <code>read_visibility_source_columns</code>
+remains for essentials/routed replay helpers.</p>
+<h2 id="standard-mfs-function-family-after-319">Standard-MFS Function Family After #319<a class="headerlink" href="#standard-mfs-function-family-after-319" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Function</th>
-<th style="text-align: right;">Status after this inventory</th>
-<th>Call-site result</th>
-<th>Disposition</th>
+<th>Old public function</th>
+<th style="text-align: right;">Status after #319</th>
+<th>Replacement</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>run_standard_mfs_weighted_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casa-imaging</code> tests; <code>casars-imager</code> dirty streaming</td>
-<td>Keep public for now.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_weighted_sample_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Test-only private</td>
-<td><code>casa-imaging</code> tests only</td>
-<td>Internal variant, no replacement.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_weighted_sample_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Test-only private</td>
-<td><code>casa-imaging</code> tests only</td>
-<td>Internal variant, no replacement.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_planned_sample_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Test-only private</td>
-<td><code>casa-imaging</code> tests only</td>
-<td>Internal variant, no replacement.</td>
+<td style="text-align: right;">Private</td>
+<td><code>run_standard_mfs_plan(StandardMfsPlan::weighted_batches(...))</code></td>
 </tr>
 <tr>
 <td><code>run_standard_mfs_planned_sample_run_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> clean streaming</td>
-<td>Retained boundary; shared private replay plan.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_routed_sample_run_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed</td>
-<td>no external workspace caller found</td>
-<td>Internal variant, no replacement.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_routed_visibility_run_block_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed</td>
-<td>no external workspace caller found</td>
-<td>Internal adapter, no replacement.</td>
-</tr>
-<tr>
-<td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed</td>
-<td>no external workspace caller found</td>
-<td>Internal no-cache adapter, no replacement.</td>
+<td style="text-align: right;">Private</td>
+<td><code>run_standard_mfs_plan(StandardMfsPlan::planned_sample_run_blocks(...))</code></td>
 </tr>
 <tr>
 <td><code>run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> Metal prefill path</td>
-<td>Retained boundary; shared private replay plan.</td>
+<td style="text-align: right;">Private</td>
+<td><code>run_standard_mfs_plan(StandardMfsPlan::routed_visibility_runs(...))</code></td>
 </tr>
 <tr>
 <td><code>run_standard_mfs_planned_sample_block_source_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Public</td>
-<td><code>casars-imager</code> clean streaming</td>
-<td>Retained boundary; shared private replay plan.</td>
+<td style="text-align: right;">Private</td>
+<td><code>run_standard_mfs_dirty_plan(...)</code> or <code>StandardMfsCleanSession</code></td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_routed_visibility_run_block_source_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed</td>
-<td>no external workspace caller found</td>
-<td>Internal adapter, no replacement.</td>
+<td><code>prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>StandardMfsCleanSession::prepare(...)</code></td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config</code></td>
-<td style="text-align: right;">Removed</td>
-<td>no external workspace caller found</td>
-<td>Internal no-cache adapter, no replacement.</td>
+<td><code>prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_config</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>StandardMfsCleanSession::prepare(...)</code></td>
 </tr>
 <tr>
-<td><code>run_standard_mfs_routed_sample_block_source_streaming_with_execution_config</code></td>
+<td><code>skip_standard_mfs_prepared_clean_plane_with_cycle_threshold</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>StandardMfsCleanSession::skip_with_cycle_threshold(...)</code></td>
+</tr>
+<tr>
+<td><code>finish_standard_mfs_prepared_clean_plane_with_execution_config</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>StandardMfsCleanSession::finish(...)</code></td>
+</tr>
+<tr>
+<td><code>finish_standard_mfs_prepared_clean_plane_one_major_cycle_with_execution_config</code></td>
 <td style="text-align: right;">Removed</td>
-<td>no external workspace caller found</td>
-<td>Internal variant, no replacement.</td>
+<td><code>StandardMfsCleanSession::finish_one_major_cycle(...)</code></td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_planned_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Private</td>
+<td><code>run_standard_mfs_dirty_plan(...)</code></td>
+</tr>
+<tr>
+<td><code>run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_config</code></td>
+<td style="text-align: right;">Removed wrapper</td>
+<td><code>run_standard_mfs_dirty_plan(...)</code></td>
 </tr>
 </tbody>
 </table>
-<p>The API reduction is now broader than the first inventory pass: the scalar
-sample, weighted sample-block, and planned sample-block wrappers are test-only
-helpers, six routed implementation wrappers were removed, the routed-sample
-block-source trait was removed from the public surface, and
-<code>StandardMfsRoutedSampleRunBlock</code> is no longer re-exported from the crate root.
-These removals have no replacement beyond the retained concept-oriented
-streaming/source APIs.</p>
-<h2 id="standard-mfs-replay-families">Standard-MFS Replay Families<a class="headerlink" href="#standard-mfs-replay-families" title="Permanent link">&para;</a></h2>
-<p>The dirty/PSF/residual replay helpers are already private functions in
-<code>casa-imaging</code>. They still duplicate the same axes across products:</p>
+<h2 id="metric-snapshot">Metric Snapshot<a class="headerlink" href="#metric-snapshot" title="Permanent link">&para;</a></h2>
+<p>These metrics are captured with
+<code>python3 tools/perf/imager/imaging_interface_metrics.py --base origin/main --format markdown</code>.
+They cover the expanded imaging scope in that script, not only the original
+phase-1 file list.</p>
 <table>
 <thead>
 <tr>
-<th>Family</th>
-<th style="text-align: right;">Current status</th>
-<th>Disposition</th>
+<th>Metric</th>
+<th style="text-align: right;">Baseline</th>
+<th style="text-align: right;">Current</th>
+<th style="text-align: right;">Delta</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Tiled replay dirty/PSF/residual</td>
-<td style="text-align: right;">Private</td>
-<td>Kept separate because weighted-batch streaming also owns W-projection replay.</td>
+<td>Public symbol-like items in expanded imaging scope</td>
+<td style="text-align: right;">397</td>
+<td style="text-align: right;">529</td>
+<td style="text-align: right;">+132</td>
 </tr>
 <tr>
-<td>Sample replay dirty/PSF/residual</td>
-<td style="text-align: right;">Private</td>
-<td>Routed through <code>StandardMfsReplayPlan</code>.</td>
+<td>Public fields in expanded imaging scope</td>
+<td style="text-align: right;">1,066</td>
+<td style="text-align: right;">1,108</td>
+<td style="text-align: right;">+42</td>
 </tr>
 <tr>
-<td>Routed sample replay dirty/PSF/residual</td>
-<td style="text-align: right;">Removed from live API path</td>
-<td>Internal routed-sample run-block backend is no longer reachable.</td>
+<td><code>pub(crate)</code> symbol-like items in expanded imaging scope</td>
+<td style="text-align: right;">391</td>
+<td style="text-align: right;">403</td>
+<td style="text-align: right;">+12</td>
 </tr>
 <tr>
-<td>Routed visibility-run replay dirty/PSF/residual</td>
-<td style="text-align: right;">Private</td>
-<td>Routed through <code>StandardMfsReplayPlan</code>, including optional Metal grouped-input cache.</td>
+<td>Private/internal symbol-like items in expanded imaging scope</td>
+<td style="text-align: right;">3,644</td>
+<td style="text-align: right;">3,643</td>
+<td style="text-align: right;">-1</td>
+</tr>
+<tr>
+<td>App-private functions in <code>casars-imager</code></td>
+<td style="text-align: right;">620</td>
+<td style="text-align: right;">556</td>
+<td style="text-align: right;">-64</td>
+</tr>
+<tr>
+<td>App standard-MFS density row helpers</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">-2</td>
+</tr>
+<tr>
+<td>App product-plane helpers</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-5</td>
+</tr>
+<tr>
+<td>App cube-Briggs formula helpers</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-7</td>
+</tr>
+<tr>
+<td>Legacy app <code>get_ms_values_into_*</code> helpers</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-2</td>
+</tr>
+<tr>
+<td>Legacy app <code>VisibilitySourceBlock*</code> concrete types</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-3</td>
+</tr>
+<tr>
+<td>Old route-specific public standard-MFS runners/free functions</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-5</td>
+</tr>
+<tr>
+<td>Public <code>StandardMfs*</code> backend payload subset</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-17</td>
+</tr>
+<tr>
+<td>Public <code>StandardMfsPlannedWeightedSample</code> fields</td>
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">-13</td>
+</tr>
+<tr>
+<td>Rust code lines in expanded imaging scope</td>
+<td style="text-align: right;">128,748</td>
+<td style="text-align: right;">129,394</td>
+<td style="text-align: right;">+646</td>
 </tr>
 </tbody>
 </table>
-<p>The shared private request/plan now captures product selection, source family,
-routing strategy, block/run grouping, executor config, and optional Metal cache
-for the planned-sample and routed-visibility paths. This implements issue #290
-without changing gridding math, weighting math, task/provider contracts, or
-persisted products.</p>
-<h2 id="casars-imager-row-block-and-streaming-families"><code>casars-imager</code> Row-Block and Streaming Families<a class="headerlink" href="#casars-imager-row-block-and-streaming-families" title="Permanent link">&para;</a></h2>
-<p>All functions listed in issue #291 are private today. They form two clusters:</p>
+<p>The largest useful reduction is not raw SLOC; it is removing the old public
+function matrix as a crate boundary and deleting second app-local visibility
+row-block, row-selection, worker-plan, and single-plane planning
+representations. Raw public symbol/field counts are up because explicit domain contracts replaced
+private app logic: MS row/read plans, worker plans, single-plane
+execution/product/capability plans, PB product helpers, coordinate metadata,
+standard-MFS density row translation, product-plane helpers, cube-Briggs formula
+helpers, typed Hogbom outcomes, clean-control helpers, image-product set
+metadata, and the standard-MFS scalar/row/block/cache source facade. The old
+public backend payload subset is now fully demoted: the app no longer constructs
+or observes planned/routed/Metal backend IR directly.</p>
+<h2 id="performance-smoke-snapshot">Performance Smoke Snapshot<a class="headerlink" href="#performance-smoke-snapshot" title="Permanent link">&para;</a></h2>
+<p>The current worktree and <code>origin/main</code> were run through the same
+<code>wave1-standard-mfs-dirty-smoke</code> CASA-vs-Rust workload with three repeats and
+artifact scratch forced under writable local <code>target</code> paths. This is smoke
+evidence, not a medium/large benchmark conclusion.</p>
 <table>
 <thead>
 <tr>
-<th>Family</th>
-<th style="text-align: right;">Current status</th>
-<th>Disposition</th>
+<th>Run</th>
+<th style="text-align: right;">Rust runs</th>
+<th style="text-align: right;">Rust median</th>
+<th style="text-align: right;">CASA median</th>
+<th style="text-align: right;">Rust/CASA</th>
+<th>Product comparison</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Source row-block preparation for mosaic MFS, cube one-channel, trace, and no-trace paths</td>
-<td style="text-align: right;">Private</td>
-<td>Shared private <code>SourceRowBlockPlaneDescriptor</code>.</td>
+<td><code>origin/main</code> <code>e5df883d1b465f87661322fec875dacd05e5fc0f</code></td>
+<td style="text-align: right;"><code>0.933943, 0.050690, 0.049200 s</code></td>
+<td style="text-align: right;"><code>0.050690 s</code></td>
+<td style="text-align: right;"><code>0.107767 s</code></td>
+<td style="text-align: right;"><code>0.470x</code></td>
+<td>completed</td>
 </tr>
 <tr>
-<td>Open-MS mode orchestration for mosaic, cube, standard-MFS, and MT-MFS</td>
-<td style="text-align: right;">Private</td>
-<td>Recorded remaining debt; keep mode entrypoints explicit.</td>
-</tr>
-<tr>
-<td>Standard-MFS density, planned-sample, routed-sample, routed-visibility, and Metal-prefill streaming stages</td>
-<td style="text-align: right;">Private</td>
-<td>Dead routed-sample run-block stage removed; retained stages feed reduced <code>casa-imaging</code> APIs.</td>
+<td>Current worktree</td>
+<td style="text-align: right;"><code>1.165246, 0.046237, 0.045941 s</code></td>
+<td style="text-align: right;"><code>0.046237 s</code></td>
+<td style="text-align: right;"><code>0.110095 s</code></td>
+<td style="text-align: right;"><code>0.420x</code></td>
+<td>completed</td>
 </tr>
 </tbody>
 </table>
-<p>The descriptor captures the MS handle, selection, DDID/SPW/polarization table
-context, loaded geometry/data/flag/weight columns, derived engine, optional
-standard-MFS table values, optional cube context, finish mode, reusable spectral
-plan, and cube-density/mosaic-metadata policy. This implements the core #291
-row-block consolidation while keeping user-visible mode entrypoints explicit.</p>
-<h2 id="mosaic-and-w-projection-backend-families">Mosaic and W-Projection Backend Families<a class="headerlink" href="#mosaic-and-w-projection-backend-families" title="Permanent link">&para;</a></h2>
-<p>The functions listed in issue #292 are private today, except where behavior is
-reachable through concept-oriented public APIs like <code>run_imaging</code> and
-<code>run_mosaic_mfs_from_single_plane_stream</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Family</th>
-<th style="text-align: right;">Current status</th>
-<th>Disposition</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Mosaic dirty grouped CPU, Metal, and sample-range variants</td>
-<td style="text-align: right;">Private</td>
-<td>Consolidated behind <code>MosaicDirtyGroupBackend</code> / <code>MosaicDirtyGroupStrategy</code>.</td>
-</tr>
-<tr>
-<td>Mosaic residual grouped CPU, Metal, and sample-range variants</td>
-<td style="text-align: right;">Private</td>
-<td>Recorded remaining debt; #292 chose mosaic dirty grouping as the primary family.</td>
-</tr>
-<tr>
-<td><code>accumulate_mosaic_grid_metal_samples</code> same-name <code>cfg</code> alternatives</td>
-<td style="text-align: right;">Private wrapper plus named platform impls</td>
-<td>Wrapper delegates to <code>accumulate_mosaic_grid_metal_samples_impl</code> under platform <code>cfg</code>.</td>
-</tr>
-<tr>
-<td>W-projection PSF/dirty/residual concept functions</td>
-<td style="text-align: right;">Private through public <code>run_imaging</code></td>
-<td>Recorded remaining debt outside the chosen #292 family.</td>
-</tr>
-<tr>
-<td>W-projection streaming/replay serial, parallel, sample, and Metal variants</td>
-<td style="text-align: right;">Private</td>
-<td>Recorded remaining debt outside the chosen #292 family.</td>
-</tr>
-<tr>
-<td><code>accumulate_w_project_grid_metal_streaming_replay</code> same-name <code>cfg</code> alternatives</td>
-<td style="text-align: right;">Private platform variants</td>
-<td>Keep compile-gated; rename or module-split in chosen backend wave.</td>
-</tr>
-</tbody>
-</table>
-<p>For #292 this PR chooses mosaic dirty grouping as the primary backend family.
-The private strategy captures the selected dirty backend (<code>Metal</code>,
-<code>GroupedCpu</code>, <code>SampleRanges</code>, or <code>Scalar</code>), projectors, weight plan, and optional
-prepared Metal/grouped samples. Mosaic residual and W-projection remain recorded
-families, but are not changed by this wave.</p>
-<h2 id="implemented-stabilization-scope">Implemented Stabilization Scope<a class="headerlink" href="#implemented-stabilization-scope" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Issue #289: checked-in inventory plus first API shrink.</li>
-<li>Issue #290: standard-MFS public wrapper shrinkage, routed-sample block-source
-  removal, and shared private replay plan for planned-sample and
-  routed-visibility sources.</li>
-<li>Issue #291: shared source-row-block descriptor in <code>casars-imager</code> and removal
-  of the dead routed-sample essentials run-block stage.</li>
-<li>Issue #292: mosaic dirty backend strategy boundary and clearer Metal <code>cfg</code>
-  implementation split.</li>
-</ul>
-<p>Remaining duplicate families are implementation debt, not approved-scope
-deferrals for these issues: weighted-batch standard-MFS replay stays separate
-because it also handles W-projection replay, and mosaic residual / W-projection
-backend families remain unchanged because #292 required one primary family.</p>
+<p>Head Rust median was <code>0.912x</code> of the <code>origin/main</code> Rust median for this smoke
+workload. The first run in each row includes cold process/data effects, so this
+is a guardrail against obvious regressions rather than a broad speedup claim.
+The <code>.image</code>, <code>.residual</code>, and <code>.psf</code> product deltas were identical between the
+two runs: <code>.image</code>/<code>.residual</code> <code>diff_rms_over_casa_rms =
+7.513996986357205e-05</code>, and <code>.psf</code> <code>diff_rms_over_casa_rms =
+2.0025219261353267e-04</code>.</p>
 
 
 
