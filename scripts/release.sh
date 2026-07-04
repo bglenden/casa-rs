@@ -18,8 +18,8 @@ Runs the repository release process:
 
 Default local release gates:
   - cargo fmt --all -- --check
-  - cargo clippy --workspace --all-targets -- -D warnings
-  - cargo test --workspace
+  - CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
+  - CARGO_INCREMENTAL=0 cargo test --workspace
   - scripts/test-release-cpp-interop.sh
   - scripts/test-python-package.sh
   - scripts/test-smoke.sh
@@ -188,6 +188,7 @@ main() {
 
   repo_root="$(git rev-parse --show-toplevel)"
   cd "$repo_root"
+  export CARGO_INCREMENTAL=0
 
   if [[ -n "$(git status --short)" ]]; then
     die "worktree must be clean before cutting a release"

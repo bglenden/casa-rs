@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+export CARGO_INCREMENTAL=0
 
 die() {
   echo "test-release-cpp-interop.sh: $*" >&2

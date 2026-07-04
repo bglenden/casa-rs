@@ -96,8 +96,8 @@ case "$command" in
     run_in_container '
       ./scripts/check-spdx.sh &&
       cargo fmt --all -- --check &&
-      cargo clippy --workspace --all-targets -- -D warnings &&
-      cargo test --workspace
+      CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings &&
+      CARGO_INCREMENTAL=0 cargo test --workspace
     '
     ;;
   python_package)

@@ -46,6 +46,8 @@ if [[ "$ci_like" == "true" ]]; then
   export PKG_CONFIG=/usr/bin/false
 fi
 
+export CARGO_INCREMENTAL=0
+
 run_llvm_cov() {
   # Keep the coverage gate focused on shipped code plus functional tests.
   # Large perf/profile harnesses are useful for benchmarking, but they make

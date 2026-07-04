@@ -152,6 +152,9 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - `just verify` is the default full wave gate.
 - `just smoke`, `scripts/test-install-suite.sh`, and
   `scripts/run-coverage.sh --ci-like` are release/tag-oriented heavy gates.
+- One-off repository gates must run Rust checks/tests with
+  `CARGO_INCREMENTAL=0` to avoid accumulating stale incremental cache entries
+  in local and Codex worktree `target/` directories.
 - Routine branch merges should not run release/tag-only heavy gates unless requested.
 - GitHub PR CI runs the lighter lint/test and Python package checks.
 - Version-tag CI additionally runs smoke, suite-install, and CI-like coverage.

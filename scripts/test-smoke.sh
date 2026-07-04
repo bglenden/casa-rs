@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+export CARGO_INCREMENTAL=0
 
 python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d)"

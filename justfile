@@ -9,8 +9,8 @@ setup:
 quick:
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets -- -D warnings
-    cargo test --workspace
+    CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
+    CARGO_INCREMENTAL=0 cargo test --workspace
 
 verify:
     just quick
@@ -22,13 +22,13 @@ smoke:
 lint:
     ./scripts/check-spdx.sh
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets -- -D warnings
+    CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
 
 typecheck:
-    cargo check --workspace --all-targets
+    CARGO_INCREMENTAL=0 cargo check --workspace --all-targets
 
 test:
-    cargo test --workspace
+    CARGO_INCREMENTAL=0 cargo test --workspace
     ./scripts/test-python-package.sh
     bash scripts/test-smoke.sh
     ./scripts/test-install-suite.sh
