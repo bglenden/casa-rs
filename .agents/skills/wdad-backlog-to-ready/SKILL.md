@@ -33,8 +33,9 @@ Planning/read-only mode. Do not edit code.
 9. Write falsifiable acceptance checks.
 10. Identify architecture/test impact and stop conditions.
 11. Identify the verification path: `quick`, `verify` before `In Progress -> Review`, and any release-only checks.
-12. Draft closeout expectations and follow-up hooks.
+12. Draft closeout expectations and follow-up hooks for adjacent work. Do not use follow-up hooks to weaken the approved outcome or acceptance checks.
 13. State that once approved, outcome, included issues, and acceptance checks cannot be deferred or descoped without explicit user signoff.
+14. State that code waves must record a bounded refactor pass before review, or a not-applicable rationale when the wave has no code surface.
 
 ## Output
 
@@ -48,6 +49,7 @@ Planning/read-only mode. Do not edit code.
 - stop conditions
 - closeout expectations
 - approved-scope deferral signoff expectation
+- refactor-pass expectation for code waves
 
 ## Do not
 

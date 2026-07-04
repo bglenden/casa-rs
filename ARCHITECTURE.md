@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-05-05
+Last reality check: 2026-07-04
 Verification: just docs-check
 
 ## System purpose
@@ -111,7 +111,10 @@ project-history persistence format or background service.
 - On-disk interoperability with casacore-compatible formats is more important than mirroring C++ APIs directly.
 - Heavy CASA parity suites must stay opt-in rather than in the default `cargo test --workspace` path.
 - Some cross-language and parity tests must skip cleanly when `pkg-config casacore` or measures data are unavailable.
-- WDAD uses the scaled layer in this repo; some architecture checks are still lightweight/document-oriented rather than full mechanical boundary enforcement.
+- WDAD uses the scaled v0.4 layer in this repo, including the bounded
+  refactor-pass gate before code waves move to review; some architecture checks
+  are still lightweight/document-oriented rather than full mechanical boundary
+  enforcement.
 
 ## Known current gaps / debt
 

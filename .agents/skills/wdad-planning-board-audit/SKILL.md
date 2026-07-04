@@ -33,7 +33,7 @@ Read-only/planning mode. Do not move cards or edit issues unless separately inst
 
 - `Backlog -> Ready`: outcome, non-goals, acceptance checks, stop conditions, and verification path exist.
 - `Ready -> In Progress`: the wave is shaped enough to start and has no unresolved blocking decision recorded.
-- `In Progress -> Review`: the PR or equivalent review artifact exists, the current `verify` result is recorded, and no approved outcome, included issue, or acceptance check was deferred or descoped without explicit user signoff recorded in the issue or PR.
+- `In Progress -> Review`: the PR or equivalent review artifact exists, the current `verify` result is recorded, a bounded refactor pass is recorded or marked not applicable for a no-code wave, and no approved outcome, included issue, or acceptance check was deferred or descoped without explicit user signoff recorded in the issue or PR.
 - `Review -> Done`: closeout is updated, review evidence exists, follow-up issues are created where needed, and any approved-scope deferral records explicit user signoff.
 - `Parked`: the deferral reason is clear enough that the item can be revisited later; parking approved scope is invalid without explicit user signoff.
 

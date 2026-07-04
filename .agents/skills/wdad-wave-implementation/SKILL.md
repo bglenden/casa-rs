@@ -1,17 +1,17 @@
 ---
 name: wdad-wave-implementation
-description: Use to implement an approved wave on a branch. Keeps work inside the approved boundary without descoping approved work, runs preflight only when needed, commits and pushes the wave branch, and creates or updates the PR.
+description: Use to implement an approved wave on a branch. Keeps work inside the approved boundary without silently descoping accepted work, runs preflight and refactor passes only where bounded by the wave, commits and pushes the wave branch, and creates or updates the PR.
 ---
 
 # Skill: Wave implementation
 
 ## Purpose
 
-Implement a wave without silently widening or narrowing the approved scope, then produce a review-ready PR.
+Implement a wave without silently widening or narrowing the approved scope, run a bounded refactor pass on the involved code, then produce a review-ready PR.
 
 ## Mode
 
-Implementation is allowed only after the wave is approved. Invoking this skill authorizes commits, push, and PR creation for the approved wave branch.
+Implementation is allowed only after the wave is approved. Invoking this skill authorizes commits, push, PR creation, and a bounded refactor pass for the approved wave branch, but not deferral or expansion of approved scope.
 
 ## Required inputs
 
@@ -30,12 +30,14 @@ Implementation is allowed only after the wave is approved. Invoking this skill a
 6. Implement the smallest coherent change set.
 7. Run `quick` during the edit loop.
 8. Add or update tests for the stated acceptance checks.
-9. Run `verify` before moving the wave into `Review`.
-10. If an approved outcome, included issue, or acceptance check cannot be completed, stop and ask for explicit user signoff before creating a deferral, follow-up, non-goal, or out-of-scope classification for that approved work.
-11. Update issue closeout and PR material so they match the actual implementation and verification result, including any approved-scope deferral and the user signoff location.
-12. Commit the finished wave changes on the wave branch.
-13. Push the wave branch and create or update the PR.
-14. Move the wave to `Review` only after the PR exists, carries the latest `verify` result, and has no unsigned approved-scope deferral.
+9. Run the `refactor` skill on the code involved in the current wave before finalizing the PR. If the wave has no code refactor surface, record why it is not applicable.
+10. Keep the refactor pass bounded to touched or directly exposed code. If `refactor` identifies a larger coherent refactor, produce the brief and ask before expanding the wave.
+11. Run `verify` before moving the wave into `Review`.
+12. If an approved outcome, included issue, or acceptance check cannot be completed, stop and ask for explicit user signoff before creating a deferral, follow-up, non-goal, or out-of-scope classification for that approved work.
+13. Update issue closeout and PR material so they match the actual implementation, refactor pass, verification result, and any approved-scope deferral and the user signoff location.
+14. Commit the finished wave changes on the wave branch.
+15. Push the wave branch and create or update the PR.
+16. Move the wave to `Review` only after the PR exists, carries the latest `verify` result, records the refactor pass or not-applicable rationale, and has no unsigned approved-scope deferral.
 
 ## Stop immediately before
 
@@ -44,5 +46,6 @@ Implementation is allowed only after the wave is approved. Invoking this skill a
 - changing runtime or boundary direction
 - deferring or descoping approved outcome, included issues, or acceptance checks without explicit user signoff
 - weakening tests without replacement
+- using the refactor pass to expand beyond the code involved in the approved wave without explicit user signoff
 - committing directly to `main`
 - merging the PR or deleting branches/worktrees; that belongs to `wdad-pr-merge`

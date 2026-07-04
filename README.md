@@ -1,7 +1,7 @@
 # casa-rs
 
 Truth class: current descriptive
-Last reality check: 2026-05-09
+Last reality check: 2026-07-04
 Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
@@ -15,9 +15,9 @@ and casacore, with Swift for the native macOS UI. It uses CASA and casacore for
 performance comparisons and calculation checks, but does not directly reuse
 their source code. The source code is basically entirely written by AI, first
 Claude and now Codex, prompted by me using various strategies. The current
-workflow is my semi-homebrew Wave Driven Agentic Development process; see
-[`AGENTS.md`](AGENTS.md). Experimenting with development methodology is part of
-the hobby.
+workflow is my semi-homebrew Wave Driven Agentic Development process, currently
+using the repo's Scaled WDAD v0.4 contract; see [`AGENTS.md`](AGENTS.md).
+Experimenting with development methodology is part of the hobby.
 
 The project currently has four broad aspects:
 

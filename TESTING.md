@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-05-04
+Last reality check: 2026-07-04
 Verification: just verify
 
 ## Test categories
@@ -79,6 +79,8 @@ For each wave:
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
+- code waves record a bounded `refactor` pass on the involved code before
+  review, or a not-applicable rationale for no-code waves
 - reality-sync happens when docs, interfaces, or boundaries changed
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
@@ -93,6 +95,8 @@ A wave is not done until:
 
 - `just verify` passes or any intentional exclusion is called out explicitly
 - tests cover the claimed behavior
+- code-wave refactor evidence is recorded, or a no-code not-applicable
+  rationale exists
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
 - any approved-scope deferral records explicit user signoff

@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-05-09
+Last reality check: 2026-07-04
 Verification: just docs-check
 
 ## Purpose
@@ -47,11 +47,16 @@ persistent data while preserving on-disk interoperability.
 
 ## WDAD Workflow
 
+This repo uses Scaled WDAD v0.4.
+
 - Board columns: `Backlog`, `Ready`, `In Progress`, `Review`, `Done`, `Parked`.
 - `Backlog -> Ready`: use `wdad-backlog-to-ready`.
 - `Ready -> In Progress`: use `wdad-wave-implementation`.
-- `In Progress -> Review`: use `wdad-wave-implementation` after a PR exists and `just verify` is recorded.
-- `Review -> Done`: use `wdad-pr-merge`.
+- `In Progress -> Review`: use `wdad-wave-implementation` after a PR exists,
+  `just verify` is recorded, and the bounded refactor pass is recorded or
+  marked not applicable for a no-code wave.
+- `Review -> Done`: use `wdad-pr-merge`; missing refactor evidence blocks code
+  wave merge.
 - Use scaled sidecars when risk justifies them: `wdad-architecture-review`,
   `wdad-test-adversary-review`, `wdad-reality-sync`,
   `wdad-ci-failure-diagnosis`, `wdad-stabilization-wave`, and
@@ -75,6 +80,18 @@ checks, and stop conditions are the approved scope contract.
 - Parked is invalid for approved-scope deferral unless the deferral reason and
   user signoff are both recorded.
 
+## WDAD Refactor Gate
+
+Before a code wave moves to `Review`, run the `refactor` skill on the code
+involved in the current wave and record the result in the issue closeout or PR.
+
+- Keep the refactor pass bounded to touched or directly exposed code.
+- If the wave has no code refactor surface, record a not-applicable rationale.
+- If the refactor pass finds a larger coherent cleanup outside the approved
+  wave, capture the brief and ask before expanding scope.
+- If the refactor pass cannot run for a code wave, stop and ask instead of
+  silently skipping it.
+
 ## PR Linkage
 
 Issue-driven wave PRs must include:
@@ -95,6 +112,7 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - changing dependency direction, runtime model, concurrency, or major performance algorithms
 - moving approved outcome, included issues, or acceptance checks into
   follow-up tickets, deferrals, non-goals, or out-of-scope language
+- expanding a pre-review refactor beyond the code involved in the approved wave
 - weakening or deleting tests without replacement
 - editing accepted ADRs except to add explicitly requested supersession metadata
 - committing directly to `main`
@@ -165,7 +183,8 @@ Use `Closes #N` only for issues that should auto-close on merge.
 ## Done
 
 A wave is done only after relevant tests pass, `just verify` passes or exclusions
-are recorded, issue closeout records the actual result, docs/ADRs are updated
-when reality changed, any approved-scope deferral records explicit user signoff,
-and medium/high-risk work gets the needed architecture, test-adversary, or
-reality-sync review.
+are recorded, code-wave refactor evidence is recorded or no-code
+not-applicable rationale exists, issue closeout records the actual result,
+docs/ADRs are updated when reality changed, any approved-scope deferral records
+explicit user signoff, and medium/high-risk work gets the needed architecture,
+test-adversary, or reality-sync review.
