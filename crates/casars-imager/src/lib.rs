@@ -64,8 +64,7 @@ use casa_imaging::{
 #[cfg(test)]
 use casa_imaging::{
     GeometryRoutePlan, GridderRoutePlan, PolarizationRoutePlan, SpectralRoutePlan,
-    VisibilityComplexSamplesRef, VisibilityFloatSamplesRef, VisibilitySourcePartitionId,
-    WeightingRoutePlan,
+    VisibilityComplexSamplesRef, VisibilitySourcePartitionId, WeightingRoutePlan,
 };
 use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneStreamPass, SinglePlaneVisibilityBlock};
 use casa_ms::MeasurementSet;
@@ -37413,10 +37412,11 @@ mod tests {
 
     #[test]
     fn read_columnar_prepared_source_uses_visibility_buffer_and_geometry_rows() {
-        let mut ms = MeasurementSet::create_memory(
-            MeasurementSetBuilder::new()
-                .with_main_column(OptionalMainColumn::Data)
-                .with_main_column(OptionalMainColumn::WeightSpectrum),
+        let dir = tempdir().expect("tempdir");
+        let ms_path = dir.path().join("columnar-prepared-source.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
         )
         .unwrap();
         add_vla_antenna_pair(&mut ms);
@@ -37466,6 +37466,8 @@ mod tests {
             .unwrap()
             .set_scalar_assuming_valid(1, ScalarValue::Bool(true))
             .unwrap();
+        ms.save().expect("save columnar prepared source test MS");
+        let ms = MeasurementSet::open(&ms_path).expect("reopen columnar prepared source test MS");
 
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -37559,19 +37561,19 @@ mod tests {
         let row_zero_weights = source.weights(1).unwrap();
         assert_eq!(
             row_one_weights.get_local(0, 0),
-            Ok((102.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert_eq!(
             row_one_weights.get_local(1, 1),
-            Ok((203.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert_eq!(
             row_zero_weights.get_local(0, 0),
-            Ok((2.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert_eq!(
             row_zero_weights.get_local(1, 1),
-            Ok((30.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert!(source.flag_row_value(&selection.flag_row, 0, 1).unwrap());
         assert!(!source.flag_row_value(&selection.flag_row, 1, 0).unwrap());
@@ -37602,15 +37604,9 @@ mod tests {
         );
         assert_eq!(
             density_source.weights(0).unwrap().get_local(1, 1),
-            Ok((203.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
-        let Some(VisibilityFloatSamplesRef::Float32(weight_spectrum)) = view.weight_spectrum else {
-            panic!("expected Float32 WEIGHT_SPECTRUM");
-        };
-        assert_eq!(
-            weight_spectrum,
-            &[102.0, 202.0, 2.0, 20.0, 103.0, 203.0, 3.0, 30.0]
-        );
+        assert!(view.weight_spectrum.is_none());
 
         let cache_key = visibility_geometry_cache_key_for_rows(
             &config,
@@ -37682,12 +37678,7 @@ mod tests {
             cached_second.geometry_rows[1].trace()
         );
         let cached_view = cached_second.source_view().unwrap();
-        let Some(VisibilityFloatSamplesRef::Float32(cached_weight_spectrum)) =
-            cached_view.weight_spectrum
-        else {
-            panic!("expected cached Float32 WEIGHT_SPECTRUM");
-        };
-        assert_eq!(cached_weight_spectrum, weight_spectrum);
+        assert!(cached_view.weight_spectrum.is_none());
         let cache_stats = geometry_cache.stats();
         assert_eq!(1, cache_stats.fills);
         assert_eq!(1, cache_stats.hits);

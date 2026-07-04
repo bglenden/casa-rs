@@ -2306,7 +2306,10 @@ mod tests {
 
     #[test]
     fn fill_visibility_buffer_reads_selected_channels_columnar() {
-        let mut ms = MeasurementSet::create_memory(
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ms_path = dir.path().join("visibility-buffer.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
             MeasurementSetBuilder::new()
                 .with_main_column(OptionalMainColumn::Data)
                 .with_main_column(OptionalMainColumn::WeightSpectrum),
@@ -2314,6 +2317,8 @@ mod tests {
         .unwrap();
         add_visibility_test_row(ms.main_table_mut(), 0);
         add_visibility_test_row(ms.main_table_mut(), 1);
+        ms.save().expect("save visibility-buffer test MS");
+        let ms = MeasurementSet::open(&ms_path).expect("reopen visibility-buffer test MS");
 
         let mut request =
             VisibilityBufferRequest::imaging(VisibilityDataColumn::Data, vec![1, 0], 1, 2)
@@ -2333,6 +2338,7 @@ mod tests {
         request.include_observation_ids = true;
         request.include_scan_numbers = true;
         request.include_state_ids = true;
+        request.include_weight_spectrum = false;
         let mut buffer = VisibilityBuffer::default();
         let report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
 

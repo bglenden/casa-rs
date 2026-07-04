@@ -31,7 +31,6 @@ use std::time::Instant;
 
 use casa_aipsio::ByteOrder;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::{Axis, Slice};
 use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
@@ -1372,59 +1371,6 @@ impl CompositeStorage {
         }
     }
 
-    pub(crate) fn load_array_column_rows_2d_channel_range_arrays_with_row_hint(
-        &self,
-        table_path: &Path,
-        column: &str,
-        selected_rows: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-        row_hint: Option<u64>,
-    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-        if selected_rows.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let control_path = table_path.join(TABLE_CONTROL_FILE);
-        if !table_path.exists() {
-            return Err(StorageError::MissingPath(table_path.to_path_buf()));
-        }
-        if !control_path.exists() {
-            return Err(StorageError::MissingControlFile(control_path));
-        }
-
-        match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self
-                .load_plain_array_column_rows_2d_channel_range_arrays(
-                    table_path,
-                    &table_dat,
-                    column,
-                    selected_rows,
-                    channel_start,
-                    channel_count,
-                    row_hint,
-                ),
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
-                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
-                let values = array_column_from_snapshot(&snapshot, column)?;
-                select_array_rows(&values, selected_rows)
-                    .into_iter()
-                    .map(|value| {
-                        value
-                            .map(|array| {
-                                slice_array_value_2d_channel_range(
-                                    array,
-                                    channel_start,
-                                    channel_count,
-                                )
-                            })
-                            .transpose()
-                    })
-                    .collect()
-            }
-        }
-    }
-
     pub(crate) fn load_array_column_rows_2d_channel_range_typed_with_row_hint(
         &self,
         table_path: &Path,
@@ -1433,9 +1379,11 @@ impl CompositeStorage {
         channel_start: usize,
         channel_count: usize,
         _row_hint: Option<u64>,
-    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+    ) -> Result<SelectedArray2DCells, StorageError> {
         if selected_rows.is_empty() {
-            return Ok(None);
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D read for {column} requires at least one selected row"
+            )));
         }
 
         let control_path = table_path.join(TABLE_CONTROL_FILE);
@@ -1458,7 +1406,11 @@ impl CompositeStorage {
                     table_path, &table_dat, request,
                 )
             }
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => Ok(None),
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                Err(StorageError::FormatMismatch(format!(
+                    "typed selected 2-D channel reads require a plain table for column '{column}'"
+                )))
+            }
         }
     }
 
@@ -2549,168 +2501,12 @@ impl CompositeStorage {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn load_plain_array_column_rows_2d_channel_range_arrays(
-        &self,
-        table_path: &Path,
-        table_dat: &TableDatContents,
-        column: &str,
-        selected_rows: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-        row_hint: Option<u64>,
-    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-        let desc_idx = table_dat
-            .table_desc
-            .columns
-            .iter()
-            .position(|desc| desc.col_name == column)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!("array column '{column}' not found"))
-            })?;
-        let col_desc = &table_dat.table_desc.columns[desc_idx];
-        if !col_desc.is_array {
-            return Err(StorageError::FormatMismatch(format!(
-                "column '{column}' is not an array column"
-            )));
-        }
-
-        if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
-            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
-            let values = array_column_from_snapshot(&snapshot, column)?;
-            return select_array_rows(&values, selected_rows)
-                .into_iter()
-                .map(|value| {
-                    value
-                        .map(|array| {
-                            slice_array_value_2d_channel_range(array, channel_start, channel_count)
-                        })
-                        .transpose()
-                })
-                .collect();
-        }
-
-        let dm_seq_nr = table_dat
-            .column_set
-            .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing ColumnSet binding"
-                ))
-            })?
-            .dm_seq_nr;
-        let dm = table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .find(|dm| dm.seq_nr == dm_seq_nr)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing data manager {dm_seq_nr}"
-                ))
-            })?;
-        let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
-        let bound_cols: Vec<(usize, &_)> = table_dat
-            .column_set
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
-            .collect();
-        let target_col_idx = bound_cols
-            .iter()
-            .position(|(bound_desc_idx, _)| *bound_desc_idx == desc_idx)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing data-manager column binding"
-                ))
-            })?;
-
-        let values = match dm.type_name.as_str() {
-            "TiledShapeStMan" => {
-                return tiled_stman::load_tiled_column_rows_2d_channel_range_arrays(
-                    table_path,
-                    dm,
-                    &table_dat.table_desc.columns,
-                    &bound_cols,
-                    desc_idx,
-                    selected_rows,
-                    channel_start,
-                    channel_count,
-                );
-            }
-            "StManAipsIO" => {
-                let group_col_descs: Vec<_> = bound_cols
-                    .iter()
-                    .map(|(bound_desc_idx, _)| {
-                        table_dat.table_desc.columns[*bound_desc_idx].clone()
-                    })
-                    .collect();
-                if let Some(values) = read_stman_array_column_rows(
-                    &data_path,
-                    &group_col_descs,
-                    target_col_idx,
-                    selected_rows,
-                    ByteOrder::BigEndian,
-                )? {
-                    values
-                } else {
-                    let values =
-                        self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                    select_array_rows(&values, selected_rows)
-                }
-            }
-            "StandardStMan" => {
-                let group_col_descs: Vec<_> = bound_cols
-                    .iter()
-                    .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
-                    .collect();
-                if let Some(values) = read_ssm_array_column_rows(
-                    &data_path,
-                    &dm.data,
-                    &group_col_descs,
-                    target_col_idx,
-                    selected_rows,
-                )? {
-                    values
-                } else {
-                    let values =
-                        self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                    select_array_rows(&values, selected_rows)
-                }
-            }
-            _ => {
-                let values =
-                    self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                select_array_rows(&values, selected_rows)
-            }
-        };
-
-        values
-            .into_iter()
-            .map(|value| {
-                value
-                    .map(|array| {
-                        slice_array_value_2d_channel_range(array, channel_start, channel_count)
-                    })
-                    .transpose()
-            })
-            .collect()
-    }
-
     fn load_plain_array_column_rows_2d_channel_range_typed(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
         request: SelectedArray2DChannelRead<'_>,
-    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+    ) -> Result<SelectedArray2DCells, StorageError> {
         let column = request.column;
         let desc_idx = table_dat
             .table_desc
@@ -2733,7 +2529,9 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            return Ok(None);
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D channel reads do not support virtual columns in table containing '{column}'"
+            )));
         }
 
         let dm_seq_nr = table_dat
@@ -2776,7 +2574,10 @@ impl CompositeStorage {
                 request.channel_start,
                 request.channel_count,
             ),
-            _ => Ok(None),
+            other => Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
+                request.column
+            ))),
         }
     }
 
@@ -3693,54 +3494,6 @@ fn select_array_rows(
         .iter()
         .map(|&row_idx| values.get(row_idx).cloned().unwrap_or(None))
         .collect()
-}
-
-pub(crate) fn slice_array_value_2d_channel_range(
-    value: ArrayValue,
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<ArrayValue, StorageError> {
-    macro_rules! slice_variant {
-        ($values:expr, $ctor:expr) => {{
-            let shape = $values.shape().to_vec();
-            if shape.len() != 2 {
-                return Err(StorageError::FormatMismatch(format!(
-                    "2-D channel-range array read expected rank-2 array, found shape {shape:?}"
-                )));
-            }
-            let Some(channel_end) = channel_start.checked_add(channel_count) else {
-                return Err(StorageError::FormatMismatch(
-                    "2-D channel-range array read overflowed channel bounds".to_string(),
-                ));
-            };
-            if channel_end > shape[1] {
-                return Err(StorageError::FormatMismatch(format!(
-                    "2-D channel range {channel_start}..{channel_end} exceeds array channel axis with {} channels",
-                    shape[1]
-                )));
-            }
-            $ctor(
-                $values
-                    .slice_axis(Axis(1), Slice::from(channel_start..channel_end))
-                    .to_owned(),
-            )
-        }};
-    }
-
-    Ok(match value {
-        ArrayValue::Bool(values) => slice_variant!(values, ArrayValue::Bool),
-        ArrayValue::UInt8(values) => slice_variant!(values, ArrayValue::UInt8),
-        ArrayValue::Int16(values) => slice_variant!(values, ArrayValue::Int16),
-        ArrayValue::UInt16(values) => slice_variant!(values, ArrayValue::UInt16),
-        ArrayValue::Int32(values) => slice_variant!(values, ArrayValue::Int32),
-        ArrayValue::UInt32(values) => slice_variant!(values, ArrayValue::UInt32),
-        ArrayValue::Int64(values) => slice_variant!(values, ArrayValue::Int64),
-        ArrayValue::Float32(values) => slice_variant!(values, ArrayValue::Float32),
-        ArrayValue::Float64(values) => slice_variant!(values, ArrayValue::Float64),
-        ArrayValue::Complex32(values) => slice_variant!(values, ArrayValue::Complex32),
-        ArrayValue::Complex64(values) => slice_variant!(values, ArrayValue::Complex64),
-        ArrayValue::String(values) => slice_variant!(values, ArrayValue::String),
-    })
 }
 
 fn select_scalar_rows(

@@ -892,51 +892,6 @@ impl Table {
             .collect()
     }
 
-    pub(crate) fn get_array_cells_2d_channel_range_arrays_uncached(
-        &self,
-        column: &str,
-        row_indices: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
-        self.require_column(column)?;
-        for &row_index in row_indices {
-            if row_index >= self.row_count() {
-                return Err(TableError::RowOutOfBounds {
-                    row_index,
-                    row_count: self.row_count(),
-                });
-            }
-        }
-        if let Some(values) = self.inner.array_cells_2d_channel_range_arrays_uncached(
-            row_indices,
-            column,
-            channel_start,
-            channel_count,
-        )? {
-            return Ok(values);
-        }
-        row_indices
-            .iter()
-            .map(|&row_index| match self.cell(row_index, column)? {
-                Some(Value::Array(array)) => crate::storage::slice_array_value_2d_channel_range(
-                    array.clone(),
-                    channel_start,
-                    channel_count,
-                )
-                .map(Some)
-                .map_err(|error| TableError::Storage(error.to_string())),
-                Some(value) => Err(TableError::ColumnTypeMismatch {
-                    row_index,
-                    column: column.to_string(),
-                    expected: "array",
-                    found: value.kind(),
-                }),
-                None => Ok(None),
-            })
-            .collect()
-    }
-
     pub(crate) fn get_array_cells_2d_channel_range_typed_uncached(
         &self,
         column: &str,
@@ -953,21 +908,12 @@ impl Table {
                 });
             }
         }
-        if let Some(values) = self.inner.array_cells_2d_channel_range_typed_uncached(
+        self.inner.array_cells_2d_channel_range_typed_uncached(
             row_indices,
             column,
             channel_start,
             channel_count,
-        )? {
-            return Ok(values);
-        }
-        let values = self.get_array_cells_2d_channel_range_arrays_uncached(
-            column,
-            row_indices,
-            channel_start,
-            channel_count,
-        )?;
-        selected_array_2d_cells_from_arrays(column, row_indices, channel_count, values)
+        )
     }
 
     /// Returns owned scalar values for every row in `column`.
@@ -1840,9 +1786,7 @@ impl<'a> TableColumn<'a> {
     /// Returns typed 2-D array channel slices for selected rows without
     /// populating the table-level row cache.
     ///
-    /// The returned values are packed as `[channel][row][axis0]`. The method
-    /// uses storage-manager-specific typed readers when available and falls
-    /// back to the generic array path otherwise.
+    /// The returned values are packed as `[channel][row][axis0]`.
     pub fn array_cells_2d_channel_range_typed_uncached(
         &self,
         row_indices: &[usize],
@@ -1856,167 +1800,6 @@ impl<'a> TableColumn<'a> {
             channel_count,
         )
     }
-}
-
-fn selected_array_2d_cells_from_arrays(
-    column: &str,
-    row_indices: &[usize],
-    channel_count: usize,
-    values: Vec<Option<ArrayValue>>,
-) -> Result<SelectedArray2DCells, TableError> {
-    let first = values.iter().flatten().next().ok_or_else(|| {
-        TableError::Storage(format!(
-            "{column} typed selected 2-D read found no defined rows"
-        ))
-    })?;
-    match first {
-        ArrayValue::Bool(_) => {
-            let (axis0_count, values) =
-                pack_selected_array_2d(column, row_indices, channel_count, values, |array| {
-                    match array {
-                        ArrayValue::Bool(values) => Ok(values),
-                        other => Err(other),
-                    }
-                })?;
-            Ok(SelectedArray2DCells::Bool(SelectedArray2D::new(
-                row_indices.len(),
-                axis0_count,
-                channel_count,
-                values,
-            )))
-        }
-        ArrayValue::Float32(_) => {
-            let (axis0_count, values) =
-                pack_selected_array_2d(column, row_indices, channel_count, values, |array| {
-                    match array {
-                        ArrayValue::Float32(values) => Ok(values),
-                        other => Err(other),
-                    }
-                })?;
-            Ok(SelectedArray2DCells::Float32(SelectedArray2D::new(
-                row_indices.len(),
-                axis0_count,
-                channel_count,
-                values,
-            )))
-        }
-        ArrayValue::Float64(_) => {
-            let (axis0_count, values) =
-                pack_selected_array_2d(column, row_indices, channel_count, values, |array| {
-                    match array {
-                        ArrayValue::Float64(values) => Ok(values),
-                        other => Err(other),
-                    }
-                })?;
-            Ok(SelectedArray2DCells::Float64(SelectedArray2D::new(
-                row_indices.len(),
-                axis0_count,
-                channel_count,
-                values,
-            )))
-        }
-        ArrayValue::Complex32(_) => {
-            let (axis0_count, values) =
-                pack_selected_array_2d(column, row_indices, channel_count, values, |array| {
-                    match array {
-                        ArrayValue::Complex32(values) => Ok(values),
-                        other => Err(other),
-                    }
-                })?;
-            Ok(SelectedArray2DCells::Complex32(SelectedArray2D::new(
-                row_indices.len(),
-                axis0_count,
-                channel_count,
-                values,
-            )))
-        }
-        ArrayValue::Complex64(_) => {
-            let (axis0_count, values) =
-                pack_selected_array_2d(column, row_indices, channel_count, values, |array| {
-                    match array {
-                        ArrayValue::Complex64(values) => Ok(values),
-                        other => Err(other),
-                    }
-                })?;
-            Ok(SelectedArray2DCells::Complex64(SelectedArray2D::new(
-                row_indices.len(),
-                axis0_count,
-                channel_count,
-                values,
-            )))
-        }
-        other => Err(TableError::ColumnTypeMismatch {
-            row_index: row_indices.first().copied().unwrap_or(0),
-            column: column.to_string(),
-            expected: "Bool, Float32, Float64, Complex32, or Complex64 2-D array",
-            found: Value::Array(other.clone()).kind(),
-        }),
-    }
-}
-
-fn pack_selected_array_2d<T: Clone>(
-    column: &str,
-    row_indices: &[usize],
-    channel_count: usize,
-    values: Vec<Option<ArrayValue>>,
-    extract: impl Fn(ArrayValue) -> Result<ndarray::ArrayD<T>, ArrayValue>,
-) -> Result<(usize, Vec<T>), TableError> {
-    let row_count = row_indices.len();
-    let mut row_arrays = Vec::with_capacity(row_count);
-    let mut axis0_count = None::<usize>;
-    for (row_slot, value) in values.into_iter().enumerate() {
-        let row_index = row_indices[row_slot];
-        let value = value.ok_or_else(|| {
-            TableError::Storage(format!(
-                "{column} row {row_index} is missing in typed selected 2-D read"
-            ))
-        })?;
-        let array = extract(value).map_err(|other| TableError::ColumnTypeMismatch {
-            row_index,
-            column: column.to_string(),
-            expected: "consistent typed 2-D array",
-            found: Value::Array(other).kind(),
-        })?;
-        if array.ndim() != 2 {
-            return Err(TableError::Storage(format!(
-                "{column} row {row_index} expected rank-2 array, found rank {}",
-                array.ndim()
-            )));
-        }
-        let shape = array.shape();
-        if shape[1] != channel_count {
-            return Err(TableError::Storage(format!(
-                "{column} row {row_index} expected {channel_count} selected channels, found {}",
-                shape[1]
-            )));
-        }
-        match axis0_count {
-            Some(expected) if expected != shape[0] => {
-                return Err(TableError::Storage(format!(
-                    "{column} row {row_index} axis-0 length {} differs from expected {expected}",
-                    shape[0]
-                )));
-            }
-            None => axis0_count = Some(shape[0]),
-            _ => {}
-        }
-        row_arrays.push(array);
-    }
-
-    let axis0_count = axis0_count.unwrap_or(0);
-    let mut packed = Vec::with_capacity(
-        row_count
-            .saturating_mul(channel_count)
-            .saturating_mul(axis0_count),
-    );
-    for channel in 0..channel_count {
-        for array in &row_arrays {
-            for axis0 in 0..axis0_count {
-                packed.push(array[[axis0, channel]].clone());
-            }
-        }
-    }
-    Ok((axis0_count, packed))
 }
 
 impl<'a> TableColumnMut<'a> {

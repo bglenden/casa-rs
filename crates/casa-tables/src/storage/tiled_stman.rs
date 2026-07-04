@@ -1557,86 +1557,6 @@ pub(crate) fn load_tiled_column_rows(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn load_tiled_column_rows_2d_channel_range_arrays(
-    table_path: &Path,
-    dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
-    target_desc_idx: usize,
-    selected_rows: &[usize],
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
-    let (variant, header) = read_tiled_header(&header_path)?;
-    let Some(target_col_idx) = bound_cols
-        .iter()
-        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
-    else {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column desc index {target_desc_idx} not bound to data manager {}",
-            dm.seq_nr
-        )));
-    };
-    if target_col_idx >= header.col_data_types.len() {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {target_col_idx} out of range for data manager {}",
-            dm.seq_nr
-        )));
-    }
-    let col_desc = &all_col_descs[target_desc_idx];
-    let dt = header.col_data_types[target_col_idx];
-    let elem_size = tile_element_size(dt);
-    if elem_size == 0 {
-        return Ok(vec![None; selected_rows.len()]);
-    }
-
-    match variant {
-        TiledVariant::Shape {
-            nr_used_row_map,
-            ref row_map,
-            ref cube_map,
-            ref pos_map,
-            ..
-        } => load_tiled_column_rows_shape_variant_2d_channel_range(
-            table_path,
-            dm.seq_nr,
-            &header,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected_rows,
-            &ShapeRowMapping {
-                nr_used_row_map,
-                row_map,
-                cube_map,
-                pos_map,
-            },
-            channel_start,
-            channel_count,
-        ),
-        _ => load_tiled_column_rows(
-            table_path,
-            dm,
-            all_col_descs,
-            bound_cols,
-            target_desc_idx,
-            selected_rows,
-        )?
-        .into_iter()
-        .map(|value| {
-            value
-                .map(|array| {
-                    super::slice_array_value_2d_channel_range(array, channel_start, channel_count)
-                })
-                .transpose()
-        })
-        .collect(),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     table_path: &Path,
     dm: &DataManagerEntry,
@@ -1646,7 +1566,7 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     selected_rows: &[usize],
     channel_start: usize,
     channel_count: usize,
-) -> Result<Option<SelectedArray2DCells>, StorageError> {
+) -> Result<SelectedArray2DCells, StorageError> {
     let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
     let (variant, header) = read_tiled_header(&header_path)?;
     let Some(target_col_idx) = bound_cols
@@ -1668,7 +1588,10 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
-        return Ok(None);
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D read does not support zero-sized element type for column {}",
+            col_desc.col_name
+        )));
     }
 
     match variant {
@@ -1695,9 +1618,11 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
             },
             channel_start,
             channel_count,
-        )
-        .map(Some),
-        _ => Ok(None),
+        ),
+        _ => Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D channel reads for column {} require TiledShapeStMan Shape variant",
+            col_desc.col_name
+        ))),
     }
 }
 
@@ -2064,69 +1989,6 @@ fn load_tiled_column_rows_shape_variant(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn load_tiled_column_rows_shape_variant_2d_channel_range(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    selected_rows: &[usize],
-    mapping: &ShapeRowMapping<'_>,
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let n_intervals = mapping.nr_used_row_map as usize;
-    if n_intervals == 0 {
-        return Ok(vec![None; selected_rows.len()]);
-    }
-
-    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
-        std::collections::BTreeMap::new();
-    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
-            continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
-        };
-        patches_by_cube
-            .entry(cube_idx)
-            .or_default()
-            .push(SelectedCubeRow {
-                out_idx,
-                pos_in_cube,
-            });
-    }
-    load_selected_row_channel_ranges_from_touched_cubes(
-        table_path,
-        dm_seq_nr,
-        header,
-        target_col_idx,
-        col_desc,
-        dt,
-        elem_size,
-        selected_rows.len(),
-        patches_by_cube,
-        channel_start,
-        channel_count,
-    )
-}
-
 /// Load columns from a `TiledDataStMan` (user-controlled hypercube assignment).
 ///
 /// Uses binary search in `row_map` to find the chunk index for each row.
@@ -2474,53 +2336,6 @@ fn load_selected_rows_from_touched_cubes(
                 selected,
                 &mut read_session,
             )?;
-        }
-    }
-
-    Ok(outputs)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn load_selected_row_channel_ranges_from_touched_cubes(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    output_len: usize,
-    patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let mut outputs = vec![None; output_len];
-    let mut read_session = TileReadSession::default();
-
-    for (cube_idx, patches) in patches_by_cube {
-        let Some(cube) = header.cubes.get(cube_idx) else {
-            continue;
-        };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        for selected in patches {
-            outputs[selected.out_idx] =
-                decode_selected_cube_row_2d_channel_range_from_shared_tiles(
-                    table_path,
-                    dm_seq_nr,
-                    header,
-                    cube_idx,
-                    cube,
-                    target_col_idx,
-                    col_desc,
-                    dt,
-                    elem_size,
-                    selected,
-                    channel_start,
-                    channel_count,
-                    &mut read_session,
-                )?;
         }
     }
 
@@ -7256,171 +7071,6 @@ fn decode_selected_cube_row_from_shared_tiles(
     }
 
     match decode_array_value(&raw, &cell_shape, dt, header.big_endian)? {
-        Value::Array(array) => Ok(Some(array)),
-        other => Err(StorageError::FormatMismatch(format!(
-            "tiled array column {} decoded as non-array value {:?}",
-            col_desc.col_name,
-            other.kind()
-        ))),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_selected_cube_row_2d_channel_range_from_shared_tiles(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    cube_idx: usize,
-    cube: &TsmCubeInfo,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    selected: SelectedCubeRow,
-    channel_start: usize,
-    channel_count: usize,
-    session: &mut TileReadSession,
-) -> Result<Option<ArrayValue>, StorageError> {
-    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-    let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
-    if cell_shape.len() != 2 {
-        return decode_selected_cube_row_from_shared_tiles(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected,
-            session,
-        )?
-        .map(|array| super::slice_array_value_2d_channel_range(array, channel_start, channel_count))
-        .transpose();
-    }
-    let Some(channel_end) = channel_start.checked_add(channel_count) else {
-        return Err(StorageError::FormatMismatch(
-            "2-D channel-range tiled read overflowed channel bounds".to_string(),
-        ));
-    };
-    if channel_end > cell_shape[1] {
-        return Err(StorageError::FormatMismatch(format!(
-            "2-D channel range {channel_start}..{channel_end} exceeds tiled cell channel axis with {} channels",
-            cell_shape[1]
-        )));
-    }
-    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
-    if cell_tile_shape.len() != 2 || cell_tile_shape[0] < cell_shape[0] {
-        return decode_selected_cube_row_from_shared_tiles(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected,
-            session,
-        )?
-        .map(|array| super::slice_array_value_2d_channel_range(array, channel_start, channel_count))
-        .transpose();
-    }
-
-    let corr_count = cell_shape[0];
-    let tile_corr_count = cell_tile_shape[0];
-    let tile_channel_count = cell_tile_shape[1];
-    if tile_channel_count == 0 {
-        return Err(StorageError::FormatMismatch(
-            "2-D channel-range tiled read found zero-width channel tile".to_string(),
-        ));
-    }
-    if matches!(dt, CasacoreDataType::TpComplex | CasacoreDataType::TpBool) {
-        return decode_selected_cube_row_2d_channel_range_typed_from_shared_tiles(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected,
-            channel_start,
-            channel_count,
-            corr_count,
-            tile_corr_count,
-            tile_channel_count,
-            session,
-        );
-    }
-    let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
-    let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
-    let row_tile_nelem: usize = cell_tile_shape.iter().product();
-    let tiles_per_dim: Vec<usize> = cube
-        .cube_shape
-        .iter()
-        .zip(cube.tile_shape.iter())
-        .map(|(&shape, &tile)| shape.div_ceil(tile))
-        .collect();
-    let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-    let mut raw = vec![0u8; corr_count * channel_count * elem_size];
-    let first_channel_tile = channel_start / tile_channel_count;
-    let last_channel_tile = (channel_end.saturating_sub(1)) / tile_channel_count;
-
-    for channel_tile in first_channel_tile..=last_channel_tile {
-        let tile_channel_start = channel_tile * tile_channel_count;
-        let actual_tile_channels =
-            std::cmp::min(tile_channel_count, cell_shape[1] - tile_channel_start);
-        let overlap_start = std::cmp::max(channel_start, tile_channel_start);
-        let overlap_end = std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
-        if overlap_start >= overlap_end {
-            continue;
-        }
-
-        let full_tile_pos = [0usize, channel_tile, row_tile];
-        let tile_index: usize = full_tile_pos
-            .iter()
-            .zip(tile_grid_strides.iter())
-            .map(|(pos, stride)| pos * stride)
-            .sum();
-        let tile = load_shared_column_tile(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            bucket_size,
-            col_offsets[target_col_idx],
-            dt,
-            tile_index,
-            session,
-        )?;
-        let src_start = row_in_tile * row_tile_nelem * elem_size;
-        let src_end = src_start + row_tile_nelem * elem_size;
-        let tile_row = &tile[src_start..src_end];
-
-        for channel in overlap_start..overlap_end {
-            let src_channel = channel - tile_channel_start;
-            let dst_channel = channel - channel_start;
-            for corr in 0..corr_count {
-                let src_elem = corr + src_channel * tile_corr_count;
-                let dst_elem = corr + dst_channel * corr_count;
-                let src_byte = src_elem * elem_size;
-                let dst_byte = dst_elem * elem_size;
-                raw[dst_byte..dst_byte + elem_size]
-                    .copy_from_slice(&tile_row[src_byte..src_byte + elem_size]);
-            }
-        }
-    }
-
-    match decode_array_value(&raw, &[corr_count, channel_count], dt, header.big_endian)? {
         Value::Array(array) => Ok(Some(array)),
         other => Err(StorageError::FormatMismatch(format!(
             "tiled array column {} decoded as non-array value {:?}",
