@@ -123,42 +123,46 @@
 <a href=#123 id=123 data-nosnippet>123</a>    parse_spw_selector,
 <a href=#124 id=124 data-nosnippet>124</a>};
 <a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub use </span>simulation::{
-<a href=#126 id=126 data-nosnippet>126</a>    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-<a href=#127 id=127 data-nosnippet>127</a>    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
-<a href=#128 id=128 data-nosnippet>128</a>    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
-<a href=#129 id=129 data-nosnippet>129</a>    SyntheticObservationRequest, SyntheticPointingCorruption,
-<a href=#130 id=130 data-nosnippet>130</a>    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
-<a href=#131 id=131 data-nosnippet>131</a>    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
-<a href=#132 id=132 data-nosnippet>132</a>};
-<a href=#133 id=133 data-nosnippet>133</a><span class="kw">pub use </span>simulation_task::{
-<a href=#134 id=134 data-nosnippet>134</a>    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
-<a href=#135 id=135 data-nosnippet>135</a>    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
-<a href=#136 id=136 data-nosnippet>136</a>    SimobserveTaskSchemaBundle,
-<a href=#137 id=137 data-nosnippet>137</a>};
-<a href=#138 id=138 data-nosnippet>138</a><span class="kw">pub use </span>spectral_selection::{
-<a href=#139 id=139 data-nosnippet>139</a>    CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
-<a href=#140 id=140 data-nosnippet>140</a>    CubeSpectralSetup, ResolvedChannelSelection, convert_frequency_to_frame,
-<a href=#141 id=141 data-nosnippet>141</a>    convert_frequency_to_frame_with_frame, parse_rest_frequency_hz,
-<a href=#142 id=142 data-nosnippet>142</a>    resolve_channel_selector_selection, resolve_contiguous_channel_selection,
-<a href=#143 id=143 data-nosnippet>143</a>    velocity_ms_from_frequency_hz,
-<a href=#144 id=144 data-nosnippet>144</a>};
-<a href=#145 id=145 data-nosnippet>145</a><span class="kw">pub use </span>subtables::{
-<a href=#146 id=146 data-nosnippet>146</a>    MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
-<a href=#147 id=147 data-nosnippet>147</a>    MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,
-<a href=#148 id=148 data-nosnippet>148</a>    MsHistory, MsHistoryMut, MsObservation, MsObservationMut, MsPointing, MsPointingMut,
-<a href=#149 id=149 data-nosnippet>149</a>    MsPolarization, MsPolarizationMut, MsProcessor, MsProcessorMut, MsSource, MsSourceMut,
-<a href=#150 id=150 data-nosnippet>150</a>    MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
-<a href=#151 id=151 data-nosnippet>151</a>    MsWeatherMut, SubTable,
-<a href=#152 id=152 data-nosnippet>152</a>};
-<a href=#153 id=153 data-nosnippet>153</a><span class="kw">pub use </span>transform::{
-<a href=#154 id=154 data-nosnippet>154</a>    MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
-<a href=#155 id=155 data-nosnippet>155</a>};
-<a href=#156 id=156 data-nosnippet>156</a><span class="kw">pub use </span>visibility_buffer::{
-<a href=#157 id=157 data-nosnippet>157</a>    SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
-<a href=#158 id=158 data-nosnippet>158</a>    VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
-<a href=#159 id=159 data-nosnippet>159</a>    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityChannelReadRange,
-<a href=#160 id=160 data-nosnippet>160</a>    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan,
-<a href=#161 id=161 data-nosnippet>161</a>    VisibilityRowSelectionPlan, VisibilityRowSelectionRequest, VisibilitySelectedMainRow,
-<a href=#162 id=162 data-nosnippet>162</a>    VisibilityShape,
-<a href=#163 id=163 data-nosnippet>163</a>};
+<a href=#126 id=126 data-nosnippet>126</a>    SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
+<a href=#127 id=127 data-nosnippet>127</a>    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+<a href=#128 id=128 data-nosnippet>128</a>    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
+<a href=#129 id=129 data-nosnippet>129</a>    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
+<a href=#130 id=130 data-nosnippet>130</a>    SyntheticObservationReport, SyntheticObservationRequest, SyntheticPointingCorruption,
+<a href=#131 id=131 data-nosnippet>131</a>    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
+<a href=#132 id=132 data-nosnippet>132</a>    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
+<a href=#133 id=133 data-nosnippet>133</a>    SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+<a href=#134 id=134 data-nosnippet>134</a>    tutorial_vla_a_antennas,
+<a href=#135 id=135 data-nosnippet>135</a>};
+<a href=#136 id=136 data-nosnippet>136</a><span class="kw">pub use </span>simulation_task::{
+<a href=#137 id=137 data-nosnippet>137</a>    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
+<a href=#138 id=138 data-nosnippet>138</a>    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveProtocolInfo,
+<a href=#139 id=139 data-nosnippet>139</a>    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
+<a href=#140 id=140 data-nosnippet>140</a>    SimobserveTaskSchemaBundle,
+<a href=#141 id=141 data-nosnippet>141</a>};
+<a href=#142 id=142 data-nosnippet>142</a><span class="kw">pub use </span>spectral_selection::{
+<a href=#143 id=143 data-nosnippet>143</a>    CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
+<a href=#144 id=144 data-nosnippet>144</a>    CubeSpectralSetup, ResolvedChannelSelection, convert_frequency_to_frame,
+<a href=#145 id=145 data-nosnippet>145</a>    convert_frequency_to_frame_with_frame, parse_rest_frequency_hz,
+<a href=#146 id=146 data-nosnippet>146</a>    resolve_channel_selector_selection, resolve_contiguous_channel_selection,
+<a href=#147 id=147 data-nosnippet>147</a>    velocity_ms_from_frequency_hz,
+<a href=#148 id=148 data-nosnippet>148</a>};
+<a href=#149 id=149 data-nosnippet>149</a><span class="kw">pub use </span>subtables::{
+<a href=#150 id=150 data-nosnippet>150</a>    MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
+<a href=#151 id=151 data-nosnippet>151</a>    MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,
+<a href=#152 id=152 data-nosnippet>152</a>    MsHistory, MsHistoryMut, MsObservation, MsObservationMut, MsPointing, MsPointingMut,
+<a href=#153 id=153 data-nosnippet>153</a>    MsPolarization, MsPolarizationMut, MsProcessor, MsProcessorMut, MsSource, MsSourceMut,
+<a href=#154 id=154 data-nosnippet>154</a>    MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
+<a href=#155 id=155 data-nosnippet>155</a>    MsWeatherMut, SubTable,
+<a href=#156 id=156 data-nosnippet>156</a>};
+<a href=#157 id=157 data-nosnippet>157</a><span class="kw">pub use </span>transform::{
+<a href=#158 id=158 data-nosnippet>158</a>    MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
+<a href=#159 id=159 data-nosnippet>159</a>};
+<a href=#160 id=160 data-nosnippet>160</a><span class="kw">pub use </span>visibility_buffer::{
+<a href=#161 id=161 data-nosnippet>161</a>    SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
+<a href=#162 id=162 data-nosnippet>162</a>    VisibilityBufferColumnReport, VisibilityBufferFillReport, VisibilityBufferRequest,
+<a href=#163 id=163 data-nosnippet>163</a>    VisibilityBufferTimings, VisibilityChannelReadGranularity, VisibilityChannelReadRange,
+<a href=#164 id=164 data-nosnippet>164</a>    VisibilityComplexSamples, VisibilityFloatSamples, VisibilityReadBlockPlan,
+<a href=#165 id=165 data-nosnippet>165</a>    VisibilityRowSelectionPlan, VisibilityRowSelectionRequest, VisibilitySelectedMainRow,
+<a href=#166 id=166 data-nosnippet>166</a>    VisibilityShape,
+<a href=#167 id=167 data-nosnippet>167</a>};
 </code></pre></div></section></main></body></html>

@@ -1,0 +1,895 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Synthetic MeasurementSet Families - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#synthetic-measurementset-families" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Synthetic MeasurementSet Families
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#model-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#family-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Family Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectral-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spectral Diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Targets
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="synthetic-measurementset-families">Synthetic MeasurementSet Families<a class="headerlink" href="#synthetic-measurementset-families" title="Permanent link">&para;</a></h1>
+<p>Truth class: implementation note
+Last reality check: 2026-07-04
+Verification: final 2026-07-04 wave gate: <code>just verify</code>; earlier wave gates: <code>just verify</code>; <code>just docs-check</code>; <code>PYTHONPATH=crates/casars-python/python pytest -q crates/casars-python/python/tests/test_simobserve.py</code>; <code>python3 tools/perf/imager/test_bench_simobserve.py</code>; <code>python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py</code>; targeted <code>swift test --package-path apps/casars-mac --filter WorkbenchStoreTests/testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON --filter WorkbenchStoreTests/testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun --filter WorkbenchStoreTests/testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure</code>; 2026-07-04 read-path gate: <code>just quick</code>; targeted 2026-07-04 read-path checks: <code>cargo fmt --all -- --check</code>; <code>cargo test -p casa-tables lazy_disk_open_reads_required_scalar_columns_owned_without_materializing_rows --lib -- --nocapture</code>; <code>cargo test -p casa-ms visibility_buffer::tests::select_visibility_rows_filters_fields_ddids_and_tracks_time --lib -- --nocapture</code>; <code>cargo test -p casars-imager read_columnar_prepared_source_uses_visibility_buffer_and_geometry_rows --lib -- --nocapture</code>; <code>cargo test -p casars-imager production_visibility_column_reads_are_source_stream_centralized --lib -- --nocapture</code>; <code>cargo clippy -p casa-tables --lib -- -D warnings</code>; <code>cargo clippy -p casa-ms --lib -- -D warnings</code>; <code>cargo clippy -p casars-imager --lib -- -D warnings</code></p>
+<p>Native <code>simobserve</code> is the primary generator for synthetic MeasurementSets used
+to exercise single-field, mosaic, MFS, continuum, spectral cube, cubedata, and
+MT-MFS imaging diagnostics. CASA remains the oracle for selected small parity
+cases.</p>
+<h2 id="model-inputs">Model Inputs<a class="headerlink" href="#model-inputs" title="Permanent link">&para;</a></h2>
+<p>Task protocol v2 keeps legacy <code>model_image</code> FITS requests and adds
+<code>request.model</code>.</p>
+<p>Analytic component file:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;schema_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;14pt-3gauss-v1&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;components&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;point&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;core_0&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;l_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;m_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;spectrum&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;flux_jy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;spectral_index&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.7</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gaussian&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;line_cloud_0&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;l_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00012</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;m_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.00008</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;major_fwhm_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00004</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;minor_fwhm_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00002</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;position_angle_rad&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.6</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;spectrum&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;flux_jy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;spectral_index&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.2</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;line_peak_jy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.5</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;line_center_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.35</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;line_sigma_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.06</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Run that analytic model:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;analytic_components&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;models/14pt-3gauss-v1.json&quot;</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;output_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out/spectral-cube.ms&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;overwrite&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;telescope_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;VLA&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;spectral_setup&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Qband&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;start_frequency_hz&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">44000000000.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;channel_width_hz&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">128000000.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;channel_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">64</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;worker_policy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;row_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;channel_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Run a FITS image or cube:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fits_image&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;models/sky-cube.fits&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;model_peak_jy_per_pixel&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.00003</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;output_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out/fits-cube.ms&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;overwrite&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Single-plane FITS inputs are valid sampled-continuum diagnostics. FITS cubes are
+authoritative sampled spectral sky models. Analytic component models provide
+exact point-source and Gaussian visibility predictions plus per-channel spectra.</p>
+<h2 id="family-inputs">Family Inputs<a class="headerlink" href="#family-inputs" title="Permanent link">&para;</a></h2>
+<p>The dialog-persistent shape is <code>kind: "family"</code>. It records the parameters
+needed to size and regenerate a family member for an imaging mode:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;family&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;source_model&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;analytic_components&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;models/14pt-3gauss-v1.json&quot;</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;telescope&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;VLA&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;array_config&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;A&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;band&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Q&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;target_ms_size_gib&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">8.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;polarizations&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;ms_channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;image_channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;pointing_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;imaging_mode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mosaic&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;output_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out/vla-mosaic.ms&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;worker_policy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;row_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;channel_workers&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Run persisted requests with:</p>
+<div class="codehilite"><pre><span></span><code>simobserve<span class="w"> </span>--json-run<span class="w"> </span>request.json
+</code></pre></div>
+
+<p>Family execution now expands the saved inputs into a concrete <code>kind: "run"</code>
+request, writes the MeasurementSet, and persists a sibling manifest named like
+<code>out/vla-mosaic.synthetic-family.json</code>. The manifest records the source model,
+mode, telescope/config/band, resolved antenna-coordinate source, requested
+pointings, MS and image channels, polarization count, target and actual sizes,
+worker settings, generated run request, and generated run result.</p>
+<p>Supported mode labels are <code>single_field</code>, <code>mfs</code>, <code>continuum_mfs</code>, <code>mosaic</code>,
+<code>mosaic_mfs</code>, <code>spectral_cube</code>, <code>cube</code>, <code>cubedata</code>, <code>mt_mfs</code>, <code>simalma</code>, and
+<code>aca</code>. Mosaic-like modes generate deterministic multi-field pointings from the
+shared source model; non-mosaic modes reuse the central pointing.</p>
+<p>Supported array configuration labels are deliberately split between real CASA
+configuration files and generated diagnostics:</p>
+<ul>
+<li>Real VLA configs: <code>A</code> uses the embedded CASA <code>vla.a.cfg</code> coordinates, while
+  <code>B</code>, <code>C</code>, <code>D</code>, <code>vla.b.cfg</code>, <code>vla.c.cfg</code>, and <code>vla.d.cfg</code> require a readable
+  CASA <code>.cfg</code> file. Set <code>CASA_RS_SIMOBSERVE_CONFIG_ROOT</code> to a directory
+  containing CASA simmos config files, set <code>CASADATA</code>, set <code>CASAPATH</code>, or pass
+  an explicit <code>.cfg</code> path.</li>
+<li>Real ALMA/ACA configs: labels such as <code>alma.cycle10.5.cfg</code> and
+  <code>aca.cycle10.cfg</code> likewise require a readable CASA <code>.cfg</code> file or explicit
+  path.</li>
+<li>Generated diagnostic layouts are explicit: <code>synthetic-vla-b</code>,
+  <code>synthetic-vla-c</code>, <code>synthetic-vla-d</code>, <code>synthetic-alma-compact</code>,
+  <code>synthetic-aca</code>, and <code>synthetic-simalma</code>.</li>
+</ul>
+<p>Supported bands remain real receiver bands: VLA <code>L</code>, <code>S</code>, <code>C</code>, <code>X</code>, <code>Ku</code>, <code>K</code>,
+<code>Ka</code>, and <code>Q</code>; ALMA/ACA <code>Band 3</code>, <code>Band 6</code>, <code>Band 7</code>, and <code>Band 9</code>.</p>
+<p><code>polarizations</code> maps to actual POLARIZATION metadata and MAIN <code>DATA</code>, <code>FLAG</code>,
+<code>WEIGHT</code>, and <code>SIGMA</code> shapes. Supported values are <code>1</code>, <code>2</code>, and <code>4</code>; VLA
+defaults to circular receptor metadata, while ALMA/ACA defaults to linear
+metadata.</p>
+<p><code>ms_channels</code> controls the generated MS spectral-window channel count.
+<code>image_channels</code> is persisted planning metadata for downstream imaging
+diagnostics and manifests; it does not change the MS channel count by itself.</p>
+<p>Python callers can use the same contract without a second schema:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars.tasks</span><span class="w"> </span><span class="kn">import</span> <span class="n">simobserve</span>
+
+<span class="n">request</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;source_model&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;analytic_components&quot;</span><span class="p">,</span> <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;models/14pt-3gauss-v1.json&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;telescope&quot;</span><span class="p">:</span> <span class="s2">&quot;ALMA&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;array_config&quot;</span><span class="p">:</span> <span class="s2">&quot;synthetic-aca&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;band&quot;</span><span class="p">:</span> <span class="s2">&quot;Band 3&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;target_ms_size_gib&quot;</span><span class="p">:</span> <span class="mf">0.25</span><span class="p">,</span>
+    <span class="s2">&quot;polarizations&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="s2">&quot;ms_channels&quot;</span><span class="p">:</span> <span class="mi">32</span><span class="p">,</span>
+    <span class="s2">&quot;image_channels&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+    <span class="s2">&quot;pointing_count&quot;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
+    <span class="s2">&quot;imaging_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;mosaic&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;output_ms&quot;</span><span class="p">:</span> <span class="s2">&quot;out/aca-mosaic.ms&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">simobserve</span><span class="o">.</span><span class="n">save_request</span><span class="p">(</span><span class="s2">&quot;out/aca-mosaic.json&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;family&quot;</span><span class="p">,</span> <span class="n">request</span><span class="o">=</span><span class="n">request</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">simobserve</span><span class="o">.</span><span class="n">run_file</span><span class="p">(</span><span class="s2">&quot;out/aca-mosaic.json&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="spectral-diagnostics">Spectral Diagnostics<a class="headerlink" href="#spectral-diagnostics" title="Permanent link">&para;</a></h2>
+<p>Analytic spectra are component-local, so channels do not need to be scaled copies
+of one plane. Use a mix of:</p>
+<ul>
+<li>continuum components with different <code>spectral_index</code> values;</li>
+<li>narrow emission lines with small <code>line_sigma_fraction</code>;</li>
+<li>broad or extended line Gaussians with larger <code>line_sigma_fraction</code>;</li>
+<li>absorption with <code>absorption_peak_jy</code>, <code>absorption_center_fraction</code>, and
+  <code>absorption_sigma_fraction</code>.</li>
+</ul>
+<h2 id="performance-targets">Performance Targets<a class="headerlink" href="#performance-targets" title="Permanent link">&para;</a></h2>
+<p>Correctness gates come before speed claims.</p>
+<ul>
+<li>v1 analytic-model floor: at least 500 MB/s end-to-end on medium datasets on
+  fast local storage. This is not a stopping point; benchmark closeout should
+  keep reporting and improving the gap to the streamed column write path until
+  disk or table-write bandwidth is the limiting stage.</li>
+<li>Existing write-path guard remains at least 700 MB/s native output throughput
+  and 900 MB/s streamed column write throughput for prediction-disabled
+  internal-disk checks.</li>
+<li>CPU multi-worker prediction is the required baseline. GPU or Metal support is
+  optional and should be added only after stage timing shows prediction remains
+  the limiting stage after CPU and write-path iteration.</li>
+<li><code>tools/perf/imager/bench_simobserve.py</code> reports native output MB/s, streamed
+  MAIN-column MB/s, explicit CASA-relative timing, stage timing fractions,
+  analytic small/medium tier slots, and serial/auto/fixed CPU worker
+  comparisons. Treat <code>stage_timing.gpu_candidate</code> as a profiling signal, not
+  proof that a GPU path is required.</li>
+<li>If CASA Python is unavailable or <code>--skip-casa</code> is set, the benchmark writes a
+  JSON artifact with <code>casa_oracle.status: "skipped"</code> and an oracle comparison
+  gap rather than failing before evidence can be inspected. The oracle helper
+  compares MeasurementSet rows, UVW, FLAG/FLAG_ROW, WEIGHT, SIGMA, and DATA
+  samples. When matched CASA and casa-rs products have already been generated,
+  <code>--casa-image-prefix</code> and <code>--native-image-prefix</code> also compare selected image
+  products such as <code>.image</code>, <code>.residual</code>, <code>.psf</code>, <code>.model</code>, <code>.sumwt</code>, and <code>.pb</code>.</li>
+</ul>
+<p>Current local evidence on 2026-07-04:</p>
+<ul>
+<li>A 1 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with 64 MS
+  channels, 16 image channels, 7 pointings, and 4 correlations measured
+  <code>1,253 MB/s</code> by reported simulator time, with about <code>2,899 MB/s</code> through the
+  streamed MAIN-column write path. The 500 MB/s floor is met, and the
+  run-based <code>IncrementalStMan</code> scalar override path reduced save overhead enough
+  that the remaining gap to streamed write bandwidth is dominated by prediction,
+  enqueue, and tiled DATA write bandwidth rather than row materialization.
+  Manifest:
+  <code>target/synthetic-ms-families/analytic-1g-vla-mosaic-current.synthetic-family.json</code>.</li>
+<li>A 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with 64 MS
+  channels, 16 image channels, 7 pointings, and 4 correlations on
+  <code>/Volumes/GLENDENNING</code> generated <code>46,603,674</code> MAIN rows and <code>100,582,228,345</code>
+  bytes in <code>131.183 s</code>: <code>767 MB/s</code> end-to-end and <code>1088 MB/s</code> through the
+  streamed MAIN-column write path. This reruns the high-row-count 64-channel
+  case that previously died after producing an invalid partial 84 GiB MS; the
+  generated-scalar MAIN path leaves <code>main_row_add_millis=0</code> and
+  <code>scalar_column_millis=17</code>, and run-based ISM scalar generation lowered
+  <code>save_millis</code> from <code>31.937 s</code> to <code>16.758 s</code>. Manifest:
+  <code>/Volumes/GLENDENNING/casa-rs-benchmarks/synthetic-ms-families/analytic-100g-vla-mosaic.synthetic-family.json</code>.</li>
+<li>The same 100 GiB MS is readable through the bounded visibility path. After
+  fixing <code>ms-read-probe</code> setup to avoid single-cell full-column materialization,
+  a 1,000,000-row visibility read (<code>DATA</code>, <code>FLAG</code>, <code>WEIGHT</code>, <code>UVW</code>, all 64
+  channels, 8,192-row blocks) completed in <code>1.465 s</code>, reporting <code>1.49 GiB/s</code>
+  logical/physical read throughput and about <code>161 MB</code> peak RSS. The actual
+  imager read probe over <code>FIELD_ID=0</code> reads <code>5,293,848</code> active rows through the
+  bounded path. Before read-path cleanup this measured <code>33.48 s</code> total /
+  <code>26.79 s</code> read time (<code>362 MiB/s</code> total, <code>452 MiB/s</code> read). After carrying
+  <code>ANTENNA1/2</code> in selected-row metadata, parallelizing required scalar loads
+  across independent data managers, and honoring <code>--imaging-row-block-rows</code>,
+  the best row-shaped 2026-07-04 local probe used <code>393,216</code> rows/block and
+  measured <code>28.55 s</code> total / <code>21.12 s</code> read time (<code>424 MiB/s</code> total,
+  <code>574 MiB/s</code> read) while still adapting every row back into <code>Array2</code>
+  payloads. The current reusable columnar-buffer probe avoids that legacy row
+  adaptation, reads <code>11.56 GiB</code> of logical buffer payload with <code>1,048,576</code>
+  rows/block, and measures <code>28.28 s</code> total / <code>21.01 s</code> read time
+  (<code>419 MiB/s</code> total, <code>563 MiB/s</code> read). The 2,097,152-row block variant was
+  slightly slower (<code>413 MiB/s</code> total, <code>552 MiB/s</code> read). A selected-row-only
+  scalar loading experiment was rejected because it increased <code>select_main_rows</code>
+  to about <code>20.7 s</code>; the retained path keeps full scalar-column selection and
+  the remaining total-time gap is dominated by selected-row visibility payload
+  reads plus about <code>7-10 s</code> of scalar selection/setup.</li>
+<li>Pre-review selected-row I/O refactor kept the typed packed selected-channel
+  path as the only channel-range table API, removed the generic array-slicing
+  fallback path, and moved imager row adaptation onto <code>VisibilityBuffer</code> layout
+  helpers. A release smoke probe on the same 100 GiB
+  MS read <code>1,000,000</code> rows with <code>8,192</code>-row blocks and explicit
+  <code>DATA,FLAG,WEIGHT,UVW</code> columns at <code>2.796 GiB/s</code> logical/physical throughput
+  with about <code>155 MB</code> peak RSS. The release imaging-sidecar variant with
+  <code>65,536</code>-row blocks measured <code>0.754 GiB/s</code>; scalar sidecar loading dominated
+  that run rather than the channelized typed selected-read path.</li>
+<li>A prior 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with
+  1024 MS channels on <code>/Volumes/GLENDENNING</code> generated <code>2,912,949</code> MAIN rows
+  and <code>99,650,093,245</code> bytes in <code>123.561 s</code>: <code>806 MB/s</code> end-to-end and
+  <code>912 MB/s</code> through the streamed MAIN-column write path. Manifest:
+  <code>/Volumes/GLENDENNING/casa-rs-benchmarks/synthetic-ms-families/analytic-100g-vla-mosaic-1024ch.synthetic-family.json</code>.</li>
+<li>A prediction-disabled write-path run using the same concrete run request
+  measured <code>1186 MB/s</code> by wall time and <code>1243 MB/s</code> by reported simulator time,
+  with <code>4433 MB/s</code> through the streamed MAIN-column write path. Report:
+  <code>target/synthetic-ms-families/analytic-1g-vla-mosaic-writeonly.report.json</code>.</li>
+<li>The final simalma CASA breadth artifact
+  <code>target/imperformance-artifacts/simulation-breadth/aca-simalma/20260703T230505Z-simalma/aca-simalma-benchmark.json</code>
+  passed its closeout gate. CASA generated <code>111.6 MB</code> in <code>27.3 s</code>
+  (<code>4.1 MB/s</code>). Native generated the 12m, 7m, and two TP MSs at <code>9.1</code>,
+  <code>8.2</code>, <code>4.5</code>, and <code>4.5 MB/s</code>; rows, FIELD centers, flags, weights, sigmas,
+  and sampled DATA all passed against CASA. The direct multi-MS native imager
+  also wrote the combined mosaic MFS product set.</li>
+<li>The final ACA CASA breadth artifact
+  <code>target/imperformance-artifacts/simulation-breadth/aca-simalma/20260703T230145Z-aca/aca-simalma-benchmark.json</code>
+  passed its closeout gate. CASA generated <code>109.4 MB</code> in <code>23.7 s</code>
+  (<code>4.6 MB/s</code>). Native generated the 12m, 7m, and TP MSs at <code>21.3</code>, <code>9.1</code>,
+  and <code>19.7 MB/s</code>; rows, FIELD centers, UVW, flags, weights, sigmas, and
+  sampled DATA all passed against CASA. The native imager wrote 12m and 7m MFS
+  product sets, plus a TP sampled-product diagnostic.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
