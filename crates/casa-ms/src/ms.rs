@@ -11,7 +11,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use casa_tables::{ColumnBinding, DataManagerKind, Table, TableInfo, TableOptions};
+use casa_tables::{
+    ColumnBinding, ColumnOverrides, DataManagerKind, Table, TableInfo, TableOptions,
+};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::builder::{MeasurementSetBuilder, MsSchemas};
@@ -176,7 +178,7 @@ impl MeasurementSet {
 
     pub(crate) fn save_assuming_valid_with_main_column_overrides(
         &mut self,
-        column_overrides: &HashMap<String, Vec<Option<Value>>>,
+        column_overrides: &ColumnOverrides,
     ) -> MsResult<()> {
         let path = self
             .path
@@ -872,22 +874,15 @@ fn save_main_table_with_policy(main: &Table, path: &Path, assume_valid: bool) ->
 fn save_main_table_with_policy_and_column_overrides(
     main: &Table,
     path: &Path,
-    column_overrides: &HashMap<String, Vec<Option<Value>>>,
+    column_overrides: &ColumnOverrides,
 ) -> MsResult<()> {
     let options = measurement_set_table_options(path);
-    match measurement_set_save_policy() {
-        MeasurementSetSavePolicy::Standard => {
-            main.save_assuming_valid(options)?;
-        }
-        MeasurementSetSavePolicy::CasaLikeMixed => {
-            let bindings = measurement_set_main_table_bindings(main);
-            main.save_with_bindings_and_column_overrides_assuming_valid(
-                options,
-                &bindings,
-                column_overrides,
-            )?;
-        }
-    }
+    let bindings = measurement_set_main_table_bindings(main);
+    main.save_with_bindings_and_column_overrides_assuming_valid(
+        options,
+        &bindings,
+        column_overrides,
+    )?;
     Ok(())
 }
 

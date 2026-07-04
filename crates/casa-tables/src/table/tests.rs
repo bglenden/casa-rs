@@ -12,8 +12,8 @@ use ndarray::ShapeBuilder;
 use crate::schema::{ColumnSchema, TableSchema};
 
 use super::{
-    ColumnBinding, DataManagerKind, EndianFormat, RequiredScalarColumnValues, RowRange, SortOrder,
-    Table, TableError, TableOptions,
+    ColumnBinding, ColumnOverrides, DataManagerKind, EndianFormat, GeneratedScalarColumn,
+    RequiredScalarColumnValues, RowRange, SortOrder, Table, TableError, TableOptions,
 };
 
 fn row_with_fixed_arrays(id: i32, data: &[i32], other: &[i32]) -> RecordValue {
@@ -3490,8 +3490,9 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
             tile_shape: None,
         },
     )]);
-    let overrides = HashMap::from([(
-        "DATA".to_string(),
+    let mut overrides = ColumnOverrides::for_row_count(3);
+    overrides.insert_values(
+        "DATA",
         vec![
             Some(Value::Array(ArrayValue::Int32(
                 ArrayD::from_shape_vec(vec![2, 2], vec![1, 2, 3, 4]).expect("row 0 shape"),
@@ -3503,7 +3504,7 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
                 ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("row 2 shape"),
             ))),
         ],
-    )]);
+    );
 
     table
         .save_with_bindings_and_column_overrides_assuming_valid(
@@ -3523,6 +3524,86 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
         &ArrayValue::Int32(
             ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("expected shape")
         )
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn save_with_bindings_generated_scalar_overrides_define_row_count() {
+    let row_count = 4096usize;
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ROW_ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("SCAN", PrimitiveType::Int32),
+        ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool),
+    ])
+    .expect("schema");
+    let table = Table::with_schema(schema);
+
+    let root = unique_test_dir("save_with_bindings_generated_scalar_overrides");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let bindings = HashMap::from([
+        (
+            "SCAN".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "FLAG_ROW".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::StandardStMan,
+                tile_shape: None,
+            },
+        ),
+    ]);
+    let mut overrides = ColumnOverrides::for_row_count(row_count);
+    overrides.insert_generated_scalar(
+        "ROW_ID",
+        GeneratedScalarColumn::new(row_count, |row| Some(ScalarValue::Int32(row as i32))),
+    );
+    overrides.insert_generated_scalar(
+        "SCAN",
+        GeneratedScalarColumn::new(row_count, |row| {
+            Some(ScalarValue::Int32((row / 128) as i32))
+        }),
+    );
+    overrides.insert_generated_scalar(
+        "FLAG_ROW",
+        GeneratedScalarColumn::new(row_count, |row| Some(ScalarValue::Bool(row % 17 == 0))),
+    );
+
+    table
+        .save_with_bindings_and_column_overrides_assuming_valid(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+            &overrides,
+        )
+        .expect("save generated overrides");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    assert_eq!(reopened.row_count(), row_count);
+    assert_eq!(
+        table_scalar(&reopened, 0, "ROW_ID").expect("row 0 id"),
+        &ScalarValue::Int32(0)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 1025, "ROW_ID").expect("row 1025 id"),
+        &ScalarValue::Int32(1025)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 4095, "SCAN").expect("last scan"),
+        &ScalarValue::Int32(31)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 34, "FLAG_ROW").expect("flag row"),
+        &ScalarValue::Bool(true)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 35, "FLAG_ROW").expect("flag row"),
+        &ScalarValue::Bool(false)
     );
 
     std::fs::remove_dir_all(&root).expect("cleanup");

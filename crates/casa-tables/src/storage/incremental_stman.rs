@@ -25,7 +25,6 @@ use std::time::SystemTime;
 use casa_aipsio::{AipsIo, ByteOrder};
 use casa_types::ScalarValue;
 
-use super::StorageError;
 use super::canonical::{
     read_f32_be, read_f32_le, read_f64_be, read_f64_le, read_i16_be, read_i16_le, read_i32_be,
     read_i32_le, read_i64_be, read_i64_le, read_u16_be, read_u16_le, read_u32_be, read_u32_le,
@@ -38,6 +37,7 @@ use super::stman_aipsio::ColumnRawData;
 use super::stman_aipsio::scalar_value_is_default;
 use super::stman_array_file::StManArrayFileReader;
 use super::table_control::ColumnDescContents;
+use super::{ScalarColumnSource, ScalarColumnSources, StorageError};
 
 const ISM_HEADER_SIZE: u64 = 512;
 const AIPSIO_MAGIC: u32 = 0xbebebebe;
@@ -2048,7 +2048,39 @@ pub(crate) fn write_ism_file_scalar_columns(
             "ISM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
+    let column_sources = ScalarColumnSources {
+        row_count: nrrow,
+        columns: scalar_columns
+            .iter()
+            .map(|values| ScalarColumnSource::Materialized(values.to_vec()))
+            .collect(),
+    };
+    write_ism_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
+}
 
+pub(crate) fn write_ism_file_scalar_column_sources(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &ScalarColumnSources<'_>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    if scalar_columns.column_count() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "ISM scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.column_count()
+        )));
+    }
+    if col_descs
+        .iter()
+        .any(|col_desc| col_desc.is_array || col_desc.is_record())
+    {
+        return Err(StorageError::FormatMismatch(
+            "ISM scalar column writer only supports scalar non-record columns".to_string(),
+        ));
+    }
+
+    let nrrow = scalar_columns.row_count();
     let ncol = col_descs.len();
     let col_info: Vec<(CasacoreDataType, usize)> = col_descs
         .iter()
@@ -2094,19 +2126,16 @@ pub(crate) fn write_ism_file_scalar_columns(
         };
         bucket_start_rows.push(0);
 
-        for (row_idx, _) in scalar_columns[0].iter().enumerate().take(nrrow) {
+        for row_idx in 0..nrrow {
             let rel_row = (row_idx - *bucket_start_rows.last().unwrap()) as u32;
 
             let mut new_data_estimate = 0usize;
             let mut row_encoded_values = Vec::with_capacity(ncol);
             for col_idx in 0..ncol {
                 let (dt, nrelem) = col_info[col_idx];
-                let encoded = encode_scalar_column_value_bytes(
-                    scalar_columns[col_idx][row_idx].as_ref(),
-                    dt,
-                    nrelem,
-                    big_endian,
-                );
+                let scalar_value = scalar_columns.value(col_idx, row_idx);
+                let encoded =
+                    encode_scalar_column_value_bytes(scalar_value.as_ref(), dt, nrelem, big_endian);
                 if rel_row == 0 || encoded != last_values[col_idx] {
                     new_data_estimate += encoded.len();
                     row_encoded_values.push(Some(encoded));
@@ -2133,9 +2162,8 @@ pub(crate) fn write_ism_file_scalar_columns(
                 for col_idx in 0..ncol {
                     let (dt, nrelem) = col_info[col_idx];
                     let bytes = if last_values[col_idx].is_empty() {
-                        let temp_value = scalar_columns[col_idx][row_idx]
-                            .as_ref()
-                            .cloned()
+                        let temp_value = scalar_columns
+                            .value(col_idx, row_idx)
                             .map(casa_types::Value::Scalar);
                         encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian)
                     } else {
@@ -2149,8 +2177,9 @@ pub(crate) fn write_ism_file_scalar_columns(
                 for col_idx in 0..ncol {
                     let (dt, nrelem) = col_info[col_idx];
                     let encoded = row_encoded_values[col_idx].take().unwrap_or_else(|| {
+                        let scalar_value = scalar_columns.value(col_idx, row_idx);
                         encode_scalar_column_value_bytes(
-                            scalar_columns[col_idx][row_idx].as_ref(),
+                            scalar_value.as_ref(),
                             dt,
                             nrelem,
                             big_endian,

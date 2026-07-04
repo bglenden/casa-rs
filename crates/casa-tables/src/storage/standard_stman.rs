@@ -23,7 +23,6 @@ use ndarray::ShapeBuilder;
 use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
-use super::StorageError;
 use super::canonical::{
     canonical_element_size, read_bool_bits, read_f32_be, read_f32_le, read_f32_slice_be,
     read_f32_slice_le, read_f64_be, read_f64_le, read_f64_slice_be, read_f64_slice_le,
@@ -37,6 +36,7 @@ use super::data_type::CasacoreDataType;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
 use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
+use super::{ScalarColumnSource, ScalarColumnSources, StorageError};
 
 const SSM_HEADER_SIZE: u64 = 512;
 const AIPSIO_MAGIC: u32 = 0xbebebebe;
@@ -1733,6 +1733,37 @@ pub(crate) fn write_ssm_file_scalar_columns(
             "SSM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
+    let column_sources = ScalarColumnSources {
+        row_count: nrrow,
+        columns: scalar_columns
+            .iter()
+            .map(|values| ScalarColumnSource::Materialized(values.to_vec()))
+            .collect(),
+    };
+    write_ssm_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
+}
+
+pub(crate) fn write_ssm_file_scalar_column_sources(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &ScalarColumnSources<'_>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    if scalar_columns.column_count() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.column_count()
+        )));
+    }
+    if col_descs
+        .iter()
+        .any(|col_desc| col_desc.is_array || col_desc.is_record())
+    {
+        return Err(StorageError::FormatMismatch(
+            "SSM scalar column writer only supports scalar non-record columns".to_string(),
+        ));
+    }
     write_ssm_file_impl(
         file_path,
         col_descs,
@@ -1748,11 +1779,11 @@ fn write_ssm_file_impl(
     col_descs: &[ColumnDescContents],
     rows: &[casa_types::RecordValue],
     field_indices: Option<&[usize]>,
-    scalar_columns: Option<&[&[Option<ScalarValue>]]>,
+    scalar_columns: Option<&ScalarColumnSources<'_>>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = scalar_columns
-        .and_then(|columns| columns.first().map(|values| values.len()))
+        .map(ScalarColumnSources::row_count)
         .unwrap_or(rows.len());
     let ncol = col_descs.len();
 
@@ -1882,10 +1913,15 @@ fn write_ssm_file_impl(
 
                 let scalar_value;
                 let value = if let Some(columns) = scalar_columns {
-                    scalar_value = columns[col_idx][row].as_ref().cloned().map(Value::Scalar);
+                    scalar_value = columns.value(col_idx, row).map(Value::Scalar);
                     scalar_value.as_ref()
                 } else {
-                    let row_record = &rows[row];
+                    let row_record = rows.get(row).ok_or_else(|| {
+                        StorageError::FormatMismatch(format!(
+                            "SSM row writer missing row {row} for column {}",
+                            col_desc.col_name
+                        ))
+                    })?;
                     row_record
                         .fields()
                         .get(
@@ -1946,10 +1982,15 @@ fn write_ssm_file_impl(
 
                 let scalar_value;
                 let value = if let Some(columns) = scalar_columns {
-                    scalar_value = columns[col_idx][row].as_ref().cloned().map(Value::Scalar);
+                    scalar_value = columns.value(col_idx, row).map(Value::Scalar);
                     scalar_value.as_ref()
                 } else {
-                    let row_record = &rows[row];
+                    let row_record = rows.get(row).ok_or_else(|| {
+                        StorageError::FormatMismatch(format!(
+                            "SSM row writer missing row {row} for column {}",
+                            col_desc.col_name
+                        ))
+                    })?;
                     row_record
                         .fields()
                         .get(

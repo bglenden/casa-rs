@@ -3628,9 +3628,14 @@ impl StreamingTiledPrimitiveWriter {
                 "streamed primitive tile rank must be cell rank + row axis; cell={cell_shape:?} tile={tile_shape:?}"
             )));
         }
-        if cell_shape.contains(&0) || tile_shape.contains(&0) {
+        if tile_shape.contains(&0) {
             return Err(StorageError::FormatMismatch(
-                "streamed primitive tiled dimensions must be positive".to_string(),
+                "streamed primitive tile dimensions must be positive".to_string(),
+            ));
+        }
+        if cell_shape.contains(&0) && variant != StreamedTiledPrimitiveVariant::Shape {
+            return Err(StorageError::FormatMismatch(
+                "streamed primitive TiledColumnStMan cell dimensions must be positive".to_string(),
             ));
         }
 
@@ -9223,6 +9228,55 @@ mod tests {
                 assert_eq!(value, row as f64 + axis as f64 * 10.0);
             }
         }
+    }
+
+    #[test]
+    fn streamed_shape_primitive_writer_allows_zero_sized_cells() {
+        let dir = tempdir().expect("tempdir");
+        let table_path = dir.path().join("flag-category.table");
+        let row_count = 5usize;
+        let tile_shape = vec![2, 2, 1, 2];
+
+        let mut writer = StreamingTiledPrimitiveWriter::create_shape(
+            dir.path().join("FLAG_CATEGORY.tmp"),
+            row_count,
+            vec![0, 2, 3],
+            tile_shape.clone(),
+            StreamedTiledPrimitiveType::Bool,
+            false,
+        )
+        .expect("create FLAG_CATEGORY writer");
+        for _ in 0..row_count {
+            writer.push_zero_row().expect("zero-size row");
+        }
+        let streamed = writer.finish().expect("finish FLAG_CATEGORY");
+        assert_eq!(streamed.bytes_written(), 0);
+        install_streamed_tiled_shape_primitive_column(&table_path, 0, "FLAG_CATEGORY", streamed)
+            .expect("install FLAG_CATEGORY");
+
+        let data_path = tsm_data_path(&table_path, 0, 0);
+        assert_eq!(std::fs::metadata(&data_path).expect("data file").len(), 0);
+        let (variant, header) =
+            read_tiled_header(&table_path.join("table.f0")).expect("read FLAG_CATEGORY header");
+        let TiledVariant::Shape {
+            default_tile_shape,
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+        } = variant
+        else {
+            panic!("expected TiledShapeStMan header");
+        };
+        assert_eq!(default_tile_shape, vec![2, 2, 1, 2]);
+        assert_eq!(nr_used_row_map, 1);
+        assert_eq!(row_map, vec![(row_count - 1) as u32]);
+        assert_eq!(cube_map, vec![1]);
+        assert_eq!(pos_map, vec![(row_count - 1) as u32]);
+        assert_eq!(header.nrrow, row_count as u64);
+        assert_eq!(header.files[0].as_ref().expect("file").length, 0);
+        assert_eq!(header.cubes[1].cube_shape, vec![0, 2, 3, row_count]);
+        assert_eq!(header.cubes[1].tile_shape, tile_shape);
     }
 
     #[test]

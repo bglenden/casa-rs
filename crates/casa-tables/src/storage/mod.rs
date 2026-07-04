@@ -35,16 +35,17 @@ use ndarray::{Axis, Slice};
 use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
+use crate::table::{ColumnOverride, ColumnOverrides, GeneratedScalarColumn};
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
     IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_scalar_column,
     read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
-    write_ism_file_scalar_columns,
+    write_ism_file_scalar_column_sources,
 };
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns, read_ssm_scalar_column_rows,
-    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_columns,
+    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -307,32 +308,77 @@ fn filter_rows_for_save(
         .collect()
 }
 
+pub(crate) enum ScalarColumnSource<'a> {
+    Materialized(Vec<Option<ScalarValue>>),
+    Generated(&'a GeneratedScalarColumn),
+}
+
+impl ScalarColumnSource<'_> {
+    pub(crate) fn value(&self, row: usize) -> Option<ScalarValue> {
+        match self {
+            Self::Materialized(values) => values.get(row).cloned().unwrap_or(None),
+            Self::Generated(column) => column.value(row),
+        }
+    }
+}
+
+pub(crate) struct ScalarColumnSources<'a> {
+    row_count: usize,
+    columns: Vec<ScalarColumnSource<'a>>,
+}
+
+impl ScalarColumnSources<'_> {
+    pub(crate) fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    pub(crate) fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
+    pub(crate) fn value(&self, column: usize, row: usize) -> Option<ScalarValue> {
+        self.columns[column].value(row)
+    }
+}
+
+fn override_value_for_row(
+    column_overrides: &ColumnOverrides,
+    column: &str,
+    row_idx: usize,
+) -> Option<Value> {
+    match column_overrides.get(column)? {
+        ColumnOverride::Values(values) => values.get(row_idx).cloned().unwrap_or(None),
+        ColumnOverride::GeneratedScalar(column) => column.value(row_idx).map(Value::Scalar),
+        ColumnOverride::Deferred => None,
+    }
+}
+
 fn project_rows_for_group(
     rows: &[RecordValue],
+    row_count: usize,
     group_col_descs: &[table_control::ColumnDescContents],
     group_col_indices: Option<&[usize]>,
-    column_overrides: &HashMap<String, Vec<Option<Value>>>,
+    column_overrides: &ColumnOverrides,
 ) -> Vec<RecordValue> {
-    rows.iter()
-        .enumerate()
-        .map(|(row_idx, row)| {
+    (0..row_count)
+        .map(|row_idx| {
+            let row = rows.get(row_idx);
             let fields = group_col_descs
                 .iter()
                 .enumerate()
                 .filter_map(|(col_idx, desc)| {
-                    let value = column_overrides
-                        .get(&desc.col_name)
-                        .and_then(|values| values.get(row_idx))
-                        .and_then(|value| value.clone())
+                    let value = override_value_for_row(column_overrides, &desc.col_name, row_idx)
                         .or_else(|| {
                             group_col_indices
                                 .and_then(|indices| {
-                                    row.fields()
-                                        .get(indices[col_idx])
-                                        .filter(|field| field.name == desc.col_name)
-                                        .map(|field| field.value.clone())
+                                    row.and_then(|row| {
+                                        row.fields()
+                                            .get(indices[col_idx])
+                                            .filter(|field| field.name == desc.col_name)
+                                            .map(|field| field.value.clone())
+                                    })
                                 })
-                                .or_else(|| row.get(&desc.col_name).cloned())
+                                .or_else(|| row.and_then(|row| row.get(&desc.col_name).cloned()))
                         });
                     value.map(|value| RecordField::new(desc.col_name.clone(), value))
                 })
@@ -359,35 +405,44 @@ fn project_column_values_for_group<'a>(
         .collect()
 }
 
-fn scalar_override_columns_for_group(
+fn scalar_override_columns_for_group<'a>(
     group_col_descs: &[table_control::ColumnDescContents],
-    column_overrides: &HashMap<String, Vec<Option<Value>>>,
-) -> Result<Option<Vec<Vec<Option<ScalarValue>>>>, StorageError> {
+    column_overrides: &'a ColumnOverrides,
+    row_count: usize,
+) -> Result<Option<ScalarColumnSources<'a>>, StorageError> {
     let mut columns = Vec::with_capacity(group_col_descs.len());
     for desc in group_col_descs {
         if desc.is_array || desc.is_record() {
             return Ok(None);
         }
-        let Some(values) = column_overrides.get(&desc.col_name) else {
+        let Some(override_value) = column_overrides.get(&desc.col_name) else {
             return Ok(None);
         };
-        let mut scalar_values = Vec::with_capacity(values.len());
-        for value in values {
-            match value {
-                Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
-                Some(other) => {
-                    return Err(StorageError::FormatMismatch(format!(
-                        "column override {} expected scalar values, found {:?}",
-                        desc.col_name,
-                        other.kind()
-                    )));
+        match override_value {
+            ColumnOverride::Values(values) => {
+                let mut scalar_values = Vec::with_capacity(values.len());
+                for value in values {
+                    match value {
+                        Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
+                        Some(other) => {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "column override {} expected scalar values, found {:?}",
+                                desc.col_name,
+                                other.kind()
+                            )));
+                        }
+                        None => scalar_values.push(None),
+                    }
                 }
-                None => scalar_values.push(None),
+                columns.push(ScalarColumnSource::Materialized(scalar_values));
             }
+            ColumnOverride::GeneratedScalar(column) => {
+                columns.push(ScalarColumnSource::Generated(column));
+            }
+            ColumnOverride::Deferred => return Ok(None),
         }
-        columns.push(scalar_values);
     }
-    Ok(Some(columns))
+    Ok(Some(ScalarColumnSources { row_count, columns }))
 }
 
 /// Composite storage manager that dispatches per data manager type.
@@ -2779,7 +2834,7 @@ impl CompositeStorage {
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
     ) -> Result<(), StorageError> {
-        let column_overrides = HashMap::new();
+        let column_overrides = ColumnOverrides::new();
         self.save_with_bindings_and_column_overrides_borrowed(
             table_path,
             rows,
@@ -2814,7 +2869,7 @@ impl CompositeStorage {
         big_endian: bool,
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
-        column_overrides: &HashMap<String, Vec<Option<Value>>>,
+        column_overrides: &ColumnOverrides,
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
@@ -2845,7 +2900,8 @@ impl CompositeStorage {
                 })
             })
             .flatten();
-        let nrrow = filtered_rows.len() as u64;
+        let effective_row_count = column_overrides.row_count().unwrap_or(filtered_rows.len());
+        let nrrow = effective_row_count as u64;
         let has_virtual = !virtual_bindings.is_empty();
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
@@ -3072,6 +3128,12 @@ impl CompositeStorage {
                     .collect();
                 (indices.len() == group_col_descs.len()).then_some(indices)
             });
+            let deferred_group = group_col_descs.iter().all(|desc| {
+                matches!(
+                    column_overrides.get(&desc.col_name),
+                    Some(ColumnOverride::Deferred)
+                )
+            });
             let use_borrowed_tiled_values = matches!(
                 group.dm_kind,
                 DataManagerKind::TiledColumnStMan
@@ -3090,20 +3152,37 @@ impl CompositeStorage {
             let use_direct_indexed_rows = matches!(
                 group.dm_kind,
                 DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
-            ) && group_col_indices.is_some()
+            ) && filtered_rows.len() == effective_row_count
+                && group_col_indices.is_some()
                 && override_columns.is_empty();
             let group_col_index = group_col_indices
                 .as_ref()
                 .and_then(|indices| (indices.len() == 1).then_some(indices[0]));
             let group_values = if use_borrowed_tiled_values {
-                if let Some(override_values) = column_overrides.get(&group_col_descs[0].col_name) {
-                    Some(override_values.iter().map(|value| value.as_ref()).collect())
-                } else {
-                    Some(project_column_values_for_group(
-                        filtered_rows,
-                        &group_col_descs[0].col_name,
-                        group_col_index,
-                    ))
+                match column_overrides.get(&group_col_descs[0].col_name) {
+                    Some(ColumnOverride::Values(override_values)) => {
+                        Some(override_values.iter().map(|value| value.as_ref()).collect())
+                    }
+                    Some(ColumnOverride::GeneratedScalar(_)) => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "tiled column override {} cannot be generated scalar",
+                            group_col_descs[0].col_name
+                        )));
+                    }
+                    Some(ColumnOverride::Deferred) => None,
+                    None => {
+                        if filtered_rows.len() != effective_row_count {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "column {} has no row values or override for {effective_row_count} generated rows",
+                                group_col_descs[0].col_name
+                            )));
+                        }
+                        Some(project_column_values_for_group(
+                            filtered_rows,
+                            &group_col_descs[0].col_name,
+                            group_col_index,
+                        ))
+                    }
                 }
             } else {
                 None
@@ -3112,16 +3191,47 @@ impl CompositeStorage {
                 group.dm_kind,
                 DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
             ) {
-                scalar_override_columns_for_group(&group_col_descs, column_overrides)?
+                scalar_override_columns_for_group(
+                    &group_col_descs,
+                    column_overrides,
+                    effective_row_count,
+                )?
             } else {
                 None
             };
+            if deferred_group {
+                if let Some(profiler) = profiler.as_mut() {
+                    profiler.mark_with_detail(
+                        "group_projection",
+                        Some(format!(
+                            "seq={} dm={} cols={} rows={} indexed_projection={} mode=deferred",
+                            group.seq_nr,
+                            group.dm_type_name,
+                            group_col_descs.len(),
+                            effective_row_count,
+                            group_col_indices.is_some()
+                        )),
+                    );
+                    profiler.mark_with_detail(
+                        "group_save",
+                        Some(format!(
+                            "seq={} dm={} cols={} rows={} deferred=true",
+                            group.seq_nr,
+                            group.dm_type_name,
+                            group_col_descs.len(),
+                            effective_row_count
+                        )),
+                    );
+                }
+                continue;
+            }
             let group_rows = if group_values.is_none()
                 && !use_direct_indexed_rows
                 && scalar_override_columns.is_none()
             {
                 Some(project_rows_for_group(
                     filtered_rows,
+                    effective_row_count,
                     &group_col_descs,
                     group_col_indices.as_deref(),
                     column_overrides,
@@ -3137,7 +3247,7 @@ impl CompositeStorage {
                         group.seq_nr,
                         group.dm_type_name,
                         group_col_descs.len(),
-                        filtered_rows.len(),
+                        effective_row_count,
                         group_col_indices.is_some(),
                         if group_values.is_some() {
                             "borrowed_values"
@@ -3164,12 +3274,10 @@ impl CompositeStorage {
                 DataManagerKind::StandardStMan => {
                     let dm_data =
                         if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
-                            let scalar_refs: Vec<_> =
-                                scalar_override_columns.iter().map(Vec::as_slice).collect();
-                            write_ssm_file_scalar_columns(
+                            write_ssm_file_scalar_column_sources(
                                 &data_path,
                                 &group_col_descs,
-                                &scalar_refs,
+                                scalar_override_columns,
                                 big_endian,
                             )?
                         } else if let Some(group_col_indices) = group_col_indices.as_ref() {
@@ -3203,12 +3311,10 @@ impl CompositeStorage {
                 DataManagerKind::IncrementalStMan => {
                     let dm_data =
                         if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
-                            let scalar_refs: Vec<_> =
-                                scalar_override_columns.iter().map(Vec::as_slice).collect();
-                            write_ism_file_scalar_columns(
+                            write_ism_file_scalar_column_sources(
                                 &data_path,
                                 &group_col_descs,
-                                &scalar_refs,
+                                scalar_override_columns,
                                 big_endian,
                             )?
                         } else if let Some(group_col_indices) = group_col_indices.as_ref() {
@@ -3281,7 +3387,7 @@ impl CompositeStorage {
                         group.seq_nr,
                         group.dm_type_name,
                         group_col_descs.len(),
-                        filtered_rows.len()
+                        effective_row_count
                     )),
                 );
             }

@@ -15,10 +15,10 @@ use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
 };
 use casa_tables::{
-    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
-    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
-    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column,
+    ColumnOverrides, GeneratedScalarColumn, StreamedTiledPrimitiveColumn,
+    StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
+    StreamingTiledShapeComplex32Writer, install_streamed_tiled_column_primitive_column,
+    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -30,11 +30,10 @@ use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1041,7 +1040,6 @@ pub fn generate_synthetic_observation_ms(
         &request.telescope_name,
     )?;
     let mut main_rows = populate_main_rows(
-        &mut ms,
         request,
         &sample_times,
         model.as_ref(),
@@ -1955,7 +1953,6 @@ fn populate_history(
 }
 
 fn populate_main_rows(
-    ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
     sample_times: &[f64],
     model: Option<&PreparedSkyModel>,
@@ -1965,9 +1962,6 @@ fn populate_main_rows(
     let num_corr = request.polarization_setup.correlation_count;
     let num_chan = request.spectral_setup.channel_count;
     let channel_prediction_workers = simobserve_channel_worker_count(request, num_chan);
-    let template = MainRowTemplate {
-        flag_category: bool_array(&[], vec![0, num_corr, num_chan]),
-    };
     let field_plan_started = Instant::now();
     let field_plans = build_field_plans(request, model)?;
     if trace_simobserve_setup() {
@@ -1992,8 +1986,8 @@ fn populate_main_rows(
     };
     let row_pairs = observation_row_pairs(request);
     let baseline_count = row_pairs.len();
-    let mut scalar_column_overrides =
-        MainScalarColumnOverrides::with_capacity(samples * baseline_count);
+    let total_row_count = samples * baseline_count;
+    let mut all_flag_rows = Vec::with_capacity(total_row_count);
     let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
     let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
     let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
@@ -2044,8 +2038,6 @@ fn populate_main_rows(
             row_specs.push(MainRowVisibilitySpec {
                 antenna1: pair.antenna1,
                 antenna2: pair.antenna2,
-                field_id,
-                time,
                 uvw,
             });
             row_uvws.push(uvw);
@@ -2099,45 +2091,36 @@ fn populate_main_rows(
             flagged_row_count += usize::from(elevation_flagged || shadow_flagged);
             flag_rows.push(elevation_flagged || shadow_flagged);
         }
+        let scalar_started = Instant::now();
+        all_flag_rows.extend(flag_rows.iter().copied());
+        timing.scalar_column += scalar_started.elapsed();
         let data_io_started = Instant::now();
         main_column_writer.send_batch(SimobserveMainColumnBatch {
             data_rows,
-            flag_rows: flag_rows.clone(),
+            flag_rows,
             uvw_rows: row_uvws,
         })?;
         timing.data_io_enqueue += data_io_started.elapsed();
-        let scan_number = if request.observation_mode == SyntheticObservationMode::TotalPower {
-            sample + 1
-        } else {
-            1
-        };
-        for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows) {
-            let write_started = Instant::now();
-            let scalar_started = Instant::now();
-            scalar_column_overrides.push(
-                &spec,
-                request.integration_seconds,
-                shadowed_row,
-                scan_number,
-            );
-            timing.scalar_column += scalar_started.elapsed();
-            let row = RecordValue::new(vec![RecordField::new(
-                "FLAG_CATEGORY",
-                template.flag_category.clone(),
-            )]);
-            let row_add_started = Instant::now();
-            ms.main_table_mut().add_row_assuming_valid(row)?;
-            timing.main_row_add += row_add_started.elapsed();
-            timing.main_write += write_started.elapsed();
-        }
     }
+    let scalar_started = Instant::now();
+    let scalar_column_overrides = MainScalarColumnOverrides::new(
+        total_row_count,
+        row_pairs,
+        sample_times.to_vec(),
+        field_plans.len(),
+        request.integration_seconds,
+        request.observation_mode,
+        all_flag_rows,
+    )
+    .into_column_overrides();
+    timing.scalar_column += scalar_started.elapsed();
     Ok(MainRowsReport {
         nonzero_visibility_count,
         flagged_row_count,
         elevation_flagged_row_count,
         shadow_flagged_row_count,
         timing: timing.into_report(),
-        scalar_column_overrides: scalar_column_overrides.into_column_overrides(),
+        scalar_column_overrides,
     })
 }
 
@@ -2321,7 +2304,7 @@ struct MainRowsReport {
     elevation_flagged_row_count: usize,
     shadow_flagged_row_count: usize,
     timing: SyntheticMainRowTimingReport,
-    scalar_column_overrides: HashMap<String, Vec<Option<Value>>>,
+    scalar_column_overrides: ColumnOverrides,
 }
 
 struct SimobserveMainColumnBatch {
@@ -2333,6 +2316,7 @@ struct SimobserveMainColumnBatch {
 struct StreamedSimobserveMainColumns {
     data: StreamedTiledShapeComplex32Column,
     flag: StreamedTiledPrimitiveColumn,
+    flag_category: StreamedTiledPrimitiveColumn,
     uvw: StreamedTiledPrimitiveColumn,
     weight: StreamedTiledPrimitiveColumn,
     sigma: StreamedTiledPrimitiveColumn,
@@ -2352,6 +2336,12 @@ impl StreamedSimobserveMainColumns {
                 self.flag.assemble_seconds(),
                 self.flag.write_seconds(),
                 self.flag.bytes_written(),
+            ),
+            self.column_timing_report(
+                "FLAG_CATEGORY",
+                self.flag_category.assemble_seconds(),
+                self.flag_category.write_seconds(),
+                self.flag_category.bytes_written(),
             ),
             self.column_timing_report(
                 "UVW",
@@ -2392,6 +2382,7 @@ impl StreamedSimobserveMainColumns {
     fn assemble_seconds(&self) -> f64 {
         self.data.assemble_seconds()
             + self.flag.assemble_seconds()
+            + self.flag_category.assemble_seconds()
             + self.uvw.assemble_seconds()
             + self.weight.assemble_seconds()
             + self.sigma.assemble_seconds()
@@ -2400,6 +2391,7 @@ impl StreamedSimobserveMainColumns {
     fn write_seconds(&self) -> f64 {
         self.data.write_seconds()
             + self.flag.write_seconds()
+            + self.flag_category.write_seconds()
             + self.uvw.write_seconds()
             + self.weight.write_seconds()
             + self.sigma.write_seconds()
@@ -2408,6 +2400,7 @@ impl StreamedSimobserveMainColumns {
     fn bytes_written(&self) -> usize {
         self.data.bytes_written()
             + self.flag.bytes_written()
+            + self.flag_category.bytes_written()
             + self.uvw.bytes_written()
             + self.weight.bytes_written()
             + self.sigma.bytes_written()
@@ -2431,6 +2424,12 @@ impl SimobserveMainColumnWriter {
             crate::ms::casa_visibility_tile_shape(num_corr, num_chan, telescope_name);
         let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
         let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
+        let flag_category_tile_shape = vec![
+            visibility_tile_shape[0],
+            visibility_tile_shape[1],
+            1,
+            visibility_tile_shape[2],
+        ];
 
         let data_writer = StreamingTiledShapeComplex32Writer::create(
             output_ms.join(".casa-rs.DATA.table.f.tmp"),
@@ -2452,6 +2451,19 @@ impl SimobserveMainColumnWriter {
         )
         .map_err(|error| {
             MsError::SyntheticObservation(format!("failed to create streamed FLAG writer: {error}"))
+        })?;
+        let flag_category_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.FLAG_CATEGORY.table.f.tmp"),
+            row_count,
+            vec![0, num_corr, num_chan],
+            flag_category_tile_shape,
+            StreamedTiledPrimitiveType::Bool,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to create streamed FLAG_CATEGORY writer: {error}"
+            ))
         })?;
         let uvw_writer = StreamingTiledPrimitiveWriter::create_column(
             output_ms.join(".casa-rs.UVW.table.f.tmp"),
@@ -2496,6 +2508,7 @@ impl SimobserveMainColumnWriter {
         let handle = thread::spawn(move || {
             let mut data_writer = data_writer;
             let mut flag_writer = flag_writer;
+            let mut flag_category_writer = flag_category_writer;
             let mut uvw_writer = uvw_writer;
             let mut weight_writer = weight_writer;
             let mut sigma_writer = sigma_writer;
@@ -2537,6 +2550,11 @@ impl SimobserveMainColumnWriter {
                             ))
                         })?;
                     }
+                    flag_category_writer.push_zero_row().map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream empty FLAG_CATEGORY row into tiled storage: {error}"
+                        ))
+                    })?;
                     uvw_writer.push_f64_row(&uvw_row).map_err(|error| {
                         MsError::SyntheticObservation(format!(
                             "failed to stream UVW row into tiled storage: {error}"
@@ -2563,6 +2581,11 @@ impl SimobserveMainColumnWriter {
                 flag: flag_writer.finish().map_err(|error| {
                     MsError::SyntheticObservation(format!(
                         "failed to finalize streamed FLAG writer: {error}"
+                    ))
+                })?,
+                flag_category: flag_category_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed FLAG_CATEGORY writer: {error}"
                     ))
                 })?,
                 uvw: uvw_writer.finish().map_err(|error| {
@@ -2622,6 +2645,19 @@ fn install_streamed_main_columns(
             ))
         })?;
 
+    let flag_category_seq = data_manager_sequence(main, "FLAG_CATEGORY")?;
+    install_streamed_tiled_shape_primitive_column(
+        output_ms,
+        flag_category_seq,
+        "FLAG_CATEGORY",
+        streamed.flag_category,
+    )
+    .map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to install streamed FLAG_CATEGORY column: {error}"
+        ))
+    })?;
+
     let uvw_seq = data_manager_sequence(main, "UVW")?;
     install_streamed_tiled_column_primitive_column(output_ms, uvw_seq, "UVW", streamed.uvw)
         .map_err(|error| {
@@ -2664,90 +2700,164 @@ fn simobserve_io_queue_depth() -> usize {
 }
 
 struct MainScalarColumnOverrides {
-    antenna1: Vec<Option<Value>>,
-    antenna2: Vec<Option<Value>>,
-    array_id: Vec<Option<Value>>,
-    data_desc_id: Vec<Option<Value>>,
-    exposure: Vec<Option<Value>>,
-    feed1: Vec<Option<Value>>,
-    feed2: Vec<Option<Value>>,
-    field_id: Vec<Option<Value>>,
-    flag_row: Vec<Option<Value>>,
-    interval: Vec<Option<Value>>,
-    observation_id: Vec<Option<Value>>,
-    processor_id: Vec<Option<Value>>,
-    scan_number: Vec<Option<Value>>,
-    state_id: Vec<Option<Value>>,
-    time: Vec<Option<Value>>,
-    time_centroid: Vec<Option<Value>>,
+    row_count: usize,
+    baseline_count: usize,
+    row_pairs: Arc<Vec<BaselinePair>>,
+    sample_times: Arc<Vec<f64>>,
+    field_count: usize,
+    integration_seconds: f64,
+    observation_mode: SyntheticObservationMode,
+    flag_rows: Arc<Vec<bool>>,
 }
 
 impl MainScalarColumnOverrides {
-    fn with_capacity(row_count: usize) -> Self {
+    fn new(
+        row_count: usize,
+        row_pairs: Vec<BaselinePair>,
+        sample_times: Vec<f64>,
+        field_count: usize,
+        integration_seconds: f64,
+        observation_mode: SyntheticObservationMode,
+        flag_rows: Vec<bool>,
+    ) -> Self {
+        debug_assert_eq!(row_count, row_pairs.len() * sample_times.len());
+        debug_assert_eq!(row_count, flag_rows.len());
         Self {
-            antenna1: Vec::with_capacity(row_count),
-            antenna2: Vec::with_capacity(row_count),
-            array_id: Vec::with_capacity(row_count),
-            data_desc_id: Vec::with_capacity(row_count),
-            exposure: Vec::with_capacity(row_count),
-            feed1: Vec::with_capacity(row_count),
-            feed2: Vec::with_capacity(row_count),
-            field_id: Vec::with_capacity(row_count),
-            flag_row: Vec::with_capacity(row_count),
-            interval: Vec::with_capacity(row_count),
-            observation_id: Vec::with_capacity(row_count),
-            processor_id: Vec::with_capacity(row_count),
-            scan_number: Vec::with_capacity(row_count),
-            state_id: Vec::with_capacity(row_count),
-            time: Vec::with_capacity(row_count),
-            time_centroid: Vec::with_capacity(row_count),
+            row_count,
+            baseline_count: row_pairs.len(),
+            row_pairs: Arc::new(row_pairs),
+            sample_times: Arc::new(sample_times),
+            field_count,
+            integration_seconds,
+            observation_mode,
+            flag_rows: Arc::new(flag_rows),
         }
     }
 
-    fn push(
-        &mut self,
-        spec: &MainRowVisibilitySpec,
-        integration_seconds: f64,
-        flag_row: bool,
-        scan_number: usize,
-    ) {
-        self.antenna1.push(Some(i(spec.antenna1 as i32)));
-        self.antenna2.push(Some(i(spec.antenna2 as i32)));
-        self.array_id.push(Some(i(0)));
-        self.data_desc_id.push(Some(i(0)));
-        self.exposure.push(Some(f(integration_seconds)));
-        self.feed1.push(Some(i(0)));
-        self.feed2.push(Some(i(0)));
-        self.field_id.push(Some(i(spec.field_id as i32)));
-        self.flag_row.push(Some(b(flag_row)));
-        self.interval.push(Some(f(integration_seconds)));
-        self.observation_id.push(Some(i(0)));
-        self.processor_id.push(Some(i(0)));
-        self.scan_number.push(Some(i(scan_number as i32)));
-        self.state_id.push(Some(i(0)));
-        self.time.push(Some(f(spec.time)));
-        self.time_centroid.push(Some(f(spec.time)));
+    fn into_column_overrides(self) -> ColumnOverrides {
+        let mut overrides = ColumnOverrides::for_row_count(self.row_count);
+        self.insert_deferred_tiled_columns(&mut overrides);
+        self.insert_baseline_columns(&mut overrides);
+        self.insert_sample_columns(&mut overrides);
+        self.insert_constant_columns(&mut overrides);
+        overrides
     }
 
-    fn into_column_overrides(self) -> HashMap<String, Vec<Option<Value>>> {
-        HashMap::from([
-            ("ANTENNA1".to_string(), self.antenna1),
-            ("ANTENNA2".to_string(), self.antenna2),
-            ("ARRAY_ID".to_string(), self.array_id),
-            ("DATA_DESC_ID".to_string(), self.data_desc_id),
-            ("EXPOSURE".to_string(), self.exposure),
-            ("FEED1".to_string(), self.feed1),
-            ("FEED2".to_string(), self.feed2),
-            ("FIELD_ID".to_string(), self.field_id),
-            ("FLAG_ROW".to_string(), self.flag_row),
-            ("INTERVAL".to_string(), self.interval),
-            ("OBSERVATION_ID".to_string(), self.observation_id),
-            ("PROCESSOR_ID".to_string(), self.processor_id),
-            ("SCAN_NUMBER".to_string(), self.scan_number),
-            ("STATE_ID".to_string(), self.state_id),
-            ("TIME".to_string(), self.time),
-            ("TIME_CENTROID".to_string(), self.time_centroid),
-        ])
+    fn insert_deferred_tiled_columns(&self, overrides: &mut ColumnOverrides) {
+        for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
+            overrides.insert_deferred(column);
+        }
+    }
+
+    fn insert_baseline_columns(&self, overrides: &mut ColumnOverrides) {
+        let row_count = self.row_count;
+        let baseline_count = self.baseline_count;
+        let row_pairs = Arc::clone(&self.row_pairs);
+        overrides.insert_generated_scalar(
+            "ANTENNA1",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Int32(
+                    row_pairs[row % baseline_count].antenna1 as i32,
+                ))
+            }),
+        );
+
+        let row_pairs = Arc::clone(&self.row_pairs);
+        overrides.insert_generated_scalar(
+            "ANTENNA2",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Int32(
+                    row_pairs[row % baseline_count].antenna2 as i32,
+                ))
+            }),
+        );
+    }
+
+    fn insert_sample_columns(&self, overrides: &mut ColumnOverrides) {
+        let row_count = self.row_count;
+        let baseline_count = self.baseline_count;
+        let sample_times = Arc::clone(&self.sample_times);
+        overrides.insert_generated_scalar(
+            "TIME",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Float64(sample_times[row / baseline_count]))
+            }),
+        );
+
+        let sample_times = Arc::clone(&self.sample_times);
+        overrides.insert_generated_scalar(
+            "TIME_CENTROID",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Float64(sample_times[row / baseline_count]))
+            }),
+        );
+
+        let field_count = self.field_count;
+        overrides.insert_generated_scalar(
+            "FIELD_ID",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Int32(
+                    (row / baseline_count % field_count) as i32,
+                ))
+            }),
+        );
+
+        let observation_mode = self.observation_mode;
+        overrides.insert_generated_scalar(
+            "SCAN_NUMBER",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                let scan = if observation_mode == SyntheticObservationMode::TotalPower {
+                    row / baseline_count + 1
+                } else {
+                    1
+                };
+                Some(ScalarValue::Int32(scan as i32))
+            }),
+        );
+
+        let flag_rows = Arc::clone(&self.flag_rows);
+        overrides.insert_generated_scalar(
+            "FLAG_ROW",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Bool(flag_rows[row]))
+            }),
+        );
+    }
+
+    fn insert_constant_columns(&self, overrides: &mut ColumnOverrides) {
+        self.insert_constant_i32(overrides, "ARRAY_ID", 0);
+        self.insert_constant_i32(overrides, "DATA_DESC_ID", 0);
+        self.insert_constant_i32(overrides, "FEED1", 0);
+        self.insert_constant_i32(overrides, "FEED2", 0);
+        self.insert_constant_i32(overrides, "OBSERVATION_ID", 0);
+        self.insert_constant_i32(overrides, "PROCESSOR_ID", 0);
+        self.insert_constant_i32(overrides, "STATE_ID", 0);
+        self.insert_constant_f64(overrides, "EXPOSURE", self.integration_seconds);
+        self.insert_constant_f64(overrides, "INTERVAL", self.integration_seconds);
+    }
+
+    fn insert_constant_i32(
+        &self,
+        overrides: &mut ColumnOverrides,
+        column: &'static str,
+        value: i32,
+    ) {
+        overrides.insert_generated_scalar(
+            column,
+            GeneratedScalarColumn::new(self.row_count, move |_| Some(ScalarValue::Int32(value))),
+        );
+    }
+
+    fn insert_constant_f64(
+        &self,
+        overrides: &mut ColumnOverrides,
+        column: &'static str,
+        value: f64,
+    ) {
+        overrides.insert_generated_scalar(
+            column,
+            GeneratedScalarColumn::new(self.row_count, move |_| Some(ScalarValue::Float64(value))),
+        );
     }
 }
 
@@ -2791,11 +2901,6 @@ fn elapsed_seconds_to_millis(seconds: f64) -> u128 {
     (seconds * 1000.0).round() as u128
 }
 
-#[derive(Clone)]
-struct MainRowTemplate {
-    flag_category: Value,
-}
-
 #[derive(Clone, Copy)]
 struct BaselinePair {
     antenna1: usize,
@@ -2829,8 +2934,6 @@ fn observation_row_pairs(request: &SyntheticObservationRequest) -> Vec<BaselineP
 struct MainRowVisibilitySpec {
     antenna1: usize,
     antenna2: usize,
-    field_id: usize,
-    time: f64,
     uvw: [f64; 3],
 }
 
@@ -5841,8 +5944,6 @@ mod tests {
                 ((antenna1 + 1)..8).map(move |antenna2| MainRowVisibilitySpec {
                     antenna1,
                     antenna2,
-                    field_id: 0,
-                    time: 0.0,
                     uvw: [antenna1 as f64, antenna2 as f64, 0.0],
                 })
             })
@@ -6487,22 +6588,16 @@ mod tests {
             MainRowVisibilitySpec {
                 antenna1: 0,
                 antenna2: 1,
-                field_id: 0,
-                time: 0.0,
                 uvw: [10.0, 0.0, 1.0],
             },
             MainRowVisibilitySpec {
                 antenna1: 0,
                 antenna2: 2,
-                field_id: 0,
-                time: 0.0,
                 uvw: [100.0, 0.0, -1.0],
             },
             MainRowVisibilitySpec {
                 antenna1: 1,
                 antenna2: 2,
-                field_id: 0,
-                time: 0.0,
                 uvw: [10.0, 0.0, -1.0],
             },
         ];

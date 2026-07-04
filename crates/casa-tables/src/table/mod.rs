@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use casa_types::{ArrayValue, Complex64, RecordField, RecordValue, ScalarValue, Value, ValueKind};
 use thiserror::Error;
@@ -224,6 +225,166 @@ pub struct ColumnBinding {
     pub data_manager: DataManagerKind,
     /// Optional tile shape (only used with tiled storage managers).
     pub tile_shape: Option<Vec<usize>>,
+}
+
+/// Generated scalar-column override for high-volume table writers.
+///
+/// This lets callers provide scalar cells by row index without first
+/// materializing one generic [`Value`] per cell. It is intended for writers
+/// such as synthetic MeasurementSet generation where MAIN scalar columns are
+/// deterministic functions of row number.
+#[derive(Clone)]
+pub struct GeneratedScalarColumn {
+    row_count: usize,
+    value_fn: Arc<dyn Fn(usize) -> Option<ScalarValue> + Send + Sync>,
+}
+
+impl GeneratedScalarColumn {
+    /// Create a generated scalar override with exactly `row_count` rows.
+    pub fn new(
+        row_count: usize,
+        value_fn: impl Fn(usize) -> Option<ScalarValue> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            row_count,
+            value_fn: Arc::new(value_fn),
+        }
+    }
+
+    /// Number of rows covered by this generated column.
+    pub fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Return the scalar value for `row`, or `None` for an undefined cell.
+    pub fn value(&self, row: usize) -> Option<ScalarValue> {
+        (self.value_fn)(row)
+    }
+}
+
+impl std::fmt::Debug for GeneratedScalarColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneratedScalarColumn")
+            .field("row_count", &self.row_count)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Per-column override used by high-volume save paths.
+#[derive(Clone, Debug)]
+pub enum ColumnOverride {
+    /// Complete materialized values for a column.
+    Values(Vec<Option<Value>>),
+    /// Scalar values generated on demand by row number.
+    GeneratedScalar(GeneratedScalarColumn),
+    /// The column is written by another path after table metadata is saved.
+    ///
+    /// This is only valid for single-column data-manager groups whose on-disk
+    /// payload is installed separately, such as streamed tiled MeasurementSet
+    /// visibility columns.
+    Deferred,
+}
+
+impl ColumnOverride {
+    fn row_count(&self) -> Option<usize> {
+        match self {
+            Self::Values(values) => Some(values.len()),
+            Self::GeneratedScalar(column) => Some(column.row_count()),
+            Self::Deferred => None,
+        }
+    }
+}
+
+/// Column overrides for [`Table::save_with_bindings_and_column_overrides_assuming_valid`].
+#[derive(Clone, Debug, Default)]
+pub struct ColumnOverrides {
+    row_count: Option<usize>,
+    columns: HashMap<String, ColumnOverride>,
+}
+
+impl ColumnOverrides {
+    /// Create an empty override set whose row count is inferred from the table.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create an override set for a table with `row_count` rows.
+    pub fn for_row_count(row_count: usize) -> Self {
+        Self {
+            row_count: Some(row_count),
+            columns: HashMap::new(),
+        }
+    }
+
+    /// Return the explicit row count, if present.
+    pub fn row_count(&self) -> Option<usize> {
+        self.row_count
+    }
+
+    /// Resolve the effective row count for saving.
+    pub(crate) fn effective_row_count(&self, table_row_count: usize) -> Result<usize, TableError> {
+        let row_count = self.row_count.unwrap_or(table_row_count);
+        for (column, override_value) in &self.columns {
+            if let Some(column_rows) = override_value.row_count() {
+                if column_rows != row_count {
+                    return Err(TableError::Storage(format!(
+                        "column override {column} has {column_rows} values for {row_count} rows"
+                    )));
+                }
+            }
+        }
+        Ok(row_count)
+    }
+
+    /// Insert materialized override values.
+    pub fn insert_values(
+        &mut self,
+        column: impl Into<String>,
+        values: Vec<Option<Value>>,
+    ) -> Option<ColumnOverride> {
+        self.columns
+            .insert(column.into(), ColumnOverride::Values(values))
+    }
+
+    /// Insert a generated scalar override.
+    pub fn insert_generated_scalar(
+        &mut self,
+        column: impl Into<String>,
+        values: GeneratedScalarColumn,
+    ) -> Option<ColumnOverride> {
+        self.columns
+            .insert(column.into(), ColumnOverride::GeneratedScalar(values))
+    }
+
+    /// Mark a column as externally streamed/deferred.
+    pub fn insert_deferred(&mut self, column: impl Into<String>) -> Option<ColumnOverride> {
+        self.columns.insert(column.into(), ColumnOverride::Deferred)
+    }
+
+    /// Return a column override by name.
+    pub fn get(&self, column: &str) -> Option<&ColumnOverride> {
+        self.columns.get(column)
+    }
+
+    /// Return whether an override exists for a column.
+    pub fn contains_key(&self, column: &str) -> bool {
+        self.columns.contains_key(column)
+    }
+
+    /// Iterate over overridden column names and override values.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ColumnOverride)> {
+        self.columns.iter()
+    }
+
+    /// Number of overridden columns.
+    pub fn len(&self) -> usize {
+        self.columns.len()
+    }
+
+    /// Return whether no columns are overridden.
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
 }
 
 /// Configuration for opening or saving a [`Table`] to disk.

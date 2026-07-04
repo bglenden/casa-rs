@@ -233,15 +233,29 @@ Correctness gates come before speed claims.
   `--casa-image-prefix` and `--native-image-prefix` also compare selected image
   products such as `.image`, `.residual`, `.psf`, `.model`, `.sumwt`, and `.pb`.
 
-Current local evidence on 2026-07-03:
+Current local evidence on 2026-07-04:
 
 - A 1 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with 64 MS
   channels, 16 image channels, 7 pointings, and 4 correlations measured
-  `889 MB/s` by wall time and `920 MB/s` by reported simulator time, with about
-  `3942 MB/s` through the streamed MAIN-column write path. The 500 MB/s floor is
-  met, but prediction and table save/write stages still leave a large gap to
-  write-path speed. Manifest:
+  `708 MB/s` by reported simulator time, with about `1251 MB/s` through the
+  streamed MAIN-column write path. The 500 MB/s floor is met, and the remaining
+  gap to streamed write bandwidth is dominated by prediction, enqueue, and
+  table-save/header stages rather than row materialization. Manifest:
   `target/synthetic-ms-families/analytic-1g-vla-mosaic-current.synthetic-family.json`.
+- A 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with 64 MS
+  channels, 16 image channels, 7 pointings, and 4 correlations on
+  `/Volumes/GLENDENNING` generated `46,603,674` MAIN rows and `100,582,541,641`
+  bytes in `169.287 s`: `594 MB/s` end-to-end and `868 MB/s` through the
+  streamed MAIN-column write path. This reruns the high-row-count 64-channel
+  case that previously died after producing an invalid partial 84 GiB MS; the
+  generated-scalar MAIN path leaves `main_row_add_millis=0` and
+  `scalar_column_millis=17`. Manifest:
+  `/Volumes/GLENDENNING/casa-rs-benchmarks/synthetic-ms-families/analytic-100g-vla-mosaic.synthetic-family.json`.
+- A prior 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with
+  1024 MS channels on `/Volumes/GLENDENNING` generated `2,912,949` MAIN rows
+  and `99,650,093,245` bytes in `123.561 s`: `806 MB/s` end-to-end and
+  `912 MB/s` through the streamed MAIN-column write path. Manifest:
+  `/Volumes/GLENDENNING/casa-rs-benchmarks/synthetic-ms-families/analytic-100g-vla-mosaic-1024ch.synthetic-family.json`.
 - A prediction-disabled write-path run using the same concrete run request
   measured `1186 MB/s` by wall time and `1243 MB/s` by reported simulator time,
   with `4433 MB/s` through the streamed MAIN-column write path. Report:

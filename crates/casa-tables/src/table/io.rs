@@ -306,15 +306,13 @@ impl Table {
         Ok(())
     }
 
-    /// Save the table with per-column bindings and complete column-value overrides.
+    /// Save the table with per-column bindings and column-value overrides.
     ///
     /// This advanced writer is for high-volume materialization paths that
-    /// build some large array columns column-wise while the rest of the table
-    /// is still represented as rows. Each override must contain exactly one
-    /// value slot per table row. Overrides can be written directly for
-    /// single-column tiled data-manager groups, matching MeasurementSet
-    /// visibility columns such as `DATA` and `FLAG`, and for scalar
-    /// IncrementalStMan groups when the whole scalar group is overridden.
+    /// build some columns column-wise while the rest of the table is still
+    /// represented as rows. Overrides can be materialized values, generated
+    /// scalar cells, or deferred single-column tiled data-manager groups
+    /// installed by a separate streaming path.
     ///
     /// The caller is responsible for ensuring that override values satisfy the
     /// table schema; this method intentionally shares the same "assuming
@@ -323,24 +321,16 @@ impl Table {
         &self,
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
-        column_overrides: &std::collections::HashMap<String, Vec<Option<Value>>>,
+        column_overrides: &ColumnOverrides,
     ) -> Result<(), TableError> {
-        let row_count = self.inner.row_count();
+        let row_count = column_overrides.effective_row_count(self.inner.row_count())?;
         if let Some(schema) = self.inner.schema() {
-            for column in column_overrides.keys() {
+            for (column, _) in column_overrides.iter() {
                 if !schema.contains_column(column) {
                     return Err(TableError::SchemaColumnUnknown {
                         column: column.clone(),
                     });
                 }
-            }
-        }
-        for (column, values) in column_overrides {
-            if values.len() != row_count {
-                return Err(TableError::Storage(format!(
-                    "column override {column} has {} values for {row_count} rows",
-                    values.len()
-                )));
             }
         }
 
