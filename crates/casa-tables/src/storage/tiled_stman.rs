@@ -1557,7 +1557,7 @@ pub(crate) fn load_tiled_column_rows(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn load_tiled_column_rows_2d_channel_range(
+pub(crate) fn load_tiled_column_rows_2d_channel_range_arrays(
     table_path: &Path,
     dm: &DataManagerEntry,
     all_col_descs: &[ColumnDescContents],
@@ -9968,22 +9968,22 @@ mod tests {
         assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
 
         let selected = reopened
-            .get_array_cells_2d_channel_range_owned_uncached("DATA", &[1], 2, 2)
+            .get_array_cells_2d_channel_range_typed_uncached("DATA", &[1], 2, 2)
             .expect("selected channel-range read");
+        let SelectedArray2DCells::Complex32(selected) = selected else {
+            panic!("expected Complex32 selected channel-range cells");
+        };
+        assert_eq!(selected.row_count(), 1);
+        assert_eq!(selected.axis0_count(), 2);
+        assert_eq!(selected.channel_count(), 2);
         assert_eq!(
-            selected,
-            vec![Some(ArrayValue::Complex32(
-                ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[2, 2]).f(),
-                    vec![
-                        Complex32::new(120.0, -120.0),
-                        Complex32::new(121.0, -121.0),
-                        Complex32::new(130.0, -130.0),
-                        Complex32::new(131.0, -131.0),
-                    ],
-                )
-                .unwrap()
-            ))]
+            selected.values(),
+            &[
+                Complex32::new(120.0, -120.0),
+                Complex32::new(121.0, -121.0),
+                Complex32::new(130.0, -130.0),
+                Complex32::new(131.0, -131.0),
+            ],
         );
         assert_eq!(
             shared_tile_cache_entry_count_for_table(&root),

@@ -427,7 +427,7 @@ impl TableImpl {
         Ok(values)
     }
 
-    fn load_array_column_rows_2d_channel_range_now(
+    fn load_array_column_rows_2d_channel_range_arrays_now(
         source: &LazyRowsSource,
         column: &str,
         row_indices: &[usize],
@@ -435,12 +435,12 @@ impl TableImpl {
         channel_count: usize,
     ) -> Result<Vec<Option<ArrayValue>>, TableError> {
         let mut profiler = StorageProfiler::start(format!(
-            "table_impl::load_array_column_rows_2d_channel_range_now path={} column={column}",
+            "table_impl::load_array_column_rows_2d_channel_range_arrays_now path={} column={column}",
             source.path.display()
         ));
         let storage = CompositeStorage;
         let values = storage
-            .load_array_column_rows_2d_channel_range_with_row_hint(
+            .load_array_column_rows_2d_channel_range_arrays_with_row_hint(
                 &source.path,
                 column,
                 row_indices,
@@ -1207,7 +1207,7 @@ impl TableImpl {
         Ok(Some(values))
     }
 
-    pub(crate) fn array_cells_2d_channel_range_owned_uncached(
+    pub(crate) fn array_cells_2d_channel_range_arrays_uncached(
         &self,
         row_indices: &[usize],
         column: &str,
@@ -1243,7 +1243,7 @@ impl TableImpl {
             return Ok(None);
         };
 
-        let mut values = Self::load_array_column_rows_2d_channel_range_now(
+        let mut values = Self::load_array_column_rows_2d_channel_range_arrays_now(
             source,
             column,
             row_indices,

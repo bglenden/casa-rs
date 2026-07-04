@@ -185,18 +185,6 @@ fn table_array_cells_owned(
         .array_cells_owned(row_indices)
 }
 
-fn table_array_cells_2d_channel_range_owned_uncached(
-    table: &Table,
-    column: &str,
-    row_indices: &[usize],
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, TableError> {
-    table
-        .column_accessor(column)?
-        .array_cells_2d_channel_range_owned_uncached(row_indices, channel_start, channel_count)
-}
-
 #[test]
 fn table_keeps_rows_in_order() {
     let first = RecordValue::new(vec![RecordField::new(
@@ -2316,28 +2304,6 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
     assert!(!reopened.inner.has_loaded_rows());
     assert!(!reopened.inner.has_loaded_array_column("data"));
 
-    let selected =
-        table_array_cells_2d_channel_range_owned_uncached(&reopened, "data", &[7, 2], 1, 3)
-            .expect("read selected channel ranges");
-    assert_eq!(
-        selected,
-        vec![
-            Some(ArrayValue::Float32(
-                ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[2, 3]).f(),
-                    vec![710.0, 711.0, 720.0, 721.0, 730.0, 731.0]
-                )
-                .unwrap()
-            )),
-            Some(ArrayValue::Float32(
-                ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[2, 3]).f(),
-                    vec![210.0, 211.0, 220.0, 221.0, 230.0, 231.0]
-                )
-                .unwrap()
-            )),
-        ]
-    );
     let typed = reopened
         .column_accessor("data")
         .expect("data accessor")

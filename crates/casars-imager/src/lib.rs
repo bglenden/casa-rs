@@ -20459,21 +20459,6 @@ fn read_visibility_source_geometry_columns(
     })
 }
 
-fn visibility_channel_row_corr_index(
-    channel_slot: usize,
-    row_slot: usize,
-    corr_slot: usize,
-    row_count: usize,
-    corr_count: usize,
-) -> Result<usize, String> {
-    channel_slot
-        .checked_mul(row_count)
-        .and_then(|value| value.checked_add(row_slot))
-        .and_then(|value| value.checked_mul(corr_count))
-        .and_then(|value| value.checked_add(corr_slot))
-        .ok_or_else(|| "visibility channel-row-correlation index overflowed".to_string())
-}
-
 fn extract_uvw_from_visibility_buffer(
     values: &[f64],
     row_slot: usize,
@@ -20488,56 +20473,45 @@ fn extract_uvw_from_visibility_buffer(
     Ok([slice[0], slice[1], slice[2]])
 }
 
-fn complex_visibility_row_array(
-    samples: &VisibilityComplexSamples,
+fn visibility_channel_row_values<T>(
+    buffer: &VisibilityBuffer,
     row_slot: usize,
-    row_count: usize,
-    corr_count: usize,
-    channel_count: usize,
-) -> Result<Array2<Complex32>, String> {
-    let mut values = Vec::with_capacity(corr_count.saturating_mul(channel_count));
-    for local_channel in 0..channel_count {
-        for corr in 0..corr_count {
-            let index = visibility_channel_row_corr_index(
-                local_channel,
-                row_slot,
-                corr,
-                row_count,
-                corr_count,
-            )?;
-            values.push(direct_cube_plane_complex_sample(samples, index)?);
+    mut sample_at: impl FnMut(usize) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
+    let mut values = Vec::with_capacity(buffer.corr_count.saturating_mul(buffer.channel_count));
+    for local_channel in 0..buffer.channel_count {
+        for corr in 0..buffer.corr_count {
+            let index = buffer.channel_row_corr_index(local_channel, row_slot, corr);
+            values.push(sample_at(index)?);
         }
     }
-    Array2::from_shape_vec((corr_count, channel_count).f(), values)
+    Ok(values)
+}
+
+fn complex_visibility_row_array(
+    buffer: &VisibilityBuffer,
+    samples: &VisibilityComplexSamples,
+    row_slot: usize,
+) -> Result<Array2<Complex32>, String> {
+    let values = visibility_channel_row_values(buffer, row_slot, |index| {
+        direct_cube_plane_complex_sample(samples, index)
+    })?;
+    Array2::from_shape_vec((buffer.corr_count, buffer.channel_count).f(), values)
         .map_err(|error| format!("shape DATA row {row_slot} as [corr, channel]: {error}"))
 }
 
 fn bool_visibility_row_array(
+    buffer: &VisibilityBuffer,
     values: &[bool],
     row_slot: usize,
-    row_count: usize,
-    corr_count: usize,
-    channel_count: usize,
 ) -> Result<Array2<bool>, String> {
-    let mut row_values = Vec::with_capacity(corr_count.saturating_mul(channel_count));
-    for local_channel in 0..channel_count {
-        for corr in 0..corr_count {
-            let index = visibility_channel_row_corr_index(
-                local_channel,
-                row_slot,
-                corr,
-                row_count,
-                corr_count,
-            )?;
-            row_values.push(
-                values
-                    .get(index)
-                    .copied()
-                    .ok_or_else(|| format!("FLAG sample index {index} is out of bounds"))?,
-            );
-        }
-    }
-    Array2::from_shape_vec((corr_count, channel_count).f(), row_values)
+    let row_values = visibility_channel_row_values(buffer, row_slot, |index| {
+        values
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("FLAG sample index {index} is out of bounds"))
+    })?;
+    Array2::from_shape_vec((buffer.corr_count, buffer.channel_count).f(), row_values)
         .map_err(|error| format!("shape FLAG row {row_slot} as [corr, channel]: {error}"))
 }
 
@@ -20558,30 +20532,14 @@ fn float_visibility_row_values(
 }
 
 fn float_visibility_channel_row_array(
+    buffer: &VisibilityBuffer,
     samples: &VisibilityFloatSamples,
     row_slot: usize,
-    row_count: usize,
-    corr_count: usize,
-    channel_count: usize,
 ) -> Result<Array2<f32>, String> {
-    let mut values = Vec::with_capacity(corr_count.saturating_mul(channel_count));
-    for local_channel in 0..channel_count {
-        for corr in 0..corr_count {
-            let index = visibility_channel_row_corr_index(
-                local_channel,
-                row_slot,
-                corr,
-                row_count,
-                corr_count,
-            )?;
-            values.push(direct_cube_plane_float_sample(
-                samples,
-                index,
-                "WEIGHT_SPECTRUM",
-            )?);
-        }
-    }
-    Array2::from_shape_vec((corr_count, channel_count).f(), values).map_err(|error| {
+    let values = visibility_channel_row_values(buffer, row_slot, |index| {
+        direct_cube_plane_float_sample(samples, index, "WEIGHT_SPECTRUM")
+    })?;
+    Array2::from_shape_vec((buffer.corr_count, buffer.channel_count).f(), values).map_err(|error| {
         format!("shape WEIGHT_SPECTRUM row {row_slot} as [corr, channel]: {error}")
     })
 }
@@ -20733,31 +20691,11 @@ fn read_ms_imaging_essentials_block(
             antenna1_pointing.angles_rad,
             antenna2_pointing.angles_rad,
         );
-        let data = complex_visibility_row_array(
-            data_values,
-            row_slot,
-            row_chunk.len(),
-            corr_count,
-            channel_count,
-        )?;
-        let flag = bool_visibility_row_array(
-            flag_values,
-            row_slot,
-            row_chunk.len(),
-            corr_count,
-            channel_count,
-        )?;
+        let data = complex_visibility_row_array(&visibility, data_values, row_slot)?;
+        let flag = bool_visibility_row_array(&visibility, flag_values, row_slot)?;
         let weight = float_visibility_row_values(weight_values, row_slot, corr_count)?;
         let weight_spectrum = weight_spectrum_values
-            .map(|values| {
-                float_visibility_channel_row_array(
-                    values,
-                    row_slot,
-                    row_chunk.len(),
-                    corr_count,
-                    channel_count,
-                )
-            })
+            .map(|values| float_visibility_channel_row_array(&visibility, values, row_slot))
             .transpose()?;
         let axis = channel_axes.get(selected_row.spw_id).ok_or_else(|| {
             format!(

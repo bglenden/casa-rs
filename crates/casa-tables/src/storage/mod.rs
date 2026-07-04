@@ -1372,7 +1372,7 @@ impl CompositeStorage {
         }
     }
 
-    pub(crate) fn load_array_column_rows_2d_channel_range_with_row_hint(
+    pub(crate) fn load_array_column_rows_2d_channel_range_arrays_with_row_hint(
         &self,
         table_path: &Path,
         column: &str,
@@ -1394,15 +1394,16 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self.load_plain_array_column_rows_2d_channel_range(
-                table_path,
-                &table_dat,
-                column,
-                selected_rows,
-                channel_start,
-                channel_count,
-                row_hint,
-            ),
+            TableDatResult::Plain(table_dat) => self
+                .load_plain_array_column_rows_2d_channel_range_arrays(
+                    table_path,
+                    &table_dat,
+                    column,
+                    selected_rows,
+                    channel_start,
+                    channel_count,
+                    row_hint,
+                ),
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 let snapshot = self.load_with_row_hint(table_path, row_hint)?;
                 let values = array_column_from_snapshot(&snapshot, column)?;
@@ -2549,7 +2550,7 @@ impl CompositeStorage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn load_plain_array_column_rows_2d_channel_range(
+    fn load_plain_array_column_rows_2d_channel_range_arrays(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -2634,7 +2635,7 @@ impl CompositeStorage {
 
         let values = match dm.type_name.as_str() {
             "TiledShapeStMan" => {
-                return tiled_stman::load_tiled_column_rows_2d_channel_range(
+                return tiled_stman::load_tiled_column_rows_2d_channel_range_arrays(
                     table_path,
                     dm,
                     &table_dat.table_desc.columns,

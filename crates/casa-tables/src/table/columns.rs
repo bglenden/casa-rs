@@ -892,7 +892,7 @@ impl Table {
             .collect()
     }
 
-    pub(crate) fn get_array_cells_2d_channel_range_owned_uncached(
+    pub(crate) fn get_array_cells_2d_channel_range_arrays_uncached(
         &self,
         column: &str,
         row_indices: &[usize],
@@ -908,7 +908,7 @@ impl Table {
                 });
             }
         }
-        if let Some(values) = self.inner.array_cells_2d_channel_range_owned_uncached(
+        if let Some(values) = self.inner.array_cells_2d_channel_range_arrays_uncached(
             row_indices,
             column,
             channel_start,
@@ -961,7 +961,7 @@ impl Table {
         )? {
             return Ok(values);
         }
-        let values = self.get_array_cells_2d_channel_range_owned_uncached(
+        let values = self.get_array_cells_2d_channel_range_arrays_uncached(
             column,
             row_indices,
             channel_start,
@@ -1835,26 +1835,6 @@ impl<'a> TableColumn<'a> {
     ) -> Result<Vec<Option<ArrayValue>>, TableError> {
         self.table
             .get_array_cells_owned_uncached(&self.column, row_indices)
-    }
-
-    /// Returns 2-D array channel slices for selected rows without populating the
-    /// table-level row cache.
-    ///
-    /// The returned arrays keep axis 0 intact and contain
-    /// `channel_start..channel_start + channel_count` from axis 1. The output
-    /// preserves the order of `row_indices`.
-    pub fn array_cells_2d_channel_range_owned_uncached(
-        &self,
-        row_indices: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
-        self.table.get_array_cells_2d_channel_range_owned_uncached(
-            &self.column,
-            row_indices,
-            channel_start,
-            channel_count,
-        )
     }
 
     /// Returns typed 2-D array channel slices for selected rows without

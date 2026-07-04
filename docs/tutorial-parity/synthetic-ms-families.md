@@ -276,6 +276,15 @@ Current local evidence on 2026-07-04:
   to about `20.7 s`; the retained path keeps full scalar-column selection and
   the remaining total-time gap is dominated by selected-row visibility payload
   reads plus about `7-10 s` of scalar selection/setup.
+- Pre-review selected-row I/O refactor kept the typed packed selected-channel
+  path as the only public channel-range table API, retained generic array
+  slicing as a private fallback, and moved imager row adaptation onto
+  `VisibilityBuffer` layout helpers. A release smoke probe on the same 100 GiB
+  MS read `1,000,000` rows with `8,192`-row blocks and explicit
+  `DATA,FLAG,WEIGHT,UVW` columns at `2.738 GiB/s` logical/physical throughput
+  with about `155 MB` peak RSS. The release imaging-sidecar variant with
+  `65,536`-row blocks measured `0.754 GiB/s`; scalar sidecar loading dominated
+  that run rather than the channelized typed selected-read path.
 - A prior 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with
   1024 MS channels on `/Volumes/GLENDENNING` generated `2,912,949` MAIN rows
   and `99,650,093,245` bytes in `123.561 s`: `806 MB/s` end-to-end and
