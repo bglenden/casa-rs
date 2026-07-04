@@ -13,12 +13,15 @@ struct CasarsMacApp: App {
     @StateObject private var store = WorkbenchStore.empty()
     @State private var didOpenStartupProject = false
     private let startupProjectPath: String?
+    private let startupImagerMeasurementSetPath: String?
     private let startupTutorialPackPath: String?
     private let startupTutorialSectionID: String?
     private let startupOpenSelectedDatasetExplorer: Bool
     private let startupImageRegionBoxes: [(Int, Int, Int, Int)]
     private let startupImageRegionExportPath: String?
     private let startupShowImagerProgressMockup: Bool
+    private let startupOpenImagerTask: Bool
+    private let startupRunActiveTask: Bool
 
     init() {
         let arguments = CommandLine.arguments
@@ -38,6 +41,7 @@ struct CasarsMacApp: App {
                 imageRegionBoxes: Self.regionBoxes(after: "--image-region-box", in: arguments),
                 imageRegionExportPath: Self.argumentValue(after: "--export-image-region-file", in: arguments),
                 showImagerProgressMockup: arguments.contains("--show-imager-progress-mockup"),
+                imagerMeasurementSetPath: Self.argumentValue(after: "--open-imager-ms", in: arguments),
                 projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
                     ?? Self.argumentValue(after: "--open-project", in: arguments)
             )
@@ -46,12 +50,15 @@ struct CasarsMacApp: App {
 
         startupProjectPath = Self.argumentValue(after: "--open-project", in: arguments)
             ?? Self.argumentValue(after: "--probe-project", in: arguments)
+        startupImagerMeasurementSetPath = Self.argumentValue(after: "--open-imager-ms", in: arguments)
         startupTutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments)
         startupTutorialSectionID = Self.argumentValue(after: "--open-tutorial-section", in: arguments)
         startupOpenSelectedDatasetExplorer = arguments.contains("--open-selected-dataset-explorer")
         startupImageRegionBoxes = Self.regionBoxes(after: "--image-region-box", in: arguments)
         startupImageRegionExportPath = Self.argumentValue(after: "--export-image-region-file", in: arguments)
         startupShowImagerProgressMockup = arguments.contains("--show-imager-progress-mockup")
+        startupOpenImagerTask = arguments.contains("--open-imager-task")
+        startupRunActiveTask = arguments.contains("--run-active-task")
     }
 
     var body: some Scene {
@@ -166,6 +173,7 @@ struct CasarsMacApp: App {
         imageRegionBoxes: [(Int, Int, Int, Int)],
         imageRegionExportPath: String?,
         showImagerProgressMockup: Bool,
+        imagerMeasurementSetPath: String?,
         projectPath: String?
     ) {
         let store = WorkbenchStore.empty()
@@ -175,6 +183,8 @@ struct CasarsMacApp: App {
             if let tutorialSectionID {
                 store.openTutorialSectionTask(tutorialSectionID)
             }
+        } else if let imagerMeasurementSetPath {
+            store.openExternalMeasurementSetForDirtyImaging(path: imagerMeasurementSetPath)
         } else if let projectPath {
             store.openProject(path: projectPath)
         }
@@ -185,6 +195,7 @@ struct CasarsMacApp: App {
             store.setGenericTaskToggle(argumentID: argumentID, value: value == "true")
         }
         if runActiveTask {
+            store.setGenericTaskConfirmation(taskID: store.state.activeTaskID, confirmed: true)
             store.runTask()
             Self.waitForTaskToFinish(store: store, timeoutSeconds: 120)
         }
@@ -325,6 +336,8 @@ struct CasarsMacApp: App {
             if let startupTutorialSectionID {
                 store.selectTutorialSection(startupTutorialSectionID)
             }
+        } else if let startupImagerMeasurementSetPath {
+            store.openExternalMeasurementSetForDirtyImaging(path: startupImagerMeasurementSetPath)
         } else if let startupProjectPath {
             store.openProject(path: startupProjectPath)
         }
@@ -335,6 +348,17 @@ struct CasarsMacApp: App {
         }
         if startupShowImagerProgressMockup {
             store.openImagerProgressMockup()
+        } else if startupOpenImagerTask && startupImagerMeasurementSetPath == nil {
+            store.openDirtyImagingTaskForSelectedDataset()
+            store.selectTask("imager")
+            store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+            if startupRunActiveTask {
+                store.runTask()
+            }
+        } else if startupRunActiveTask && startupImagerMeasurementSetPath != nil {
+            store.selectTask("imager")
+            store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+            store.runTask()
         }
     }
 

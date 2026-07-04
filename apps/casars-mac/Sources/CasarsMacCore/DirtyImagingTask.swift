@@ -25,6 +25,13 @@ public enum DirtyImagingDimensionSeverity: String, Equatable {
     case terrible
 }
 
+public enum DirtyImagingSpectralMode: String, CaseIterable, Codable, Equatable, Identifiable {
+    case mfs
+    case cube
+
+    public var id: String { rawValue }
+}
+
 public struct DirtyImagingDimensionAssessment: Equatable {
     public var value: Int
     public var severity: DirtyImagingDimensionSeverity
@@ -47,6 +54,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
     public var channelCount: String
     public var dataColumn: String
     public var correlation: String?
+    public var spectralMode: DirtyImagingSpectralMode
     public var imageSize: Int
     public var imageHeight: Int
     public var cellArcsec: Double
@@ -65,6 +73,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         channelCount: String = "",
         dataColumn: String,
         correlation: String? = nil,
+        spectralMode: DirtyImagingSpectralMode = .mfs,
         imageSize: Int = 512,
         imageHeight: Int? = nil,
         cellArcsec: Double = 1.0,
@@ -82,6 +91,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         self.channelCount = channelCount
         self.dataColumn = dataColumn
         self.correlation = correlation
+        self.spectralMode = spectralMode
         self.imageSize = imageSize
         self.imageHeight = imageHeight ?? imageSize
         self.cellArcsec = cellArcsec
@@ -99,6 +109,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
             "spw=\(selectedSpectralWindow ?? "all")",
             "data=\(dataColumn)",
             "plane=\(correlation ?? "Stokes I")",
+            "spectral-mode=\(spectralMode.rawValue)",
             "image=\(imageSize)x\(imageHeight) px",
             "cell=\(cellArcsec) arcsec",
             "weighting=\(weighting.rawValue)",
@@ -243,6 +254,14 @@ public struct DirtyImagingTaskRequest: Codable, Equatable {
                     ? nil
                     : parameters.dataColumn,
                 correlation: selectorToken(parameters.correlation),
+                spectralMode: parameters.spectralMode.rawValue,
+                cubeAxis: parameters.spectralMode == .cube
+                    ? ImagerCubeAxisPayload(interpolation: "nearest")
+                    : nil,
+                standardMfsAcceleration: parameters.spectralMode == .cube ? "cpu" : nil,
+                standardMfsInitialDirtyBackend: parameters.spectralMode == .cube ? "cpu" : nil,
+                standardMfsResidualBackend: parameters.spectralMode == .cube ? "cpu" : nil,
+                standardMfsMetalGroupedInputCache: parameters.spectralMode == .cube ? false : nil,
                 weighting: ImagerWeightingPayload(weighting: parameters.weighting),
                 niter: 0,
                 dirtyOnly: parameters.dirtyOnly,
@@ -892,7 +911,7 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
 
         do {
             try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-            try request.encodedImagerJSON().write(to: requestURL, options: .atomic)
+            try writeSidecarData(try request.encodedImagerJSON(), to: requestURL)
 
             let protocolOutput = try runProcess(["--protocol-info"], execution: execution)
             if execution.isCancelled {
@@ -935,8 +954,8 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
                     eventHandler(.progress(snapshot))
                 }
             }
-            try output.stdout.data(using: .utf8)?.write(to: stdoutURL, options: .atomic)
-            try output.stderr.data(using: .utf8)?.write(to: stderrURL, options: .atomic)
+            try writeSidecarText(output.stdout, to: stdoutURL)
+            try writeSidecarText(output.stderr, to: stderrURL)
 
             if execution.isCancelled {
                 eventHandler(.cancelled(cancelledFailure(requestURL: requestURL, stdoutURL: stdoutURL, stderrURL: stderrURL)))
@@ -973,6 +992,22 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
                     stderrPath: stderrURL.path
                 )))
             }
+        }
+    }
+
+    private func writeSidecarText(_ text: String, to url: URL) throws {
+        try writeSidecarData(Data(text.utf8), to: url)
+    }
+
+    private func writeSidecarData(_ data: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            try data.write(to: url, options: [])
         }
     }
 
@@ -1148,6 +1183,12 @@ private struct ImagerRunRequestPayload: Encodable {
     var channelCount: Int?
     var dataColumn: String?
     var correlation: String?
+    var spectralMode: String
+    var cubeAxis: ImagerCubeAxisPayload?
+    var standardMfsAcceleration: String?
+    var standardMfsInitialDirtyBackend: String?
+    var standardMfsResidualBackend: String?
+    var standardMfsMetalGroupedInputCache: Bool?
     var weighting: ImagerWeightingPayload
     var niter: Int
     var dirtyOnly: Bool
@@ -1166,12 +1207,22 @@ private struct ImagerRunRequestPayload: Encodable {
         case channelCount = "channel_count"
         case dataColumn = "data_column"
         case correlation
+        case spectralMode = "spectral_mode"
+        case cubeAxis = "cube_axis"
+        case standardMfsAcceleration = "standard_mfs_acceleration"
+        case standardMfsInitialDirtyBackend = "standard_mfs_initial_dirty_backend"
+        case standardMfsResidualBackend = "standard_mfs_residual_backend"
+        case standardMfsMetalGroupedInputCache = "standard_mfs_metal_grouped_input_cache"
         case weighting
         case niter
         case dirtyOnly = "dirty_only"
         case writePreviewPngs = "write_preview_pngs"
         case progress
     }
+}
+
+private struct ImagerCubeAxisPayload: Encodable {
+    var interpolation: String
 }
 
 private struct ImagerProgressOptionsPayload: Encodable {

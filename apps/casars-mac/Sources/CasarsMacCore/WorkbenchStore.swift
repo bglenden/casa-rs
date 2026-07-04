@@ -699,6 +699,60 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+
+    public func openExternalMeasurementSetForDirtyImaging(path: String) {
+        let interfaceFontSize = state.interfaceFontSize
+        let taskCatalog = state.taskCatalog
+        cleanupTemporaryDemoProject()
+        let standardizedPath = Self.standardizedDatasetPath(path)
+        let url = URL(fileURLWithPath: standardizedPath)
+        let rootPath = url.deletingLastPathComponent().path
+        let dataset = DatasetSummary(
+            id: standardizedPath,
+            name: url.lastPathComponent,
+            path: standardizedPath,
+            kind: .measurementSet,
+            size: "external MeasurementSet",
+            units: "Jy, Hz, seconds",
+            columns: ["UVW", "DATA", "FLAG"],
+            dataColumns: ["DATA"],
+            notes: "Opened directly as an imager input without probing the full project tree.",
+            diagnostics: [
+                "Project probe skipped for launch; task request uses backend defaults for field/SPW, phase-center field 0, and a bounded 64-plane cube slab."
+            ]
+        )
+        state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+        state.taskCatalog = taskCatalog
+        state.project = ProjectFixture(
+            name: url.deletingPathExtension().lastPathComponent,
+            rootPath: rootPath,
+            datasets: [dataset],
+            source: .probed
+        )
+        state.selectedDatasetID = dataset.id
+        state.dockMode = .datasets
+        state.leftDockCollapsed = false
+        state.inspectorCollapsed = false
+        openDirtyImagingTaskForSelectedDataset()
+        state.dirtyImagingTaskParameters?.spectralMode = .cube
+        state.dirtyImagingTaskParameters?.phaseCenterField = "0"
+        state.dirtyImagingTaskParameters?.channelStart = "0"
+        state.dirtyImagingTaskParameters?.channelCount = "64"
+        state.dirtyImagingTaskParameters?.runReason =
+            "Long-running cube imaging progress review from direct MeasurementSet launch."
+        state.taskRun.requestSummary = state.dirtyImagingTaskParameters?.requestSummary
+        state.history.append(
+            ProcessingHistoryEvent(
+                id: "hist-project-open-\(state.history.count + 1)",
+                timestamp: "direct",
+                title: "MeasurementSet opened for imaging",
+                reason: "Opened a direct MeasurementSet path for a long-running imager progress run.",
+                affectedPaths: [standardizedPath],
+                approval: "user"
+            )
+        )
+    }
+
     public func openTutorialPack(path: String) {
         let interfaceFontSize = state.interfaceFontSize
         let taskCatalog = state.taskCatalog

@@ -140,21 +140,26 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
         )
     }
 
-    static func live(event: ImagerProgressEventPayload, runID: String?, state: TaskRunState) -> ImagerProgressSnapshot {
+    static func live(
+        event: ImagerProgressEventPayload,
+        runID: String?,
+        state: TaskRunState,
+        previous: ImagerProgressSnapshot? = nil
+    ) -> ImagerProgressSnapshot {
         ImagerProgressSnapshot(
             source: "casars-imager",
-            runID: runID,
+            runID: runID ?? previous?.runID,
             state: state,
             phase: event.phase,
             summary: event.summary,
-            workEstimate: event.work.map(ImagingWorkEstimate.init(payload:)) ?? ImagingWorkEstimate(
+            workEstimate: event.work.map(ImagingWorkEstimate.init(payload:)) ?? previous?.workEstimate ?? ImagingWorkEstimate(
                 completedUnits: 0,
                 totalUnits: 1,
                 unitLabel: "scheduled units",
                 basis: "no work estimate in progress event",
                 confidence: "unknown"
             ),
-            measurementSetWindow: event.msRead.map(MeasurementSetReadWindowProgress.init(payload:)) ?? MeasurementSetReadWindowProgress(
+            measurementSetWindow: event.msRead.map(MeasurementSetReadWindowProgress.init(payload:)) ?? previous?.measurementSetWindow ?? MeasurementSetReadWindowProgress(
                 totalRows: 0,
                 totalChannels: 0,
                 activeRowStart: 0,
@@ -162,20 +167,20 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 activeChannelStart: 0,
                 activeChannelEnd: 0
             ),
-            outputCube: event.outputCube.map(OutputCubeProgress.init(payload:)) ?? OutputCubeProgress(
+            outputCube: event.outputCube.map(OutputCubeProgress.init(payload:)) ?? previous?.outputCube ?? OutputCubeProgress(
                 xPixels: 1,
                 yPixels: 1,
                 zPlanes: 1,
                 activePlaneStart: 0,
                 activePlaneEnd: 0
             ),
-            uvCoverage: event.uvCoverage.map(UVCoverageProgress.init(payload:)) ?? UVCoverageProgress(
+            uvCoverage: event.uvCoverage.map(UVCoverageProgress.init(payload:)) ?? previous?.uvCoverage ?? UVCoverageProgress(
                 uExtentKilolambda: 0,
                 vExtentKilolambda: 0,
                 measured: [],
                 conjugate: []
             ),
-            deconvolution: event.deconvolution.map(ImagingDeconvolutionProgress.init(payload:)) ?? ImagingDeconvolutionProgress(
+            deconvolution: event.deconvolution.map(ImagingDeconvolutionProgress.init(payload:)) ?? previous?.deconvolution ?? ImagingDeconvolutionProgress(
                 phase: event.phase,
                 majorCycle: 0,
                 majorCycleLimit: 0,
@@ -185,7 +190,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 peakResidualMilliJyPerBeam: 0,
                 targetResidualMilliJyPerBeam: 0
             ),
-            runtime: event.runtime.map(ImagingRuntimeProgress.init(payload:)) ?? ImagingRuntimeProgress(
+            runtime: event.runtime.map(ImagingRuntimeProgress.init(payload:)) ?? previous?.runtime ?? ImagingRuntimeProgress(
                 activeThreads: 0,
                 totalThreads: 0,
                 gpuActive: false,
@@ -713,6 +718,7 @@ enum ImagerProgressStderrRecord: Equatable {
 
 struct ImagerProgressStderrParser {
     private var pending = ""
+    private var lastProgress: ImagerProgressSnapshot?
 
     mutating func append(_ text: String, runID: String?, state: TaskRunState) -> [ImagerProgressStderrRecord] {
         pending.append(text)
@@ -732,7 +738,7 @@ struct ImagerProgressStderrParser {
         return [record(for: line, runID: runID, state: state)]
     }
 
-    private func record(for rawLine: String, runID: String?, state: TaskRunState) -> ImagerProgressStderrRecord {
+    private mutating func record(for rawLine: String, runID: String?, state: TaskRunState) -> ImagerProgressStderrRecord {
         let line = rawLine.trimmingCharacters(in: .newlines)
         guard line.hasPrefix(imagerProgressStderrPrefix) else {
             return line.isEmpty ? .diagnostic("") : .diagnostic(line)
@@ -740,7 +746,14 @@ struct ImagerProgressStderrParser {
         let json = String(line.dropFirst(imagerProgressStderrPrefix.count))
         do {
             let payload = try JSONDecoder().decode(ImagerProgressEventPayload.self, from: Data(json.utf8))
-            return .progress(ImagerProgressSnapshot.live(event: payload, runID: runID, state: state))
+            let snapshot = ImagerProgressSnapshot.live(
+                event: payload,
+                runID: runID,
+                state: state,
+                previous: lastProgress
+            )
+            lastProgress = snapshot
+            return .progress(snapshot)
         } catch {
             return .diagnostic("Malformed imager progress event: \(error)")
         }
