@@ -15,7 +15,7 @@ use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
 };
 use casa_tables::{
-    ColumnOverrides, GeneratedScalarColumn, StreamedTiledPrimitiveColumn,
+    ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun, StreamedTiledPrimitiveColumn,
     StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
     StreamingTiledShapeComplex32Writer, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
@@ -2112,7 +2112,7 @@ fn populate_main_rows(
         request.observation_mode,
         all_flag_rows,
     )
-    .into_column_overrides();
+    .into_column_overrides()?;
     timing.scalar_column += scalar_started.elapsed();
     Ok(MainRowsReport {
         nonzero_visibility_count,
@@ -2734,13 +2734,13 @@ impl MainScalarColumnOverrides {
         }
     }
 
-    fn into_column_overrides(self) -> ColumnOverrides {
+    fn into_column_overrides(self) -> MsResult<ColumnOverrides> {
         let mut overrides = ColumnOverrides::for_row_count(self.row_count);
         self.insert_deferred_tiled_columns(&mut overrides);
         self.insert_baseline_columns(&mut overrides);
-        self.insert_sample_columns(&mut overrides);
+        self.insert_sample_columns(&mut overrides)?;
         self.insert_constant_columns(&mut overrides);
-        overrides
+        Ok(overrides)
     }
 
     fn insert_deferred_tiled_columns(&self, overrides: &mut ColumnOverrides) {
@@ -2773,47 +2773,37 @@ impl MainScalarColumnOverrides {
         );
     }
 
-    fn insert_sample_columns(&self, overrides: &mut ColumnOverrides) {
+    fn insert_sample_columns(&self, overrides: &mut ColumnOverrides) -> MsResult<()> {
         let row_count = self.row_count;
-        let baseline_count = self.baseline_count;
-        let sample_times = Arc::clone(&self.sample_times);
+        let time_runs =
+            self.sample_runs(|sample| Some(ScalarValue::Float64(self.sample_times[sample])));
         overrides.insert_generated_scalar(
             "TIME",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                Some(ScalarValue::Float64(sample_times[row / baseline_count]))
-            }),
+            GeneratedScalarColumn::from_scalar_runs(row_count, time_runs.clone())?,
         );
 
-        let sample_times = Arc::clone(&self.sample_times);
         overrides.insert_generated_scalar(
             "TIME_CENTROID",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                Some(ScalarValue::Float64(sample_times[row / baseline_count]))
-            }),
+            GeneratedScalarColumn::from_scalar_runs(row_count, time_runs)?,
         );
 
         let field_count = self.field_count;
+        let field_runs =
+            self.sample_runs(|sample| Some(ScalarValue::Int32((sample % field_count) as i32)));
         overrides.insert_generated_scalar(
             "FIELD_ID",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                Some(ScalarValue::Int32(
-                    (row / baseline_count % field_count) as i32,
-                ))
-            }),
+            GeneratedScalarColumn::from_scalar_runs(row_count, field_runs)?,
         );
 
-        let observation_mode = self.observation_mode;
-        overrides.insert_generated_scalar(
-            "SCAN_NUMBER",
-            GeneratedScalarColumn::new(row_count, move |row| {
-                let scan = if observation_mode == SyntheticObservationMode::TotalPower {
-                    row / baseline_count + 1
-                } else {
-                    1
-                };
-                Some(ScalarValue::Int32(scan as i32))
-            }),
-        );
+        let scan_column = if self.observation_mode == SyntheticObservationMode::TotalPower {
+            GeneratedScalarColumn::from_scalar_runs(
+                row_count,
+                self.sample_runs(|sample| Some(ScalarValue::Int32(sample as i32 + 1))),
+            )?
+        } else {
+            GeneratedScalarColumn::constant(row_count, Some(ScalarValue::Int32(1)))
+        };
+        overrides.insert_generated_scalar("SCAN_NUMBER", scan_column);
 
         let flag_rows = Arc::clone(&self.flag_rows);
         overrides.insert_generated_scalar(
@@ -2822,6 +2812,7 @@ impl MainScalarColumnOverrides {
                 Some(ScalarValue::Bool(flag_rows[row]))
             }),
         );
+        Ok(())
     }
 
     fn insert_constant_columns(&self, overrides: &mut ColumnOverrides) {
@@ -2844,7 +2835,7 @@ impl MainScalarColumnOverrides {
     ) {
         overrides.insert_generated_scalar(
             column,
-            GeneratedScalarColumn::new(self.row_count, move |_| Some(ScalarValue::Int32(value))),
+            GeneratedScalarColumn::constant(self.row_count, Some(ScalarValue::Int32(value))),
         );
     }
 
@@ -2856,8 +2847,28 @@ impl MainScalarColumnOverrides {
     ) {
         overrides.insert_generated_scalar(
             column,
-            GeneratedScalarColumn::new(self.row_count, move |_| Some(ScalarValue::Float64(value))),
+            GeneratedScalarColumn::constant(self.row_count, Some(ScalarValue::Float64(value))),
         );
+    }
+
+    fn sample_runs(
+        &self,
+        mut value_for_sample: impl FnMut(usize) -> Option<ScalarValue>,
+    ) -> Vec<GeneratedScalarValueRun> {
+        let sample_count = self.sample_times.len();
+        let mut runs = Vec::with_capacity(sample_count);
+        let mut last_value: Option<ScalarValue> = None;
+        for sample in 0..sample_count {
+            let value = value_for_sample(sample);
+            if sample == 0 || value != last_value {
+                runs.push(GeneratedScalarValueRun::new(
+                    sample * self.baseline_count,
+                    value.clone(),
+                ));
+                last_value = value;
+            }
+        }
+        runs
     }
 }
 

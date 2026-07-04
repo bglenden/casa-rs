@@ -1,8 +1,8 @@
 # Synthetic MeasurementSet Families
 
 Truth class: implementation note
-Last reality check: 2026-07-03
-Verification: `just verify`; `just docs-check`; `PYTHONPATH=crates/casars-python/python pytest -q crates/casars-python/python/tests/test_simobserve.py`; `python3 tools/perf/imager/test_bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py`; targeted `swift test --package-path apps/casars-mac --filter WorkbenchStoreTests/testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON --filter WorkbenchStoreTests/testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun --filter WorkbenchStoreTests/testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure`
+Last reality check: 2026-07-04
+Verification: final 2026-07-04 wave gate: `just verify`; earlier wave gates: `just verify`; `just docs-check`; `PYTHONPATH=crates/casars-python/python pytest -q crates/casars-python/python/tests/test_simobserve.py`; `python3 tools/perf/imager/test_bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py`; targeted `swift test --package-path apps/casars-mac --filter WorkbenchStoreTests/testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON --filter WorkbenchStoreTests/testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun --filter WorkbenchStoreTests/testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure`; 2026-07-04 read-path gate: `just quick`; targeted 2026-07-04 read-path checks: `cargo fmt --all -- --check`; `cargo test -p casa-tables lazy_disk_open_reads_required_scalar_columns_owned_without_materializing_rows --lib -- --nocapture`; `cargo test -p casa-ms visibility_buffer::tests::select_visibility_rows_filters_fields_ddids_and_tracks_time --lib -- --nocapture`; `cargo test -p casars-imager read_columnar_prepared_source_uses_visibility_buffer_and_geometry_rows --lib -- --nocapture`; `cargo test -p casars-imager production_visibility_column_reads_are_source_stream_centralized --lib -- --nocapture`; `cargo clippy -p casa-tables --lib -- -D warnings`; `cargo clippy -p casa-ms --lib -- -D warnings`; `cargo clippy -p casars-imager --lib -- -D warnings`
 
 Native `simobserve` is the primary generator for synthetic MeasurementSets used
 to exercise single-field, mosaic, MFS, continuum, spectral cube, cubedata, and
@@ -237,20 +237,45 @@ Current local evidence on 2026-07-04:
 
 - A 1 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with 64 MS
   channels, 16 image channels, 7 pointings, and 4 correlations measured
-  `708 MB/s` by reported simulator time, with about `1251 MB/s` through the
-  streamed MAIN-column write path. The 500 MB/s floor is met, and the remaining
-  gap to streamed write bandwidth is dominated by prediction, enqueue, and
-  table-save/header stages rather than row materialization. Manifest:
+  `1,253 MB/s` by reported simulator time, with about `2,899 MB/s` through the
+  streamed MAIN-column write path. The 500 MB/s floor is met, and the
+  run-based `IncrementalStMan` scalar override path reduced save overhead enough
+  that the remaining gap to streamed write bandwidth is dominated by prediction,
+  enqueue, and tiled DATA write bandwidth rather than row materialization.
+  Manifest:
   `target/synthetic-ms-families/analytic-1g-vla-mosaic-current.synthetic-family.json`.
 - A 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with 64 MS
   channels, 16 image channels, 7 pointings, and 4 correlations on
-  `/Volumes/GLENDENNING` generated `46,603,674` MAIN rows and `100,582,541,641`
-  bytes in `169.287 s`: `594 MB/s` end-to-end and `868 MB/s` through the
+  `/Volumes/GLENDENNING` generated `46,603,674` MAIN rows and `100,582,228,345`
+  bytes in `131.183 s`: `767 MB/s` end-to-end and `1088 MB/s` through the
   streamed MAIN-column write path. This reruns the high-row-count 64-channel
   case that previously died after producing an invalid partial 84 GiB MS; the
   generated-scalar MAIN path leaves `main_row_add_millis=0` and
-  `scalar_column_millis=17`. Manifest:
+  `scalar_column_millis=17`, and run-based ISM scalar generation lowered
+  `save_millis` from `31.937 s` to `16.758 s`. Manifest:
   `/Volumes/GLENDENNING/casa-rs-benchmarks/synthetic-ms-families/analytic-100g-vla-mosaic.synthetic-family.json`.
+- The same 100 GiB MS is readable through the bounded visibility path. After
+  fixing `ms-read-probe` setup to avoid single-cell full-column materialization,
+  a 1,000,000-row visibility read (`DATA`, `FLAG`, `WEIGHT`, `UVW`, all 64
+  channels, 8,192-row blocks) completed in `1.465 s`, reporting `1.49 GiB/s`
+  logical/physical read throughput and about `161 MB` peak RSS. The actual
+  imager read probe over `FIELD_ID=0` reads `5,293,848` active rows through the
+  bounded path. Before read-path cleanup this measured `33.48 s` total /
+  `26.79 s` read time (`362 MiB/s` total, `452 MiB/s` read). After carrying
+  `ANTENNA1/2` in selected-row metadata, parallelizing required scalar loads
+  across independent data managers, and honoring `--imaging-row-block-rows`,
+  the best row-shaped 2026-07-04 local probe used `393,216` rows/block and
+  measured `28.55 s` total / `21.12 s` read time (`424 MiB/s` total,
+  `574 MiB/s` read) while still adapting every row back into `Array2`
+  payloads. The current reusable columnar-buffer probe avoids that legacy row
+  adaptation, reads `11.56 GiB` of logical buffer payload with `1,048,576`
+  rows/block, and measures `28.28 s` total / `21.01 s` read time
+  (`419 MiB/s` total, `563 MiB/s` read). The 2,097,152-row block variant was
+  slightly slower (`413 MiB/s` total, `552 MiB/s` read). A selected-row-only
+  scalar loading experiment was rejected because it increased `select_main_rows`
+  to about `20.7 s`; the retained path keeps full scalar-column selection and
+  the remaining total-time gap is dominated by selected-row visibility payload
+  reads plus about `7-10 s` of scalar selection/setup.
 - A prior 100 GiB analytic synthetic VLA-D-style/Q-band mosaic family run with
   1024 MS channels on `/Volumes/GLENDENNING` generated `2,912,949` MAIN rows
   and `99,650,093,245` bytes in `123.561 s`: `806 MB/s` end-to-end and

@@ -35,7 +35,10 @@ use ndarray::{Axis, Slice};
 use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
-use crate::table::{ColumnOverride, ColumnOverrides, GeneratedScalarColumn};
+use crate::table::{
+    ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
+    SelectedArray2DCells,
+};
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
@@ -64,6 +67,13 @@ use self::table_control::{
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
 pub(crate) const TABLE_INFO_FILE: &str = "table.info";
+
+struct SelectedArray2DChannelRead<'a> {
+    column: &'a str,
+    selected_rows: &'a [usize],
+    channel_start: usize,
+    channel_count: usize,
+}
 
 fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> RecordValue {
     RecordValue::new(
@@ -313,11 +323,18 @@ pub(crate) enum ScalarColumnSource<'a> {
     Generated(&'a GeneratedScalarColumn),
 }
 
-impl ScalarColumnSource<'_> {
+impl<'a> ScalarColumnSource<'a> {
     pub(crate) fn value(&self, row: usize) -> Option<ScalarValue> {
         match self {
             Self::Materialized(values) => values.get(row).cloned().unwrap_or(None),
             Self::Generated(column) => column.value(row),
+        }
+    }
+
+    pub(crate) fn scalar_runs(&self) -> Option<&'a [GeneratedScalarValueRun]> {
+        match self {
+            Self::Materialized(_) => None,
+            Self::Generated(column) => column.scalar_runs(),
         }
     }
 }
@@ -327,7 +344,7 @@ pub(crate) struct ScalarColumnSources<'a> {
     columns: Vec<ScalarColumnSource<'a>>,
 }
 
-impl ScalarColumnSources<'_> {
+impl<'a> ScalarColumnSources<'a> {
     pub(crate) fn row_count(&self) -> usize {
         self.row_count
     }
@@ -338,6 +355,10 @@ impl ScalarColumnSources<'_> {
 
     pub(crate) fn value(&self, column: usize, row: usize) -> Option<ScalarValue> {
         self.columns[column].value(row)
+    }
+
+    pub(crate) fn scalar_runs(&self, column: usize) -> Option<&'a [GeneratedScalarValueRun]> {
+        self.columns[column].scalar_runs()
     }
 }
 
@@ -1403,6 +1424,43 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn load_array_column_rows_2d_channel_range_typed_with_row_hint(
+        &self,
+        table_path: &Path,
+        column: &str,
+        selected_rows: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+        _row_hint: Option<u64>,
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        if selected_rows.is_empty() {
+            return Ok(None);
+        }
+
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => {
+                let request = SelectedArray2DChannelRead {
+                    column,
+                    selected_rows,
+                    channel_start,
+                    channel_count,
+                };
+                self.load_plain_array_column_rows_2d_channel_range_typed(
+                    table_path, &table_dat, request,
+                )
+            }
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => Ok(None),
+        }
+    }
+
     /// Load a PlainTable from table.dat contents and data files.
     ///
     /// Uses two-pass loading:
@@ -1943,10 +2001,7 @@ impl CompositeStorage {
             return required_scalar_columns_from_optional_snapshot(&scalar_columns);
         }
 
-        let mut columns = HashMap::new();
-
         for dm in &table_dat.column_set.data_managers {
-            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
             let all_bound_cols: Vec<(usize, &_)> = table_dat
                 .column_set
                 .columns
@@ -1965,67 +2020,123 @@ impl CompositeStorage {
             if bound_cols.is_empty() {
                 continue;
             }
+            if matches!(
+                dm.type_name.as_str(),
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+            ) && bound_cols
+                .iter()
+                .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
+            {
+                let scalar_columns = self.load_plain_scalar_columns_filtered(
+                    table_path,
+                    table_dat,
+                    row_hint,
+                    Some(requested_columns),
+                )?;
+                return required_scalar_columns_from_optional_snapshot(&scalar_columns);
+            }
+        }
 
-            match dm.type_name.as_str() {
-                "StManAipsIO" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
-                    }
-                    collect_stman_required_scalar_columns(
-                        &data_path,
-                        &table_dat.table_desc.columns,
-                        &all_bound_cols,
-                        requested_columns,
-                        nrrow,
-                        ByteOrder::BigEndian,
-                        &mut columns,
-                    )?;
+        let columns_by_manager = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for dm in &table_dat.column_set.data_managers {
+                let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+                let all_bound_cols: Vec<(usize, &_)> = table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pc)| dm.seq_nr == pc.dm_seq_nr)
+                    .collect();
+                if all_bound_cols.is_empty() {
+                    continue;
                 }
-                "StandardStMan" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
-                    }
-                    collect_ssm_required_scalar_columns(
-                        &data_path,
-                        &dm.data,
-                        &table_dat.table_desc.columns,
-                        &all_bound_cols,
-                        requested_columns,
-                        nrrow,
-                        &mut columns,
-                    )?;
+                let bound_cols: Vec<(usize, &_)> = all_bound_cols
+                    .iter()
+                    .copied()
+                    .filter(|(_, pc)| requested_columns.contains(pc.original_name.as_str()))
+                    .collect();
+                if bound_cols.is_empty() {
+                    continue;
                 }
-                "IncrementalStMan" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
+
+                let dm_type = dm.type_name.clone();
+                let dm_data = dm.data.clone();
+                let table_columns = &table_dat.table_desc.columns;
+                handles.push(scope.spawn(move || {
+                    let mut columns = HashMap::new();
+                    match dm_type.as_str() {
+                        "StManAipsIO" => {
+                            if !data_path.is_file() {
+                                return Err(StorageError::MissingDataFile(data_path));
+                            }
+                            collect_stman_required_scalar_columns(
+                                &data_path,
+                                table_columns,
+                                &all_bound_cols,
+                                requested_columns,
+                                nrrow,
+                                ByteOrder::BigEndian,
+                                &mut columns,
+                            )?;
+                        }
+                        "StandardStMan" => {
+                            if !data_path.is_file() {
+                                return Err(StorageError::MissingDataFile(data_path));
+                            }
+                            collect_ssm_required_scalar_columns(
+                                &data_path,
+                                &dm_data,
+                                table_columns,
+                                &all_bound_cols,
+                                requested_columns,
+                                nrrow,
+                                &mut columns,
+                            )?;
+                        }
+                        "IncrementalStMan" => {
+                            if !data_path.is_file() {
+                                return Err(StorageError::MissingDataFile(data_path));
+                            }
+                            collect_ism_required_scalar_columns(
+                                &data_path,
+                                &dm_data,
+                                table_columns,
+                                &all_bound_cols,
+                                requested_columns,
+                                all_bound_cols.len(),
+                                nrrow,
+                                &mut columns,
+                            )?;
+                        }
+                        "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan"
+                        | "TiledDataStMan" => {}
+                        other => {
+                            return Err(StorageError::UnsupportedDataManager(other.to_string()));
+                        }
                     }
-                    collect_ism_required_scalar_columns(
-                        &data_path,
-                        &dm.data,
-                        &table_dat.table_desc.columns,
-                        &all_bound_cols,
-                        requested_columns,
-                        all_bound_cols.len(),
-                        nrrow,
-                        &mut columns,
-                    )?;
-                }
-                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
-                    if bound_cols
-                        .iter()
-                        .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
-                    {
-                        let scalar_columns = self.load_plain_scalar_columns_filtered(
-                            table_path,
-                            table_dat,
-                            row_hint,
-                            Some(requested_columns),
-                        )?;
-                        return required_scalar_columns_from_optional_snapshot(&scalar_columns);
-                    }
-                }
-                other => {
-                    return Err(StorageError::UnsupportedDataManager(other.to_string()));
+                    Ok::<_, StorageError>(columns)
+                }));
+            }
+
+            let mut columns_by_manager = Vec::with_capacity(handles.len());
+            for handle in handles {
+                columns_by_manager.push(handle.join().map_err(|_| {
+                    StorageError::FormatMismatch(
+                        "required scalar column loader thread panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<_, StorageError>(columns_by_manager)
+        })?;
+
+        let mut columns = HashMap::new();
+        for manager_columns in columns_by_manager {
+            for (name, values) in manager_columns {
+                if columns.insert(name.clone(), values).is_some() {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "required scalar column '{name}' loaded more than once"
+                    )));
                 }
             }
         }
@@ -2591,6 +2702,81 @@ impl CompositeStorage {
                     .transpose()
             })
             .collect()
+    }
+
+    fn load_plain_array_column_rows_2d_channel_range_typed(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        request: SelectedArray2DChannelRead<'_>,
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        let column = request.column;
+        let desc_idx = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("array column '{column}' not found"))
+            })?;
+        let col_desc = &table_dat.table_desc.columns[desc_idx];
+        if !col_desc.is_array {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{column}' is not an array column"
+            )));
+        }
+
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Ok(None);
+        }
+
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        let bound_cols: Vec<(usize, &_)> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            .collect();
+
+        match dm.type_name.as_str() {
+            "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_2d_channel_range_typed(
+                table_path,
+                dm,
+                &table_dat.table_desc.columns,
+                &bound_cols,
+                desc_idx,
+                request.selected_rows,
+                request.channel_start,
+                request.channel_count,
+            ),
+            _ => Ok(None),
+        }
     }
 
     fn load_plain_table_metadata(

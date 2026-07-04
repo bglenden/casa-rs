@@ -8,7 +8,7 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::schema::{ColumnType, TableSchema};
 use crate::storage::{CompositeStorage, RequiredScalarColumnData, StorageProfiler};
-use crate::table::TableError;
+use crate::table::{SelectedArray2DCells, TableError};
 
 type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
 type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
@@ -464,6 +464,49 @@ impl TableImpl {
                     channel_start,
                     channel_count,
                     values.len()
+                )),
+            );
+        }
+        Ok(values)
+    }
+
+    fn load_array_column_rows_2d_channel_range_typed_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
+        let mut profiler = StorageProfiler::start(format!(
+            "table_impl::load_array_column_rows_2d_channel_range_typed_now path={} column={column}",
+            source.path.display()
+        ));
+        let storage = CompositeStorage;
+        let values = storage
+            .load_array_column_rows_2d_channel_range_typed_with_row_hint(
+                &source.path,
+                column,
+                row_indices,
+                channel_start,
+                channel_count,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load typed selected channel range for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "storage_load_complete",
+                Some(format!(
+                    "row_count_hint={} requested_rows={} channel_start={} channel_count={} typed={}",
+                    source.row_count_hint,
+                    row_indices.len(),
+                    channel_start,
+                    channel_count,
+                    values.is_some()
                 )),
             );
         }
@@ -1223,6 +1266,33 @@ impl TableImpl {
         }
 
         Ok(Some(values))
+    }
+
+    pub(crate) fn array_cells_2d_channel_range_typed_uncached(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
+        if self.loaded_rows.get().is_some()
+            || self.pending_array_cells.by_column.contains_key(column)
+            || self.lazy_rows.is_none()
+        {
+            return Ok(None);
+        }
+
+        let source = self
+            .lazy_rows
+            .as_ref()
+            .expect("lazy rows checked before typed selected-row load");
+        Self::load_array_column_rows_2d_channel_range_typed_now(
+            source,
+            column,
+            row_indices,
+            channel_start,
+            channel_count,
+        )
     }
 
     pub(crate) fn row_mut(
