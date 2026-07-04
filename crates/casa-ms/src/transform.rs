@@ -8,12 +8,12 @@
 //! preserving the standard subtables and updating spectral-window channel
 //! metadata.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use casa_tables::{ColumnType, Table, TableError, TableOptions};
+use casa_tables::{ColumnOverrides, ColumnType, Table, TableError, TableOptions};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
 use schemars::JsonSchema;
@@ -520,14 +520,14 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     );
 
     let stage_started_at = Instant::now();
-    output_column_overrides.insert(
+    output_column_overrides.insert_values(
         VisibilityDataColumn::Data.name().to_string(),
         transformed_data
             .into_iter()
             .map(|value| Some(Value::Array(value)))
             .collect(),
     );
-    output_column_overrides.insert(
+    output_column_overrides.insert_values(
         "FLAG".to_string(),
         transformed_flags
             .into_iter()
@@ -535,12 +535,12 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             .collect(),
     );
     if let Some(transformed_weight_spectrum) = transformed_weight_spectrum {
-        output_column_overrides.insert(
+        output_column_overrides.insert_values(
             "WEIGHT_SPECTRUM".to_string(),
             transformed_weight_spectrum.into_iter().collect(),
         );
     }
-    output_column_overrides.insert(
+    output_column_overrides.insert_values(
         "DATA_DESC_ID".to_string(),
         selected_ddids_for_metadata
             .iter()
@@ -559,7 +559,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             })
             .collect::<Result<Vec<_>, _>>()?,
     );
-    output_column_overrides.insert(
+    output_column_overrides.insert_values(
         "FIELD_ID".to_string(),
         selected_field_ids_for_metadata
             .iter()
@@ -655,7 +655,7 @@ fn gather_selected_main_column_overrides(
     table: &Table,
     selected_rows: &[usize],
     output_path: &Path,
-) -> Result<HashMap<String, Vec<Option<Value>>>, MsTransformError> {
+) -> Result<ColumnOverrides, MsTransformError> {
     let schema = table
         .schema()
         .ok_or_else(|| MsTransformError::MutateMeasurementSet {
@@ -664,7 +664,7 @@ fn gather_selected_main_column_overrides(
                 "MAIN table is missing schema metadata".to_string(),
             )),
         })?;
-    let mut columns = HashMap::new();
+    let mut columns = ColumnOverrides::for_row_count(selected_rows.len());
     for column in schema.columns() {
         let column_started_at = Instant::now();
         let name = column.name();
@@ -680,7 +680,7 @@ fn gather_selected_main_column_overrides(
                         path: output_path.display().to_string(),
                         source: Box::new(source),
                     })?;
-                columns.insert(
+                columns.insert_values(
                     name.to_string(),
                     values
                         .into_iter()
@@ -696,7 +696,7 @@ fn gather_selected_main_column_overrides(
                         path: output_path.display().to_string(),
                         source: Box::new(source),
                     })?;
-                columns.insert(
+                columns.insert_values(
                     name.to_string(),
                     values
                         .into_iter()
@@ -719,7 +719,7 @@ fn gather_selected_main_column_overrides(
                             })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                columns.insert(name.to_string(), values);
+                columns.insert_values(name.to_string(), values);
             }
         }
         maybe_log_transform_progress(

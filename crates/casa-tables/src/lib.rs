@@ -272,9 +272,10 @@ pub use storage::{
     table_cache_budget_bytes,
 };
 pub use table::{
-    ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, DataManagerKind, EndianFormat,
-    QueryResult, RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange, Slicer,
-    SortOrder, Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
-    TableOptions, TableRow, TableRowMut,
+    ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
+    DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun, QueryResult,
+    RecordColumnCell, RecordColumnIter, RequiredScalarColumnValues, RowRange, SelectedArray2D,
+    SelectedArray2DCells, Slicer, SortOrder, Table, TableCell, TableCellMut, TableColumn,
+    TableColumnMut, TableError, TableKind, TableOptions, TableRow, TableRowMut,
 };
 pub use tablebrowser::{LinkedTableRef, TableBrowser, TableBrowserError, TableBrowserView};

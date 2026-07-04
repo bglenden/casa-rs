@@ -31,20 +31,23 @@ use std::time::Instant;
 
 use casa_aipsio::ByteOrder;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::{Axis, Slice};
 use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
+use crate::table::{
+    ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
+    SelectedArray2DCells,
+};
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
     IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_scalar_column,
     read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
-    write_ism_file_scalar_columns,
+    write_ism_file_scalar_column_sources,
 };
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns, read_ssm_scalar_column_rows,
-    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_columns,
+    write_ssm_file, write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -63,6 +66,13 @@ use self::table_control::{
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
 pub(crate) const TABLE_INFO_FILE: &str = "table.info";
+
+struct SelectedArray2DChannelRead<'a> {
+    column: &'a str,
+    selected_rows: &'a [usize],
+    channel_start: usize,
+    channel_count: usize,
+}
 
 fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> RecordValue {
     RecordValue::new(
@@ -307,32 +317,88 @@ fn filter_rows_for_save(
         .collect()
 }
 
+pub(crate) enum ScalarColumnSource<'a> {
+    Materialized(Vec<Option<ScalarValue>>),
+    Generated(&'a GeneratedScalarColumn),
+}
+
+impl<'a> ScalarColumnSource<'a> {
+    pub(crate) fn value(&self, row: usize) -> Option<ScalarValue> {
+        match self {
+            Self::Materialized(values) => values.get(row).cloned().unwrap_or(None),
+            Self::Generated(column) => column.value(row),
+        }
+    }
+
+    pub(crate) fn scalar_runs(&self) -> Option<&'a [GeneratedScalarValueRun]> {
+        match self {
+            Self::Materialized(_) => None,
+            Self::Generated(column) => column.scalar_runs(),
+        }
+    }
+}
+
+pub(crate) struct ScalarColumnSources<'a> {
+    row_count: usize,
+    columns: Vec<ScalarColumnSource<'a>>,
+}
+
+impl<'a> ScalarColumnSources<'a> {
+    pub(crate) fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    pub(crate) fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
+    pub(crate) fn value(&self, column: usize, row: usize) -> Option<ScalarValue> {
+        self.columns[column].value(row)
+    }
+
+    pub(crate) fn scalar_runs(&self, column: usize) -> Option<&'a [GeneratedScalarValueRun]> {
+        self.columns[column].scalar_runs()
+    }
+}
+
+fn override_value_for_row(
+    column_overrides: &ColumnOverrides,
+    column: &str,
+    row_idx: usize,
+) -> Option<Value> {
+    match column_overrides.get(column)? {
+        ColumnOverride::Values(values) => values.get(row_idx).cloned().unwrap_or(None),
+        ColumnOverride::GeneratedScalar(column) => column.value(row_idx).map(Value::Scalar),
+        ColumnOverride::Deferred => None,
+    }
+}
+
 fn project_rows_for_group(
     rows: &[RecordValue],
+    row_count: usize,
     group_col_descs: &[table_control::ColumnDescContents],
     group_col_indices: Option<&[usize]>,
-    column_overrides: &HashMap<String, Vec<Option<Value>>>,
+    column_overrides: &ColumnOverrides,
 ) -> Vec<RecordValue> {
-    rows.iter()
-        .enumerate()
-        .map(|(row_idx, row)| {
+    (0..row_count)
+        .map(|row_idx| {
+            let row = rows.get(row_idx);
             let fields = group_col_descs
                 .iter()
                 .enumerate()
                 .filter_map(|(col_idx, desc)| {
-                    let value = column_overrides
-                        .get(&desc.col_name)
-                        .and_then(|values| values.get(row_idx))
-                        .and_then(|value| value.clone())
+                    let value = override_value_for_row(column_overrides, &desc.col_name, row_idx)
                         .or_else(|| {
                             group_col_indices
                                 .and_then(|indices| {
-                                    row.fields()
-                                        .get(indices[col_idx])
-                                        .filter(|field| field.name == desc.col_name)
-                                        .map(|field| field.value.clone())
+                                    row.and_then(|row| {
+                                        row.fields()
+                                            .get(indices[col_idx])
+                                            .filter(|field| field.name == desc.col_name)
+                                            .map(|field| field.value.clone())
+                                    })
                                 })
-                                .or_else(|| row.get(&desc.col_name).cloned())
+                                .or_else(|| row.and_then(|row| row.get(&desc.col_name).cloned()))
                         });
                     value.map(|value| RecordField::new(desc.col_name.clone(), value))
                 })
@@ -359,35 +425,44 @@ fn project_column_values_for_group<'a>(
         .collect()
 }
 
-fn scalar_override_columns_for_group(
+fn scalar_override_columns_for_group<'a>(
     group_col_descs: &[table_control::ColumnDescContents],
-    column_overrides: &HashMap<String, Vec<Option<Value>>>,
-) -> Result<Option<Vec<Vec<Option<ScalarValue>>>>, StorageError> {
+    column_overrides: &'a ColumnOverrides,
+    row_count: usize,
+) -> Result<Option<ScalarColumnSources<'a>>, StorageError> {
     let mut columns = Vec::with_capacity(group_col_descs.len());
     for desc in group_col_descs {
         if desc.is_array || desc.is_record() {
             return Ok(None);
         }
-        let Some(values) = column_overrides.get(&desc.col_name) else {
+        let Some(override_value) = column_overrides.get(&desc.col_name) else {
             return Ok(None);
         };
-        let mut scalar_values = Vec::with_capacity(values.len());
-        for value in values {
-            match value {
-                Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
-                Some(other) => {
-                    return Err(StorageError::FormatMismatch(format!(
-                        "column override {} expected scalar values, found {:?}",
-                        desc.col_name,
-                        other.kind()
-                    )));
+        match override_value {
+            ColumnOverride::Values(values) => {
+                let mut scalar_values = Vec::with_capacity(values.len());
+                for value in values {
+                    match value {
+                        Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
+                        Some(other) => {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "column override {} expected scalar values, found {:?}",
+                                desc.col_name,
+                                other.kind()
+                            )));
+                        }
+                        None => scalar_values.push(None),
+                    }
                 }
-                None => scalar_values.push(None),
+                columns.push(ScalarColumnSource::Materialized(scalar_values));
             }
+            ColumnOverride::GeneratedScalar(column) => {
+                columns.push(ScalarColumnSource::Generated(column));
+            }
+            ColumnOverride::Deferred => return Ok(None),
         }
-        columns.push(scalar_values);
     }
-    Ok(Some(columns))
+    Ok(Some(ScalarColumnSources { row_count, columns }))
 }
 
 /// Composite storage manager that dispatches per data manager type.
@@ -1296,17 +1371,19 @@ impl CompositeStorage {
         }
     }
 
-    pub(crate) fn load_array_column_rows_2d_channel_range_with_row_hint(
+    pub(crate) fn load_array_column_rows_2d_channel_range_typed_with_row_hint(
         &self,
         table_path: &Path,
         column: &str,
         selected_rows: &[usize],
         channel_start: usize,
         channel_count: usize,
-        row_hint: Option<u64>,
-    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        _row_hint: Option<u64>,
+    ) -> Result<SelectedArray2DCells, StorageError> {
         if selected_rows.is_empty() {
-            return Ok(Vec::new());
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D read for {column} requires at least one selected row"
+            )));
         }
 
         let control_path = table_path.join(TABLE_CONTROL_FILE);
@@ -1318,32 +1395,21 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self.load_plain_array_column_rows_2d_channel_range(
-                table_path,
-                &table_dat,
-                column,
-                selected_rows,
-                channel_start,
-                channel_count,
-                row_hint,
-            ),
+            TableDatResult::Plain(table_dat) => {
+                let request = SelectedArray2DChannelRead {
+                    column,
+                    selected_rows,
+                    channel_start,
+                    channel_count,
+                };
+                self.load_plain_array_column_rows_2d_channel_range_typed(
+                    table_path, &table_dat, request,
+                )
+            }
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
-                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
-                let values = array_column_from_snapshot(&snapshot, column)?;
-                select_array_rows(&values, selected_rows)
-                    .into_iter()
-                    .map(|value| {
-                        value
-                            .map(|array| {
-                                slice_array_value_2d_channel_range(
-                                    array,
-                                    channel_start,
-                                    channel_count,
-                                )
-                            })
-                            .transpose()
-                    })
-                    .collect()
+                Err(StorageError::FormatMismatch(format!(
+                    "typed selected 2-D channel reads require a plain table for column '{column}'"
+                )))
             }
         }
     }
@@ -1888,10 +1954,7 @@ impl CompositeStorage {
             return required_scalar_columns_from_optional_snapshot(&scalar_columns);
         }
 
-        let mut columns = HashMap::new();
-
         for dm in &table_dat.column_set.data_managers {
-            let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
             let all_bound_cols: Vec<(usize, &_)> = table_dat
                 .column_set
                 .columns
@@ -1910,67 +1973,123 @@ impl CompositeStorage {
             if bound_cols.is_empty() {
                 continue;
             }
+            if matches!(
+                dm.type_name.as_str(),
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+            ) && bound_cols
+                .iter()
+                .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
+            {
+                let scalar_columns = self.load_plain_scalar_columns_filtered(
+                    table_path,
+                    table_dat,
+                    row_hint,
+                    Some(requested_columns),
+                )?;
+                return required_scalar_columns_from_optional_snapshot(&scalar_columns);
+            }
+        }
 
-            match dm.type_name.as_str() {
-                "StManAipsIO" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
-                    }
-                    collect_stman_required_scalar_columns(
-                        &data_path,
-                        &table_dat.table_desc.columns,
-                        &all_bound_cols,
-                        requested_columns,
-                        nrrow,
-                        ByteOrder::BigEndian,
-                        &mut columns,
-                    )?;
+        let columns_by_manager = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for dm in &table_dat.column_set.data_managers {
+                let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+                let all_bound_cols: Vec<(usize, &_)> = table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pc)| dm.seq_nr == pc.dm_seq_nr)
+                    .collect();
+                if all_bound_cols.is_empty() {
+                    continue;
                 }
-                "StandardStMan" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
-                    }
-                    collect_ssm_required_scalar_columns(
-                        &data_path,
-                        &dm.data,
-                        &table_dat.table_desc.columns,
-                        &all_bound_cols,
-                        requested_columns,
-                        nrrow,
-                        &mut columns,
-                    )?;
+                let bound_cols: Vec<(usize, &_)> = all_bound_cols
+                    .iter()
+                    .copied()
+                    .filter(|(_, pc)| requested_columns.contains(pc.original_name.as_str()))
+                    .collect();
+                if bound_cols.is_empty() {
+                    continue;
                 }
-                "IncrementalStMan" => {
-                    if !data_path.is_file() {
-                        return Err(StorageError::MissingDataFile(data_path));
+
+                let dm_type = dm.type_name.clone();
+                let dm_data = dm.data.clone();
+                let table_columns = &table_dat.table_desc.columns;
+                handles.push(scope.spawn(move || {
+                    let mut columns = HashMap::new();
+                    match dm_type.as_str() {
+                        "StManAipsIO" => {
+                            if !data_path.is_file() {
+                                return Err(StorageError::MissingDataFile(data_path));
+                            }
+                            collect_stman_required_scalar_columns(
+                                &data_path,
+                                table_columns,
+                                &all_bound_cols,
+                                requested_columns,
+                                nrrow,
+                                ByteOrder::BigEndian,
+                                &mut columns,
+                            )?;
+                        }
+                        "StandardStMan" => {
+                            if !data_path.is_file() {
+                                return Err(StorageError::MissingDataFile(data_path));
+                            }
+                            collect_ssm_required_scalar_columns(
+                                &data_path,
+                                &dm_data,
+                                table_columns,
+                                &all_bound_cols,
+                                requested_columns,
+                                nrrow,
+                                &mut columns,
+                            )?;
+                        }
+                        "IncrementalStMan" => {
+                            if !data_path.is_file() {
+                                return Err(StorageError::MissingDataFile(data_path));
+                            }
+                            collect_ism_required_scalar_columns(
+                                &data_path,
+                                &dm_data,
+                                table_columns,
+                                &all_bound_cols,
+                                requested_columns,
+                                all_bound_cols.len(),
+                                nrrow,
+                                &mut columns,
+                            )?;
+                        }
+                        "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan"
+                        | "TiledDataStMan" => {}
+                        other => {
+                            return Err(StorageError::UnsupportedDataManager(other.to_string()));
+                        }
                     }
-                    collect_ism_required_scalar_columns(
-                        &data_path,
-                        &dm.data,
-                        &table_dat.table_desc.columns,
-                        &all_bound_cols,
-                        requested_columns,
-                        all_bound_cols.len(),
-                        nrrow,
-                        &mut columns,
-                    )?;
-                }
-                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
-                    if bound_cols
-                        .iter()
-                        .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
-                    {
-                        let scalar_columns = self.load_plain_scalar_columns_filtered(
-                            table_path,
-                            table_dat,
-                            row_hint,
-                            Some(requested_columns),
-                        )?;
-                        return required_scalar_columns_from_optional_snapshot(&scalar_columns);
-                    }
-                }
-                other => {
-                    return Err(StorageError::UnsupportedDataManager(other.to_string()));
+                    Ok::<_, StorageError>(columns)
+                }));
+            }
+
+            let mut columns_by_manager = Vec::with_capacity(handles.len());
+            for handle in handles {
+                columns_by_manager.push(handle.join().map_err(|_| {
+                    StorageError::FormatMismatch(
+                        "required scalar column loader thread panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<_, StorageError>(columns_by_manager)
+        })?;
+
+        let mut columns = HashMap::new();
+        for manager_columns in columns_by_manager {
+            for (name, values) in manager_columns {
+                if columns.insert(name.clone(), values).is_some() {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "required scalar column '{name}' loaded more than once"
+                    )));
                 }
             }
         }
@@ -2382,17 +2501,13 @@ impl CompositeStorage {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn load_plain_array_column_rows_2d_channel_range(
+    fn load_plain_array_column_rows_2d_channel_range_typed(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
-        column: &str,
-        selected_rows: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-        row_hint: Option<u64>,
-    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        request: SelectedArray2DChannelRead<'_>,
+    ) -> Result<SelectedArray2DCells, StorageError> {
+        let column = request.column;
         let desc_idx = table_dat
             .table_desc
             .columns
@@ -2414,18 +2529,9 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
-            let values = array_column_from_snapshot(&snapshot, column)?;
-            return select_array_rows(&values, selected_rows)
-                .into_iter()
-                .map(|value| {
-                    value
-                        .map(|array| {
-                            slice_array_value_2d_channel_range(array, channel_start, channel_count)
-                        })
-                        .transpose()
-                })
-                .collect();
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D channel reads do not support virtual columns in table containing '{column}'"
+            )));
         }
 
         let dm_seq_nr = table_dat
@@ -2449,7 +2555,6 @@ impl CompositeStorage {
                     "array column '{column}' missing data manager {dm_seq_nr}"
                 ))
             })?;
-        let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
         let bound_cols: Vec<(usize, &_)> = table_dat
             .column_set
             .columns
@@ -2457,85 +2562,23 @@ impl CompositeStorage {
             .enumerate()
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
-        let target_col_idx = bound_cols
-            .iter()
-            .position(|(bound_desc_idx, _)| *bound_desc_idx == desc_idx)
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "array column '{column}' missing data-manager column binding"
-                ))
-            })?;
 
-        let values = match dm.type_name.as_str() {
-            "TiledShapeStMan" => {
-                return tiled_stman::load_tiled_column_rows_2d_channel_range(
-                    table_path,
-                    dm,
-                    &table_dat.table_desc.columns,
-                    &bound_cols,
-                    desc_idx,
-                    selected_rows,
-                    channel_start,
-                    channel_count,
-                );
-            }
-            "StManAipsIO" => {
-                let group_col_descs: Vec<_> = bound_cols
-                    .iter()
-                    .map(|(bound_desc_idx, _)| {
-                        table_dat.table_desc.columns[*bound_desc_idx].clone()
-                    })
-                    .collect();
-                if let Some(values) = read_stman_array_column_rows(
-                    &data_path,
-                    &group_col_descs,
-                    target_col_idx,
-                    selected_rows,
-                    ByteOrder::BigEndian,
-                )? {
-                    values
-                } else {
-                    let values =
-                        self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                    select_array_rows(&values, selected_rows)
-                }
-            }
-            "StandardStMan" => {
-                let group_col_descs: Vec<_> = bound_cols
-                    .iter()
-                    .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
-                    .collect();
-                if let Some(values) = read_ssm_array_column_rows(
-                    &data_path,
-                    &dm.data,
-                    &group_col_descs,
-                    target_col_idx,
-                    selected_rows,
-                )? {
-                    values
-                } else {
-                    let values =
-                        self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                    select_array_rows(&values, selected_rows)
-                }
-            }
-            _ => {
-                let values =
-                    self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                select_array_rows(&values, selected_rows)
-            }
-        };
-
-        values
-            .into_iter()
-            .map(|value| {
-                value
-                    .map(|array| {
-                        slice_array_value_2d_channel_range(array, channel_start, channel_count)
-                    })
-                    .transpose()
-            })
-            .collect()
+        match dm.type_name.as_str() {
+            "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_2d_channel_range_typed(
+                table_path,
+                dm,
+                &table_dat.table_desc.columns,
+                &bound_cols,
+                desc_idx,
+                request.selected_rows,
+                request.channel_start,
+                request.channel_count,
+            ),
+            other => Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
+                request.column
+            ))),
+        }
     }
 
     fn load_plain_table_metadata(
@@ -2779,7 +2822,7 @@ impl CompositeStorage {
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
     ) -> Result<(), StorageError> {
-        let column_overrides = HashMap::new();
+        let column_overrides = ColumnOverrides::new();
         self.save_with_bindings_and_column_overrides_borrowed(
             table_path,
             rows,
@@ -2814,7 +2857,7 @@ impl CompositeStorage {
         big_endian: bool,
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
-        column_overrides: &HashMap<String, Vec<Option<Value>>>,
+        column_overrides: &ColumnOverrides,
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
@@ -2845,7 +2888,8 @@ impl CompositeStorage {
                 })
             })
             .flatten();
-        let nrrow = filtered_rows.len() as u64;
+        let effective_row_count = column_overrides.row_count().unwrap_or(filtered_rows.len());
+        let nrrow = effective_row_count as u64;
         let has_virtual = !virtual_bindings.is_empty();
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
@@ -3072,6 +3116,12 @@ impl CompositeStorage {
                     .collect();
                 (indices.len() == group_col_descs.len()).then_some(indices)
             });
+            let deferred_group = group_col_descs.iter().all(|desc| {
+                matches!(
+                    column_overrides.get(&desc.col_name),
+                    Some(ColumnOverride::Deferred)
+                )
+            });
             let use_borrowed_tiled_values = matches!(
                 group.dm_kind,
                 DataManagerKind::TiledColumnStMan
@@ -3090,20 +3140,37 @@ impl CompositeStorage {
             let use_direct_indexed_rows = matches!(
                 group.dm_kind,
                 DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
-            ) && group_col_indices.is_some()
+            ) && filtered_rows.len() == effective_row_count
+                && group_col_indices.is_some()
                 && override_columns.is_empty();
             let group_col_index = group_col_indices
                 .as_ref()
                 .and_then(|indices| (indices.len() == 1).then_some(indices[0]));
             let group_values = if use_borrowed_tiled_values {
-                if let Some(override_values) = column_overrides.get(&group_col_descs[0].col_name) {
-                    Some(override_values.iter().map(|value| value.as_ref()).collect())
-                } else {
-                    Some(project_column_values_for_group(
-                        filtered_rows,
-                        &group_col_descs[0].col_name,
-                        group_col_index,
-                    ))
+                match column_overrides.get(&group_col_descs[0].col_name) {
+                    Some(ColumnOverride::Values(override_values)) => {
+                        Some(override_values.iter().map(|value| value.as_ref()).collect())
+                    }
+                    Some(ColumnOverride::GeneratedScalar(_)) => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "tiled column override {} cannot be generated scalar",
+                            group_col_descs[0].col_name
+                        )));
+                    }
+                    Some(ColumnOverride::Deferred) => None,
+                    None => {
+                        if filtered_rows.len() != effective_row_count {
+                            return Err(StorageError::FormatMismatch(format!(
+                                "column {} has no row values or override for {effective_row_count} generated rows",
+                                group_col_descs[0].col_name
+                            )));
+                        }
+                        Some(project_column_values_for_group(
+                            filtered_rows,
+                            &group_col_descs[0].col_name,
+                            group_col_index,
+                        ))
+                    }
                 }
             } else {
                 None
@@ -3112,16 +3179,47 @@ impl CompositeStorage {
                 group.dm_kind,
                 DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
             ) {
-                scalar_override_columns_for_group(&group_col_descs, column_overrides)?
+                scalar_override_columns_for_group(
+                    &group_col_descs,
+                    column_overrides,
+                    effective_row_count,
+                )?
             } else {
                 None
             };
+            if deferred_group {
+                if let Some(profiler) = profiler.as_mut() {
+                    profiler.mark_with_detail(
+                        "group_projection",
+                        Some(format!(
+                            "seq={} dm={} cols={} rows={} indexed_projection={} mode=deferred",
+                            group.seq_nr,
+                            group.dm_type_name,
+                            group_col_descs.len(),
+                            effective_row_count,
+                            group_col_indices.is_some()
+                        )),
+                    );
+                    profiler.mark_with_detail(
+                        "group_save",
+                        Some(format!(
+                            "seq={} dm={} cols={} rows={} deferred=true",
+                            group.seq_nr,
+                            group.dm_type_name,
+                            group_col_descs.len(),
+                            effective_row_count
+                        )),
+                    );
+                }
+                continue;
+            }
             let group_rows = if group_values.is_none()
                 && !use_direct_indexed_rows
                 && scalar_override_columns.is_none()
             {
                 Some(project_rows_for_group(
                     filtered_rows,
+                    effective_row_count,
                     &group_col_descs,
                     group_col_indices.as_deref(),
                     column_overrides,
@@ -3137,7 +3235,7 @@ impl CompositeStorage {
                         group.seq_nr,
                         group.dm_type_name,
                         group_col_descs.len(),
-                        filtered_rows.len(),
+                        effective_row_count,
                         group_col_indices.is_some(),
                         if group_values.is_some() {
                             "borrowed_values"
@@ -3164,12 +3262,10 @@ impl CompositeStorage {
                 DataManagerKind::StandardStMan => {
                     let dm_data =
                         if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
-                            let scalar_refs: Vec<_> =
-                                scalar_override_columns.iter().map(Vec::as_slice).collect();
-                            write_ssm_file_scalar_columns(
+                            write_ssm_file_scalar_column_sources(
                                 &data_path,
                                 &group_col_descs,
-                                &scalar_refs,
+                                scalar_override_columns,
                                 big_endian,
                             )?
                         } else if let Some(group_col_indices) = group_col_indices.as_ref() {
@@ -3203,12 +3299,10 @@ impl CompositeStorage {
                 DataManagerKind::IncrementalStMan => {
                     let dm_data =
                         if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
-                            let scalar_refs: Vec<_> =
-                                scalar_override_columns.iter().map(Vec::as_slice).collect();
-                            write_ism_file_scalar_columns(
+                            write_ism_file_scalar_column_sources(
                                 &data_path,
                                 &group_col_descs,
-                                &scalar_refs,
+                                scalar_override_columns,
                                 big_endian,
                             )?
                         } else if let Some(group_col_indices) = group_col_indices.as_ref() {
@@ -3281,7 +3375,7 @@ impl CompositeStorage {
                         group.seq_nr,
                         group.dm_type_name,
                         group_col_descs.len(),
-                        filtered_rows.len()
+                        effective_row_count
                     )),
                 );
             }
@@ -3400,54 +3494,6 @@ fn select_array_rows(
         .iter()
         .map(|&row_idx| values.get(row_idx).cloned().unwrap_or(None))
         .collect()
-}
-
-pub(crate) fn slice_array_value_2d_channel_range(
-    value: ArrayValue,
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<ArrayValue, StorageError> {
-    macro_rules! slice_variant {
-        ($values:expr, $ctor:expr) => {{
-            let shape = $values.shape().to_vec();
-            if shape.len() != 2 {
-                return Err(StorageError::FormatMismatch(format!(
-                    "2-D channel-range array read expected rank-2 array, found shape {shape:?}"
-                )));
-            }
-            let Some(channel_end) = channel_start.checked_add(channel_count) else {
-                return Err(StorageError::FormatMismatch(
-                    "2-D channel-range array read overflowed channel bounds".to_string(),
-                ));
-            };
-            if channel_end > shape[1] {
-                return Err(StorageError::FormatMismatch(format!(
-                    "2-D channel range {channel_start}..{channel_end} exceeds array channel axis with {} channels",
-                    shape[1]
-                )));
-            }
-            $ctor(
-                $values
-                    .slice_axis(Axis(1), Slice::from(channel_start..channel_end))
-                    .to_owned(),
-            )
-        }};
-    }
-
-    Ok(match value {
-        ArrayValue::Bool(values) => slice_variant!(values, ArrayValue::Bool),
-        ArrayValue::UInt8(values) => slice_variant!(values, ArrayValue::UInt8),
-        ArrayValue::Int16(values) => slice_variant!(values, ArrayValue::Int16),
-        ArrayValue::UInt16(values) => slice_variant!(values, ArrayValue::UInt16),
-        ArrayValue::Int32(values) => slice_variant!(values, ArrayValue::Int32),
-        ArrayValue::UInt32(values) => slice_variant!(values, ArrayValue::UInt32),
-        ArrayValue::Int64(values) => slice_variant!(values, ArrayValue::Int64),
-        ArrayValue::Float32(values) => slice_variant!(values, ArrayValue::Float32),
-        ArrayValue::Float64(values) => slice_variant!(values, ArrayValue::Float64),
-        ArrayValue::Complex32(values) => slice_variant!(values, ArrayValue::Complex32),
-        ArrayValue::Complex64(values) => slice_variant!(values, ArrayValue::Complex64),
-        ArrayValue::String(values) => slice_variant!(values, ArrayValue::String),
-    })
 }
 
 fn select_scalar_rows(

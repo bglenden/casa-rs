@@ -49,6 +49,7 @@ functionality.
 - [Wave 1 stage instrumentation](imperformance-wave-1-stage-instrumentation.md)
 - [Wave 1 baseline matrix and bottleneck ledger](imperformance-wave-1-baseline-matrix.md)
 - [Wave 2 standard-MFS experiment summary](imperformance-wave-2-experiment-summary.md)
+- [Synthetic MeasurementSet families](synthetic-ms-families.md)
 
 ## Source Pages
 

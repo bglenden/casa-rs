@@ -11,7 +11,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use casa_tables::{ColumnBinding, DataManagerKind, Table, TableInfo, TableOptions};
+use casa_tables::{
+    ColumnBinding, ColumnOverrides, DataManagerKind, Table, TableInfo, TableOptions,
+};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::builder::{MeasurementSetBuilder, MsSchemas};
@@ -176,7 +178,7 @@ impl MeasurementSet {
 
     pub(crate) fn save_assuming_valid_with_main_column_overrides(
         &mut self,
-        column_overrides: &HashMap<String, Vec<Option<Value>>>,
+        column_overrides: &ColumnOverrides,
     ) -> MsResult<()> {
         let path = self
             .path
@@ -872,22 +874,15 @@ fn save_main_table_with_policy(main: &Table, path: &Path, assume_valid: bool) ->
 fn save_main_table_with_policy_and_column_overrides(
     main: &Table,
     path: &Path,
-    column_overrides: &HashMap<String, Vec<Option<Value>>>,
+    column_overrides: &ColumnOverrides,
 ) -> MsResult<()> {
     let options = measurement_set_table_options(path);
-    match measurement_set_save_policy() {
-        MeasurementSetSavePolicy::Standard => {
-            main.save_assuming_valid(options)?;
-        }
-        MeasurementSetSavePolicy::CasaLikeMixed => {
-            let bindings = measurement_set_main_table_bindings(main);
-            main.save_with_bindings_and_column_overrides_assuming_valid(
-                options,
-                &bindings,
-                column_overrides,
-            )?;
-        }
-    }
+    let bindings = measurement_set_main_table_bindings(main);
+    main.save_with_bindings_and_column_overrides_assuming_valid(
+        options,
+        &bindings,
+        column_overrides,
+    )?;
     Ok(())
 }
 
@@ -965,6 +960,17 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
             name,
             DataManagerKind::TiledShapeStMan,
             weight_tile_shape.clone(),
+        );
+    }
+    for name in [
+        "SIGMA_SPECTRUM",
+        "WEIGHT_SPECTRUM",
+        "CORRECTED_WEIGHT_SPECTRUM",
+    ] {
+        bind(
+            name,
+            DataManagerKind::TiledShapeStMan,
+            visibility_tile_shape.clone(),
         );
     }
     bind("UVW", DataManagerKind::TiledColumnStMan, uvw_tile_shape);
@@ -1173,6 +1179,7 @@ fn subtable_keyword_value(base_path: &Path, subtable_path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::builder::MeasurementSetBuilder;
+    use crate::schema::main_table::OptionalMainColumn;
     use crate::test_helpers::default_value;
     use casa_tables::TableOptions;
     use casa_types::PrimitiveType;
@@ -1258,6 +1265,30 @@ mod tests {
         assert_eq!(ms.source().unwrap().row_count(), 0);
         assert_eq!(ms.syscal().unwrap().row_count(), 0);
         assert_eq!(ms.weather().unwrap().row_count(), 0);
+    }
+
+    #[test]
+    fn casa_like_main_table_bindings_tile_channelized_weight_columns() {
+        let ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new()
+                .with_main_column(OptionalMainColumn::Data)
+                .with_main_column(OptionalMainColumn::SigmaSpectrum)
+                .with_main_column(OptionalMainColumn::WeightSpectrum)
+                .with_main_column(OptionalMainColumn::CorrectedWeightSpectrum),
+        )
+        .unwrap();
+
+        let bindings = measurement_set_main_table_bindings(ms.main_table());
+        let data_tile_shape = bindings.get("DATA").unwrap().tile_shape.clone();
+        for column in [
+            "SIGMA_SPECTRUM",
+            "WEIGHT_SPECTRUM",
+            "CORRECTED_WEIGHT_SPECTRUM",
+        ] {
+            let binding = bindings.get(column).expect("channelized weight binding");
+            assert_eq!(binding.data_manager, DataManagerKind::TiledShapeStMan);
+            assert_eq!(binding.tile_shape, data_tile_shape);
+        }
     }
 
     #[test]

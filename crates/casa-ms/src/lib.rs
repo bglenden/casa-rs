@@ -123,15 +123,19 @@ pub use selection_syntax::{
     parse_spw_selector,
 };
 pub use simulation::{
+    SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
     SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
     SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
-    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
-    SyntheticObservationRequest, SyntheticPointingCorruption,
-    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
+    SyntheticObservationReport, SyntheticObservationRequest, SyntheticPointingCorruption,
+    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
+    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
+    SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+    tutorial_vla_a_antennas,
 };
 pub use simulation_task::{
-    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
+    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
+    SimobserveFamilyTaskRequest, SimobserveFamilyTaskResult, SimobserveProtocolInfo,
     SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
     SimobserveTaskSchemaBundle,
 };

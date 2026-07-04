@@ -31,6 +31,8 @@ use casa_types::{
 };
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+use crate::table::{SelectedArray2D, SelectedArray2DCells};
+
 /// Maximum number of dimensions supported by stack-allocated arrays in
 /// tile iteration loops.  casacore images are at most 5-D.
 const MAX_NDIM: usize = 8;
@@ -1163,20 +1165,40 @@ fn decode_complex32_scalar(raw: &[u8], big_endian: bool) -> Complex32 {
     Complex32::new(re, im)
 }
 
+fn decode_f32_scalar(raw: &[u8], big_endian: bool) -> f32 {
+    if big_endian {
+        f32::from_be_bytes(raw[0..4].try_into().expect("exact f32 bytes"))
+    } else {
+        f32::from_le_bytes(raw[0..4].try_into().expect("exact f32 bytes"))
+    }
+}
+
+fn decode_f64_scalar(raw: &[u8], big_endian: bool) -> f64 {
+    if big_endian {
+        f64::from_be_bytes(raw[0..8].try_into().expect("exact f64 bytes"))
+    } else {
+        f64::from_le_bytes(raw[0..8].try_into().expect("exact f64 bytes"))
+    }
+}
+
+fn decode_complex64_scalar(raw: &[u8], big_endian: bool) -> Complex64 {
+    let re = if big_endian {
+        f64::from_be_bytes(raw[0..8].try_into().expect("exact f64 bytes"))
+    } else {
+        f64::from_le_bytes(raw[0..8].try_into().expect("exact f64 bytes"))
+    };
+    let im = if big_endian {
+        f64::from_be_bytes(raw[8..16].try_into().expect("exact f64 bytes"))
+    } else {
+        f64::from_le_bytes(raw[8..16].try_into().expect("exact f64 bytes"))
+    };
+    Complex64::new(re, im)
+}
+
 fn decode_complex64_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex64> {
     let mut values = Vec::with_capacity(nelem);
     for chunk in raw[..nelem * 16].chunks_exact(16) {
-        let re = if big_endian {
-            f64::from_be_bytes(chunk[0..8].try_into().expect("exact f64 bytes"))
-        } else {
-            f64::from_le_bytes(chunk[0..8].try_into().expect("exact f64 bytes"))
-        };
-        let im = if big_endian {
-            f64::from_be_bytes(chunk[8..16].try_into().expect("exact f64 bytes"))
-        } else {
-            f64::from_le_bytes(chunk[8..16].try_into().expect("exact f64 bytes"))
-        };
-        values.push(Complex64::new(re, im));
+        values.push(decode_complex64_scalar(chunk, big_endian));
     }
     values
 }
@@ -1535,7 +1557,7 @@ pub(crate) fn load_tiled_column_rows(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn load_tiled_column_rows_2d_channel_range(
+pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     table_path: &Path,
     dm: &DataManagerEntry,
     all_col_descs: &[ColumnDescContents],
@@ -1544,7 +1566,7 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range(
     selected_rows: &[usize],
     channel_start: usize,
     channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+) -> Result<SelectedArray2DCells, StorageError> {
     let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
     let (variant, header) = read_tiled_header(&header_path)?;
     let Some(target_col_idx) = bound_cols
@@ -1566,7 +1588,10 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range(
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
-        return Ok(vec![None; selected_rows.len()]);
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D read does not support zero-sized element type for column {}",
+            col_desc.col_name
+        )));
     }
 
     match variant {
@@ -1576,7 +1601,7 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range(
             ref cube_map,
             ref pos_map,
             ..
-        } => load_tiled_column_rows_shape_variant_2d_channel_range(
+        } => load_tiled_column_rows_shape_variant_2d_channel_range_typed(
             table_path,
             dm.seq_nr,
             &header,
@@ -1594,23 +1619,10 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range(
             channel_start,
             channel_count,
         ),
-        _ => load_tiled_column_rows(
-            table_path,
-            dm,
-            all_col_descs,
-            bound_cols,
-            target_desc_idx,
-            selected_rows,
-        )?
-        .into_iter()
-        .map(|value| {
-            value
-                .map(|array| {
-                    super::slice_array_value_2d_channel_range(array, channel_start, channel_count)
-                })
-                .transpose()
-        })
-        .collect(),
+        _ => Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D channel reads for column {} require TiledShapeStMan Shape variant",
+            col_desc.col_name
+        ))),
     }
 }
 
@@ -1977,69 +1989,6 @@ fn load_tiled_column_rows_shape_variant(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn load_tiled_column_rows_shape_variant_2d_channel_range(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    selected_rows: &[usize],
-    mapping: &ShapeRowMapping<'_>,
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let n_intervals = mapping.nr_used_row_map as usize;
-    if n_intervals == 0 {
-        return Ok(vec![None; selected_rows.len()]);
-    }
-
-    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
-        std::collections::BTreeMap::new();
-    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
-            continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
-        };
-        patches_by_cube
-            .entry(cube_idx)
-            .or_default()
-            .push(SelectedCubeRow {
-                out_idx,
-                pos_in_cube,
-            });
-    }
-    load_selected_row_channel_ranges_from_touched_cubes(
-        table_path,
-        dm_seq_nr,
-        header,
-        target_col_idx,
-        col_desc,
-        dt,
-        elem_size,
-        selected_rows.len(),
-        patches_by_cube,
-        channel_start,
-        channel_count,
-    )
-}
-
 /// Load columns from a `TiledDataStMan` (user-controlled hypercube assignment).
 ///
 /// Uses binary search in `row_map` to find the chunk index for each row.
@@ -2394,7 +2343,7 @@ fn load_selected_rows_from_touched_cubes(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_selected_row_channel_ranges_from_touched_cubes(
+fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
     table_path: &Path,
     dm_seq_nr: u32,
     header: &TiledStManHeader,
@@ -2402,42 +2351,449 @@ fn load_selected_row_channel_ranges_from_touched_cubes(
     col_desc: &ColumnDescContents,
     dt: CasacoreDataType,
     elem_size: usize,
-    output_len: usize,
-    patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
+    selected_rows: &[usize],
+    mapping: &ShapeRowMapping<'_>,
     channel_start: usize,
     channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let mut outputs = vec![None; output_len];
-    let mut read_session = TileReadSession::default();
+) -> Result<SelectedArray2DCells, StorageError> {
+    let n_intervals = mapping.nr_used_row_map as usize;
+    if n_intervals == 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected read for {} found an empty row map",
+            col_desc.col_name
+        )));
+    }
 
-    for (cube_idx, patches) in patches_by_cube {
+    let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
+        std::collections::BTreeMap::new();
+    let mut mapped_rows = 0usize;
+    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
+        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
+        if interval >= n_intervals {
+            continue;
+        }
+        let cube_idx = mapping.cube_map[interval] as usize;
+        if cube_idx == 0 || cube_idx >= header.cubes.len() {
+            continue;
+        }
+        let diff = mapping.row_map[interval] as usize - row_idx;
+        if diff > mapping.pos_map[interval] as usize {
+            continue;
+        }
+        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
+            return Err(StorageError::FormatMismatch(format!(
+                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
+                mapping.pos_map[interval]
+            )));
+        };
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SelectedCubeRow {
+                out_idx,
+                pos_in_cube,
+            });
+        mapped_rows += 1;
+    }
+    if mapped_rows != selected_rows.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected read for {} mapped {} of {} requested rows",
+            col_desc.col_name,
+            mapped_rows,
+            selected_rows.len()
+        )));
+    }
+
+    let mut corr_count = None::<usize>;
+    for (&cube_idx, patches) in &patches_by_cube {
+        if patches.is_empty() {
+            continue;
+        }
+        let cube = header.cubes.get(cube_idx).ok_or_else(|| {
+            StorageError::FormatMismatch(format!("typed selected read missing cube {cube_idx}"))
+        })?;
+        let shape = typed_2d_cube_shape(cube, channel_start, channel_count)?;
+        match corr_count {
+            Some(expected) if expected != shape.corr_count => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "typed selected read for {} found mixed axis-0 lengths: {} and {expected}",
+                    col_desc.col_name, shape.corr_count
+                )));
+            }
+            None => corr_count = Some(shape.corr_count),
+            _ => {}
+        }
+    }
+    let corr_count = corr_count.ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "typed selected read for {} found no selected rows",
+            col_desc.col_name
+        ))
+    })?;
+    let sample_count = channel_count
+        .saturating_mul(selected_rows.len())
+        .saturating_mul(corr_count);
+    let mut session = TileReadSession::default();
+    let fill_plan = TypedSelected2DFillPlan {
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
+        dt,
+        elem_size,
+        patches_by_cube: &patches_by_cube,
+        row_count: selected_rows.len(),
+        corr_count,
+        channel_start,
+        channel_count,
+    };
+
+    match dt {
+        CasacoreDataType::TpBool => {
+            let mut values = vec![false; sample_count];
+            fill_typed_selected_2d_rows(
+                table_path,
+                dm_seq_nr,
+                header,
+                target_col_idx,
+                dt,
+                elem_size,
+                &patches_by_cube,
+                selected_rows.len(),
+                corr_count,
+                channel_start,
+                channel_count,
+                &mut session,
+                &mut values,
+                |bytes, _big_endian| bytes[0] != 0,
+            )?;
+            Ok(SelectedArray2DCells::Bool(SelectedArray2D::new(
+                selected_rows.len(),
+                corr_count,
+                channel_count,
+                values,
+            )))
+        }
+        CasacoreDataType::TpFloat => {
+            let mut values = vec![0.0f32; sample_count];
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, &mut values)?;
+            Ok(SelectedArray2DCells::Float32(SelectedArray2D::new(
+                selected_rows.len(),
+                corr_count,
+                channel_count,
+                values,
+            )))
+        }
+        CasacoreDataType::TpDouble => {
+            let mut values = vec![0.0f64; sample_count];
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, &mut values)?;
+            Ok(SelectedArray2DCells::Float64(SelectedArray2D::new(
+                selected_rows.len(),
+                corr_count,
+                channel_count,
+                values,
+            )))
+        }
+        CasacoreDataType::TpComplex => {
+            let mut values = vec![Complex32::new(0.0, 0.0); sample_count];
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, &mut values)?;
+            Ok(SelectedArray2DCells::Complex32(SelectedArray2D::new(
+                selected_rows.len(),
+                corr_count,
+                channel_count,
+                values,
+            )))
+        }
+        CasacoreDataType::TpDComplex => {
+            let mut values = vec![Complex64::new(0.0, 0.0); sample_count];
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, &mut values)?;
+            Ok(SelectedArray2DCells::Complex64(SelectedArray2D::new(
+                selected_rows.len(),
+                corr_count,
+                channel_count,
+                values,
+            )))
+        }
+        other => Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D read does not support {other:?} for column {}",
+            col_desc.col_name
+        ))),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Typed2DCubeShape {
+    corr_count: usize,
+    tile_corr_count: usize,
+    tile_channel_count: usize,
+}
+
+#[derive(Clone, Copy)]
+struct TypedSelected2DFillPlan<'a> {
+    table_path: &'a Path,
+    dm_seq_nr: u32,
+    header: &'a TiledStManHeader,
+    target_col_idx: usize,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    patches_by_cube: &'a std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
+    row_count: usize,
+    corr_count: usize,
+    channel_start: usize,
+    channel_count: usize,
+}
+
+fn typed_2d_cube_shape(
+    cube: &TsmCubeInfo,
+    channel_start: usize,
+    channel_count: usize,
+) -> Result<Typed2DCubeShape, StorageError> {
+    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
+    let cell_shape = &cube.cube_shape[..cell_ndim];
+    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
+    if cell_shape.len() != 2 || cell_tile_shape.len() != 2 {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D read requires rank-2 cells, found cell_shape={cell_shape:?}"
+        )));
+    }
+    let channel_end = channel_start.checked_add(channel_count).ok_or_else(|| {
+        StorageError::FormatMismatch(
+            "typed selected 2-D read overflowed channel bounds".to_string(),
+        )
+    })?;
+    if channel_end > cell_shape[1] {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D channel range {channel_start}..{channel_end} exceeds cell channel axis with {} channels",
+            cell_shape[1]
+        )));
+    }
+    if cell_tile_shape[0] < cell_shape[0] {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D read requires a complete axis-0 tile, found cell_shape={cell_shape:?} tile_shape={cell_tile_shape:?}"
+        )));
+    }
+    if cell_tile_shape[1] == 0 {
+        return Err(StorageError::FormatMismatch(
+            "typed selected 2-D read found zero-width channel tile".to_string(),
+        ));
+    }
+    Ok(Typed2DCubeShape {
+        corr_count: cell_shape[0],
+        tile_corr_count: cell_tile_shape[0],
+        tile_channel_count: cell_tile_shape[1],
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_typed_selected_2d_rows<T: Copy>(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    patches_by_cube: &std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
+    row_count: usize,
+    corr_count: usize,
+    channel_start: usize,
+    channel_count: usize,
+    session: &mut TileReadSession,
+    values: &mut [T],
+    decode: fn(&[u8], bool) -> T,
+) -> Result<(), StorageError> {
+    let channel_end = channel_start + channel_count;
+    for (&cube_idx, patches) in patches_by_cube {
         let Some(cube) = header.cubes.get(cube_idx) else {
             continue;
         };
         if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
             continue;
         }
-        for selected in patches {
-            outputs[selected.out_idx] =
-                decode_selected_cube_row_2d_channel_range_from_shared_tiles(
+        let shape = typed_2d_cube_shape(cube, channel_start, channel_count)?;
+        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
+        let row_tile_size = cube.tile_shape[cell_ndim];
+        let row_tile_nelem: usize = cube.tile_shape[..cell_ndim].iter().product();
+        let tiles_per_dim: Vec<usize> = cube
+            .cube_shape
+            .iter()
+            .zip(cube.tile_shape.iter())
+            .map(|(&shape, &tile)| shape.div_ceil(tile))
+            .collect();
+        let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
+        let (bucket_size, col_offsets) =
+            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+        let first_channel_tile = channel_start / shape.tile_channel_count;
+        let last_channel_tile = (channel_end.saturating_sub(1)) / shape.tile_channel_count;
+        let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
+            std::collections::BTreeMap::new();
+        for &patch in patches {
+            patches_by_row_tile
+                .entry(patch.pos_in_cube / row_tile_size)
+                .or_default()
+                .push(patch);
+        }
+
+        for (row_tile, row_patches) in patches_by_row_tile {
+            for channel_tile in first_channel_tile..=last_channel_tile {
+                let tile_channel_start = channel_tile * shape.tile_channel_count;
+                let actual_tile_channels = std::cmp::min(
+                    shape.tile_channel_count,
+                    cube.cube_shape[1] - tile_channel_start,
+                );
+                let overlap_start = std::cmp::max(channel_start, tile_channel_start);
+                let overlap_end =
+                    std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+
+                let full_tile_pos = [0usize, channel_tile, row_tile];
+                let tile_index: usize = full_tile_pos
+                    .iter()
+                    .zip(tile_grid_strides.iter())
+                    .map(|(pos, stride)| pos * stride)
+                    .sum();
+                let tile = load_shared_column_tile(
                     table_path,
                     dm_seq_nr,
                     header,
                     cube_idx,
                     cube,
                     target_col_idx,
-                    col_desc,
+                    bucket_size,
+                    col_offsets[target_col_idx],
                     dt,
-                    elem_size,
-                    selected,
-                    channel_start,
-                    channel_count,
-                    &mut read_session,
+                    tile_index,
+                    session,
                 )?;
+
+                for selected in &row_patches {
+                    let row_in_tile = selected.pos_in_cube % row_tile_size;
+                    let src_start = row_in_tile * row_tile_nelem * elem_size;
+                    let src_end = src_start + row_tile_nelem * elem_size;
+                    let tile_row = &tile[src_start..src_end];
+                    for channel in overlap_start..overlap_end {
+                        let src_channel = channel - tile_channel_start;
+                        let dst_channel = channel - channel_start;
+                        for corr in 0..corr_count {
+                            let src_elem = corr + src_channel * shape.tile_corr_count;
+                            let dst_elem = dst_channel
+                                .saturating_mul(row_count)
+                                .saturating_mul(corr_count)
+                                .saturating_add(selected.out_idx.saturating_mul(corr_count))
+                                .saturating_add(corr);
+                            let src_byte = src_elem * elem_size;
+                            values[dst_elem] = decode(
+                                &tile_row[src_byte..src_byte + elem_size],
+                                header.big_endian,
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
+    Ok(())
+}
 
-    Ok(outputs)
+fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
+    plan: TypedSelected2DFillPlan<'_>,
+    session: &mut TileReadSession,
+    values: &mut [T],
+) -> Result<(), StorageError> {
+    debug_assert_eq!(plan.elem_size, T::ELEM_SIZE);
+    let channel_end = plan.channel_start + plan.channel_count;
+    let values_bytes = tile_values_as_bytes_mut(values);
+    for (&cube_idx, patches) in plan.patches_by_cube {
+        let Some(cube) = plan.header.cubes.get(cube_idx) else {
+            continue;
+        };
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
+            continue;
+        }
+        let shape = typed_2d_cube_shape(cube, plan.channel_start, plan.channel_count)?;
+        let cell_ndim = cube.cube_shape.len().saturating_sub(1);
+        let row_tile_size = cube.tile_shape[cell_ndim];
+        let row_tile_nelem: usize = cube.tile_shape[..cell_ndim].iter().product();
+        let tiles_per_dim: Vec<usize> = cube
+            .cube_shape
+            .iter()
+            .zip(cube.tile_shape.iter())
+            .map(|(&shape, &tile)| shape.div_ceil(tile))
+            .collect();
+        let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
+        let (bucket_size, col_offsets) =
+            compute_tile_layout(&plan.header.col_data_types, &cube.tile_shape);
+        let first_channel_tile = plan.channel_start / shape.tile_channel_count;
+        let last_channel_tile = (channel_end.saturating_sub(1)) / shape.tile_channel_count;
+        let mut patches_by_row_tile: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>> =
+            std::collections::BTreeMap::new();
+        for &patch in patches {
+            patches_by_row_tile
+                .entry(patch.pos_in_cube / row_tile_size)
+                .or_default()
+                .push(patch);
+        }
+
+        for (row_tile, row_patches) in patches_by_row_tile {
+            for channel_tile in first_channel_tile..=last_channel_tile {
+                let tile_channel_start = channel_tile * shape.tile_channel_count;
+                let actual_tile_channels = std::cmp::min(
+                    shape.tile_channel_count,
+                    cube.cube_shape[1] - tile_channel_start,
+                );
+                let overlap_start = std::cmp::max(plan.channel_start, tile_channel_start);
+                let overlap_end =
+                    std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+
+                let full_tile_pos = [0usize, channel_tile, row_tile];
+                let tile_index: usize = full_tile_pos
+                    .iter()
+                    .zip(tile_grid_strides.iter())
+                    .map(|(pos, stride)| pos * stride)
+                    .sum();
+                let tile = load_shared_column_tile(
+                    plan.table_path,
+                    plan.dm_seq_nr,
+                    plan.header,
+                    cube_idx,
+                    cube,
+                    plan.target_col_idx,
+                    bucket_size,
+                    col_offsets[plan.target_col_idx],
+                    plan.dt,
+                    tile_index,
+                    session,
+                )?;
+
+                for selected in &row_patches {
+                    let row_in_tile = selected.pos_in_cube % row_tile_size;
+                    let src_start = row_in_tile * row_tile_nelem * plan.elem_size;
+                    let src_end = src_start + row_tile_nelem * plan.elem_size;
+                    let tile_row = &tile[src_start..src_end];
+                    for channel in overlap_start..overlap_end {
+                        let src_channel = channel - tile_channel_start;
+                        let dst_channel = channel - plan.channel_start;
+                        let src_byte = src_channel
+                            .saturating_mul(shape.tile_corr_count)
+                            .saturating_mul(plan.elem_size);
+                        let dst_byte = dst_channel
+                            .saturating_mul(plan.row_count)
+                            .saturating_mul(plan.corr_count)
+                            .saturating_add(selected.out_idx.saturating_mul(plan.corr_count))
+                            .saturating_mul(plan.elem_size);
+                        let copy_bytes = plan.corr_count.saturating_mul(plan.elem_size);
+                        values_bytes[dst_byte..dst_byte + copy_bytes]
+                            .copy_from_slice(&tile_row[src_byte..src_byte + copy_bytes]);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn extract_selected_rows_from_cube_raw(
@@ -3628,9 +3984,14 @@ impl StreamingTiledPrimitiveWriter {
                 "streamed primitive tile rank must be cell rank + row axis; cell={cell_shape:?} tile={tile_shape:?}"
             )));
         }
-        if cell_shape.contains(&0) || tile_shape.contains(&0) {
+        if tile_shape.contains(&0) {
             return Err(StorageError::FormatMismatch(
-                "streamed primitive tiled dimensions must be positive".to_string(),
+                "streamed primitive tile dimensions must be positive".to_string(),
+            ));
+        }
+        if cell_shape.contains(&0) && variant != StreamedTiledPrimitiveVariant::Shape {
+            return Err(StorageError::FormatMismatch(
+                "streamed primitive TiledColumnStMan cell dimensions must be positive".to_string(),
             ));
         }
 
@@ -4714,6 +5075,15 @@ fn copy_complex32_native_bytes(dst: &mut [u8], values: &[Complex32]) {
 fn tile_values_as_bytes<T: TilePixel>(values: &[T]) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
+    }
+}
+
+fn tile_values_as_bytes_mut<T: TilePixel>(values: &mut [T]) -> &mut [u8] {
+    unsafe {
+        std::slice::from_raw_parts_mut(
+            values.as_mut_ptr().cast::<u8>(),
+            std::mem::size_of_val(values),
+        )
     }
 }
 
@@ -6701,171 +7071,6 @@ fn decode_selected_cube_row_from_shared_tiles(
     }
 
     match decode_array_value(&raw, &cell_shape, dt, header.big_endian)? {
-        Value::Array(array) => Ok(Some(array)),
-        other => Err(StorageError::FormatMismatch(format!(
-            "tiled array column {} decoded as non-array value {:?}",
-            col_desc.col_name,
-            other.kind()
-        ))),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_selected_cube_row_2d_channel_range_from_shared_tiles(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    cube_idx: usize,
-    cube: &TsmCubeInfo,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    selected: SelectedCubeRow,
-    channel_start: usize,
-    channel_count: usize,
-    session: &mut TileReadSession,
-) -> Result<Option<ArrayValue>, StorageError> {
-    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-    let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
-    if cell_shape.len() != 2 {
-        return decode_selected_cube_row_from_shared_tiles(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected,
-            session,
-        )?
-        .map(|array| super::slice_array_value_2d_channel_range(array, channel_start, channel_count))
-        .transpose();
-    }
-    let Some(channel_end) = channel_start.checked_add(channel_count) else {
-        return Err(StorageError::FormatMismatch(
-            "2-D channel-range tiled read overflowed channel bounds".to_string(),
-        ));
-    };
-    if channel_end > cell_shape[1] {
-        return Err(StorageError::FormatMismatch(format!(
-            "2-D channel range {channel_start}..{channel_end} exceeds tiled cell channel axis with {} channels",
-            cell_shape[1]
-        )));
-    }
-    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
-    if cell_tile_shape.len() != 2 || cell_tile_shape[0] < cell_shape[0] {
-        return decode_selected_cube_row_from_shared_tiles(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected,
-            session,
-        )?
-        .map(|array| super::slice_array_value_2d_channel_range(array, channel_start, channel_count))
-        .transpose();
-    }
-
-    let corr_count = cell_shape[0];
-    let tile_corr_count = cell_tile_shape[0];
-    let tile_channel_count = cell_tile_shape[1];
-    if tile_channel_count == 0 {
-        return Err(StorageError::FormatMismatch(
-            "2-D channel-range tiled read found zero-width channel tile".to_string(),
-        ));
-    }
-    if matches!(dt, CasacoreDataType::TpComplex | CasacoreDataType::TpBool) {
-        return decode_selected_cube_row_2d_channel_range_typed_from_shared_tiles(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            col_desc,
-            dt,
-            elem_size,
-            selected,
-            channel_start,
-            channel_count,
-            corr_count,
-            tile_corr_count,
-            tile_channel_count,
-            session,
-        );
-    }
-    let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
-    let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
-    let row_tile_nelem: usize = cell_tile_shape.iter().product();
-    let tiles_per_dim: Vec<usize> = cube
-        .cube_shape
-        .iter()
-        .zip(cube.tile_shape.iter())
-        .map(|(&shape, &tile)| shape.div_ceil(tile))
-        .collect();
-    let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-    let mut raw = vec![0u8; corr_count * channel_count * elem_size];
-    let first_channel_tile = channel_start / tile_channel_count;
-    let last_channel_tile = (channel_end.saturating_sub(1)) / tile_channel_count;
-
-    for channel_tile in first_channel_tile..=last_channel_tile {
-        let tile_channel_start = channel_tile * tile_channel_count;
-        let actual_tile_channels =
-            std::cmp::min(tile_channel_count, cell_shape[1] - tile_channel_start);
-        let overlap_start = std::cmp::max(channel_start, tile_channel_start);
-        let overlap_end = std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
-        if overlap_start >= overlap_end {
-            continue;
-        }
-
-        let full_tile_pos = [0usize, channel_tile, row_tile];
-        let tile_index: usize = full_tile_pos
-            .iter()
-            .zip(tile_grid_strides.iter())
-            .map(|(pos, stride)| pos * stride)
-            .sum();
-        let tile = load_shared_column_tile(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            bucket_size,
-            col_offsets[target_col_idx],
-            dt,
-            tile_index,
-            session,
-        )?;
-        let src_start = row_in_tile * row_tile_nelem * elem_size;
-        let src_end = src_start + row_tile_nelem * elem_size;
-        let tile_row = &tile[src_start..src_end];
-
-        for channel in overlap_start..overlap_end {
-            let src_channel = channel - tile_channel_start;
-            let dst_channel = channel - channel_start;
-            for corr in 0..corr_count {
-                let src_elem = corr + src_channel * tile_corr_count;
-                let dst_elem = corr + dst_channel * corr_count;
-                let src_byte = src_elem * elem_size;
-                let dst_byte = dst_elem * elem_size;
-                raw[dst_byte..dst_byte + elem_size]
-                    .copy_from_slice(&tile_row[src_byte..src_byte + elem_size]);
-            }
-        }
-    }
-
-    match decode_array_value(&raw, &[corr_count, channel_count], dt, header.big_endian)? {
         Value::Array(array) => Ok(Some(array)),
         other => Err(StorageError::FormatMismatch(format!(
             "tiled array column {} decoded as non-array value {:?}",
@@ -9226,6 +9431,55 @@ mod tests {
     }
 
     #[test]
+    fn streamed_shape_primitive_writer_allows_zero_sized_cells() {
+        let dir = tempdir().expect("tempdir");
+        let table_path = dir.path().join("flag-category.table");
+        let row_count = 5usize;
+        let tile_shape = vec![2, 2, 1, 2];
+
+        let mut writer = StreamingTiledPrimitiveWriter::create_shape(
+            dir.path().join("FLAG_CATEGORY.tmp"),
+            row_count,
+            vec![0, 2, 3],
+            tile_shape.clone(),
+            StreamedTiledPrimitiveType::Bool,
+            false,
+        )
+        .expect("create FLAG_CATEGORY writer");
+        for _ in 0..row_count {
+            writer.push_zero_row().expect("zero-size row");
+        }
+        let streamed = writer.finish().expect("finish FLAG_CATEGORY");
+        assert_eq!(streamed.bytes_written(), 0);
+        install_streamed_tiled_shape_primitive_column(&table_path, 0, "FLAG_CATEGORY", streamed)
+            .expect("install FLAG_CATEGORY");
+
+        let data_path = tsm_data_path(&table_path, 0, 0);
+        assert_eq!(std::fs::metadata(&data_path).expect("data file").len(), 0);
+        let (variant, header) =
+            read_tiled_header(&table_path.join("table.f0")).expect("read FLAG_CATEGORY header");
+        let TiledVariant::Shape {
+            default_tile_shape,
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+        } = variant
+        else {
+            panic!("expected TiledShapeStMan header");
+        };
+        assert_eq!(default_tile_shape, vec![2, 2, 1, 2]);
+        assert_eq!(nr_used_row_map, 1);
+        assert_eq!(row_map, vec![(row_count - 1) as u32]);
+        assert_eq!(cube_map, vec![1]);
+        assert_eq!(pos_map, vec![(row_count - 1) as u32]);
+        assert_eq!(header.nrrow, row_count as u64);
+        assert_eq!(header.files[0].as_ref().expect("file").length, 0);
+        assert_eq!(header.cubes[1].cube_shape, vec![0, 2, 3, row_count]);
+        assert_eq!(header.cubes[1].tile_shape, tile_shape);
+    }
+
+    #[test]
     fn table_cache_budget_api_respects_env_and_runtime_override() {
         let _guard = shared_table_cache_test_guard();
         let prior = std::env::var(TABLE_CACHE_BUDGET_ENV).ok();
@@ -9364,22 +9618,22 @@ mod tests {
         assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
 
         let selected = reopened
-            .get_array_cells_2d_channel_range_owned_uncached("DATA", &[1], 2, 2)
+            .get_array_cells_2d_channel_range_typed_uncached("DATA", &[1], 2, 2)
             .expect("selected channel-range read");
+        let SelectedArray2DCells::Complex32(selected) = selected else {
+            panic!("expected Complex32 selected channel-range cells");
+        };
+        assert_eq!(selected.row_count(), 1);
+        assert_eq!(selected.axis0_count(), 2);
+        assert_eq!(selected.channel_count(), 2);
         assert_eq!(
-            selected,
-            vec![Some(ArrayValue::Complex32(
-                ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[2, 2]).f(),
-                    vec![
-                        Complex32::new(120.0, -120.0),
-                        Complex32::new(121.0, -121.0),
-                        Complex32::new(130.0, -130.0),
-                        Complex32::new(131.0, -131.0),
-                    ],
-                )
-                .unwrap()
-            ))]
+            selected.values(),
+            &[
+                Complex32::new(120.0, -120.0),
+                Complex32::new(121.0, -121.0),
+                Complex32::new(130.0, -130.0),
+                Complex32::new(131.0, -131.0),
+            ],
         );
         assert_eq!(
             shared_tile_cache_entry_count_for_table(&root),

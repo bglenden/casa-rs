@@ -15,14 +15,17 @@ use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use casa_types::measures::position::MPosition;
+
 use crate::simulation::{
     SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
     SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
-    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
-    SyntheticObservationRequest, SyntheticPointingCorruption,
-    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
-    zenith_transit_phase_center_rad,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationMode,
+    SyntheticObservationReport, SyntheticObservationRequest, SyntheticPointingCorruption,
+    SyntheticPolarizationBasis, SyntheticPolarizationLeakageCorruption,
+    SyntheticPolarizationLeakageMode, SyntheticPolarizationSetup, SyntheticSkyModel,
+    SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+    tutorial_vla_a_antennas, zenith_transit_phase_center_rad,
 };
 use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
@@ -31,7 +34,7 @@ use crate::ui_schema::{
 /// Stable protocol name advertised by `simobserve --protocol-info`.
 pub const SIMOBSERVE_TASK_PROTOCOL_NAME: &str = "casa_simobserve_task";
 /// Stable protocol version advertised by `simobserve --protocol-info`.
-pub const SIMOBSERVE_TASK_PROTOCOL_VERSION: u32 = 1;
+pub const SIMOBSERVE_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// Version/compatibility information for the JSON task protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -61,8 +64,13 @@ impl SimobserveProtocolInfo {
 /// One end-to-end synthetic-observation task request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SimobserveRunTaskRequest {
-    /// Existing FITS model image path.
-    pub model_image: PathBuf,
+    /// Existing FITS model image path. Kept for compatibility with protocol v1.
+    #[serde(default)]
+    pub model_image: Option<PathBuf>,
+    /// Preferred sky model. When absent, `model_image` keeps the legacy FITS
+    /// image behavior.
+    #[serde(default)]
+    pub model: Option<SyntheticSkyModel>,
     /// Optional peak brightness scaling in Jy/pixel.
     #[serde(default)]
     pub model_peak_jy_per_pixel: Option<f32>,
@@ -104,12 +112,29 @@ pub struct SimobserveRunTaskRequest {
     /// Spectral-window setup. Defaults to the VLA ppdisk tutorial frequency.
     #[serde(default)]
     pub spectral_setup: Option<SyntheticSpectralSetup>,
+    /// Optional polarization/correlation setup.
+    #[serde(default)]
+    pub polarization_setup: Option<SyntheticPolarizationSetup>,
     /// Predict visibility samples from the model image into `MAIN.DATA`.
     #[serde(default = "default_predict_model")]
     pub predict_model: bool,
     /// Optional deterministic corruptions applied to generated visibility data.
     #[serde(default)]
     pub corruption: Option<SyntheticCorruptionConfig>,
+    /// Worker selection policy for native row/channel parallelism.
+    #[serde(default)]
+    pub worker_policy: SyntheticWorkerPolicy,
+    /// Observation row topology.
+    #[serde(default)]
+    pub observation_mode: SyntheticObservationMode,
+    /// Explicit row worker count when `worker_policy` is `fixed`, or an upper
+    /// bound when `worker_policy` is `auto`.
+    #[serde(default)]
+    pub row_workers: Option<usize>,
+    /// Explicit channel prediction worker count when `worker_policy` is
+    /// `fixed`, or an upper bound when `worker_policy` is `auto`.
+    #[serde(default)]
+    pub channel_workers: Option<usize>,
 }
 
 impl SimobserveRunTaskRequest {
@@ -120,8 +145,18 @@ impl SimobserveRunTaskRequest {
         } else {
             self.antennas.clone()
         };
+        let model_image = self
+            .model_image
+            .clone()
+            .or_else(|| {
+                self.model
+                    .as_ref()
+                    .and_then(|model| model.path().map(Path::to_path_buf))
+            })
+            .unwrap_or_else(|| PathBuf::from("analytic-components.json"));
         let mut request =
-            SyntheticObservationRequest::vla_ppdisk(&self.model_image, &self.output_ms, antennas);
+            SyntheticObservationRequest::vla_ppdisk(model_image, &self.output_ms, antennas);
+        request.model = self.model.clone();
         request.model_peak_jy_per_pixel = self.model_peak_jy_per_pixel;
         request.overwrite = self.overwrite;
         if let Some(telescope_name) = &self.telescope_name {
@@ -157,8 +192,15 @@ impl SimobserveRunTaskRequest {
         if let Some(spectral_setup) = &self.spectral_setup {
             request.spectral_setup = spectral_setup.clone();
         }
+        if let Some(polarization_setup) = &self.polarization_setup {
+            request.polarization_setup = polarization_setup.clone();
+        }
         request.predict_model = self.predict_model;
         request.corruption = self.corruption.clone();
+        request.worker_policy = self.worker_policy;
+        request.observation_mode = self.observation_mode;
+        request.row_workers = self.row_workers;
+        request.channel_workers = self.channel_workers;
         request
     }
 
@@ -184,19 +226,1227 @@ pub struct SimobserveRunTaskResult {
     pub elapsed_millis: u128,
 }
 
+/// Dialog-friendly request for one synthetic MS family.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SimobserveFamilyTaskRequest {
+    /// Source model used for this family.
+    pub source_model: SyntheticSkyModel,
+    /// Telescope family, for example `VLA` or `ALMA`.
+    pub telescope: String,
+    /// Array configuration label, CASA `.cfg` path/name, or explicit synthetic layout label.
+    pub array_config: String,
+    /// Receiver band label.
+    pub band: String,
+    /// Target MeasurementSet size in GiB.
+    pub target_ms_size_gib: f64,
+    /// Number of polarization correlations in the generated MS.
+    pub polarizations: usize,
+    /// Number of frequency channels in the generated MS.
+    pub ms_channels: usize,
+    /// Number of output image channels expected for diagnostics.
+    pub image_channels: usize,
+    /// Number of pointings in the generated observing pattern.
+    pub pointing_count: usize,
+    /// Optional exact field phase centers for CASA-oracle mosaic regeneration.
+    /// When provided, the length must match `pointing_count`.
+    #[serde(default)]
+    pub field_phase_centers_rad: Option<Vec<[f64; 2]>>,
+    /// Optional phase center as `[right_ascension_rad, declination_rad]`.
+    #[serde(default)]
+    pub phase_center_rad: Option<[f64; 2]>,
+    /// Optional first channel center frequency in Hz.
+    #[serde(default)]
+    pub start_frequency_hz: Option<f64>,
+    /// Optional channel width in Hz.
+    #[serde(default)]
+    pub channel_width_hz: Option<f64>,
+    /// Optional exact number of generated time samples.
+    #[serde(default)]
+    pub time_sample_count: Option<usize>,
+    /// Optional integration time in seconds.
+    #[serde(default)]
+    pub integration_seconds: Option<f64>,
+    /// Optional observation start time in MJD seconds UTC.
+    #[serde(default)]
+    pub start_time_mjd_seconds: Option<f64>,
+    /// Imaging mode label, for example `single_field`, `mosaic`, `mfs`,
+    /// `spectral_cube`, `cubedata`, or `mt_mfs`.
+    pub imaging_mode: String,
+    /// Optional output MeasurementSet path for generated family members.
+    #[serde(default)]
+    pub output_ms: Option<PathBuf>,
+    /// Recursively measure the final MeasurementSet directory size. Disabled by
+    /// default because it is expensive for large on-the-fly generation runs.
+    #[serde(default)]
+    pub measure_actual_size: bool,
+    /// Worker selection policy for generated runs.
+    #[serde(default)]
+    pub worker_policy: SyntheticWorkerPolicy,
+    /// Observation row topology for generated runs.
+    #[serde(default)]
+    pub observation_mode: SyntheticObservationMode,
+    /// Optional source antenna index for single-dish total-power family runs.
+    #[serde(default)]
+    pub total_power_antenna_index: Option<usize>,
+    /// Optional row worker control for generated runs.
+    #[serde(default)]
+    pub row_workers: Option<usize>,
+    /// Optional channel worker control for generated runs.
+    #[serde(default)]
+    pub channel_workers: Option<usize>,
+}
+
+impl SimobserveFamilyTaskRequest {
+    /// Execute the family request by generating a concrete MeasurementSet and
+    /// manifest from the persisted dialog inputs.
+    pub fn execute(&self) -> Result<SimobserveFamilyTaskResult, String> {
+        if self.target_ms_size_gib <= 0.0 || !self.target_ms_size_gib.is_finite() {
+            return Err("target_ms_size_gib must be positive".to_string());
+        }
+        if self.polarizations == 0 {
+            return Err("polarizations must be positive".to_string());
+        }
+        if self.ms_channels == 0 {
+            return Err("ms_channels must be positive".to_string());
+        }
+        if self.image_channels == 0 {
+            return Err("image_channels must be positive".to_string());
+        }
+        if self.pointing_count == 0 {
+            return Err("pointing_count must be positive".to_string());
+        }
+        if let Some(field_phase_centers_rad) = &self.field_phase_centers_rad {
+            if field_phase_centers_rad.len() != self.pointing_count {
+                return Err(
+                    "field_phase_centers_rad length must match pointing_count when provided"
+                        .to_string(),
+                );
+            }
+            if field_phase_centers_rad.iter().any(|[ra, dec]| {
+                !ra.is_finite()
+                    || !dec.is_finite()
+                    || *ra < -std::f64::consts::TAU
+                    || *ra > std::f64::consts::TAU
+                    || *dec < -std::f64::consts::FRAC_PI_2
+                    || *dec > std::f64::consts::FRAC_PI_2
+            }) {
+                return Err("field_phase_centers_rad entries must be finite radians".to_string());
+            }
+        }
+        if let Some([right_ascension_rad, declination_rad]) = self.phase_center_rad {
+            if !right_ascension_rad.is_finite() || !declination_rad.is_finite() {
+                return Err("phase_center_rad values must be finite when provided".to_string());
+            }
+        }
+        if let Some(start_frequency_hz) = self.start_frequency_hz {
+            if start_frequency_hz <= 0.0 || !start_frequency_hz.is_finite() {
+                return Err("start_frequency_hz must be positive when provided".to_string());
+            }
+        }
+        if let Some(channel_width_hz) = self.channel_width_hz {
+            if channel_width_hz <= 0.0 || !channel_width_hz.is_finite() {
+                return Err("channel_width_hz must be positive when provided".to_string());
+            }
+        }
+        if matches!(self.time_sample_count, Some(0)) {
+            return Err("time_sample_count must be positive when provided".to_string());
+        }
+        if let Some(integration_seconds) = self.integration_seconds {
+            if integration_seconds <= 0.0 || !integration_seconds.is_finite() {
+                return Err("integration_seconds must be positive when provided".to_string());
+            }
+        }
+        if let Some(start_time_mjd_seconds) = self.start_time_mjd_seconds {
+            if !start_time_mjd_seconds.is_finite() {
+                return Err("start_time_mjd_seconds must be finite when provided".to_string());
+            }
+        }
+        validate_family_imaging_mode(&self.imaging_mode)?;
+        let output_ms = self
+            .output_ms
+            .clone()
+            .ok_or_else(|| "family output_ms is required".to_string())?;
+        let target_bytes = (self.target_ms_size_gib * 1024.0 * 1024.0 * 1024.0).round() as u64;
+        let data_cell_bytes = self.polarizations as u64 * self.ms_channels as u64 * 8;
+        let flag_cell_bytes = self.polarizations as u64 * self.ms_channels as u64;
+        let row_payload_bytes = (data_cell_bytes + flag_cell_bytes).max(1);
+        let estimated_main_rows = (target_bytes / row_payload_bytes).max(1);
+        let preset = resolve_family_preset(self)?;
+        let antennas = family_antennas_for_mode(
+            preset.antennas.clone(),
+            self.observation_mode,
+            self.total_power_antenna_index,
+        )?;
+        let baseline_count = family_row_pair_count(antennas.len(), self.observation_mode);
+        let time_sample_count = self.time_sample_count.unwrap_or_else(|| {
+            estimated_main_rows
+                .div_ceil(baseline_count.max(1) as u64)
+                .max(1) as usize
+        });
+        let integration_seconds = self.integration_seconds.unwrap_or(2.0);
+        let start_frequency_hz = self.start_frequency_hz.unwrap_or(preset.start_frequency_hz);
+        let channel_width_hz = self
+            .channel_width_hz
+            .unwrap_or_else(|| family_channel_width_hz(&self.imaging_mode, &preset));
+        let phase_center_rad = self.phase_center_rad.unwrap_or(preset.phase_center_rad);
+        let spectral_setup = SyntheticSpectralSetup {
+            name: format!("{}-{}", self.band, self.ms_channels),
+            start_frequency_hz,
+            channel_width_hz,
+            channel_count: self.ms_channels,
+        };
+        let fields = family_fields(
+            self.pointing_count,
+            phase_center_rad,
+            self.field_phase_centers_rad.as_deref(),
+            &self.imaging_mode,
+            spectral_setup.reference_frequency_hz(),
+            preset.dish_diameter_m,
+        );
+        let polarization_setup =
+            SyntheticPolarizationSetup::new(preset.polarization_basis, self.polarizations)
+                .map_err(|error| error.to_string())?;
+        let telescope_name = if self.observation_mode == SyntheticObservationMode::TotalPower
+            && matches!(preset.telescope_name.as_str(), "ALMA" | "ACA")
+        {
+            "ALMASD".to_string()
+        } else {
+            preset.telescope_name.clone()
+        };
+        let run_request = SimobserveRunTaskRequest {
+            model_image: self
+                .source_model
+                .path()
+                .map(Path::to_path_buf)
+                .or_else(|| Some(PathBuf::from("analytic-components.json"))),
+            model: Some(self.source_model.clone()),
+            model_peak_jy_per_pixel: None,
+            output_ms: output_ms.clone(),
+            overwrite: true,
+            telescope_name: Some(telescope_name),
+            field_name: Some(preset.field_name.clone()),
+            antennas: antennas.clone(),
+            phase_center_rad: Some(phase_center_rad),
+            fields,
+            start_time_mjd_seconds: Some(
+                self.start_time_mjd_seconds
+                    .unwrap_or(preset.start_time_mjd_seconds),
+            ),
+            duration_seconds: Some(time_sample_count as f64 * integration_seconds),
+            integration_seconds: Some(integration_seconds),
+            elevation_limit_rad: Some((-89.0_f64).to_radians()),
+            allow_below_elevation_limit: true,
+            spectral_setup: Some(spectral_setup),
+            polarization_setup: Some(polarization_setup),
+            predict_model: true,
+            corruption: None,
+            worker_policy: self.worker_policy,
+            observation_mode: self.observation_mode,
+            row_workers: self.row_workers,
+            channel_workers: self.channel_workers,
+        };
+        let run_result = run_request.execute()?;
+        let (actual_ms_bytes, actual_ms_bytes_source) = if self.measure_actual_size {
+            (
+                directory_size_bytes(&output_ms).map_err(|error| {
+                    format!(
+                        "failed to measure generated MeasurementSet {}: {error}",
+                        output_ms.display()
+                    )
+                })?,
+                "directory_walk".to_string(),
+            )
+        } else {
+            (
+                run_result.report.timing.main_rows.data_io_bytes,
+                "streamed_columns".to_string(),
+            )
+        };
+        let manifest_path = family_manifest_path(&output_ms);
+        let manifest = SimobserveFamilyManifest {
+            source_model: self.source_model.clone(),
+            source_model_kind: self.source_model.kind_name().to_string(),
+            telescope: self.telescope.clone(),
+            array_config: self.array_config.clone(),
+            array_config_source: preset.array_config_source.clone(),
+            band: self.band.clone(),
+            imaging_mode: self.imaging_mode.clone(),
+            output_ms: output_ms.clone(),
+            target_bytes,
+            actual_ms_bytes,
+            actual_ms_bytes_source: actual_ms_bytes_source.clone(),
+            requested_polarizations: self.polarizations,
+            requested_ms_channels: self.ms_channels,
+            requested_image_channels: self.image_channels,
+            requested_pointing_count: self.pointing_count,
+            requested_field_phase_centers_rad: self.field_phase_centers_rad.clone(),
+            estimated_main_rows,
+            generated_main_rows: run_result.report.main_row_count as u64,
+            worker_policy: self.worker_policy,
+            observation_mode: self.observation_mode,
+            total_power_antenna_index: self.total_power_antenna_index,
+            row_workers: self.row_workers,
+            channel_workers: self.channel_workers,
+            run_request: run_request.clone(),
+            run_result: run_result.clone(),
+        };
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| {
+            format!(
+                "failed to write family manifest {}: {error}",
+                manifest_path.display()
+            )
+        })?;
+        Ok(SimobserveFamilyTaskResult {
+            source_model_kind: self.source_model.kind_name().to_string(),
+            target_bytes,
+            actual_ms_bytes,
+            actual_ms_bytes_source,
+            estimated_main_rows,
+            estimated_visibility_payload_bytes: estimated_main_rows * row_payload_bytes,
+            requested_ms_channels: self.ms_channels,
+            requested_image_channels: self.image_channels,
+            requested_pointing_count: self.pointing_count,
+            requested_field_phase_centers_rad: self.field_phase_centers_rad.clone(),
+            generated_main_rows: run_result.report.main_row_count as u64,
+            output_ms,
+            manifest_path,
+            run_result: Box::new(run_result),
+            worker_policy: self.worker_policy,
+            observation_mode: self.observation_mode,
+            total_power_antenna_index: self.total_power_antenna_index,
+            row_workers: self.row_workers,
+            channel_workers: self.channel_workers,
+        })
+    }
+}
+
+/// Structured manifest persisted next to a generated synthetic MS family member.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SimobserveFamilyManifest {
+    /// Source model used for this family member.
+    pub source_model: SyntheticSkyModel,
+    /// Active source-model kind.
+    pub source_model_kind: String,
+    /// Requested telescope label.
+    pub telescope: String,
+    /// Requested array configuration label.
+    pub array_config: String,
+    /// Resolved source of the antenna coordinates.
+    pub array_config_source: String,
+    /// Requested receiver band label.
+    pub band: String,
+    /// Requested imaging mode label.
+    pub imaging_mode: String,
+    /// Generated MeasurementSet path.
+    pub output_ms: PathBuf,
+    /// Requested target size in bytes.
+    pub target_bytes: u64,
+    /// Actual generated size in bytes from `actual_ms_bytes_source`.
+    pub actual_ms_bytes: u64,
+    /// Source used for `actual_ms_bytes`.
+    pub actual_ms_bytes_source: String,
+    /// Requested number of polarization correlations.
+    pub requested_polarizations: usize,
+    /// Requested MS channel count.
+    pub requested_ms_channels: usize,
+    /// Requested image channel count.
+    pub requested_image_channels: usize,
+    /// Requested pointing count.
+    pub requested_pointing_count: usize,
+    /// Requested exact field phase centers, when supplied by an oracle harness.
+    #[serde(default)]
+    pub requested_field_phase_centers_rad: Option<Vec<[f64; 2]>>,
+    /// Estimated MAIN rows from the sizing planner.
+    pub estimated_main_rows: u64,
+    /// MAIN rows actually generated.
+    pub generated_main_rows: u64,
+    /// Worker selection policy.
+    pub worker_policy: SyntheticWorkerPolicy,
+    /// Observation row topology.
+    #[serde(default)]
+    pub observation_mode: SyntheticObservationMode,
+    /// Source antenna index for total-power family runs.
+    #[serde(default)]
+    pub total_power_antenna_index: Option<usize>,
+    /// Optional row worker count.
+    #[serde(default)]
+    pub row_workers: Option<usize>,
+    /// Optional channel worker count.
+    #[serde(default)]
+    pub channel_workers: Option<usize>,
+    /// Concrete run request generated from the family request.
+    pub run_request: SimobserveRunTaskRequest,
+    /// Concrete run result.
+    pub run_result: SimobserveRunTaskResult,
+}
+
+/// Result for a generated synthetic MS family request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SimobserveFamilyTaskResult {
+    /// Active source-model kind.
+    pub source_model_kind: String,
+    /// Requested target size in bytes.
+    pub target_bytes: u64,
+    /// Actual generated size in bytes from `actual_ms_bytes_source`.
+    pub actual_ms_bytes: u64,
+    /// Source used for `actual_ms_bytes`.
+    pub actual_ms_bytes_source: String,
+    /// Estimated MAIN row count needed to approach the target.
+    pub estimated_main_rows: u64,
+    /// Estimated DATA+FLAG payload bytes represented by the row budget.
+    pub estimated_visibility_payload_bytes: u64,
+    /// Requested MS channel count.
+    pub requested_ms_channels: usize,
+    /// Requested image channel count.
+    pub requested_image_channels: usize,
+    /// Requested pointing count.
+    pub requested_pointing_count: usize,
+    /// Requested exact field phase centers, when supplied by an oracle harness.
+    #[serde(default)]
+    pub requested_field_phase_centers_rad: Option<Vec<[f64; 2]>>,
+    /// MAIN rows actually generated.
+    pub generated_main_rows: u64,
+    /// Generated MeasurementSet path.
+    pub output_ms: PathBuf,
+    /// Persisted manifest path.
+    pub manifest_path: PathBuf,
+    /// Concrete run result for the generated family member.
+    pub run_result: Box<SimobserveRunTaskResult>,
+    /// Worker selection policy for generated runs.
+    pub worker_policy: SyntheticWorkerPolicy,
+    /// Observation row topology for generated runs.
+    #[serde(default)]
+    pub observation_mode: SyntheticObservationMode,
+    /// Source antenna index for total-power family runs.
+    #[serde(default)]
+    pub total_power_antenna_index: Option<usize>,
+    /// Optional row worker count.
+    #[serde(default)]
+    pub row_workers: Option<usize>,
+    /// Optional channel worker count.
+    #[serde(default)]
+    pub channel_workers: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct FamilyPreset {
+    telescope_name: String,
+    field_name: String,
+    antennas: Vec<SyntheticAntenna>,
+    array_config_source: String,
+    phase_center_rad: [f64; 2],
+    start_time_mjd_seconds: f64,
+    start_frequency_hz: f64,
+    channel_width_hz: f64,
+    dish_diameter_m: f64,
+    polarization_basis: SyntheticPolarizationBasis,
+}
+
+fn resolve_family_preset(request: &SimobserveFamilyTaskRequest) -> Result<FamilyPreset, String> {
+    let telescope = request.telescope.trim().to_ascii_lowercase();
+    let array_config = request.array_config.trim().to_ascii_lowercase();
+    let start_frequency_hz = resolve_band_frequency_hz(&telescope, &request.band)?;
+    let phase_center_rad = [4.712_391_234_768_306, -0.401_423_788_703_971_4];
+    let start_time_mjd_seconds = 4_895_229_577.784_943;
+
+    if telescope == "vla" {
+        let (antennas, array_config_source) = match array_config.as_str() {
+            "a" | "vla.a" | "vla.a.cfg" => load_real_family_config("VLA", "vla.a.cfg")?
+                .unwrap_or_else(|| {
+                    (
+                        tutorial_vla_a_antennas(),
+                        "embedded CASA vla.a.cfg coordinates".to_string(),
+                    )
+                }),
+            "b" | "vla.b" | "vla.b.cfg" => require_real_family_config("VLA", "vla.b.cfg")?,
+            "c" | "vla.c" | "vla.c.cfg" => require_real_family_config("VLA", "vla.c.cfg")?,
+            "d" | "vla.d" | "vla.d.cfg" => require_real_family_config("VLA", "vla.d.cfg")?,
+            "synthetic-vla-b" | "synthetic-b" => (
+                scaled_vla_antennas(0.35),
+                "synthetic scaled VLA A".to_string(),
+            ),
+            "synthetic-vla-c" | "synthetic-c" => (
+                scaled_vla_antennas(0.11),
+                "synthetic scaled VLA A".to_string(),
+            ),
+            "synthetic-vla-d" | "synthetic-d" => (
+                scaled_vla_antennas(0.035),
+                "synthetic scaled VLA A".to_string(),
+            ),
+            _ => match load_real_family_config("VLA", request.array_config.trim())? {
+                Some(loaded) => loaded,
+                None => {
+                    return Err(format!(
+                        "unsupported VLA array_config {:?}; expected A, B, C, D, a CASA .cfg path/name, or synthetic-vla-b/c/d",
+                        request.array_config
+                    ));
+                }
+            },
+        };
+        return Ok(FamilyPreset {
+            telescope_name: "VLA".to_string(),
+            field_name: "synthetic-vla".to_string(),
+            antennas,
+            array_config_source,
+            phase_center_rad,
+            start_time_mjd_seconds,
+            start_frequency_hz,
+            channel_width_hz: 1.0e6,
+            dish_diameter_m: 25.0,
+            polarization_basis: SyntheticPolarizationBasis::Circular,
+        });
+    }
+
+    if telescope == "alma" || telescope == "aca" {
+        let (antennas, array_config_source, aca_only, simalma) = match array_config.as_str() {
+            "aca" | "aca.cycle10" | "aca.cycle10.cfg" | "aca.cycle10.named.cfg"
+                if telescope == "aca" =>
+            {
+                let loaded = load_real_family_config("ACA", "aca.cycle10.cfg")?
+                    .or(load_real_family_config("ACA", "aca.cycle10.named.cfg")?);
+                match loaded {
+                    Some((antennas, source)) => (antennas, source, true, false),
+                    None => {
+                        return Err(real_config_not_found_message("ACA", "aca.cycle10.cfg"));
+                    }
+                }
+            }
+            "alma.cycle8.5.cfg" | "alma.cycle10.5" | "alma.cycle10.5.cfg" => {
+                let config_name = if array_config == "alma.cycle8.5.cfg" {
+                    "alma.cycle8.5.cfg"
+                } else {
+                    "alma.cycle10.5.cfg"
+                };
+                let (antennas, source) = require_real_family_config("ALMA", config_name)?;
+                (antennas, source, false, false)
+            }
+            "synthetic-alma-compact" | "synthetic-12m" | "synthetic-compact" => (
+                synthetic_alma_antennas("DA", 16, 12.0, 450.0),
+                "synthetic ALMA 12m compact".to_string(),
+                false,
+                false,
+            ),
+            "synthetic-aca" => (
+                synthetic_alma_antennas("CM", 10, 7.0, 120.0),
+                "synthetic ACA 7m compact".to_string(),
+                true,
+                false,
+            ),
+            "synthetic-simalma" => {
+                let mut antennas = synthetic_alma_antennas("DA", 12, 12.0, 450.0);
+                antennas.extend(synthetic_alma_antennas("CM", 10, 7.0, 120.0));
+                (
+                    antennas,
+                    "synthetic ALMA 12m plus ACA 7m".to_string(),
+                    false,
+                    true,
+                )
+            }
+            _ => match load_real_family_config(&request.telescope, request.array_config.trim())? {
+                Some((antennas, source)) => (
+                    antennas,
+                    source,
+                    telescope == "aca" || array_config.contains("aca"),
+                    false,
+                ),
+                None => {
+                    return Err(format!(
+                        "unsupported ALMA/ACA array_config {:?}; expected a CASA .cfg path/name such as alma.cycle10.5.cfg or aca.cycle10.cfg, or synthetic-alma-compact/synthetic-aca/synthetic-simalma",
+                        request.array_config
+                    ));
+                }
+            },
+        };
+        let dish_diameter_m = if aca_only { 7.0 } else { 12.0 };
+        return Ok(FamilyPreset {
+            telescope_name: if aca_only {
+                "ACA".to_string()
+            } else {
+                "ALMA".to_string()
+            },
+            field_name: if simalma {
+                "synthetic-simalma".to_string()
+            } else if aca_only {
+                "synthetic-aca".to_string()
+            } else {
+                "synthetic-alma".to_string()
+            },
+            antennas,
+            array_config_source,
+            phase_center_rad,
+            start_time_mjd_seconds,
+            start_frequency_hz,
+            channel_width_hz: 1.0e6,
+            dish_diameter_m,
+            polarization_basis: SyntheticPolarizationBasis::Linear,
+        });
+    }
+
+    Err(format!(
+        "unsupported telescope {:?}; expected VLA, ALMA, or ACA",
+        request.telescope
+    ))
+}
+
+fn require_real_family_config(
+    telescope: &str,
+    config_name: &str,
+) -> Result<(Vec<SyntheticAntenna>, String), String> {
+    load_real_family_config(telescope, config_name)?
+        .ok_or_else(|| real_config_not_found_message(telescope, config_name))
+}
+
+fn real_config_not_found_message(telescope: &str, config_name: &str) -> String {
+    format!(
+        "real {telescope} array_config {config_name:?} was not found; set CASA_RS_SIMOBSERVE_CONFIG_ROOT to a directory containing CASA simmos .cfg files, pass an explicit .cfg path, or use an explicit synthetic-* array_config"
+    )
+}
+
+fn load_real_family_config(
+    telescope: &str,
+    config_label: &str,
+) -> Result<Option<(Vec<SyntheticAntenna>, String)>, String> {
+    let label = config_label.trim();
+    if label.is_empty() {
+        return Ok(None);
+    }
+    let looks_like_cfg = label.ends_with(".cfg") || Path::new(label).is_file();
+    if !looks_like_cfg {
+        return Ok(None);
+    }
+    for candidate in family_config_candidates(label) {
+        if candidate.is_file() {
+            let antennas = parse_casa_array_config(telescope, &candidate)?;
+            return Ok(Some((antennas, candidate.display().to_string())));
+        }
+    }
+    Ok(None)
+}
+
+fn family_config_candidates(label: &str) -> Vec<PathBuf> {
+    let path = Path::new(label);
+    if path.is_absolute() || path.components().count() > 1 {
+        return vec![path.to_path_buf()];
+    }
+
+    let mut candidates = Vec::new();
+    for env_name in ["CASA_RS_SIMOBSERVE_CONFIG_ROOT", "CASADATA"] {
+        if let Some(paths) = std::env::var_os(env_name) {
+            for root in std::env::split_paths(&paths) {
+                push_family_config_candidates(&mut candidates, &root, label);
+            }
+        }
+    }
+    if let Some(casapath) = std::env::var_os("CASAPATH") {
+        if let Some(first_root) = casapath.to_string_lossy().split_whitespace().next() {
+            push_family_config_candidates(
+                &mut candidates,
+                &Path::new(first_root).join("data"),
+                label,
+            );
+        }
+    }
+    candidates
+}
+
+fn push_family_config_candidates(candidates: &mut Vec<PathBuf>, root: &Path, label: &str) {
+    candidates.push(root.join(label));
+    candidates.push(root.join("alma").join("simmos").join(label));
+    candidates.push(
+        root.join("__data__")
+            .join("alma")
+            .join("simmos")
+            .join(label),
+    );
+}
+
+fn parse_casa_array_config(telescope: &str, path: &Path) -> Result<Vec<SyntheticAntenna>, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read array_config {}: {error}", path.display()))?;
+    let mut observatory = telescope.trim().to_string();
+    let mut coordsys = "XYZ".to_string();
+    let mut datum = "WGS84".to_string();
+    let mut utm_zone: Option<i32> = None;
+    let mut utm_south: Option<bool> = None;
+    let mut antennas = Vec::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(comment) = line.strip_prefix('#') {
+            let comment = comment.trim();
+            if let Some((key, value)) = comment.split_once('=') {
+                match key.trim().to_ascii_lowercase().as_str() {
+                    "observatory" => observatory = value.trim().to_string(),
+                    "coordsys" => coordsys = value.trim().to_ascii_uppercase(),
+                    "datum" => datum = value.trim().to_ascii_uppercase(),
+                    "zone" => {
+                        utm_zone = Some(value.trim().parse::<i32>().map_err(|error| {
+                            format!(
+                                "array_config {} has invalid UTM zone {value:?}: {error}",
+                                path.display()
+                            )
+                        })?)
+                    }
+                    "hemisphere" => {
+                        let hemisphere = value.trim();
+                        utm_south = Some(
+                            if hemisphere.eq_ignore_ascii_case("S")
+                                || hemisphere.eq_ignore_ascii_case("SOUTH")
+                            {
+                                true
+                            } else if hemisphere.eq_ignore_ascii_case("N")
+                                || hemisphere.eq_ignore_ascii_case("NORTH")
+                            {
+                                false
+                            } else {
+                                return Err(format!(
+                                    "array_config {} has invalid UTM hemisphere {hemisphere:?}",
+                                    path.display()
+                                ));
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 5 {
+            return Err(format!(
+                "array_config {} has malformed antenna row {line:?}",
+                path.display()
+            ));
+        }
+        let x_m = parse_config_f64(fields[0], path)?;
+        let y_m = parse_config_f64(fields[1], path)?;
+        let z_m = parse_config_f64(fields[2], path)?;
+        let dish_diameter_m = parse_config_f64(fields[3], path)?;
+        let station = fields[4].to_string();
+        let position_m = if coordsys.starts_with("LOC") {
+            let observatory_position = config_observatory_position(&observatory).ok_or_else(|| {
+                format!(
+                    "array_config {} uses local coordinates but observatory {observatory:?} is unknown",
+                    path.display()
+                )
+            })?;
+            offset_itrf_position_geodetic_enu(&observatory_position, x_m, y_m, z_m).ok_or_else(
+                || {
+                    format!(
+                        "array_config {} uses local coordinates but observatory {observatory:?} has invalid geodetic basis",
+                        path.display()
+                    )
+                },
+            )?
+        } else if coordsys.starts_with("UTM") {
+            utm_to_itrf_position(&datum, utm_zone, utm_south, x_m, y_m, z_m, path)?
+        } else {
+            [x_m, y_m, z_m]
+        };
+        antennas.push(SyntheticAntenna {
+            name: station.clone(),
+            station,
+            position_m,
+            dish_diameter_m,
+        });
+    }
+
+    if antennas.is_empty() {
+        return Err(format!("array_config {} has no antennas", path.display()));
+    }
+    Ok(antennas)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UtmDatum {
+    semi_major_axis_m: f64,
+    inverse_flattening: f64,
+    translation_to_itrf_m: [f64; 3],
+}
+
+fn utm_to_itrf_position(
+    datum: &str,
+    zone: Option<i32>,
+    south: Option<bool>,
+    easting_m: f64,
+    northing_m: f64,
+    height_m: f64,
+    path: &Path,
+) -> Result<[f64; 3], String> {
+    let zone = zone.ok_or_else(|| {
+        format!(
+            "array_config {} uses UTM coordinates but has no # zone=<n> comment",
+            path.display()
+        )
+    })?;
+    let south = south.ok_or_else(|| {
+        format!(
+            "array_config {} uses UTM coordinates but has no # hemisphere=N|S comment",
+            path.display()
+        )
+    })?;
+    if !(1..=60).contains(&zone) {
+        return Err(format!(
+            "array_config {} has invalid UTM zone {zone}; expected 1..60",
+            path.display()
+        ));
+    }
+    let datum = utm_datum(datum).ok_or_else(|| {
+        format!(
+            "array_config {} uses unsupported UTM datum {datum:?}",
+            path.display()
+        )
+    })?;
+    let [longitude_rad, latitude_rad] =
+        inverse_utm_to_geodetic(easting_m, northing_m, zone, south, datum);
+    let mut position = geodetic_to_ecef(
+        longitude_rad,
+        latitude_rad,
+        height_m,
+        datum.semi_major_axis_m,
+        1.0 / datum.inverse_flattening,
+    );
+    position[0] += datum.translation_to_itrf_m[0];
+    position[1] += datum.translation_to_itrf_m[1];
+    position[2] += datum.translation_to_itrf_m[2];
+    Ok(position)
+}
+
+fn utm_datum(name: &str) -> Option<UtmDatum> {
+    match name.trim().to_ascii_uppercase().as_str() {
+        "WGS84" | "WGS_84" => Some(UtmDatum {
+            semi_major_axis_m: 6_378_137.0,
+            inverse_flattening: 298.257_223_563,
+            translation_to_itrf_m: [0.0, 0.0, 0.0],
+        }),
+        "SAM56" | "PSAD56" => Some(UtmDatum {
+            semi_major_axis_m: 6_378_388.0,
+            inverse_flattening: 297.0,
+            translation_to_itrf_m: [-288.0, 175.0, -376.0],
+        }),
+        _ => None,
+    }
+}
+
+fn inverse_utm_to_geodetic(
+    easting_m: f64,
+    northing_m: f64,
+    zone: i32,
+    south: bool,
+    datum: UtmDatum,
+) -> [f64; 2] {
+    let flattening = 1.0 / datum.inverse_flattening;
+    let eccentricity_squared = flattening * (2.0 - flattening);
+    let second_eccentricity_squared = eccentricity_squared / (1.0 - eccentricity_squared);
+    let scale = 0.9996;
+    let x = easting_m - 500_000.0;
+    let y = northing_m - if south { 10_000_000.0 } else { 0.0 };
+    let central_meridian_rad = ((zone as f64 * 6.0) - 183.0).to_radians();
+    let meridional_arc = y / scale;
+    let mu = meridional_arc
+        / (datum.semi_major_axis_m
+            * (1.0
+                - eccentricity_squared / 4.0
+                - 3.0 * eccentricity_squared.powi(2) / 64.0
+                - 5.0 * eccentricity_squared.powi(3) / 256.0));
+    let e1 =
+        (1.0 - (1.0 - eccentricity_squared).sqrt()) / (1.0 + (1.0 - eccentricity_squared).sqrt());
+    let footprint_latitude_rad = mu
+        + (3.0 * e1 / 2.0 - 27.0 * e1.powi(3) / 32.0) * (2.0 * mu).sin()
+        + (21.0 * e1.powi(2) / 16.0 - 55.0 * e1.powi(4) / 32.0) * (4.0 * mu).sin()
+        + (151.0 * e1.powi(3) / 96.0) * (6.0 * mu).sin()
+        + (1097.0 * e1.powi(4) / 512.0) * (8.0 * mu).sin();
+    let sin_footprint = footprint_latitude_rad.sin();
+    let cos_footprint = footprint_latitude_rad.cos();
+    let tan_footprint = footprint_latitude_rad.tan();
+    let c1 = second_eccentricity_squared * cos_footprint.powi(2);
+    let t1 = tan_footprint.powi(2);
+    let n1 = datum.semi_major_axis_m / (1.0 - eccentricity_squared * sin_footprint.powi(2)).sqrt();
+    let r1 = datum.semi_major_axis_m * (1.0 - eccentricity_squared)
+        / (1.0 - eccentricity_squared * sin_footprint.powi(2)).powf(1.5);
+    let d = x / (n1 * scale);
+    let latitude_rad = footprint_latitude_rad
+        - (n1 * tan_footprint / r1)
+            * (d.powi(2) / 2.0
+                - (5.0 + 3.0 * t1 + 10.0 * c1
+                    - 4.0 * c1.powi(2)
+                    - 9.0 * second_eccentricity_squared)
+                    * d.powi(4)
+                    / 24.0
+                + (61.0 + 90.0 * t1 + 298.0 * c1 + 45.0 * t1.powi(2)
+                    - 252.0 * second_eccentricity_squared
+                    - 3.0 * c1.powi(2))
+                    * d.powi(6)
+                    / 720.0);
+    let longitude_rad = central_meridian_rad
+        + (d - (1.0 + 2.0 * t1 + c1) * d.powi(3) / 6.0
+            + (5.0 - 2.0 * c1 + 28.0 * t1 - 3.0 * c1.powi(2)
+                + 8.0 * second_eccentricity_squared
+                + 24.0 * t1.powi(2))
+                * d.powi(5)
+                / 120.0)
+            / cos_footprint;
+    [longitude_rad, latitude_rad]
+}
+
+fn geodetic_to_ecef(
+    longitude_rad: f64,
+    latitude_rad: f64,
+    height_m: f64,
+    semi_major_axis_m: f64,
+    flattening: f64,
+) -> [f64; 3] {
+    let eccentricity_squared = flattening * (2.0 - flattening);
+    let sin_latitude = latitude_rad.sin();
+    let cos_latitude = latitude_rad.cos();
+    let prime_vertical_radius =
+        semi_major_axis_m / (1.0 - eccentricity_squared * sin_latitude.powi(2)).sqrt();
+    [
+        (prime_vertical_radius + height_m) * cos_latitude * longitude_rad.cos(),
+        (prime_vertical_radius + height_m) * cos_latitude * longitude_rad.sin(),
+        (prime_vertical_radius * (1.0 - eccentricity_squared) + height_m) * sin_latitude,
+    ]
+}
+
+fn config_observatory_position(name: &str) -> Option<MPosition> {
+    MPosition::from_observatory_name(name).or_else(|| {
+        if name.eq_ignore_ascii_case("ALMASD") {
+            MPosition::from_observatory_name("ALMA")
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_config_f64(value: &str, path: &Path) -> Result<f64, String> {
+    value.parse::<f64>().map_err(|error| {
+        format!(
+            "array_config {} has invalid floating-point value {value:?}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn resolve_band_frequency_hz(telescope: &str, band: &str) -> Result<f64, String> {
+    let band = band.trim().to_ascii_lowercase().replace(' ', "");
+    match (telescope, band.as_str()) {
+        ("vla", "l") => Ok(1.5e9),
+        ("vla", "s") => Ok(3.0e9),
+        ("vla", "c") => Ok(6.0e9),
+        ("vla", "x") => Ok(10.0e9),
+        ("vla", "ku") => Ok(15.0e9),
+        ("vla", "k") => Ok(22.0e9),
+        ("vla", "ka") => Ok(33.0e9),
+        ("vla", "q") => Ok(44.0e9),
+        ("alma" | "aca", "3" | "band3" | "band_3") => Ok(100.0e9),
+        ("alma" | "aca", "6" | "band6" | "band_6") => Ok(230.0e9),
+        ("alma" | "aca", "7" | "band7" | "band_7") => Ok(345.0e9),
+        ("alma" | "aca", "9" | "band9" | "band_9") => Ok(690.0e9),
+        ("vla", other) => Err(format!(
+            "unsupported VLA band {other:?}; expected L, S, C, X, Ku, K, Ka, or Q"
+        )),
+        (_, other) => Err(format!(
+            "unsupported ALMA/ACA band {other:?}; expected Band 3, 6, 7, or 9"
+        )),
+    }
+}
+
+fn family_channel_width_hz(imaging_mode: &str, preset: &FamilyPreset) -> f64 {
+    let mode = imaging_mode.trim().to_ascii_lowercase();
+    if matches!(
+        mode.as_str(),
+        "mfs" | "continuum" | "continuum_mfs" | "single_field" | "mt_mfs" | "mtmfs"
+    ) {
+        preset.channel_width_hz.max(32.0e6)
+    } else {
+        preset.channel_width_hz
+    }
+}
+
+fn family_row_pair_count(
+    antenna_count: usize,
+    observation_mode: SyntheticObservationMode,
+) -> usize {
+    match observation_mode {
+        SyntheticObservationMode::Interferometric => {
+            antenna_count * antenna_count.saturating_sub(1) / 2
+        }
+        SyntheticObservationMode::TotalPower => antenna_count,
+    }
+    .max(1)
+}
+
+fn family_antennas_for_mode(
+    antennas: Vec<SyntheticAntenna>,
+    observation_mode: SyntheticObservationMode,
+    total_power_antenna_index: Option<usize>,
+) -> Result<Vec<SyntheticAntenna>, String> {
+    match observation_mode {
+        SyntheticObservationMode::Interferometric => Ok(antennas),
+        SyntheticObservationMode::TotalPower => {
+            let selected_index = total_power_antenna_index.unwrap_or(0);
+            antennas
+                .into_iter()
+                .nth(selected_index)
+                .map(|antenna| vec![antenna])
+                .ok_or_else(|| {
+                    format!(
+                        "total_power_antenna_index {selected_index} is out of range for array_config"
+                    )
+                })
+        }
+    }
+}
+
+fn validate_family_imaging_mode(imaging_mode: &str) -> Result<(), String> {
+    let mode = imaging_mode.trim().to_ascii_lowercase();
+    if matches!(
+        mode.as_str(),
+        "single_field"
+            | "mfs"
+            | "continuum"
+            | "continuum_mfs"
+            | "mosaic"
+            | "mosaic_mfs"
+            | "spectral_cube"
+            | "cube"
+            | "cubedata"
+            | "mt_mfs"
+            | "mtmfs"
+            | "simalma"
+            | "aca"
+    ) {
+        return Ok(());
+    }
+    Err(format!(
+        "unsupported imaging_mode {imaging_mode:?}; expected single_field, mfs, mosaic, spectral_cube, cubedata, mt_mfs, simalma, or aca"
+    ))
+}
+
+fn scaled_vla_antennas(scale: f64) -> Vec<SyntheticAntenna> {
+    let antennas = tutorial_vla_a_antennas();
+    if (scale - 1.0).abs() < f64::EPSILON {
+        return antennas;
+    }
+    let center = antenna_centroid(&antennas);
+    antennas
+        .into_iter()
+        .map(|antenna| SyntheticAntenna {
+            position_m: [
+                center[0] + (antenna.position_m[0] - center[0]) * scale,
+                center[1] + (antenna.position_m[1] - center[1]) * scale,
+                center[2] + (antenna.position_m[2] - center[2]) * scale,
+            ],
+            ..antenna
+        })
+        .collect()
+}
+
+fn antenna_centroid(antennas: &[SyntheticAntenna]) -> [f64; 3] {
+    let mut sum = [0.0; 3];
+    for antenna in antennas {
+        sum[0] += antenna.position_m[0];
+        sum[1] += antenna.position_m[1];
+        sum[2] += antenna.position_m[2];
+    }
+    let count = antennas.len().max(1) as f64;
+    [sum[0] / count, sum[1] / count, sum[2] / count]
+}
+
+fn synthetic_alma_antennas(
+    name_prefix: &str,
+    count: usize,
+    dish_diameter_m: f64,
+    max_radius_m: f64,
+) -> Vec<SyntheticAntenna> {
+    let center = MPosition::from_observatory_name("ALMA")
+        .map(|position| position.as_itrf())
+        .unwrap_or([-2_223_990.194, -5_440_045.461, -2_481_682.086]);
+    (0..count)
+        .map(|index| {
+            let radius = if count <= 1 {
+                0.0
+            } else {
+                max_radius_m * ((index + 1) as f64 / count as f64).sqrt()
+            };
+            let angle = index as f64 * 2.399_963_229_728_653;
+            let east_m = radius * angle.cos();
+            let north_m = radius * angle.sin();
+            let name = format!("{name_prefix}{:02}", index + 1);
+            SyntheticAntenna {
+                name: name.clone(),
+                station: name,
+                position_m: offset_itrf_position(center, east_m, north_m),
+                dish_diameter_m,
+            }
+        })
+        .collect()
+}
+
+fn offset_itrf_position(center: [f64; 3], east_m: f64, north_m: f64) -> [f64; 3] {
+    offset_itrf_position_enu(center, east_m, north_m, 0.0)
+}
+
+fn offset_itrf_position_enu(center: [f64; 3], east_m: f64, north_m: f64, up_m: f64) -> [f64; 3] {
+    let up = normalized(center);
+    let east = normalized([-center[1], center[0], 0.0]);
+    let north = [
+        up[1] * east[2] - up[2] * east[1],
+        up[2] * east[0] - up[0] * east[2],
+        up[0] * east[1] - up[1] * east[0],
+    ];
+    [
+        center[0] + east[0] * east_m + north[0] * north_m + up[0] * up_m,
+        center[1] + east[1] * east_m + north[1] * north_m + up[1] * up_m,
+        center[2] + east[2] * east_m + north[2] * north_m + up[2] * up_m,
+    ]
+}
+
+fn offset_itrf_position_geodetic_enu(
+    position: &MPosition,
+    east_m: f64,
+    north_m: f64,
+    up_m: f64,
+) -> Option<[f64; 3]> {
+    let center = position.as_itrf();
+    let longitude_rad = position.longitude_rad();
+    let latitude_rad = position.latitude_rad();
+    if !longitude_rad.is_finite()
+        || !latitude_rad.is_finite()
+        || center.iter().any(|value| !value.is_finite())
+    {
+        return None;
+    }
+    let (sin_lon, cos_lon) = longitude_rad.sin_cos();
+    let (sin_lat, cos_lat) = latitude_rad.sin_cos();
+    let east = [-sin_lon, cos_lon, 0.0];
+    let north = [-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat];
+    let up = [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat];
+    Some([
+        center[0] + east[0] * east_m + north[0] * north_m + up[0] * up_m,
+        center[1] + east[1] * east_m + north[1] * north_m + up[1] * up_m,
+        center[2] + east[2] * east_m + north[2] * north_m + up[2] * up_m,
+    ])
+}
+
+fn normalized(vector: [f64; 3]) -> [f64; 3] {
+    let norm = (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
+    if norm == 0.0 {
+        return [0.0, 0.0, 0.0];
+    }
+    [vector[0] / norm, vector[1] / norm, vector[2] / norm]
+}
+
+fn family_fields(
+    pointing_count: usize,
+    phase_center_rad: [f64; 2],
+    field_phase_centers_rad: Option<&[[f64; 2]]>,
+    imaging_mode: &str,
+    reference_frequency_hz: f64,
+    dish_diameter_m: f64,
+) -> Vec<SyntheticField> {
+    if let Some(field_phase_centers_rad) = field_phase_centers_rad {
+        if field_phase_centers_rad.len() == 1 {
+            return Vec::new();
+        }
+        return field_phase_centers_rad
+            .iter()
+            .enumerate()
+            .map(|(index, phase_center_rad)| SyntheticField {
+                name: format!("P{:03}", index),
+                phase_center_rad: *phase_center_rad,
+            })
+            .collect();
+    }
+    if pointing_count <= 1 || !mode_uses_mosaic(imaging_mode) {
+        return Vec::new();
+    }
+    let wavelength_m = 299_792_458.0 / reference_frequency_hz;
+    let primary_beam_fwhm_rad = 1.13 * wavelength_m / dish_diameter_m;
+    let spacing_rad = 0.45 * primary_beam_fwhm_rad;
+    mosaic_offsets(pointing_count, spacing_rad)
+        .into_iter()
+        .enumerate()
+        .map(|(index, [l_rad, m_rad])| SyntheticField {
+            name: format!("P{:03}", index),
+            phase_center_rad: [
+                phase_center_rad[0] + l_rad / phase_center_rad[1].cos().max(1.0e-6),
+                phase_center_rad[1] + m_rad,
+            ],
+        })
+        .collect()
+}
+
+fn mode_uses_mosaic(imaging_mode: &str) -> bool {
+    let mode = imaging_mode.trim().to_ascii_lowercase();
+    matches!(
+        mode.as_str(),
+        "mosaic" | "mosaic_mfs" | "mosaic_cube" | "simalma" | "aca"
+    )
+}
+
+fn mosaic_offsets(pointing_count: usize, spacing_rad: f64) -> Vec<[f64; 2]> {
+    let mut offsets = vec![[0.0, 0.0]];
+    let mut ring = 1usize;
+    while offsets.len() < pointing_count {
+        let samples = ring * 6;
+        for sample in 0..samples {
+            if offsets.len() == pointing_count {
+                break;
+            }
+            let angle = std::f64::consts::TAU * sample as f64 / samples as f64;
+            offsets.push([
+                ring as f64 * spacing_rad * angle.cos(),
+                ring as f64 * spacing_rad * angle.sin(),
+            ]);
+        }
+        ring += 1;
+    }
+    offsets
+}
+
+fn family_manifest_path(output_ms: &Path) -> PathBuf {
+    let mut path = output_ms.to_path_buf();
+    path.set_extension("synthetic-family.json");
+    path
+}
+
+fn directory_size_bytes(path: &Path) -> std::io::Result<u64> {
+    let metadata = fs::metadata(path)?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    let mut total = 0;
+    for entry in fs::read_dir(path)? {
+        total += directory_size_bytes(&entry?.path())?;
+    }
+    Ok(total)
+}
+
 /// Canonical `simobserve` task request envelope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "request", rename_all = "snake_case")]
 pub enum SimobserveTaskRequest {
     /// Execute one `simobserve` request.
-    Run(SimobserveRunTaskRequest),
+    Run(Box<SimobserveRunTaskRequest>),
+    /// Plan one synthetic MeasurementSet family from persisted dialog inputs.
+    Family(Box<SimobserveFamilyTaskRequest>),
 }
 
 impl SimobserveTaskRequest {
     /// Execute the request and return the canonical task result envelope.
     pub fn execute(&self) -> Result<SimobserveTaskResult, String> {
         match self {
-            Self::Run(request) => Ok(SimobserveTaskResult::Run(request.execute()?)),
+            Self::Run(request) => Ok(SimobserveTaskResult::Run(Box::new(request.execute()?))),
+            Self::Family(request) => Ok(SimobserveTaskResult::Family(Box::new(request.execute()?))),
         }
     }
 
@@ -226,7 +1476,9 @@ impl SimobserveTaskRequest {
 #[serde(tag = "kind", content = "result", rename_all = "snake_case")]
 pub enum SimobserveTaskResult {
     /// Completed synthetic-observation run.
-    Run(SimobserveRunTaskResult),
+    Run(Box<SimobserveRunTaskResult>),
+    /// Planned synthetic MeasurementSet family.
+    Family(Box<SimobserveFamilyTaskResult>),
 }
 
 /// JSON-schema bundle for the public `simobserve` task protocol.
@@ -260,11 +1512,18 @@ impl SimobserveTaskSchemaBundle {
             semantic: TaskSemanticContract {
                 request_schema: request_schema.clone(),
                 result_schema: result_schema.clone(),
-                operations: vec![TaskOperationDescriptor {
-                    name: "run".to_string(),
-                    request_kind: "run".to_string(),
-                    result_kind: Some("run".to_string()),
-                }],
+                operations: vec![
+                    TaskOperationDescriptor {
+                        name: "run".to_string(),
+                        request_kind: "run".to_string(),
+                        result_kind: Some("run".to_string()),
+                    },
+                    TaskOperationDescriptor {
+                        name: "family".to_string(),
+                        request_kind: "family".to_string(),
+                        result_kind: Some("family".to_string()),
+                    },
+                ],
             },
             components: merged_components([&request_schema, &result_schema]),
             annotations: derived_ui_schema_annotations(),
@@ -405,9 +1664,64 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 "Predict visibilities from the model image",
             ),
             option_argument(OptionArgumentConfig {
+                id: "polarizations",
+                label: "Polarizations",
+                order: 10,
+                flags: &["--polarizations"],
+                metavar: "N",
+                value_kind: UiValueKind::String,
+                default: Some("2"),
+                required: false,
+                help: "Number of correlations to write: 1, 2, or 4",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "polarization_basis",
+                label: "Polarization Basis",
+                order: 11,
+                flags: &["--polarization-basis"],
+                metavar: "circular|linear",
+                value_kind: UiValueKind::String,
+                default: Some("circular"),
+                required: false,
+                help: "Receptor basis for polarization metadata",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "worker_policy",
+                label: "Worker Policy",
+                order: 12,
+                flags: &["--worker-policy"],
+                metavar: "auto|fixed",
+                value_kind: UiValueKind::String,
+                default: Some("auto"),
+                required: false,
+                help: "Native simulator worker policy: auto or fixed",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "row_workers",
+                label: "Row Workers",
+                order: 13,
+                flags: &["--row-workers"],
+                metavar: "N",
+                value_kind: UiValueKind::String,
+                default: None,
+                required: false,
+                help: "Explicit row worker count or auto upper bound",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "channel_workers",
+                label: "Channel Workers",
+                order: 14,
+                flags: &["--channel-workers"],
+                metavar: "N",
+                value_kind: UiValueKind::String,
+                default: None,
+                required: false,
+                help: "Explicit channel prediction worker count or auto upper bound",
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "corruption_seed",
                 label: "Corruption Seed",
-                order: 10,
+                order: 15,
                 flags: &["--corruption-seed"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
@@ -418,7 +1732,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "noise_simplenoise_jy",
                 label: "Noise SimpleNoise (Jy)",
-                order: 11,
+                order: 16,
                 flags: &["--noise-simplenoise-jy"],
                 metavar: "JY",
                 value_kind: UiValueKind::Float,
@@ -429,7 +1743,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "gain_mode",
                 label: "Gain Mode",
-                order: 12,
+                order: 17,
                 flags: &["--gain-mode"],
                 metavar: "MODE",
                 value_kind: UiValueKind::String,
@@ -440,7 +1754,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "gain_interval_seconds",
                 label: "Gain Interval",
-                order: 13,
+                order: 18,
                 flags: &["--gain-interval-seconds"],
                 metavar: "SECONDS",
                 value_kind: UiValueKind::Float,
@@ -451,7 +1765,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "gain_amplitude",
                 label: "Gain Amplitude",
-                order: 14,
+                order: 19,
                 flags: &["--gain-amplitude"],
                 metavar: "REAL[,IMAG]",
                 value_kind: UiValueKind::String,
@@ -462,7 +1776,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "bandpass_mode",
                 label: "Bandpass Mode",
-                order: 15,
+                order: 20,
                 flags: &["--bandpass-mode"],
                 metavar: "MODE",
                 value_kind: UiValueKind::String,
@@ -473,7 +1787,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "bandpass_interval_seconds",
                 label: "Bandpass Interval",
-                order: 16,
+                order: 21,
                 flags: &["--bandpass-interval-seconds"],
                 metavar: "SECONDS",
                 value_kind: UiValueKind::Float,
@@ -484,7 +1798,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "bandpass_amplitude",
                 label: "Bandpass Amplitude",
-                order: 17,
+                order: 22,
                 flags: &["--bandpass-amplitude"],
                 metavar: "AMP[,PHASE]",
                 value_kind: UiValueKind::String,
@@ -495,7 +1809,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "leakage_amplitude",
                 label: "Leakage Amplitude",
-                order: 18,
+                order: 23,
                 flags: &["--leakage-amplitude"],
                 metavar: "REAL[,IMAG]",
                 value_kind: UiValueKind::String,
@@ -506,7 +1820,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "leakage_offset",
                 label: "Leakage Offset",
-                order: 19,
+                order: 24,
                 flags: &["--leakage-offset"],
                 metavar: "REAL[,IMAG]",
                 value_kind: UiValueKind::String,
@@ -517,7 +1831,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "pointing_offset_ra_arcsec",
                 label: "Pointing RA Offset",
-                order: 20,
+                order: 25,
                 flags: &["--pointing-offset-ra-arcsec"],
                 metavar: "ARCSEC",
                 value_kind: UiValueKind::Float,
@@ -528,7 +1842,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "pointing_offset_dec_arcsec",
                 label: "Pointing Dec Offset",
-                order: 21,
+                order: 26,
                 flags: &["--pointing-offset-dec-arcsec"],
                 metavar: "ARCSEC",
                 value_kind: UiValueKind::Float,
@@ -536,10 +1850,270 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 required: false,
                 help: "Global primary-beam pointing offset in declination arcseconds",
             }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "request_kind",
+                label: "Request Kind",
+                order: 100,
+                default: Some("run"),
+                metavar: "run|family",
+                help: "Canonical request envelope kind.",
+                group: "Saved JSON",
+                choices: &["run", "family"],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "request_json",
+                label: "Request JSON",
+                order: 101,
+                default: Some(".casa-rs/requests/simobserve-family.json"),
+                metavar: "PATH",
+                help: "Saved canonical JSON request path used by simobserve --json-run.",
+                group: "Saved JSON",
+                choices: &[],
+                value_kind: UiValueKind::Path,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "source_model",
+                label: "Source Model",
+                order: 102,
+                default: Some(
+                    r#"{"kind":"analytic_components","components":[{"kind":"point","l_rad":0.0,"m_rad":0.0,"spectrum":{"flux_jy":1.0}}]}"#,
+                ),
+                metavar: "JSON",
+                help: "Canonical SyntheticSkyModel JSON object.",
+                group: "Family Parameters",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "telescope",
+                label: "Telescope",
+                order: 103,
+                default: Some("VLA"),
+                metavar: "NAME",
+                help: "Telescope family, for example VLA, ALMA, or ACA.",
+                group: "Family Parameters",
+                choices: &["VLA", "ALMA", "ACA"],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "array_config",
+                label: "Array Config",
+                order: 104,
+                default: Some("A"),
+                metavar: "CONFIG",
+                help: "CASA .cfg path/name or explicit synthetic-* layout label.",
+                group: "Family Parameters",
+                choices: &[
+                    "A",
+                    "vla.b.cfg",
+                    "vla.c.cfg",
+                    "vla.d.cfg",
+                    "alma.cycle10.5.cfg",
+                    "aca.cycle10.cfg",
+                    "synthetic-vla-d",
+                    "synthetic-alma-compact",
+                    "synthetic-aca",
+                    "synthetic-simalma",
+                ],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "band",
+                label: "Band",
+                order: 105,
+                default: Some("Q"),
+                metavar: "BAND",
+                help: "Receiver band label.",
+                group: "Family Parameters",
+                choices: &[
+                    "L", "S", "C", "X", "Ku", "K", "Ka", "Q", "Band 3", "Band 6", "Band 7",
+                    "Band 9",
+                ],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "target_ms_size_gib",
+                label: "Target MS Size (GiB)",
+                order: 106,
+                default: Some("0.01"),
+                metavar: "GiB",
+                help: "Target MeasurementSet size in GiB.",
+                group: "Family Parameters",
+                choices: &[],
+                value_kind: UiValueKind::Float,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "output_ms",
+                label: "Family Output MS",
+                order: 107,
+                default: Some("simobserve-family.ms"),
+                metavar: "PATH",
+                help: "Output MeasurementSet path persisted as request.output_ms.",
+                group: "Family Parameters",
+                choices: &[],
+                value_kind: UiValueKind::Path,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "polarizations",
+                label: "Polarizations",
+                order: 108,
+                default: Some("2"),
+                metavar: "N",
+                help: "Number of polarization correlations.",
+                group: "Family Dimensions",
+                choices: &["1", "2", "4"],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "ms_channels",
+                label: "MS Channels",
+                order: 109,
+                default: Some("4"),
+                metavar: "N",
+                help: "Number of generated MeasurementSet channels.",
+                group: "Family Dimensions",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "image_channels",
+                label: "Image Channels",
+                order: 110,
+                default: Some("1"),
+                metavar: "N",
+                help: "Expected image-channel count recorded for diagnostics.",
+                group: "Family Dimensions",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "pointing_count",
+                label: "Pointings",
+                order: 111,
+                default: Some("1"),
+                metavar: "N",
+                help: "Number of pointings in the observing pattern.",
+                group: "Family Dimensions",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "imaging_mode",
+                label: "Imaging Mode",
+                order: 115,
+                default: Some("mfs"),
+                metavar: "MODE",
+                help: "Family imaging mode.",
+                group: "Family Dimensions",
+                choices: &[
+                    "single_field",
+                    "mfs",
+                    "continuum",
+                    "continuum_mfs",
+                    "mosaic",
+                    "mosaic_mfs",
+                    "spectral_cube",
+                    "cube",
+                    "cubedata",
+                    "mt_mfs",
+                    "simalma",
+                    "aca",
+                ],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "worker_policy",
+                label: "Worker Policy",
+                order: 117,
+                default: Some("auto"),
+                metavar: "auto|fixed",
+                help: "Native simulator worker policy.",
+                group: "Family Workers",
+                choices: &["auto", "fixed"],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "observation_mode",
+                label: "Observation Mode",
+                order: 116,
+                default: Some("interferometric"),
+                metavar: "interferometric|total_power",
+                help: "Native simulator row topology.",
+                group: "Family Dimensions",
+                choices: &["interferometric", "total_power"],
+                value_kind: UiValueKind::Choice,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "row_workers",
+                label: "Row Workers",
+                order: 118,
+                default: None,
+                metavar: "N",
+                help: "Optional row worker count.",
+                group: "Family Workers",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "channel_workers",
+                label: "Channel Workers",
+                order: 119,
+                default: None,
+                metavar: "N",
+                help: "Optional channel prediction worker count.",
+                group: "Family Workers",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "measure_actual_size",
+                label: "Measure Actual Size",
+                order: 120,
+                default: Some("false"),
+                metavar: "BOOL",
+                help: "Measure generated MeasurementSet size by walking the output directory.",
+                group: "Family Workers",
+                choices: &[],
+                value_kind: UiValueKind::Bool,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "time_sample_count",
+                label: "Time Samples",
+                order: 112,
+                default: None,
+                metavar: "N",
+                help: "Optional exact generated time-sample count.",
+                group: "Family Dimensions",
+                choices: &[],
+                value_kind: UiValueKind::String,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "integration_seconds",
+                label: "Integration Seconds",
+                order: 113,
+                default: None,
+                metavar: "SECONDS",
+                help: "Optional integration time override.",
+                group: "Family Dimensions",
+                choices: &[],
+                value_kind: UiValueKind::Float,
+            }),
+            family_option_argument(FamilyArgumentConfig {
+                id: "start_time_mjd_seconds",
+                label: "Start Time",
+                order: 114,
+                default: None,
+                metavar: "MJD_SECONDS",
+                help: "Optional observation start time in MJD seconds UTC.",
+                group: "Family Dimensions",
+                choices: &[],
+                value_kind: UiValueKind::Float,
+            }),
             action_argument(
                 "help",
                 "Help",
-                19,
+                27,
                 &["-h", "--help"],
                 UiActionKind::Help,
                 "Render help text",
@@ -547,7 +2121,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             action_argument(
                 "ui_schema",
                 "UI Schema",
-                20,
+                28,
                 &["--ui-schema"],
                 UiActionKind::UiSchema,
                 "Emit the launcher/TUI schema",
@@ -614,7 +2188,7 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> 
     let result = request.execute()?;
     println!(
         "{}",
-        serde_json::to_string_pretty(&SimobserveTaskResult::Run(result))
+        serde_json::to_string_pretty(&SimobserveTaskResult::Run(Box::new(result)))
             .map_err(|error| error.to_string())?
     );
     Ok(())
@@ -630,9 +2204,26 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
     let start_frequency_hz = optional_f64(args, "--start-frequency-hz")?.unwrap_or(44.0e9);
     let channel_width_hz = optional_f64(args, "--channel-width-hz")?.unwrap_or(128.0e6);
     let channel_count = optional_usize(args, "--channels")?.unwrap_or(1);
+    let polarization_basis = optional_string(args, "--polarization-basis")
+        .as_deref()
+        .map(parse_polarization_basis)
+        .transpose()?
+        .unwrap_or_default();
+    let polarization_count = optional_usize(args, "--polarizations")?.unwrap_or(2);
+    let polarization_setup =
+        SyntheticPolarizationSetup::new(polarization_basis, polarization_count)
+            .map_err(|error| error.to_string())?;
+    let worker_policy = optional_string(args, "--worker-policy")
+        .as_deref()
+        .map(parse_worker_policy)
+        .transpose()?
+        .unwrap_or_default();
+    let row_workers = optional_usize(args, "--row-workers")?;
+    let channel_workers = optional_usize(args, "--channel-workers")?;
     let corruption = corruption_from_cli_args(args)?;
     Ok(SimobserveRunTaskRequest {
-        model_image,
+        model_image: Some(model_image),
+        model: None,
         model_peak_jy_per_pixel,
         output_ms,
         overwrite: has_flag(args, "--overwrite"),
@@ -652,8 +2243,13 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
             channel_width_hz,
             channel_count,
         }),
+        polarization_setup: Some(polarization_setup),
         predict_model: !has_flag(args, "--no-predict-model"),
         corruption,
+        worker_policy,
+        observation_mode: SyntheticObservationMode::Interferometric,
+        row_workers,
+        channel_workers,
     })
 }
 
@@ -758,6 +2354,26 @@ fn parse_bandpass_mode(value: &str) -> Result<SyntheticBandpassMode, String> {
     }
 }
 
+fn parse_worker_policy(value: &str) -> Result<SyntheticWorkerPolicy, String> {
+    match value {
+        "auto" => Ok(SyntheticWorkerPolicy::Auto),
+        "fixed" => Ok(SyntheticWorkerPolicy::Fixed),
+        other => Err(format!(
+            "unsupported --worker-policy {other:?}; expected auto or fixed"
+        )),
+    }
+}
+
+fn parse_polarization_basis(value: &str) -> Result<SyntheticPolarizationBasis, String> {
+    match value {
+        "circular" => Ok(SyntheticPolarizationBasis::Circular),
+        "linear" => Ok(SyntheticPolarizationBasis::Linear),
+        other => Err(format!(
+            "unsupported --polarization-basis {other:?}; expected circular or linear"
+        )),
+    }
+}
+
 fn default_predict_model() -> bool {
     true
 }
@@ -776,6 +2392,18 @@ struct OptionArgumentConfig<'a> {
     default: Option<&'a str>,
     required: bool,
     help: &'a str,
+}
+
+struct FamilyArgumentConfig<'a> {
+    id: &'a str,
+    label: &'a str,
+    order: usize,
+    default: Option<&'a str>,
+    metavar: &'a str,
+    help: &'a str,
+    group: &'a str,
+    choices: &'a [&'a str],
+    value_kind: UiValueKind,
 }
 
 fn option_argument(config: OptionArgumentConfig<'_>) -> UiArgumentSchema {
@@ -797,6 +2425,30 @@ fn option_argument(config: OptionArgumentConfig<'_>) -> UiArgumentSchema {
         default: config.default.map(str::to_string),
         help: config.help.to_string(),
         group: "Synthetic Observation".to_string(),
+        advanced: false,
+        hidden_in_tui: false,
+    }
+}
+
+fn family_option_argument(config: FamilyArgumentConfig<'_>) -> UiArgumentSchema {
+    UiArgumentSchema {
+        id: config.id.to_string(),
+        label: config.label.to_string(),
+        order: config.order,
+        parser: UiArgumentParser::Option {
+            flags: Vec::new(),
+            metavar: config.metavar.to_string(),
+            choices: config
+                .choices
+                .iter()
+                .map(|choice| (*choice).to_string())
+                .collect(),
+        },
+        value_kind: config.value_kind,
+        required: false,
+        default: config.default.map(str::to_string),
+        help: config.help.to_string(),
+        group: config.group.to_string(),
         advanced: false,
         hidden_in_tui: false,
     }
@@ -973,9 +2625,13 @@ mod tests {
     use casa_provider_contracts::ProviderSurfaceKind;
 
     use super::{
-        SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
-        SimobserveTaskSchemaBundle, command_schema, request_from_cli_args,
+        SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
+        SimobserveProtocolInfo, SimobserveTaskRequest, SimobserveTaskSchemaBundle,
+        SyntheticObservationMode, SyntheticPolarizationBasis, SyntheticWorkerPolicy,
+        command_schema, load_real_family_config, request_from_cli_args,
     };
+    use crate::columns::main_ids;
+    use crate::ui_schema::{UiArgumentParser, UiValueKind};
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_projection() {
@@ -987,9 +2643,24 @@ mod tests {
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
+        assert_eq!(bundle.semantic.operations[1].request_kind, "family");
         assert!(bundle.components.contains_key("SimobserveRunTaskRequest"));
+        assert!(
+            bundle
+                .components
+                .contains_key("SimobserveFamilyTaskRequest")
+        );
         let ui_schema = command_schema("simobserve");
         assert_eq!(ui_schema.command_id, "simobserve");
+        let request_kind = ui_schema.argument("request_kind").expect("request_kind");
+        assert_eq!(request_kind.value_kind, UiValueKind::Choice);
+        let UiArgumentParser::Option { choices, .. } = &request_kind.parser else {
+            panic!("request_kind should be a choice option");
+        };
+        assert_eq!(choices, &["run".to_string(), "family".to_string()]);
+        assert!(ui_schema.argument("source_model").is_some());
+        assert!(ui_schema.argument("target_ms_size_gib").is_some());
+        assert!(ui_schema.argument("observation_mode").is_some());
     }
 
     #[test]
@@ -1082,5 +2753,354 @@ mod tests {
         .expect("parse simobserve cli request");
 
         assert!(request.allow_below_elevation_limit);
+    }
+
+    #[test]
+    fn cli_parses_explicit_worker_controls() {
+        let request = request_from_cli_args(
+            &[
+                "--model",
+                "model.fits",
+                "--out",
+                "out.ms",
+                "--worker-policy",
+                "fixed",
+                "--row-workers",
+                "3",
+                "--channel-workers",
+                "5",
+            ]
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>(),
+        )
+        .expect("parse simobserve cli request");
+
+        assert_eq!(request.worker_policy, SyntheticWorkerPolicy::Fixed);
+        assert_eq!(request.row_workers, Some(3));
+        assert_eq!(request.channel_workers, Some(5));
+    }
+
+    #[test]
+    fn cli_parses_polarization_controls() {
+        let request = request_from_cli_args(
+            &[
+                "--model",
+                "model.fits",
+                "--out",
+                "out.ms",
+                "--polarizations",
+                "4",
+                "--polarization-basis",
+                "linear",
+            ]
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>(),
+        )
+        .expect("parse simobserve cli request");
+        let polarization_setup = request.polarization_setup.expect("polarization setup");
+
+        assert_eq!(polarization_setup.basis, SyntheticPolarizationBasis::Linear);
+        assert_eq!(polarization_setup.correlation_count, 4);
+    }
+
+    #[test]
+    fn run_request_accepts_analytic_model_without_legacy_model_image() {
+        let request: SimobserveTaskRequest = serde_json::from_str(
+            r#"{
+                "kind": "run",
+                "request": {
+                    "model": {
+                        "kind": "analytic_components",
+                        "components": [{
+                            "kind": "point",
+                            "l_rad": 0.0,
+                            "m_rad": 0.0,
+                            "spectrum": { "flux_jy": 1.0 }
+                        }]
+                    },
+                    "output_ms": "out.ms"
+                }
+            }"#,
+        )
+        .expect("parse analytic run request");
+        let SimobserveTaskRequest::Run(request) = request else {
+            panic!("expected run request");
+        };
+
+        let synthetic = request.to_synthetic_request();
+
+        assert!(synthetic.model.is_some());
+        assert_eq!(
+            synthetic.model_image,
+            std::path::PathBuf::from("analytic-components.json")
+        );
+    }
+
+    #[test]
+    fn real_array_config_loader_accepts_casa_xyz_cfg_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("vla.test.cfg");
+        std::fs::write(
+            &config_path,
+            "# observatory=VLA\n# coordsys=XYZ\n1.0 2.0 3.0 25.0 VLA01\n4.0 5.0 6.0 25.0 VLA02\n",
+        )
+        .unwrap();
+
+        let loaded = load_real_family_config("VLA", config_path.to_str().unwrap())
+            .expect("load config")
+            .expect("config found");
+
+        assert_eq!(loaded.0.len(), 2);
+        assert_eq!(loaded.0[0].station, "VLA01");
+        assert_eq!(loaded.0[1].position_m, [4.0, 5.0, 6.0]);
+        assert_eq!(loaded.1, config_path.display().to_string());
+    }
+
+    #[test]
+    fn real_array_config_loader_uses_casa_geodetic_loc_basis() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("alma.test.cfg");
+        std::fs::write(
+            &config_path,
+            "# observatory=ALMA\n# coordsys=LOC (local tangent plane)\n-33.89412596 -712.7516484 -2.330089496 12.0 A001\n",
+        )
+        .unwrap();
+
+        let loaded = load_real_family_config("ALMA", config_path.to_str().unwrap())
+            .expect("load config")
+            .expect("config found");
+        let position = loaded.0[0].position_m;
+
+        assert!((position[0] - 2_225_004.468_449_519_5).abs() < 1.0e-3);
+        assert!((position[1] + 5_440_060.207_407_018).abs() < 1.0e-3);
+        assert!((position[2] + 2_481_684.920_604_503).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn real_array_config_loader_converts_casa_utm_sam56_basis() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("alma.out07.test.cfg");
+        std::fs::write(
+            &config_path,
+            "# observatory=ALMA\n# coordsys=UTM\n# datum=SAM56\n# zone=19\n# hemisphere=S\n627789.81 7453079.62 5029.4 12.0 1\n",
+        )
+        .unwrap();
+
+        let loaded = load_real_family_config("ALMA", config_path.to_str().unwrap())
+            .expect("load config")
+            .expect("config found");
+        let position = loaded.0[0].position_m;
+
+        assert!((position[0] - 2_225_083.645_110_78).abs() < 1.0e-3);
+        assert!((position[1] + 5_440_152.112_940_93).abs() < 1.0e-3);
+        assert!((position[2] + 2_481_694.493_444_05).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn family_total_power_accepts_almasd_cfg_and_uses_first_antenna() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("aca.tp.cfg");
+        std::fs::write(
+            &config_path,
+            "# observatory=ALMASD\n# coordsys=LOC\n-47.7 178.2 -2.0 12.0 T701\n-42.1 118.7 -2.0 12.0 T702\n",
+        )
+        .unwrap();
+        let output_ms = temp.path().join("tp-family.ms");
+        let request_json = serde_json::json!({
+            "kind": "family",
+            "request": {
+                "source_model": {
+                    "kind": "analytic_components",
+                    "components": [{
+                        "kind": "point",
+                        "l_rad": 0.0,
+                        "m_rad": 0.0,
+                        "spectrum": { "flux_jy": 1.0 }
+                    }]
+                },
+                "telescope": "ACA",
+                "array_config": config_path,
+                "band": "Band 7",
+                "target_ms_size_gib": 0.00001,
+                "polarizations": 2,
+                "ms_channels": 1,
+                "image_channels": 1,
+                "pointing_count": 3,
+                "imaging_mode": "mosaic",
+                "observation_mode": "total_power",
+                "output_ms": output_ms
+            }
+        });
+
+        let request: SimobserveTaskRequest =
+            serde_json::from_value(request_json).expect("parse family request");
+        let result = request.execute().expect("execute family request");
+        let super::SimobserveTaskResult::Family(result) = result else {
+            panic!("expected family result");
+        };
+
+        assert_eq!(
+            result.run_result.report.observation_mode,
+            SyntheticObservationMode::TotalPower
+        );
+        assert_eq!(result.run_result.report.antenna_count, 1);
+        assert_eq!(result.run_result.report.baseline_count, 1);
+        assert_eq!(
+            result.run_result.report.main_row_count,
+            result.run_result.report.time_sample_count
+        );
+        let manifest: SimobserveFamilyManifest =
+            serde_json::from_slice(&std::fs::read(&result.manifest_path).expect("read manifest"))
+                .expect("parse manifest");
+        assert_eq!(
+            manifest.observation_mode,
+            SyntheticObservationMode::TotalPower
+        );
+        assert_eq!(manifest.run_request.antennas.len(), 1);
+        assert_eq!(manifest.run_request.antennas[0].station, "T701");
+        assert_eq!(
+            manifest.run_request.telescope_name.as_deref(),
+            Some("ALMASD")
+        );
+    }
+
+    #[test]
+    fn family_request_generates_ms_and_manifest_from_dialog_inputs() {
+        let temp = tempfile::tempdir().unwrap();
+        let output_ms = temp.path().join("family.ms");
+        let request_json = serde_json::json!({
+            "kind": "family",
+            "request": {
+                "source_model": {
+                    "kind": "analytic_components",
+                    "components": [{
+                        "kind": "point",
+                        "l_rad": 0.0,
+                        "m_rad": 0.0,
+                        "spectrum": { "flux_jy": 1.0 }
+                    }]
+                },
+                "telescope": "ALMA",
+                "array_config": "synthetic-aca",
+                "band": "Band 3",
+                "target_ms_size_gib": 0.0001,
+                "polarizations": 4,
+                "ms_channels": 4,
+                "image_channels": 2,
+                "pointing_count": 3,
+                "imaging_mode": "mosaic",
+                "output_ms": output_ms
+            }
+        });
+        let request: SimobserveTaskRequest =
+            serde_json::from_value(request_json).expect("parse family request");
+        let result = request.execute().expect("execute family request");
+        let super::SimobserveTaskResult::Family(result) = result else {
+            panic!("expected family result");
+        };
+
+        assert_eq!(result.source_model_kind, "analytic_components");
+        assert_eq!(result.requested_ms_channels, 4);
+        assert_eq!(result.requested_image_channels, 2);
+        assert_eq!(result.requested_pointing_count, 3);
+        assert!(result.estimated_main_rows > 0);
+        assert!(result.output_ms.exists());
+        assert!(result.manifest_path.exists());
+        assert_eq!(result.run_result.report.correlation_count, 4);
+        assert_eq!(result.run_result.report.channel_count, 4);
+
+        let ms = crate::MeasurementSet::open(&result.output_ms).expect("open family MS");
+        assert!(ms.validate().unwrap().is_empty());
+        assert_eq!(ms.polarization().unwrap().num_corr(0).unwrap(), 4);
+        assert_eq!(ms.field().unwrap().row_count(), 3);
+        let antenna_count = result.run_result.report.antenna_count;
+        assert_eq!(
+            ms.pointing().unwrap().row_count(),
+            antenna_count * result.run_result.report.time_sample_count
+        );
+        let baseline_count = antenna_count * (antenna_count - 1) / 2;
+        assert_eq!(main_ids::field_id(ms.main_table()).get(0).unwrap(), 0);
+        assert_eq!(
+            main_ids::field_id(ms.main_table())
+                .get(baseline_count)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            main_ids::field_id(ms.main_table())
+                .get(2 * baseline_count)
+                .unwrap(),
+            2
+        );
+
+        let manifest: SimobserveFamilyManifest =
+            serde_json::from_slice(&std::fs::read(&result.manifest_path).expect("read manifest"))
+                .expect("parse manifest");
+        assert_eq!(manifest.requested_image_channels, 2);
+        assert_eq!(manifest.array_config_source, "synthetic ACA 7m compact");
+        assert_eq!(manifest.run_request.fields.len(), 3);
+    }
+
+    #[test]
+    fn family_request_generates_expected_mode_matrix_members() {
+        let temp = tempfile::tempdir().unwrap();
+        let cases = [
+            ("single_field", "VLA", "A", "Q", 1usize),
+            ("mfs", "VLA", "A", "Q", 1usize),
+            ("mosaic", "VLA", "A", "Q", 3usize),
+            ("spectral_cube", "VLA", "A", "Q", 1usize),
+            ("cubedata", "VLA", "A", "Q", 1usize),
+            ("mt_mfs", "VLA", "A", "Q", 1usize),
+            ("simalma", "ALMA", "synthetic-simalma", "Band 3", 3usize),
+            ("aca", "ACA", "synthetic-aca", "Band 3", 3usize),
+        ];
+
+        for (mode, telescope, array_config, band, expected_fields) in cases {
+            let output_ms = temp.path().join(format!("{mode}.ms"));
+            let request_json = serde_json::json!({
+                "kind": "family",
+                "request": {
+                    "source_model": {
+                        "kind": "analytic_components",
+                        "components": [{
+                            "kind": "point",
+                            "l_rad": 0.0,
+                            "m_rad": 0.0,
+                            "spectrum": {
+                                "flux_jy": 1.0,
+                                "line_peak_jy": 0.25,
+                                "line_center_fraction": 0.5,
+                                "line_sigma_fraction": 0.2
+                            }
+                        }]
+                    },
+                    "telescope": telescope,
+                    "array_config": array_config,
+                    "band": band,
+                    "target_ms_size_gib": 0.000001,
+                    "polarizations": 2,
+                    "ms_channels": 4,
+                    "image_channels": 2,
+                    "pointing_count": 3,
+                    "imaging_mode": mode,
+                    "output_ms": output_ms
+                }
+            });
+            let request: SimobserveTaskRequest =
+                serde_json::from_value(request_json).expect("parse family request");
+            let result = request.execute().expect("execute family request");
+            let super::SimobserveTaskResult::Family(result) = result else {
+                panic!("expected family result");
+            };
+            let ms = crate::MeasurementSet::open(&result.output_ms).expect("open family MS");
+            assert_eq!(
+                ms.field().unwrap().row_count(),
+                expected_fields,
+                "mode {mode}"
+            );
+            assert_eq!(ms.spectral_window().unwrap().num_chan(0).unwrap(), 4);
+        }
     }
 }

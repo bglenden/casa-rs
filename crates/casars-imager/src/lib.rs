@@ -64,14 +64,12 @@ use casa_imaging::{
 #[cfg(test)]
 use casa_imaging::{
     GeometryRoutePlan, GridderRoutePlan, PolarizationRoutePlan, SpectralRoutePlan,
-    VisibilityComplexSamplesRef, VisibilityFloatSamplesRef, VisibilitySourcePartitionId,
-    WeightingRoutePlan,
+    VisibilityComplexSamplesRef, VisibilitySourcePartitionId, WeightingRoutePlan,
 };
 use casa_imaging::{SinglePlaneGridderMetadata, SinglePlaneStreamPass, SinglePlaneVisibilityBlock};
 use casa_ms::MeasurementSet;
 #[cfg(test)]
 use casa_ms::columns::time_columns::TimeColumn;
-use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::spectral_selection::{CubeGridChannelContributions, CubeRowSpectralContributions};
@@ -79,10 +77,11 @@ use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
     CubeSpectralSetup, SourcePartition, VisibilityBuffer, VisibilityBufferFillReport,
-    VisibilityChannelReadRange, VisibilityComplexSamples, VisibilityFloatSamples,
-    VisibilityReadBlockPlan, VisibilityRowSelectionRequest, convert_frequency_to_frame,
-    parse_numeric_id_selector, parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
-    parse_spw_selector, resolve_channel_selector_selection, resolve_contiguous_channel_selection,
+    VisibilityBufferRequest, VisibilityChannelReadRange, VisibilityComplexSamples,
+    VisibilityFloatSamples, VisibilityReadBlockPlan, VisibilityRowSelectionRequest,
+    convert_frequency_to_frame, parse_numeric_id_selector,
+    parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
+    resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
 use casa_tables::{ColumnSchema, TiledFileIoStats};
 
@@ -108,7 +107,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
-use ndarray::{Array2, Array4, ArrayD, Ix1, Ix2, IxDyn, ShapeBuilder, s};
+use ndarray::{Array2, Array4, ArrayD, IxDyn, ShapeBuilder, s};
 use num_complex::{Complex32, Complex64};
 
 pub use managed_output::{
@@ -1130,11 +1129,11 @@ pub fn build_prepare_spectral_axis_trace(
     }
 }
 
-/// Read selected MeasurementSet imaging essentials and print raw frontend throughput.
+/// Read selected MeasurementSet visibility buffers and print raw frontend throughput.
 ///
-/// This is intentionally a probe-only path: it stops at row-shaped MS payloads
-/// (`UVW`, `DATA`, `FLAG`, `WEIGHT`, optional `WEIGHT_SPECTRUM`, and shared
-/// spectral-window channel axes) and does not collapse polarizations or route
+/// This is intentionally a probe-only path: it stops at the caller-owned
+/// columnar `VisibilityBuffer` shape (`UVW`, `DATA`, `FLAG`, `WEIGHT`, and
+/// optional `WEIGHT_SPECTRUM`) and does not collapse polarizations or route
 /// samples to any imaging backend.
 pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> Result<(), String> {
     let total_started = Instant::now();
@@ -1171,10 +1170,10 @@ pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> R
         })
         .cloned()
         .collect::<Vec<_>>();
-    let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(&ms)?);
-    let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing)?;
-    let block_rows = env_usize("CASA_RS_MS_IMAGING_READ_PROBE_ROWS")
+    let block_rows = config
+        .imaging_row_block_rows
         .filter(|value| *value > 0)
+        .or_else(|| env_usize("CASA_RS_MS_IMAGING_READ_PROBE_ROWS").filter(|value| *value > 0))
         .unwrap_or(MAX_PREPARE_ROW_BLOCK_ROWS);
 
     let mut timings = MsImagingEssentialsReadTimings::default();
@@ -1182,19 +1181,46 @@ pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> R
     let mut samples_read = 0usize;
     let mut logical_bytes = 0usize;
     let mut blocks_read = 0usize;
+    let (channel_origin, channel_count) = channel_read_range
+        .map(|range| (range.start, range.count))
+        .unwrap_or((0, table_values.spw_freqs_hz.len()));
+    let mut visibility = VisibilityBuffer::default();
     for row_chunk in active_selected_rows.chunks(block_rows) {
-        let (block, block_timings) = read_ms_imaging_essentials_block(
-            &ms,
+        let row_indices = row_chunk
+            .iter()
+            .map(|selected_row| selected_row.row_index)
+            .collect::<Vec<_>>();
+        let mut request = VisibilityBufferRequest::imaging(
             data_column,
-            Arc::clone(&channel_axes),
-            &geometry_columns,
-            row_chunk,
-            channel_read_range,
-        )?;
-        rows_read = rows_read.saturating_add(block.rows.len());
-        samples_read = samples_read.saturating_add(block.sample_count());
-        logical_bytes = logical_bytes.saturating_add(block.logical_bytes());
-        timings.add(block_timings);
+            row_indices,
+            channel_origin,
+            channel_count,
+        );
+        request.include_antenna_ids = false;
+        request.include_data_desc_ids = false;
+        request.include_field_ids = false;
+        request.include_flag_row = false;
+        request.include_time = false;
+        let fill_report = ms
+            .fill_visibility_buffer(&request, &mut visibility)
+            .map_err(|error| format!("fill visibility buffer read probe: {error}"))?;
+        rows_read = rows_read.saturating_add(fill_report.row_count);
+        samples_read = samples_read.saturating_add(
+            fill_report
+                .row_count
+                .saturating_mul(fill_report.channel_count)
+                .saturating_mul(fill_report.corr_count),
+        );
+        logical_bytes = logical_bytes.saturating_add(fill_report.logical_output_bytes as usize);
+        timings.add(MsImagingEssentialsReadTimings {
+            columns_wall: Duration::from_nanos(fill_report.timings.total_ns as u64),
+            data_column: Duration::from_nanos(fill_report.timings.data_ns as u64),
+            flag_column: Duration::from_nanos(fill_report.timings.flags_ns as u64),
+            weight_column: Duration::from_nanos(fill_report.timings.weights_ns as u64),
+            weight_spectrum: Duration::from_nanos(fill_report.timings.weight_spectrum_ns as u64),
+            uvw_column: Duration::from_nanos(fill_report.timings.uvw_ns as u64),
+            adapt_rows: Duration::ZERO,
+        });
         blocks_read = blocks_read.saturating_add(1);
     }
 
@@ -2112,6 +2138,9 @@ fn run_single_image_from_config_with_gridder_override(
                 ms_paths.len(),
             ))
         };
+    if can_run_mfs_mosaic_multi_ms_materialized(config, force_standard_gridder, ms_paths.len()) {
+        return run_mfs_mosaic_multi_ms_materialized_from_paths(config, &ms_paths, total_start);
+    }
     let ms = MeasurementSet::open(
         ms_paths
             .first()
@@ -2364,6 +2393,28 @@ fn can_run_mfs_mosaic_from_single_plane_stream(
         && config.start_model.is_none()
         && config.outlier_file.is_none()
         && config.use_mask != CleanMaskMode::AutoMultiThreshold
+        && config.uv_taper.is_none()
+        && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
+        && matches!(config.w_term_mode, WTermMode::None)
+        && env::var_os("CASA_RS_MOSAIC_TRACE").is_none()
+        && env::var_os("CASA_RS_MOSAIC_CELL_TRACE").is_none()
+}
+
+fn can_run_mfs_mosaic_multi_ms_materialized(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count > 1
+        && !force_standard_gridder
+        && !config.force_standard_gridder
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
         && config.uv_taper.is_none()
         && !matches!(config.weighting, WeightingMode::BriggsBwTaper { .. })
         && matches!(config.w_term_mode, WTermMode::None)
@@ -3933,6 +3984,164 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     let stage_start = Instant::now();
     write_products(
         output_config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
+}
+
+fn run_mfs_mosaic_multi_ms_materialized_from_paths(
+    config: &CliConfig,
+    ms_paths: &[PathBuf],
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let stage_start = Instant::now();
+    let measurement_sets = ms_paths
+        .iter()
+        .map(|path| MeasurementSet::open(path).map_err(|error| format!("open MS: {error}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let open_measurement_set = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "open_measurement_set",
+        open_measurement_set,
+        total_start.elapsed(),
+    );
+
+    let prepare_started = Instant::now();
+    let mut prepared_inputs = Vec::<PreparedInput>::with_capacity(measurement_sets.len());
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    for (index, ms) in measurement_sets.iter().enumerate() {
+        let data_column = resolve_data_column(ms, config.datacolumn.as_deref())?;
+        let (prepared, trace, timings) =
+            prepare_plane_input_inner(ms, config, data_column, false, None)?;
+        if trace.is_some() {
+            return Err(format!(
+                "multi-MS MFS mosaic input {index} unexpectedly required trace materialization"
+            ));
+        }
+        prepare_stage_timings.add(timings);
+        prepared_inputs.push(prepared);
+    }
+    let prepared = merge_mfs_mosaic_prepared_inputs(prepared_inputs)?;
+    let PreparedInput::Mfs(plane) = prepared else {
+        return Err("multi-MS MFS mosaic preparation produced cube input".to_string());
+    };
+    if !matches!(plane.gridder_mode, GridderMode::Mosaic(_)) {
+        return Err("multi-MS MFS mosaic preparation produced standard gridder".to_string());
+    }
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        true,
+    )?;
+    let prepare_plane_time = prepare_started.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let phase_center = plane.phase_center.clone();
+    let freq_ref = plane.freq_ref;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: plane.batches,
+        gridder_mode: plane.gridder_mode,
+        plane_stokes: plane.plane_stokes,
+        weighting: config.weighting,
+        reffreq_hz: plane.reffreq_hz,
+        selected_frequency_range_hz: plane.selected_frequency_range_hz,
+        deconvolver: config.deconvolver,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        clean: CleanConfig {
+            niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
+            gain: config.gain,
+            threshold_jy_per_beam: config.threshold_jy,
+            nsigma: config.nsigma,
+            psf_cutoff: config.psf_cutoff,
+            minor_cycle_length: config.minor_cycle_length,
+            cyclefactor: config.cyclefactor,
+            min_psf_fraction: config.min_psf_fraction,
+            max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
+        },
+        clean_mask: clean_mask.clone(),
+        initial_model: None,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+
+    let stage_start = Instant::now();
+    let result = run_imaging(&request).map_err(|error| error.to_string())?;
+    let run_imaging_time = stage_start.elapsed();
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let run_result = RunProducts::Mfs(result);
+    let stage_start = Instant::now();
+    let coords = build_image_coordinate_system(
+        config.imsize,
+        phase_center.angles_rad,
+        config.cell_arcsec,
+        run_result.coordinate_freq_ref(freq_ref),
+        phase_center.reference,
+        run_result.plane_stokes(),
+        run_result.channel_frequencies_hz(),
+        run_result.spectral_delta_hz(),
+        config
+            .cube_axis
+            .rest_frequency_hz
+            .or_else(|| run_result.rest_frequency_hz()),
+    );
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let effective_clean_mask = clean_mask
+        .as_ref()
+        .map(|mask| EffectiveCleanMask::Plane(mask.clone()));
+    let stage_start = Instant::now();
+    write_products(
+        config,
         &coords,
         &run_result,
         effective_clean_mask.as_ref(),
@@ -17498,6 +17707,8 @@ fn selected_row_block_digest(row_chunk: &[SelectedMainRow]) -> u64 {
                     row.ddid,
                     row.spw_id,
                     row.polarization_id,
+                    row.antenna1_id,
+                    row.antenna2_id,
                     row.time_mjd_seconds.map(f64::to_bits),
                 )
             })
@@ -19983,53 +20194,6 @@ impl SelectedMainArrayColumn {
         })
     }
 
-    fn load_uncached(
-        ms: &MeasurementSet,
-        column_name: &'static str,
-        row_indices: &[usize],
-    ) -> Result<Self, String> {
-        let values = ms
-            .main_table()
-            .column_accessor(column_name)
-            .and_then(|column| column.array_cells_owned_uncached(row_indices))
-            .map_err(|error| format!("load selected {column_name} rows: {error}"))?;
-        Ok(Self {
-            column_name,
-            values,
-            channel_origin: 0,
-        })
-    }
-
-    fn load_2d_channel_range_uncached(
-        ms: &MeasurementSet,
-        column_name: &'static str,
-        row_indices: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-    ) -> Result<Self, String> {
-        let values = ms
-            .main_table()
-            .column_accessor(column_name)
-            .and_then(|column| {
-                column.array_cells_2d_channel_range_owned_uncached(
-                    row_indices,
-                    channel_start,
-                    channel_count,
-                )
-            })
-            .map_err(|error| {
-                format!(
-                    "load selected {column_name} rows channel range {channel_start}..{}: {error}",
-                    channel_start + channel_count
-                )
-            })?;
-        Ok(Self {
-            column_name,
-            values,
-            channel_origin: channel_start,
-        })
-    }
-
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
         self.values
             .get(row_slot)
@@ -20053,53 +20217,6 @@ impl SelectedMainArrayColumn {
                     self.column_name, row_slot
                 )
             })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum SelectedMainDataSource {
-    Single(SelectedMainArrayColumn),
-}
-
-impl SelectedMainDataSource {
-    fn load_uncached(
-        ms: &MeasurementSet,
-        column: VisibilityDataColumn,
-        row_indices: &[usize],
-    ) -> Result<Self, String> {
-        let column_name = match column {
-            VisibilityDataColumn::Data => "DATA",
-            VisibilityDataColumn::CorrectedData => "CORRECTED_DATA",
-            VisibilityDataColumn::ModelData => "MODEL_DATA",
-        };
-        Ok(Self::Single(SelectedMainArrayColumn::load_uncached(
-            ms,
-            column_name,
-            row_indices,
-        )?))
-    }
-
-    fn load_2d_channel_range_uncached(
-        ms: &MeasurementSet,
-        column: VisibilityDataColumn,
-        row_indices: &[usize],
-        channel_start: usize,
-        channel_count: usize,
-    ) -> Result<Self, String> {
-        let column_name = match column {
-            VisibilityDataColumn::Data => "DATA",
-            VisibilityDataColumn::CorrectedData => "CORRECTED_DATA",
-            VisibilityDataColumn::ModelData => "MODEL_DATA",
-        };
-        Ok(Self::Single(
-            SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                ms,
-                column_name,
-                row_indices,
-                channel_start,
-                channel_count,
-            )?,
-        ))
     }
 }
 
@@ -20306,21 +20423,6 @@ impl MsImagingEssentialsReadTimings {
 #[derive(Debug)]
 struct VisibilitySourceGeometryColumns {
     selected_uvw: SelectedMainArrayColumn,
-    antenna1_values: Vec<i32>,
-    antenna2_values: Vec<i32>,
-    pointing_ids: Option<Vec<Option<i32>>>,
-    timings: MsImagingEssentialsReadTimings,
-}
-
-#[derive(Debug)]
-struct VisibilitySourceColumns {
-    data_column: Option<SelectedMainDataSource>,
-    flag_column: SelectedMainArrayColumn,
-    weight_column: SelectedMainArrayColumn,
-    weight_spectrum: Option<SelectedMainArrayColumn>,
-    selected_uvw: SelectedMainArrayColumn,
-    antenna1_values: Vec<i32>,
-    antenna2_values: Vec<i32>,
     pointing_ids: Option<Vec<Option<i32>>>,
     timings: MsImagingEssentialsReadTimings,
 }
@@ -20334,9 +20436,7 @@ fn read_visibility_source_geometry_columns(
     let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", selected_row_indices)?;
     let uvw_elapsed = started.elapsed();
 
-    let antenna_started = Instant::now();
-    let antenna1_values = load_selected_i32_main_column(ms, "ANTENNA1", selected_row_indices)?;
-    let antenna2_values = load_selected_i32_main_column(ms, "ANTENNA2", selected_row_indices)?;
+    let pointing_started = Instant::now();
     let pointing_ids = if geometry_columns.pointing_resolver.is_some() {
         Some(load_selected_optional_i32_main_column(
             ms,
@@ -20350,361 +20450,97 @@ fn read_visibility_source_geometry_columns(
         uvw_column: uvw_elapsed,
         ..Default::default()
     };
-    timings.columns_wall = uvw_elapsed.saturating_add(antenna_started.elapsed());
+    timings.columns_wall = uvw_elapsed.saturating_add(pointing_started.elapsed());
     Ok(VisibilitySourceGeometryColumns {
         selected_uvw,
-        antenna1_values,
-        antenna2_values,
         pointing_ids,
         timings,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn read_visibility_source_columns(
-    ms: &MeasurementSet,
-    data_column_kind: Option<VisibilityDataColumn>,
-    geometry_columns: &PreparedGeometryColumnCache,
-    row_chunk: &[SelectedMainRow],
-    channel_read_range: Option<SelectedChannelReadRange>,
-) -> Result<VisibilitySourceColumns, String> {
-    let selected_row_indices = row_chunk
-        .iter()
-        .map(|selected_row| selected_row.row_index)
-        .collect::<Vec<_>>();
-    let mut timings = MsImagingEssentialsReadTimings::default();
-
-    let columns_started = Instant::now();
-    let has_weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).is_ok();
-    let (data_column, flag_column, weight_column, weight_spectrum, geometry) =
-        if ms_imaging_read_parallel_columns_enabled() {
-            std::thread::scope(|scope| {
-                let data_handle = if let Some(data_column_kind) = data_column_kind {
-                    let selected_row_indices = &selected_row_indices;
-                    Some(scope.spawn(move || {
-                        let started = Instant::now();
-                        let column = match channel_read_range {
-                            Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
-                                ms,
-                                data_column_kind,
-                                selected_row_indices,
-                                range.start,
-                                range.count,
-                            )?,
-                            None => SelectedMainDataSource::load_uncached(
-                                ms,
-                                data_column_kind,
-                                selected_row_indices,
-                            )?,
-                        };
-                        Ok::<_, String>((column, started.elapsed()))
-                    }))
-                } else {
-                    None
-                };
-                let flag_handle = scope.spawn(|| {
-                    let started = Instant::now();
-                    let column = match channel_read_range {
-                        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                            ms,
-                            "FLAG",
-                            &selected_row_indices,
-                            range.start,
-                            range.count,
-                        )?,
-                        None => SelectedMainArrayColumn::load_uncached(
-                            ms,
-                            "FLAG",
-                            &selected_row_indices,
-                        )?,
-                    };
-                    Ok::<_, String>((column, started.elapsed()))
-                });
-                let weight_handle = scope.spawn(|| {
-                    let started = Instant::now();
-                    let column = SelectedMainArrayColumn::load_uncached(
-                        ms,
-                        "WEIGHT",
-                        &selected_row_indices,
-                    )?;
-                    Ok::<_, String>((column, started.elapsed()))
-                });
-                let geometry_handle = scope.spawn(|| {
-                    read_visibility_source_geometry_columns(
-                        ms,
-                        geometry_columns,
-                        &selected_row_indices,
-                    )
-                });
-                let weight_spectrum_handle = if has_weight_spectrum {
-                    Some(scope.spawn(|| {
-                        let started = Instant::now();
-                        let column = match channel_read_range {
-                            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                                ms,
-                                "WEIGHT_SPECTRUM",
-                                &selected_row_indices,
-                                range.start,
-                                range.count,
-                            )?,
-                            None => SelectedMainArrayColumn::load_uncached(
-                                ms,
-                                "WEIGHT_SPECTRUM",
-                                &selected_row_indices,
-                            )?,
-                        };
-                        Ok::<_, String>((column, started.elapsed()))
-                    }))
-                } else {
-                    None
-                };
-
-                let data_column = match data_handle {
-                    Some(handle) => {
-                        let (column, elapsed) = handle.join().map_err(|_| {
-                            "visibility source DATA column reader panicked".to_string()
-                        })??;
-                        timings.data_column = elapsed;
-                        Some(column)
-                    }
-                    None => None,
-                };
-                let (flag_column, elapsed) = flag_handle
-                    .join()
-                    .map_err(|_| "visibility source FLAG column reader panicked".to_string())??;
-                timings.flag_column = elapsed;
-                let (weight_column, elapsed) = weight_handle
-                    .join()
-                    .map_err(|_| "visibility source WEIGHT column reader panicked".to_string())??;
-                timings.weight_column = elapsed;
-                let weight_spectrum = match weight_spectrum_handle {
-                    Some(handle) => {
-                        let (column, elapsed) = handle.join().map_err(|_| {
-                            "visibility source WEIGHT_SPECTRUM column reader panicked".to_string()
-                        })??;
-                        timings.weight_spectrum = elapsed;
-                        Some(column)
-                    }
-                    None => None,
-                };
-                let geometry = geometry_handle
-                    .join()
-                    .map_err(|_| "visibility source geometry reader panicked".to_string())??;
-                timings.uvw_column = geometry.timings.uvw_column;
-                Ok::<_, String>((
-                    data_column,
-                    flag_column,
-                    weight_column,
-                    weight_spectrum,
-                    geometry,
-                ))
-            })?
-        } else {
-            let data_column = match data_column_kind {
-                Some(data_column_kind) => {
-                    let started = Instant::now();
-                    let column = match channel_read_range {
-                        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
-                            ms,
-                            data_column_kind,
-                            &selected_row_indices,
-                            range.start,
-                            range.count,
-                        )?,
-                        None => SelectedMainDataSource::load_uncached(
-                            ms,
-                            data_column_kind,
-                            &selected_row_indices,
-                        )?,
-                    };
-                    timings.data_column = started.elapsed();
-                    Some(column)
-                }
-                None => None,
-            };
-
-            let started = Instant::now();
-            let flag_column = match channel_read_range {
-                Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                    ms,
-                    "FLAG",
-                    &selected_row_indices,
-                    range.start,
-                    range.count,
-                )?,
-                None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
-            };
-            timings.flag_column = started.elapsed();
-
-            let started = Instant::now();
-            let weight_column =
-                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
-            timings.weight_column = started.elapsed();
-
-            let started = Instant::now();
-            let weight_spectrum = has_weight_spectrum
-                .then(|| match channel_read_range {
-                    Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                        ms,
-                        "WEIGHT_SPECTRUM",
-                        &selected_row_indices,
-                        range.start,
-                        range.count,
-                    ),
-                    None => SelectedMainArrayColumn::load_uncached(
-                        ms,
-                        "WEIGHT_SPECTRUM",
-                        &selected_row_indices,
-                    ),
-                })
-                .transpose()?;
-            timings.weight_spectrum = started.elapsed();
-
-            let geometry = read_visibility_source_geometry_columns(
-                ms,
-                geometry_columns,
-                &selected_row_indices,
-            )?;
-            timings.uvw_column = geometry.timings.uvw_column;
-
-            (
-                data_column,
-                flag_column,
-                weight_column,
-                weight_spectrum,
-                geometry,
-            )
-        };
-    timings.columns_wall = columns_started.elapsed();
-
-    Ok(VisibilitySourceColumns {
-        data_column,
-        flag_column,
-        weight_column,
-        weight_spectrum,
-        selected_uvw: geometry.selected_uvw,
-        antenna1_values: geometry.antenna1_values,
-        antenna2_values: geometry.antenna2_values,
-        pointing_ids: geometry.pointing_ids,
-        timings,
-    })
-}
-
-fn complex_array2_owned(
-    value: ArrayValue,
-    column_name: &str,
-    row_index: usize,
-) -> Result<Array2<Complex32>, String> {
-    match value {
-        ArrayValue::Complex32(values) => values.into_dimensionality::<Ix2>().map_err(|error| {
-            format!("{column_name} row {row_index} must be rank-2 Complex32: {error}")
-        }),
-        ArrayValue::Complex64(values) => values
-            .into_dimensionality::<Ix2>()
-            .map_err(|error| {
-                format!("{column_name} row {row_index} must be rank-2 Complex64: {error}")
-            })
-            .map(|values| values.mapv(|value| Complex32::new(value.re as f32, value.im as f32))),
-        other => Err(format!(
-            "{column_name} row {row_index} must be Complex32/Complex64 array, found {:?}",
-            other.primitive_type()
-        )),
-    }
-}
-
-fn bool_array2_owned(
-    value: ArrayValue,
-    column_name: &str,
-    row_index: usize,
-) -> Result<Array2<bool>, String> {
-    match value {
-        ArrayValue::Bool(values) => values
-            .into_dimensionality::<Ix2>()
-            .map_err(|error| format!("{column_name} row {row_index} must be rank-2 Bool: {error}")),
-        other => Err(format!(
-            "{column_name} row {row_index} must be Bool array, found {:?}",
-            other.primitive_type()
-        )),
-    }
-}
-
-fn float_array1_owned(
-    value: ArrayValue,
-    column_name: &str,
-    row_index: usize,
-) -> Result<Vec<f32>, String> {
-    match value {
-        ArrayValue::Float32(values) => values
-            .into_dimensionality::<Ix1>()
-            .map_err(|error| {
-                format!("{column_name} row {row_index} must be rank-1 Float32: {error}")
-            })
-            .map(|values| values.iter().copied().collect()),
-        ArrayValue::Float64(values) => values
-            .into_dimensionality::<Ix1>()
-            .map_err(|error| {
-                format!("{column_name} row {row_index} must be rank-1 Float64: {error}")
-            })
-            .map(|values| values.iter().map(|value| *value as f32).collect()),
-        other => Err(format!(
-            "{column_name} row {row_index} must be Float32/Float64 array, found {:?}",
-            other.primitive_type()
-        )),
-    }
-}
-
-fn float_array2_owned(
-    value: ArrayValue,
-    column_name: &str,
-    row_index: usize,
-) -> Result<Array2<f32>, String> {
-    match value {
-        ArrayValue::Float32(values) => values.into_dimensionality::<Ix2>().map_err(|error| {
-            format!("{column_name} row {row_index} must be rank-2 Float32: {error}")
-        }),
-        ArrayValue::Float64(values) => values
-            .into_dimensionality::<Ix2>()
-            .map_err(|error| {
-                format!("{column_name} row {row_index} must be rank-2 Float64: {error}")
-            })
-            .map(|values| values.mapv(|value| value as f32)),
-        other => Err(format!(
-            "{column_name} row {row_index} must be Float32/Float64 array, found {:?}",
-            other.primitive_type()
-        )),
-    }
-}
-
-fn take_required_array(
-    values: &mut [Option<ArrayValue>],
+fn extract_uvw_from_visibility_buffer(
+    values: &[f64],
     row_slot: usize,
-    column_name: &str,
     row_index: usize,
-) -> Result<ArrayValue, String> {
-    values
-        .get_mut(row_slot)
-        .and_then(Option::take)
-        .ok_or_else(|| format!("{column_name} data missing for selected row {row_index}"))
+) -> Result<[f64; 3], String> {
+    let offset = row_slot
+        .checked_mul(3)
+        .ok_or_else(|| "UVW row offset overflowed".to_string())?;
+    let slice = values.get(offset..offset + 3).ok_or_else(|| {
+        format!("UVW row {row_index} at selected slot {row_slot} is out of bounds")
+    })?;
+    Ok([slice[0], slice[1], slice[2]])
 }
 
-fn ms_imaging_read_parallel_columns_enabled() -> bool {
-    env::var("CASA_RS_MS_IMAGING_READ_THREADS")
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            if matches!(
-                normalized.as_str(),
-                "" | "0" | "1" | "false" | "no" | "off" | "serial"
-            ) {
-                return false;
-            }
-            normalized == "auto"
-                || normalized == "parallel"
-                || normalized
-                    .parse::<usize>()
-                    .map(|threads| threads > 1)
-                    .unwrap_or(true)
-        })
-        .unwrap_or(true)
+fn visibility_channel_row_values<T>(
+    buffer: &VisibilityBuffer,
+    row_slot: usize,
+    mut sample_at: impl FnMut(usize) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
+    let mut values = Vec::with_capacity(buffer.corr_count.saturating_mul(buffer.channel_count));
+    for local_channel in 0..buffer.channel_count {
+        for corr in 0..buffer.corr_count {
+            let index = buffer.channel_row_corr_index(local_channel, row_slot, corr);
+            values.push(sample_at(index)?);
+        }
+    }
+    Ok(values)
+}
+
+fn complex_visibility_row_array(
+    buffer: &VisibilityBuffer,
+    samples: &VisibilityComplexSamples,
+    row_slot: usize,
+) -> Result<Array2<Complex32>, String> {
+    let values = visibility_channel_row_values(buffer, row_slot, |index| {
+        direct_cube_plane_complex_sample(samples, index)
+    })?;
+    Array2::from_shape_vec((buffer.corr_count, buffer.channel_count).f(), values)
+        .map_err(|error| format!("shape DATA row {row_slot} as [corr, channel]: {error}"))
+}
+
+fn bool_visibility_row_array(
+    buffer: &VisibilityBuffer,
+    values: &[bool],
+    row_slot: usize,
+) -> Result<Array2<bool>, String> {
+    let row_values = visibility_channel_row_values(buffer, row_slot, |index| {
+        values
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("FLAG sample index {index} is out of bounds"))
+    })?;
+    Array2::from_shape_vec((buffer.corr_count, buffer.channel_count).f(), row_values)
+        .map_err(|error| format!("shape FLAG row {row_slot} as [corr, channel]: {error}"))
+}
+
+fn float_visibility_row_values(
+    samples: &VisibilityFloatSamples,
+    row_slot: usize,
+    corr_count: usize,
+) -> Result<Vec<f32>, String> {
+    let mut values = Vec::with_capacity(corr_count);
+    for corr in 0..corr_count {
+        let index = row_slot
+            .checked_mul(corr_count)
+            .and_then(|value| value.checked_add(corr))
+            .ok_or_else(|| "WEIGHT sample index overflowed".to_string())?;
+        values.push(direct_cube_plane_float_sample(samples, index, "WEIGHT")?);
+    }
+    Ok(values)
+}
+
+fn float_visibility_channel_row_array(
+    buffer: &VisibilityBuffer,
+    samples: &VisibilityFloatSamples,
+    row_slot: usize,
+) -> Result<Array2<f32>, String> {
+    let values = visibility_channel_row_values(buffer, row_slot, |index| {
+        direct_cube_plane_float_sample(samples, index, "WEIGHT_SPECTRUM")
+    })?;
+    Array2::from_shape_vec((buffer.corr_count, buffer.channel_count).f(), values).map_err(|error| {
+        format!("shape WEIGHT_SPECTRUM row {row_slot} as [corr, channel]: {error}")
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -20716,41 +20552,83 @@ fn read_ms_imaging_essentials_block(
     row_chunk: &[SelectedMainRow],
     channel_read_range: Option<SelectedChannelReadRange>,
 ) -> Result<(MsImagingEssentialsBlock, MsImagingEssentialsReadTimings), String> {
-    let columns = read_visibility_source_columns(
-        ms,
-        Some(data_column_kind),
-        geometry_columns,
-        row_chunk,
-        channel_read_range,
-    )?;
-    let mut timings = columns.timings;
+    let row_indices = row_chunk
+        .iter()
+        .map(|selected_row| selected_row.row_index)
+        .collect::<Vec<_>>();
+    let pointing_started = Instant::now();
+    let pointing_ids = if geometry_columns.pointing_resolver.is_some() {
+        Some(load_selected_optional_i32_main_column(
+            ms,
+            "POINTING_ID",
+            &row_indices,
+        )?)
+    } else {
+        None
+    };
+    let pointing_elapsed = pointing_started.elapsed();
+    let (channel_origin, channel_count) = channel_read_range
+        .map(|range| (range.start, range.count))
+        .unwrap_or_else(|| {
+            let spw_id = row_chunk.first().map(|row| row.spw_id).unwrap_or(0);
+            let channel_count = channel_axes
+                .get(spw_id)
+                .map(|axis| axis.chan_freq_hz.len())
+                .unwrap_or(0);
+            (0, channel_count)
+        });
+    let mut request = VisibilityBufferRequest::imaging(
+        data_column_kind,
+        row_indices,
+        channel_origin,
+        channel_count,
+    );
+    request.include_antenna_ids = false;
+    request.include_data_desc_ids = false;
+    request.include_field_ids = false;
+    request.include_flag_row = false;
+    request.include_time = false;
+    let mut visibility = VisibilityBuffer::default();
+    let fill_report = ms
+        .fill_visibility_buffer(&request, &mut visibility)
+        .map_err(|error| format!("fill visibility buffer for imaging essentials: {error}"))?;
+    let mut timings = MsImagingEssentialsReadTimings {
+        columns_wall: Duration::from_nanos(fill_report.timings.total_ns as u64)
+            .saturating_add(pointing_elapsed),
+        data_column: Duration::from_nanos(fill_report.timings.data_ns as u64),
+        flag_column: Duration::from_nanos(fill_report.timings.flags_ns as u64),
+        weight_column: Duration::from_nanos(fill_report.timings.weights_ns as u64),
+        weight_spectrum: Duration::from_nanos(fill_report.timings.weight_spectrum_ns as u64),
+        uvw_column: Duration::from_nanos(fill_report.timings.uvw_ns as u64)
+            .saturating_add(pointing_elapsed),
+        adapt_rows: Duration::ZERO,
+    };
     let started = Instant::now();
-    let data_column = columns
-        .data_column
-        .ok_or_else(|| "internal error: visibility source did not load DATA".to_string())?;
-    let SelectedMainDataSource::Single(data_column) = data_column;
-    let mut data_values = data_column.values;
-    let mut flag_values = columns.flag_column.values;
-    let mut weight_values = columns.weight_column.values;
-    let mut weight_spectrum_values = columns.weight_spectrum.map(|column| column.values);
-    let mut uvw_values = columns.selected_uvw.values;
-    let channel_origin = data_column.channel_origin;
+    let data_values = visibility
+        .data
+        .as_ref()
+        .ok_or_else(|| "visibility buffer did not return DATA".to_string())?;
+    let flag_values = visibility
+        .flags
+        .as_ref()
+        .ok_or_else(|| "visibility buffer did not return FLAG".to_string())?;
+    let weight_values = visibility
+        .weights
+        .as_ref()
+        .ok_or_else(|| "visibility buffer did not return WEIGHT".to_string())?;
+    let uvw_values = visibility
+        .uvw
+        .as_ref()
+        .ok_or_else(|| "visibility buffer did not return UVW".to_string())?;
+    let weight_spectrum_values = visibility.weight_spectrum.as_ref();
+    let corr_count = visibility.corr_count;
     let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
     let mut rows = Vec::with_capacity(row_chunk.len());
     for (row_slot, selected_row) in row_chunk.iter().enumerate() {
         let row_index = selected_row.row_index;
-        let antenna1_id = *columns
-            .antenna1_values
-            .get(row_slot)
-            .ok_or_else(|| format!("read ANTENNA1 row {row_index}: row is out of bounds"))?;
-        let antenna2_id = *columns
-            .antenna2_values
-            .get(row_slot)
-            .ok_or_else(|| format!("read ANTENNA2 row {row_index}: row is out of bounds"))?;
-        let raw_uvw_m = extract_uvw_from_array(
-            &take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?,
-            row_index,
-        )?;
+        let antenna1_id = selected_row.antenna1_id;
+        let antenna2_id = selected_row.antenna2_id;
+        let raw_uvw_m = extract_uvw_from_visibility_buffer(uvw_values, row_slot, row_index)?;
         let row_phase_center =
             if let Some(angles_rad) = field_phase_centers.get(&selected_row.field_id) {
                 *angles_rad
@@ -20767,8 +20645,7 @@ fn read_ms_imaging_essentials_block(
                 field_phase_centers.insert(selected_row.field_id, angles_rad);
                 angles_rad
             };
-        let pointing_id = columns
-            .pointing_ids
+        let pointing_id = pointing_ids
             .as_deref()
             .and_then(|values| values.get(row_slot))
             .copied()
@@ -20813,31 +20690,11 @@ fn read_ms_imaging_essentials_block(
             antenna1_pointing.angles_rad,
             antenna2_pointing.angles_rad,
         );
-        let data = complex_array2_owned(
-            take_required_array(
-                &mut data_values,
-                row_slot,
-                data_column.column_name,
-                row_index,
-            )?,
-            data_column.column_name,
-            row_index,
-        )?;
-        let flag = bool_array2_owned(
-            take_required_array(&mut flag_values, row_slot, "FLAG", row_index)?,
-            "FLAG",
-            row_index,
-        )?;
-        let weight = float_array1_owned(
-            take_required_array(&mut weight_values, row_slot, "WEIGHT", row_index)?,
-            "WEIGHT",
-            row_index,
-        )?;
+        let data = complex_visibility_row_array(&visibility, data_values, row_slot)?;
+        let flag = bool_visibility_row_array(&visibility, flag_values, row_slot)?;
+        let weight = float_visibility_row_values(weight_values, row_slot, corr_count)?;
         let weight_spectrum = weight_spectrum_values
-            .as_mut()
-            .and_then(|values| values.get_mut(row_slot))
-            .and_then(Option::take)
-            .map(|value| float_array2_owned(value, "WEIGHT_SPECTRUM", row_index))
+            .map(|values| float_visibility_channel_row_array(&visibility, values, row_slot))
             .transpose()?;
         let axis = channel_axes.get(selected_row.spw_id).ok_or_else(|| {
             format!(
@@ -20845,7 +20702,6 @@ fn read_ms_imaging_essentials_block(
                 selected_row.row_index, selected_row.spw_id
             )
         })?;
-        let channel_count = data.shape().get(1).copied().unwrap_or(0);
         if channel_origin.saturating_add(channel_count) > axis.chan_freq_hz.len() {
             return Err(format!(
                 "row {} selected channel range {}..{} exceeds SPW {} channel count {}",
@@ -21057,6 +20913,8 @@ struct SelectedMainRow {
     ddid: usize,
     spw_id: usize,
     polarization_id: usize,
+    antenna1_id: i32,
+    antenna2_id: i32,
     time_mjd_seconds: Option<f64>,
 }
 
@@ -21526,12 +21384,15 @@ fn select_main_rows(
         .map(|row| {
             let (row_index, field_id, ddid, spw_id, polarization_id, time_mjd_seconds) =
                 row.parts();
+            let (antenna1_id, antenna2_id) = row.antenna_ids();
             SelectedMainRow {
                 row_index,
                 field_id,
                 ddid,
                 spw_id,
                 polarization_id,
+                antenna1_id,
+                antenna2_id,
                 time_mjd_seconds,
             }
         })
@@ -21565,39 +21426,6 @@ fn select_main_rows(
         needs_geometry_engine,
         flag_row,
     })
-}
-
-fn load_selected_i32_main_column(
-    ms: &MeasurementSet,
-    column_name: &'static str,
-    row_indices: &[usize],
-) -> Result<Vec<i32>, String> {
-    let values = ms
-        .main_table()
-        .column_accessor(column_name)
-        .and_then(|column| column.scalar_cells_owned_for_rows(row_indices))
-        .map_err(|error| format!("load selected scalar column {column_name}: {error}"))?;
-    if values.len() != row_indices.len() {
-        return Err(format!(
-            "{column_name} selected length {} does not match requested row count {}",
-            values.len(),
-            row_indices.len()
-        ));
-    }
-    values
-        .into_iter()
-        .enumerate()
-        .map(|(row_slot, value)| match value {
-            Some(ScalarValue::Int32(value)) => Ok(value),
-            Some(other) => Err(format!(
-                "{column_name} selected row slot {row_slot} must be Int32, found {:?}",
-                other.primitive_type()
-            )),
-            None => Err(format!(
-                "{column_name} selected row slot {row_slot} is missing"
-            )),
-        })
-        .collect()
 }
 
 fn load_selected_optional_i32_main_column(
@@ -21695,7 +21523,7 @@ fn build_prepared_geometry_rows(
         geometry_started_at.elapsed(),
     );
     maybe_log_frontend_progress(
-        "prepare_plane_input/build_prepared_geometry_rows/load_selected_antenna_ids",
+        "prepare_plane_input/build_prepared_geometry_rows/use_selected_antenna_ids",
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
@@ -21712,8 +21540,6 @@ fn build_prepared_geometry_rows(
         derived_engine,
         reprojection_mode,
         &geometry.selected_uvw,
-        &geometry.antenna1_values,
-        &geometry.antenna2_values,
         geometry.pointing_ids.as_deref(),
         geometry_started_at,
     )
@@ -21728,8 +21554,6 @@ fn build_prepared_geometry_rows_from_selected_uvw(
     derived_engine: Option<&MsCalEngine>,
     reprojection_mode: UvwReprojectionMode,
     selected_uvw: &SelectedMainArrayColumn,
-    antenna1_values: &[i32],
-    antenna2_values: &[i32],
     pointing_ids: Option<&[Option<i32>]>,
     geometry_started_at: Instant,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
@@ -21737,12 +21561,8 @@ fn build_prepared_geometry_rows_from_selected_uvw(
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
-        let antenna1_id = *antenna1_values
-            .get(row_slot)
-            .ok_or_else(|| format!("read ANTENNA1 row {row}: row is out of bounds"))?;
-        let antenna2_id = *antenna2_values
-            .get(row_slot)
-            .ok_or_else(|| format!("read ANTENNA2 row {row}: row is out of bounds"))?;
+        let antenna1_id = selected_row.antenna1_id;
+        let antenna2_id = selected_row.antenna2_id;
         let is_cross = antenna1_id != antenna2_id;
         let raw_uvw_m = extract_uvw_from_array(selected_uvw.get(row_slot)?, row)?;
         let transform = row_imaging_transform(
@@ -37592,10 +37412,11 @@ mod tests {
 
     #[test]
     fn read_columnar_prepared_source_uses_visibility_buffer_and_geometry_rows() {
-        let mut ms = MeasurementSet::create_memory(
-            MeasurementSetBuilder::new()
-                .with_main_column(OptionalMainColumn::Data)
-                .with_main_column(OptionalMainColumn::WeightSpectrum),
+        let dir = tempdir().expect("tempdir");
+        let ms_path = dir.path().join("columnar-prepared-source.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
         )
         .unwrap();
         add_vla_antenna_pair(&mut ms);
@@ -37645,6 +37466,8 @@ mod tests {
             .unwrap()
             .set_scalar_assuming_valid(1, ScalarValue::Bool(true))
             .unwrap();
+        ms.save().expect("save columnar prepared source test MS");
+        let ms = MeasurementSet::open(&ms_path).expect("reopen columnar prepared source test MS");
 
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -37738,19 +37561,19 @@ mod tests {
         let row_zero_weights = source.weights(1).unwrap();
         assert_eq!(
             row_one_weights.get_local(0, 0),
-            Ok((102.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert_eq!(
             row_one_weights.get_local(1, 1),
-            Ok((203.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert_eq!(
             row_zero_weights.get_local(0, 0),
-            Ok((2.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert_eq!(
             row_zero_weights.get_local(1, 1),
-            Ok((30.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
         assert!(source.flag_row_value(&selection.flag_row, 0, 1).unwrap());
         assert!(!source.flag_row_value(&selection.flag_row, 1, 0).unwrap());
@@ -37781,15 +37604,9 @@ mod tests {
         );
         assert_eq!(
             density_source.weights(0).unwrap().get_local(1, 1),
-            Ok((203.0, WeightSourceKind::WeightSpectrum))
+            Ok((1.0, WeightSourceKind::Weight))
         );
-        let Some(VisibilityFloatSamplesRef::Float32(weight_spectrum)) = view.weight_spectrum else {
-            panic!("expected Float32 WEIGHT_SPECTRUM");
-        };
-        assert_eq!(
-            weight_spectrum,
-            &[102.0, 202.0, 2.0, 20.0, 103.0, 203.0, 3.0, 30.0]
-        );
+        assert!(view.weight_spectrum.is_none());
 
         let cache_key = visibility_geometry_cache_key_for_rows(
             &config,
@@ -37861,12 +37678,7 @@ mod tests {
             cached_second.geometry_rows[1].trace()
         );
         let cached_view = cached_second.source_view().unwrap();
-        let Some(VisibilityFloatSamplesRef::Float32(cached_weight_spectrum)) =
-            cached_view.weight_spectrum
-        else {
-            panic!("expected cached Float32 WEIGHT_SPECTRUM");
-        };
-        assert_eq!(cached_weight_spectrum, weight_spectrum);
+        assert!(cached_view.weight_spectrum.is_none());
         let cache_stats = geometry_cache.stats();
         assert_eq!(1, cache_stats.fills);
         assert_eq!(1, cache_stats.hits);
@@ -39919,19 +39731,13 @@ mod tests {
     #[test]
     fn production_visibility_column_reads_are_source_stream_centralized() {
         let source = include_str!("lib.rs");
-        let data_source_pattern = concat!("SelectedMain", "DataSource::load");
         let array_load_pattern = concat!("SelectedMain", "ArrayColumn::load(");
         let array_uncached_pattern = concat!("SelectedMain", "ArrayColumn::load_uncached");
         let array_range_pattern = concat!(
             "SelectedMain",
             "ArrayColumn::load_2d_channel_range_uncached"
         );
-        let allowed_functions = [
-            "read_visibility_source_columns",
-            "read_visibility_source_geometry_columns",
-            "load_uncached",
-            "load_2d_channel_range_uncached",
-        ];
+        let allowed_functions = ["read_visibility_source_geometry_columns"];
         let mut current_fn = String::new();
         for (line_index, line) in source.lines().enumerate() {
             let trimmed = line.trim_start();
@@ -39944,8 +39750,7 @@ mod tests {
                     current_fn = name.trim().to_string();
                 }
             }
-            let is_column_read = line.contains(data_source_pattern)
-                || line.contains(array_load_pattern)
+            let is_column_read = line.contains(array_load_pattern)
                 || line.contains(array_uncached_pattern)
                 || line.contains(array_range_pattern);
             if !is_column_read {
@@ -39955,7 +39760,7 @@ mod tests {
                 allowed_functions
                     .iter()
                     .any(|allowed| current_fn == *allowed),
-                "direct MS imaging column read at lib.rs:{} in {}; route it through read_visibility_source_columns/read_visibility_source_geometry_columns",
+                "direct MS imaging array read at lib.rs:{} in {}; route visibility payloads through VisibilityBuffer and geometry-only UVW reads through read_visibility_source_geometry_columns",
                 line_index + 1,
                 current_fn
             );
@@ -44115,6 +43920,8 @@ deconvolver=mtmfs
             ddid: 0,
             spw_id: 0,
             polarization_id: 0,
+            antenna1_id: 0,
+            antenna2_id: 1,
             time_mjd_seconds: Some(12.5),
         };
         let spectral = Arc::new(CubeRowSpectralContributions {

@@ -89,6 +89,7 @@ fn run() -> Result<(), String> {
                 )
                 .with_source_partition(source_partition.clone()),
             );
+            let request = options.columns.apply_to(request);
             let started = Instant::now();
             let fill_report = ms
                 .fill_visibility_buffer(&request, &mut buffer)
@@ -146,6 +147,7 @@ fn run() -> Result<(), String> {
             block_rows: options.block_rows,
             repeat: options.repeat,
             sidecars: options.sidecars,
+            columns: options.columns,
         },
         elapsed_ns: probe_elapsed.as_nanos(),
         aggregate,
@@ -177,6 +179,7 @@ struct ProbeOptions {
     block_rows: usize,
     repeat: usize,
     sidecars: ProbeSidecarMode,
+    columns: ProbeColumnSelection,
     verify_full_read_rows: Option<usize>,
 }
 
@@ -191,6 +194,7 @@ impl ProbeOptions {
         let mut block_rows = 8192usize;
         let mut repeat = 1usize;
         let mut sidecars = ProbeSidecarMode::Imaging;
+        let mut columns = ProbeColumnSelection::default();
         let mut verify_full_read_rows = None;
 
         let mut index = 0usize;
@@ -239,6 +243,10 @@ impl ProbeOptions {
                     index += 1;
                     sidecars = parse_sidecars(args.get(index).ok_or_else(usage)?)?;
                 }
+                "--columns" => {
+                    index += 1;
+                    columns = parse_columns(args.get(index).ok_or_else(usage)?)?;
+                }
                 "--verify-full-read" => {
                     index += 1;
                     verify_full_read_rows = Some(parse_usize(
@@ -266,6 +274,7 @@ impl ProbeOptions {
             block_rows,
             repeat,
             sidecars,
+            columns,
             verify_full_read_rows,
         })
     }
@@ -306,6 +315,38 @@ impl ProbeSidecarMode {
                 request.include_state_ids = true;
             }
         }
+        request
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct ProbeColumnSelection {
+    data: bool,
+    flags: bool,
+    weights: bool,
+    weight_spectrum: bool,
+    uvw: bool,
+}
+
+impl Default for ProbeColumnSelection {
+    fn default() -> Self {
+        Self {
+            data: true,
+            flags: true,
+            weights: true,
+            weight_spectrum: true,
+            uvw: true,
+        }
+    }
+}
+
+impl ProbeColumnSelection {
+    fn apply_to(self, mut request: VisibilityBufferRequest) -> VisibilityBufferRequest {
+        request.include_data = self.data;
+        request.include_flags = self.flags;
+        request.include_weights = self.weights;
+        request.include_weight_spectrum = self.weight_spectrum;
+        request.include_uvw = self.uvw;
         request
     }
 }
@@ -375,6 +416,7 @@ struct SelectionReport {
     block_rows: usize,
     repeat: usize,
     sidecars: ProbeSidecarMode,
+    columns: ProbeColumnSelection,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -753,7 +795,13 @@ fn data_shape(
     let value = ms
         .main_table()
         .column_accessor(data_column.name())?
-        .array_cell(row)?;
+        .array_cells_owned_uncached(&[row])?
+        .into_iter()
+        .next()
+        .flatten()
+        .ok_or_else(|| {
+            casa_ms::MsError::InvalidInput(format!("{} row {row} is missing", data_column.name()))
+        })?;
     match value {
         ArrayValue::Complex32(values) => Ok((values.shape()[0], values.shape()[1])),
         ArrayValue::Complex64(values) => Ok((values.shape()[0], values.shape()[1])),
@@ -771,13 +819,18 @@ fn source_partition_for_row(
     corr_count: usize,
     full_channel_count: usize,
 ) -> Result<SourcePartition, String> {
-    let value = ms
+    let values = ms
         .main_table()
         .column_accessor("DATA_DESC_ID")
-        .and_then(|column| column.scalar_cell(row))
+        .and_then(|column| column.scalar_cells_owned_for_rows(&[row]))
         .map_err(|error| format!("read DATA_DESC_ID row {row}: {error}"))?;
+    let value = values
+        .into_iter()
+        .next()
+        .flatten()
+        .ok_or_else(|| format!("DATA_DESC_ID row {row} is missing"))?;
     let data_desc_id = match value {
-        ScalarValue::Int32(value) if *value >= 0 => *value,
+        ScalarValue::Int32(value) if value >= 0 => value,
         ScalarValue::Int32(value) => {
             return Err(format!("DATA_DESC_ID row {row} is negative: {value}"));
         }
@@ -845,6 +898,43 @@ fn parse_sidecars(value: &str) -> Result<ProbeSidecarMode, String> {
     }
 }
 
+fn parse_columns(value: &str) -> Result<ProbeColumnSelection, String> {
+    let mut selection = ProbeColumnSelection {
+        data: false,
+        flags: false,
+        weights: false,
+        weight_spectrum: false,
+        uvw: false,
+    };
+    for item in value.split(',') {
+        match item.trim().to_ascii_lowercase().as_str() {
+            "" => {}
+            "all" => selection = ProbeColumnSelection::default(),
+            "data" => selection.data = true,
+            "flag" | "flags" => selection.flags = true,
+            "weight" | "weights" => selection.weights = true,
+            "weight_spectrum" | "weight-spectrum" | "weightspectrum" => {
+                selection.weight_spectrum = true;
+            }
+            "uvw" => selection.uvw = true,
+            other => {
+                return Err(format!(
+                    "unknown read-probe column {other:?}; expected all, data, flags, weights, weight_spectrum, or uvw"
+                ));
+            }
+        }
+    }
+    if !(selection.data
+        || selection.flags
+        || selection.weights
+        || selection.weight_spectrum
+        || selection.uvw)
+    {
+        return Err("--columns must select at least one visibility column".to_string());
+    }
+    Ok(selection)
+}
+
 fn parse_usize(value: &str, name: &str) -> Result<usize, String> {
     value
         .parse::<usize>()
@@ -881,6 +971,49 @@ fn usage() -> String {
     "Usage: ms-read-probe --ms PATH [--datacolumn DATA|CORRECTED_DATA|MODEL_DATA] \
      [--row-start N] [--row-count N] [--channel-start N] [--channel-count N] \
      [--block-rows N] [--repeat N] [--sidecars minimal|imaging|full] \
+     [--columns all|data,flags,weights,weight_spectrum,uvw] \
      [--verify-full-read N]"
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_columns_accepts_single_and_multiple_visibility_columns() {
+        let data_only = parse_columns("data").expect("data column selection");
+        assert!(data_only.data);
+        assert!(!data_only.flags);
+        assert!(!data_only.weights);
+        assert!(!data_only.weight_spectrum);
+        assert!(!data_only.uvw);
+
+        let mixed = parse_columns("flags,weight-spectrum,uvw").expect("mixed columns");
+        assert!(!mixed.data);
+        assert!(mixed.flags);
+        assert!(!mixed.weights);
+        assert!(mixed.weight_spectrum);
+        assert!(mixed.uvw);
+    }
+
+    #[test]
+    fn parse_columns_rejects_empty_and_unknown_selections() {
+        assert!(parse_columns("").is_err());
+        assert!(parse_columns("data,phase").is_err());
+    }
+
+    #[test]
+    fn probe_column_selection_controls_visibility_request_columns() {
+        let request = VisibilityBufferRequest::imaging(VisibilityDataColumn::Data, vec![0], 0, 4);
+        let request = parse_columns("data,uvw")
+            .expect("column selection")
+            .apply_to(request);
+        assert!(request.include_data);
+        assert!(!request.include_flags);
+        assert!(!request.include_weights);
+        assert!(!request.include_weight_spectrum);
+        assert!(request.include_uvw);
+        assert!(request.include_antenna_ids);
+    }
 }

@@ -7210,6 +7210,7 @@ struct GenericTaskPanel: View {
                         }
                     } else if let schema {
                         genericParameterBlock(schema: schema)
+                        genericSavedJSONBlock
                         genericSafetyBlock
                     } else {
                         Text("Loading task schema...")
@@ -7396,6 +7397,59 @@ struct GenericTaskPanel: View {
     private func genericTaskToggle(_ argumentID: String) -> Bool {
         store.state.genericTaskToggles[activeTaskID]?[argumentID]
             ?? (schema?.arguments.first { $0.id == argumentID }?.default == "true")
+    }
+
+    @ViewBuilder
+    private var genericSavedJSONBlock: some View {
+        if activeTaskID == "simobserve", genericTaskValue("request_kind") == "family" {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Saved JSON")
+                    .workbenchFont(.headline)
+                HStack {
+                    Button {
+                        saveActiveGenericTaskRequest()
+                    } label: {
+                        Label("Save Request", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(!store.hasSaveableActiveGenericTaskRequest())
+                    Button {
+                        openGenericTaskRequest()
+                    } label: {
+                        Label("Open Request", systemImage: "folder")
+                    }
+                    Spacer()
+                    Text(genericTaskValue("request_json"))
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .taskCard()
+        }
+    }
+
+    private func saveActiveGenericTaskRequest() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = store.taskRequestSaveFilename()
+        panel.directoryURL = URL(fileURLWithPath: store.taskRequestSaveDirectory(), isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        store.saveActiveGenericTaskRequest(to: url.path)
+    }
+
+    private func openGenericTaskRequest() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: store.taskRequestSaveDirectory(), isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        store.loadGenericTaskRequest(from: url.path, tabID: tabID)
     }
 
     @ViewBuilder

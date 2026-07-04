@@ -857,6 +857,155 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.history.last?.affectedPaths.contains(outputPath) == true)
     }
 
+    func testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-simobserve-family-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Synthetic", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.taskCatalog = [makeSimobserveTaskCatalogEntry()]
+        state.activeTaskID = "simobserve"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeSimobserveTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("simobserve")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "request_kind", value: "family")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "request_json", value: "requests/family.json")
+        store.setGenericTaskValue(
+            taskID: "simobserve",
+            argumentID: "source_model",
+            value: #"{"kind":"fits_image","path":"model.fits"}"#
+        )
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "telescope", value: "ALMA")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "array_config", value: "synthetic-aca")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "band", value: "Band 3")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "target_ms_size_gib", value: "0.02")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "output_ms", value: "products/family.ms")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "polarizations", value: "4")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "ms_channels", value: "8")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "image_channels", value: "2")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "pointing_count", value: "3")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "imaging_mode", value: "mosaic")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "worker_policy", value: "fixed")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "row_workers", value: "2")
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "channel_workers", value: "3")
+
+        let requestURL = rootURL.appendingPathComponent("requests/family.json")
+        store.saveActiveGenericTaskRequest(to: requestURL.path)
+
+        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: requestURL)) as? [String: Any]
+        XCTAssertEqual(saved?["kind"] as? String, "family")
+        let request = try XCTUnwrap(saved?["request"] as? [String: Any])
+        XCTAssertNil(request["request_kind"])
+        XCTAssertNil(request["request_json"])
+        XCTAssertEqual(request["telescope"] as? String, "ALMA")
+        XCTAssertEqual(request["array_config"] as? String, "synthetic-aca")
+        XCTAssertEqual(request["polarizations"] as? Int, 4)
+        XCTAssertEqual(request["ms_channels"] as? Int, 8)
+        XCTAssertEqual(request["worker_policy"] as? String, "fixed")
+        XCTAssertEqual(request["row_workers"] as? Int, 2)
+        XCTAssertEqual(request["channel_workers"] as? Int, 3)
+
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "pointing_count", value: "99")
+        store.loadGenericTaskRequest(from: requestURL.path)
+
+        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["request_kind"], "family")
+        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["request_json"], "requests/family.json")
+        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["pointing_count"], "3")
+        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["worker_policy"], "fixed")
+
+        store.setGenericTaskValue(taskID: "simobserve", argumentID: "pointing_count", value: "5")
+        store.saveActiveGenericTaskRequest(to: requestURL.path)
+        let edited = try JSONSerialization.jsonObject(with: Data(contentsOf: requestURL)) as? [String: Any]
+        let editedRequest = try XCTUnwrap(edited?["request"] as? [String: Any])
+        XCTAssertEqual(editedRequest["pointing_count"] as? Int, 5)
+    }
+
+    func testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-simobserve-run-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let binaryURL = try writeStubSimobserveBinary(
+            rootURL: rootURL,
+            script: """
+            #!/bin/sh
+            if [ "$1" = "--json-run" ]; then
+              cat "$2"
+              exit 0
+            fi
+            echo "unexpected arguments: $*" >&2
+            exit 2
+            """
+        )
+        setenv("CASARS_SIMOBSERVE_BIN", binaryURL.path, 1)
+        defer { unsetenv("CASARS_SIMOBSERVE_BIN") }
+
+        let request = try makeSimobserveFamilyGenericTaskRequest(rootURL: rootURL)
+        let client = ProcessGenericTaskClient(queue: DispatchQueue(label: "test.simobserve.family"))
+        let semaphore = DispatchSemaphore(value: 0)
+        var event: GenericTaskEvent?
+        _ = try client.startTask(request: request) {
+            event = $0
+            semaphore.signal()
+        }
+        XCTAssertEqual(semaphore.wait(timeout: .now() + 5), .success)
+
+        guard case let .succeeded(result) = event else {
+            XCTFail("expected simobserve family success")
+            return
+        }
+        XCTAssertEqual(result.arguments.first, "--json-run")
+        let requestJSONPath = try XCTUnwrap(result.requestJSONPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: requestJSONPath))
+        XCTAssertEqual(result.arguments.dropFirst().first, requestJSONPath)
+        let payload = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        XCTAssertEqual(payload?["kind"] as? String, "family")
+        let familyRequest = try XCTUnwrap(payload?["request"] as? [String: Any])
+        XCTAssertEqual(familyRequest["worker_policy"] as? String, "fixed")
+        XCTAssertEqual(familyRequest["row_workers"] as? Int, 2)
+        XCTAssertEqual(familyRequest["channel_workers"] as? Int, 3)
+    }
+
+    func testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-simobserve-fail-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let binaryURL = try writeStubSimobserveBinary(
+            rootURL: rootURL,
+            script: """
+            #!/bin/sh
+            echo "Error: target_ms_size_gib must be positive" >&2
+            exit 1
+            """
+        )
+        setenv("CASARS_SIMOBSERVE_BIN", binaryURL.path, 1)
+        defer { unsetenv("CASARS_SIMOBSERVE_BIN") }
+
+        let request = try makeSimobserveFamilyGenericTaskRequest(rootURL: rootURL)
+        let client = ProcessGenericTaskClient(queue: DispatchQueue(label: "test.simobserve.family.failure"))
+        let semaphore = DispatchSemaphore(value: 0)
+        var event: GenericTaskEvent?
+        _ = try client.startTask(request: request) {
+            event = $0
+            semaphore.signal()
+        }
+        XCTAssertEqual(semaphore.wait(timeout: .now() + 5), .success)
+
+        guard case let .failed(failure) = event else {
+            XCTFail("expected simobserve family failure")
+            return
+        }
+        XCTAssertEqual(failure.message, "simobserve exited with 1.")
+        XCTAssertTrue(failure.diagnostics.joined(separator: "\n").contains("target_ms_size_gib must be positive"))
+    }
+
     func testGenericTaskRequestSummaryDisplaysProjectRelativePaths() throws {
         let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
         {
@@ -4337,6 +4486,25 @@ private func makeImheadTaskCatalogEntry() -> TaskCatalogEntry {
     makeTaskCatalogEntry(id: "imhead", displayName: "Image Header")
 }
 
+private func makeSimobserveTaskCatalogEntry() -> TaskCatalogEntry {
+    TaskCatalogEntry(
+        id: "simobserve",
+        category: "Simulation",
+        displayName: "SimObserve",
+        binaryName: "simobserve",
+        cargoPackage: "casa-ms",
+        overrideEnv: "CASARS_SIMOBSERVE_BIN",
+        shellKind: "workflow",
+        interaction: "one_shot",
+        browserKind: nil,
+        datasetKinds: ["measurement_set"],
+        schemaSource: "binary",
+        showInTUI: true,
+        showInSwift: true,
+        includeInSuite: true
+    )
+}
+
 private func makeTaskCatalogEntry(id: String, displayName: String) -> TaskCatalogEntry {
     TaskCatalogEntry(
         id: id,
@@ -4370,6 +4538,39 @@ private func makeImheadTaskUISchema() throws -> TaskUISchema {
         {"id":"image_path","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
         {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","list"]},"value_kind":"choice","required":false,"default":"summary","help":"","group":"Output","advanced":false,"hidden_in_tui":false},
         {"id":"json","label":"JSON","order":2,"parser":{"kind":"toggle","true_flags":["--json"],"false_flags":["--no-json"]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+      ]
+    }
+    """.utf8))
+}
+
+private func makeSimobserveTaskUISchema() throws -> TaskUISchema {
+    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+    {
+      "schema_version": 1,
+      "command_id": "simobserve",
+      "invocation_name": "simobserve",
+      "display_name": "SimObserve",
+      "category": "Simulation",
+      "summary": "Generate synthetic MeasurementSets from CLI parameters or saved family JSON.",
+      "usage": "simobserve --json-run family.json",
+      "arguments": [
+        {"id":"request_kind","label":"Request Kind","order":0,"parser":{"kind":"option","flags":[],"metavar":"run|family","choices":["run","family"]},"value_kind":"choice","parameter_type":"simobserve_request_kind","required":false,"default":"run","help":"","group":"Saved JSON","advanced":false,"hidden_in_tui":false},
+        {"id":"request_json","label":"Request JSON","order":1,"parser":{"kind":"option","flags":[],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"output_json_path","required":false,"default":".casa-rs/requests/simobserve-family.json","help":"","group":"Saved JSON","advanced":false,"hidden_in_tui":false},
+        {"id":"source_model","label":"Source Model","order":2,"parser":{"kind":"option","flags":[],"metavar":"JSON","choices":[]},"value_kind":"string","parameter_type":"json_object","required":false,"default":"{\\"kind\\":\\"analytic_components\\",\\"components\\":[{\\"kind\\":\\"point\\",\\"l_rad\\":0.0,\\"m_rad\\":0.0,\\"spectrum\\":{\\"flux_jy\\":1.0}}]}","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"telescope","label":"Telescope","order":3,"parser":{"kind":"option","flags":[],"metavar":"NAME","choices":["VLA","ALMA","ACA"]},"value_kind":"choice","parameter_type":"telescope_family","required":false,"default":"VLA","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"array_config","label":"Array Config","order":4,"parser":{"kind":"option","flags":[],"metavar":"CONFIG","choices":["A","vla.b.cfg","vla.c.cfg","vla.d.cfg","alma.cycle10.5.cfg","aca.cycle10.cfg","synthetic-vla-d","synthetic-alma-compact","synthetic-aca","synthetic-simalma"]},"value_kind":"choice","parameter_type":"array_configuration","required":false,"default":"A","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"band","label":"Band","order":5,"parser":{"kind":"option","flags":[],"metavar":"BAND","choices":["L","S","C","X","Ku","K","Ka","Q","Band 3","Band 6","Band 7","Band 9"]},"value_kind":"choice","parameter_type":"receiver_band","required":false,"default":"Q","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"target_ms_size_gib","label":"Target MS Size","order":6,"parser":{"kind":"option","flags":[],"metavar":"GiB","choices":[]},"value_kind":"float","parameter_type":"data_size_gib","required":false,"default":"0.01","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"output_ms","label":"Family Output MS","order":7,"parser":{"kind":"option","flags":[],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"output_measurement_set_path","required":false,"default":"simobserve-family.ms","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"polarizations","label":"Polarizations","order":8,"parser":{"kind":"option","flags":[],"metavar":"N","choices":["1","2","4"]},"value_kind":"choice","parameter_type":"integer_count","required":false,"default":"2","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
+        {"id":"ms_channels","label":"MS Channels","order":9,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"4","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
+        {"id":"image_channels","label":"Image Channels","order":10,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"1","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
+        {"id":"pointing_count","label":"Pointings","order":11,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"1","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
+        {"id":"imaging_mode","label":"Imaging Mode","order":12,"parser":{"kind":"option","flags":[],"metavar":"MODE","choices":["single_field","mfs","mosaic","spectral_cube","cubedata","mt_mfs","simalma","aca"]},"value_kind":"choice","parameter_type":"mode","required":false,"default":"mfs","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
+        {"id":"worker_policy","label":"Worker Policy","order":13,"parser":{"kind":"option","flags":[],"metavar":"auto|fixed","choices":["auto","fixed"]},"value_kind":"choice","parameter_type":"worker_policy","required":false,"default":"auto","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false},
+        {"id":"row_workers","label":"Row Workers","order":14,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false},
+        {"id":"channel_workers","label":"Channel Workers","order":15,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false},
+        {"id":"measure_actual_size","label":"Measure Actual Size","order":16,"parser":{"kind":"option","flags":[],"metavar":"BOOL","choices":[]},"value_kind":"bool","parameter_type":"boolean","required":false,"default":"false","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false}
       ]
     }
     """.utf8))
@@ -4453,6 +4654,44 @@ private final class HoldingGenericTaskClient: GenericTaskClient {
             stderr: stderr
         )))
     }
+}
+
+private func makeSimobserveFamilyGenericTaskRequest(rootURL: URL) throws -> GenericTaskRequest {
+    GenericTaskRequest(
+        runID: "simobserve-1",
+        task: makeSimobserveTaskCatalogEntry(),
+        schema: try makeSimobserveTaskUISchema(),
+        values: [
+            "request_kind": "family",
+            "request_json": "requests/family.json",
+            "source_model": #"{"kind":"analytic_components","components":[{"kind":"point","l_rad":0.0,"m_rad":0.0,"spectrum":{"flux_jy":1.0}}]}"#,
+            "telescope": "VLA",
+            "array_config": "synthetic-vla-d",
+            "band": "Q",
+            "target_ms_size_gib": "0.01",
+            "output_ms": "products/family.ms",
+            "polarizations": "4",
+            "ms_channels": "8",
+            "image_channels": "2",
+            "pointing_count": "3",
+            "imaging_mode": "mosaic",
+            "worker_policy": "fixed",
+            "row_workers": "2",
+            "channel_workers": "3"
+        ],
+        toggles: [:],
+        workingDirectoryPath: rootURL.path
+    )
+}
+
+private func writeStubSimobserveBinary(rootURL: URL, script: String) throws -> URL {
+    let binaryURL = rootURL.appendingPathComponent("simobserve")
+    try script.write(to: binaryURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: NSNumber(value: Int16(0o755))],
+        ofItemAtPath: binaryURL.path
+    )
+    return binaryURL
 }
 
 private func waitFor(

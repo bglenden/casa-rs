@@ -3300,6 +3300,7 @@ fn mosaic_weight_image_pixel_bounds(
     (x_start..x_end.max(x_start), y_start..y_end.max(y_start))
 }
 
+#[derive(Clone)]
 enum MosaicWeightImageVoltagePattern {
     Airy(AiryVoltageLookup),
     Model(PrimaryBeamModel),
@@ -3326,6 +3327,26 @@ impl MosaicWeightImageVoltagePattern {
                 frequency_hz,
             ),
         }
+    }
+}
+
+/// Cached voltage-pattern evaluator for repeated primary-beam samples.
+#[derive(Clone)]
+pub struct PrimaryBeamVoltagePattern {
+    inner: MosaicWeightImageVoltagePattern,
+}
+
+impl PrimaryBeamVoltagePattern {
+    /// Build a cached evaluator for a primary-beam model.
+    pub fn new(primary_beam_model: PrimaryBeamModel) -> Self {
+        Self {
+            inner: MosaicWeightImageVoltagePattern::new(primary_beam_model),
+        }
+    }
+
+    /// Evaluate the voltage pattern at direction-cosine offsets in radians.
+    pub fn evaluate_offsets(&self, l_rad: f64, m_rad: f64, frequency_hz: f64) -> f32 {
+        self.inner.evaluate(l_rad, m_rad, frequency_hz)
     }
 }
 

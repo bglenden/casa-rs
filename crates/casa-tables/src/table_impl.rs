@@ -8,7 +8,7 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::schema::{ColumnType, TableSchema};
 use crate::storage::{CompositeStorage, RequiredScalarColumnData, StorageProfiler};
-use crate::table::TableError;
+use crate::table::{SelectedArray2DCells, TableError};
 
 type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
 type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
@@ -427,20 +427,20 @@ impl TableImpl {
         Ok(values)
     }
 
-    fn load_array_column_rows_2d_channel_range_now(
+    fn load_array_column_rows_2d_channel_range_typed_now(
         source: &LazyRowsSource,
         column: &str,
         row_indices: &[usize],
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+    ) -> Result<SelectedArray2DCells, TableError> {
         let mut profiler = StorageProfiler::start(format!(
-            "table_impl::load_array_column_rows_2d_channel_range_now path={} column={column}",
+            "table_impl::load_array_column_rows_2d_channel_range_typed_now path={} column={column}",
             source.path.display()
         ));
         let storage = CompositeStorage;
         let values = storage
-            .load_array_column_rows_2d_channel_range_with_row_hint(
+            .load_array_column_rows_2d_channel_range_typed_with_row_hint(
                 &source.path,
                 column,
                 row_indices,
@@ -450,7 +450,7 @@ impl TableImpl {
             )
             .map_err(|err| {
                 TableError::Storage(format!(
-                    "failed to load selected channel range for array column '{column}' from table {}: {err}",
+                    "failed to load typed selected channel range for array column '{column}' from table {}: {err}",
                     source.path.display()
                 ))
             })?;
@@ -463,7 +463,7 @@ impl TableImpl {
                     row_indices.len(),
                     channel_start,
                     channel_count,
-                    values.len()
+                    values.row_count()
                 )),
             );
         }
@@ -1164,65 +1164,36 @@ impl TableImpl {
         Ok(Some(values))
     }
 
-    pub(crate) fn array_cells_2d_channel_range_owned_uncached(
+    pub(crate) fn array_cells_2d_channel_range_typed_uncached(
         &self,
         row_indices: &[usize],
         column: &str,
         channel_start: usize,
         channel_count: usize,
-    ) -> Result<Option<Vec<Option<ArrayValue>>>, TableError> {
-        if let Some(loaded) = self.loaded_rows.get() {
-            let values = row_indices
-                .iter()
-                .map(|&row_index| {
-                    loaded
-                        .rows
-                        .get(row_index)
-                        .and_then(|row| match row.get(column) {
-                            Some(Value::Array(array)) => Some(array.clone()),
-                            _ => None,
-                        })
-                        .map(|array| {
-                            crate::storage::slice_array_value_2d_channel_range(
-                                array,
-                                channel_start,
-                                channel_count,
-                            )
-                        })
-                        .transpose()
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| TableError::Storage(error.to_string()))?;
-            return Ok(Some(values));
+    ) -> Result<SelectedArray2DCells, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads require a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads do not support pending array-cell overrides"
+            )));
         }
 
         let Some(source) = &self.lazy_rows else {
-            return Ok(None);
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads require a lazy disk-backed table"
+            )));
         };
-
-        let mut values = Self::load_array_column_rows_2d_channel_range_now(
+        Self::load_array_column_rows_2d_channel_range_typed_now(
             source,
             column,
             row_indices,
             channel_start,
             channel_count,
-        )?;
-        if let Some(overrides) = self.pending_array_cells.by_column.get(column) {
-            for (out_idx, &row_index) in row_indices.iter().enumerate() {
-                if let Some(value) = overrides.get(row_index) {
-                    values[out_idx] = Some(
-                        crate::storage::slice_array_value_2d_channel_range(
-                            value.clone(),
-                            channel_start,
-                            channel_count,
-                        )
-                        .map_err(|error| TableError::Storage(error.to_string()))?,
-                    );
-                }
-            }
-        }
-
-        Ok(Some(values))
+        )
     }
 
     pub(crate) fn row_mut(

@@ -12,13 +12,13 @@ use casa_coordinates::{
     Coordinate, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
 };
 use casa_imaging::{
-    ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
+    ImageGeometry, PrimaryBeamModel, PrimaryBeamVoltagePattern, StandardMfsModelPredictor,
 };
 use casa_tables::{
-    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
-    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
-    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column,
+    ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun, StreamedTiledPrimitiveColumn,
+    StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
+    StreamingTiledShapeComplex32Writer, install_streamed_tiled_column_primitive_column,
+    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -30,11 +30,10 @@ use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -302,9 +301,306 @@ impl SyntheticSpectralSetup {
         self.channel_width_hz.abs() * self.channel_count as f64
     }
 
-    fn reference_frequency_hz(&self) -> f64 {
+    /// Return the central reference frequency in Hz.
+    pub fn reference_frequency_hz(&self) -> f64 {
         self.start_frequency_hz + (self.channel_count / 2) as f64 * self.channel_width_hz
     }
+}
+
+/// Polarization/correlation layout for a synthetic observation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticPolarizationSetup {
+    /// Receptor basis used in FEED and POLARIZATION metadata.
+    #[serde(default)]
+    pub basis: SyntheticPolarizationBasis,
+    /// Number of correlations written per visibility row. Supported values are
+    /// 1, 2, and 4.
+    pub correlation_count: usize,
+}
+
+impl Default for SyntheticPolarizationSetup {
+    fn default() -> Self {
+        Self {
+            basis: SyntheticPolarizationBasis::Circular,
+            correlation_count: 2,
+        }
+    }
+}
+
+impl SyntheticPolarizationSetup {
+    /// Build a setup from the dialog-facing correlation count.
+    pub fn new(basis: SyntheticPolarizationBasis, correlation_count: usize) -> MsResult<Self> {
+        let setup = Self {
+            basis,
+            correlation_count,
+        };
+        setup.validate()?;
+        Ok(setup)
+    }
+
+    /// Validate that the correlation layout is supported by the native writer.
+    pub fn validate(&self) -> MsResult<()> {
+        match self.correlation_count {
+            1 | 2 | 4 => Ok(()),
+            other => Err(MsError::SyntheticObservation(format!(
+                "polarization correlation_count {other} is unsupported; expected 1, 2, or 4"
+            ))),
+        }
+    }
+
+    fn correlation_types(&self) -> Vec<i32> {
+        match (self.basis, self.correlation_count) {
+            (SyntheticPolarizationBasis::Circular, 1) => vec![5],
+            (SyntheticPolarizationBasis::Circular, 2) => vec![5, 8],
+            (SyntheticPolarizationBasis::Circular, 4) => vec![5, 6, 7, 8],
+            (SyntheticPolarizationBasis::Linear, 1) => vec![9],
+            (SyntheticPolarizationBasis::Linear, 2) => vec![9, 12],
+            (SyntheticPolarizationBasis::Linear, 4) => vec![9, 10, 11, 12],
+            _ => Vec::new(),
+        }
+    }
+
+    fn correlation_products(&self) -> Vec<i32> {
+        match self.correlation_count {
+            1 => vec![0, 0],
+            2 => vec![0, 1, 0, 1],
+            4 => vec![0, 0, 1, 1, 0, 1, 0, 1],
+            _ => Vec::new(),
+        }
+    }
+
+    fn receptor_types(&self) -> [&'static str; 2] {
+        match self.basis {
+            SyntheticPolarizationBasis::Circular => ["R", "L"],
+            SyntheticPolarizationBasis::Linear => ["X", "Y"],
+        }
+    }
+}
+
+/// Receptor basis used for synthetic polarization metadata.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticPolarizationBasis {
+    /// Circular receptors: R/L and RR/RL/LR/LL Stokes codes.
+    #[default]
+    Circular,
+    /// Linear receptors: X/Y and XX/XY/YX/YY Stokes codes.
+    Linear,
+}
+
+/// Worker selection policy for native synthetic MS generation.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticWorkerPolicy {
+    /// Choose worker counts from request bounds, environment, and available CPU parallelism.
+    #[default]
+    Auto,
+    /// Use the explicit request worker counts, clamped only to the available work.
+    Fixed,
+}
+
+/// Observation row topology for native synthetic MS generation.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticObservationMode {
+    /// Cross-correlation interferometric rows for every antenna pair.
+    #[default]
+    Interferometric,
+    /// Single-dish total-power style autocorrelation rows.
+    TotalPower,
+}
+
+/// Sky model source used by the native simulator.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SyntheticSkyModel {
+    /// Sampled FITS image or cube model.
+    FitsImage {
+        /// FITS image or cube path.
+        path: PathBuf,
+        /// Optional peak brightness scaling in Jy/pixel.
+        #[serde(default)]
+        model_peak_jy_per_pixel: Option<f32>,
+        /// Optional sampled-image reference direction as `[right_ascension_rad, declination_rad]`.
+        #[serde(default)]
+        direction_reference_rad: Option<[f64; 2]>,
+        /// Optional sampled-image cell size as absolute `[ra_cell_rad, dec_cell_rad]`.
+        #[serde(default)]
+        cell_size_rad: Option<[f64; 2]>,
+    },
+    /// Exact analytic point-source and Gaussian component model.
+    AnalyticComponents {
+        /// Optional JSON component-model path.
+        #[serde(default)]
+        path: Option<PathBuf>,
+        /// Optional component-model schema version.
+        #[serde(default)]
+        schema_version: Option<u32>,
+        /// Optional component-model name.
+        #[serde(default)]
+        name: Option<String>,
+        /// Inline analytic components. If empty, `path` is loaded.
+        #[serde(default)]
+        components: Vec<SyntheticAnalyticComponent>,
+    },
+}
+
+impl SyntheticSkyModel {
+    /// Return the backing file path when this model has one.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::FitsImage { path, .. } => Some(path.as_path()),
+            Self::AnalyticComponents { path, .. } => path.as_deref(),
+        }
+    }
+
+    /// Return the stable JSON kind name for reporting.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::FitsImage { .. } => "fits_image",
+            Self::AnalyticComponents { .. } => "analytic_components",
+        }
+    }
+}
+
+/// File-level analytic component model.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct SyntheticAnalyticComponentModel {
+    /// Optional schema version for component-model files.
+    #[serde(default)]
+    pub schema_version: Option<u32>,
+    /// Optional model name for provenance.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Analytic components in direction-cosine coordinates relative to phase center.
+    pub components: Vec<SyntheticAnalyticComponent>,
+}
+
+/// One exact analytic sky component.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SyntheticAnalyticComponent {
+    /// Delta-function component.
+    Point {
+        /// Optional component name for diagnostics.
+        #[serde(default)]
+        name: Option<String>,
+        /// Direction-cosine offset from phase center in radians.
+        l_rad: f64,
+        /// Direction-cosine offset from phase center in radians.
+        m_rad: f64,
+        /// Per-channel flux model.
+        spectrum: SyntheticAnalyticSpectrum,
+    },
+    /// Elliptical Gaussian component parameterized by image-plane FWHM.
+    Gaussian {
+        /// Optional component name for diagnostics.
+        #[serde(default)]
+        name: Option<String>,
+        /// Direction-cosine offset from phase center in radians.
+        l_rad: f64,
+        /// Direction-cosine offset from phase center in radians.
+        m_rad: f64,
+        /// Major-axis full width at half maximum in radians.
+        major_fwhm_rad: f64,
+        /// Minor-axis full width at half maximum in radians. Defaults to circular.
+        #[serde(default)]
+        minor_fwhm_rad: f64,
+        /// Gaussian position angle in radians.
+        #[serde(default)]
+        position_angle_rad: f64,
+        /// Per-channel integrated flux model.
+        spectrum: SyntheticAnalyticSpectrum,
+    },
+}
+
+/// Per-component spectral model for analytic components.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct SyntheticAnalyticSpectrum {
+    /// Continuum flux density in Jy at `reference_frequency_hz`.
+    pub flux_jy: f64,
+    /// Continuum spectral index.
+    #[serde(default)]
+    pub spectral_index: f64,
+    /// Optional spectral-index reference frequency in Hz.
+    #[serde(default)]
+    pub reference_frequency_hz: Option<f64>,
+    /// Additive Gaussian emission-line peak flux density in Jy.
+    #[serde(default)]
+    pub line_peak_jy: f64,
+    /// Emission-line center as a fraction of the channel range.
+    #[serde(default = "default_line_center_fraction")]
+    pub line_center_fraction: f64,
+    /// Emission-line sigma as a fraction of the channel range.
+    #[serde(default = "default_line_sigma_fraction")]
+    pub line_sigma_fraction: f64,
+    /// Subtractive Gaussian absorption-line peak flux density in Jy.
+    #[serde(default)]
+    pub absorption_peak_jy: f64,
+    /// Absorption-line center as a fraction of the channel range.
+    #[serde(default = "default_line_center_fraction")]
+    pub absorption_center_fraction: f64,
+    /// Absorption-line sigma as a fraction of the channel range.
+    #[serde(default = "default_line_sigma_fraction")]
+    pub absorption_sigma_fraction: f64,
+}
+
+fn default_line_center_fraction() -> f64 {
+    0.5
+}
+
+fn default_line_sigma_fraction() -> f64 {
+    0.1
+}
+
+impl SyntheticAnalyticSpectrum {
+    /// Evaluate the component flux density for one spectral channel.
+    pub fn flux_for_channel(&self, spectral_setup: &SyntheticSpectralSetup, channel: usize) -> f64 {
+        let reference_frequency_hz = self
+            .reference_frequency_hz
+            .unwrap_or_else(|| spectral_setup.reference_frequency_hz());
+        let frequency_hz =
+            spectral_setup.start_frequency_hz + channel as f64 * spectral_setup.channel_width_hz;
+        let continuum = if reference_frequency_hz > 0.0 && frequency_hz > 0.0 {
+            self.flux_jy * (frequency_hz / reference_frequency_hz).powf(self.spectral_index)
+        } else {
+            self.flux_jy
+        };
+        continuum
+            + gaussian_channel_profile(
+                self.line_peak_jy,
+                self.line_center_fraction,
+                self.line_sigma_fraction,
+                spectral_setup.channel_count,
+                channel,
+            )
+            - gaussian_channel_profile(
+                self.absorption_peak_jy,
+                self.absorption_center_fraction,
+                self.absorption_sigma_fraction,
+                spectral_setup.channel_count,
+                channel,
+            )
+    }
+}
+
+fn gaussian_channel_profile(
+    peak_jy: f64,
+    center_fraction: f64,
+    sigma_fraction: f64,
+    channel_count: usize,
+    channel: usize,
+) -> f64 {
+    if peak_jy == 0.0 || sigma_fraction <= 0.0 || channel_count == 0 {
+        return 0.0;
+    }
+    let channel_fraction = if channel_count == 1 {
+        0.5
+    } else {
+        channel as f64 / (channel_count - 1) as f64
+    };
+    let offset = (channel_fraction - center_fraction) / sigma_fraction;
+    peak_jy * (-0.5 * offset * offset).exp()
 }
 
 /// Request for generating a synthetic MeasurementSet.
@@ -312,6 +608,10 @@ impl SyntheticSpectralSetup {
 pub struct SyntheticObservationRequest {
     /// Existing model image path that defines the tutorial model provenance.
     pub model_image: PathBuf,
+    /// Preferred sky model. When absent, `model_image` keeps the legacy FITS
+    /// image behavior.
+    #[serde(default)]
+    pub model: Option<SyntheticSkyModel>,
     /// Optional peak brightness scaling in Jy/pixel, matching CASA
     /// `simobserve(inbright=...)` semantics for the model image.
     #[serde(default)]
@@ -353,11 +653,28 @@ pub struct SyntheticObservationRequest {
     pub antennas: Vec<SyntheticAntenna>,
     /// Spectral-window setup.
     pub spectral_setup: SyntheticSpectralSetup,
+    /// Polarization/correlation setup.
+    #[serde(default)]
+    pub polarization_setup: SyntheticPolarizationSetup,
     /// Predict visibility samples from the model image into `MAIN.DATA`.
     pub predict_model: bool,
     /// Optional deterministic corruptions applied to predicted visibility data.
     #[serde(default)]
     pub corruption: Option<SyntheticCorruptionConfig>,
+    /// Worker selection policy for native row/channel parallelism.
+    #[serde(default)]
+    pub worker_policy: SyntheticWorkerPolicy,
+    /// Observation row topology.
+    #[serde(default)]
+    pub observation_mode: SyntheticObservationMode,
+    /// Explicit row worker count when `worker_policy` is `fixed`, or an upper
+    /// bound when `worker_policy` is `auto`.
+    #[serde(default)]
+    pub row_workers: Option<usize>,
+    /// Explicit channel prediction worker count when `worker_policy` is
+    /// `fixed`, or an upper bound when `worker_policy` is `auto`.
+    #[serde(default)]
+    pub channel_workers: Option<usize>,
 }
 
 impl SyntheticObservationRequest {
@@ -369,6 +686,7 @@ impl SyntheticObservationRequest {
     ) -> Self {
         Self {
             model_image: model_image.into(),
+            model: None,
             model_peak_jy_per_pixel: Some(3.0e-5),
             output_ms: output_ms.into(),
             overwrite: false,
@@ -390,8 +708,13 @@ impl SyntheticObservationRequest {
                 channel_width_hz: 128.0e6,
                 channel_count: 1,
             },
+            polarization_setup: SyntheticPolarizationSetup::default(),
             predict_model: true,
             corruption: None,
+            worker_policy: SyntheticWorkerPolicy::Auto,
+            observation_mode: SyntheticObservationMode::Interferometric,
+            row_workers: None,
+            channel_workers: None,
         }
     }
 }
@@ -532,9 +855,15 @@ pub struct SyntheticObservationReport {
     pub output_ms: PathBuf,
     /// Model image path recorded as provenance.
     pub model_image: PathBuf,
+    /// Active sky-model kind used for prediction.
+    #[serde(default)]
+    pub model_kind: String,
     /// Number of antennas written.
     pub antenna_count: usize,
-    /// Number of baseline rows per time sample.
+    /// Observation row topology.
+    #[serde(default)]
+    pub observation_mode: SyntheticObservationMode,
+    /// Number of visibility-row pairs per time sample.
     pub baseline_count: usize,
     /// Number of time samples written.
     pub time_sample_count: usize,
@@ -542,6 +871,9 @@ pub struct SyntheticObservationReport {
     pub main_row_count: usize,
     /// Number of channels written in the spectral window.
     pub channel_count: usize,
+    /// Number of correlations written per visibility row.
+    #[serde(default)]
+    pub correlation_count: usize,
     /// Number of complex visibility cells with non-zero predicted model values.
     pub nonzero_visibility_count: usize,
     /// Number of MAIN rows whose `FLAG_ROW` is true.
@@ -685,38 +1017,29 @@ pub fn generate_synthetic_observation_ms(
     let metadata_started = Instant::now();
     populate_antennas(&mut ms, &request.antennas)?;
     populate_field(&mut ms, request)?;
-    populate_pointing(&mut ms, request)?;
+    populate_pointing(&mut ms, request, &sample_times)?;
     populate_spectral_window(&mut ms, &request.spectral_setup)?;
-    populate_polarization(&mut ms)?;
+    populate_polarization(&mut ms, &request.polarization_setup)?;
     populate_data_description(&mut ms)?;
     populate_state(&mut ms)?;
-    populate_processor(&mut ms)?;
-    populate_feed(&mut ms, request)?;
+    populate_feed(&mut ms, request, &request.polarization_setup)?;
     populate_observation(&mut ms, request, &sample_times)?;
     populate_history(&mut ms, request)?;
     let metadata_millis = elapsed_millis(metadata_started.elapsed());
 
-    let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
+    let row_pairs = observation_row_pairs(request);
+    let baseline_count = row_pairs.len();
     let model_started = Instant::now();
-    let model = if request.predict_model {
-        Some(read_fits_model_image(
-            &request.model_image,
-            request.model_peak_jy_per_pixel,
-            request.spectral_setup.channel_count,
-        )?)
-    } else {
-        None
-    };
+    let model = prepare_sky_model(request)?;
     let model_prepare_millis = elapsed_millis(model_started.elapsed());
     let mut main_column_writer = SimobserveMainColumnWriter::start(
         &request.output_ms,
         baseline_count * time_sample_count,
-        2,
+        request.polarization_setup.correlation_count,
         request.spectral_setup.channel_count,
         &request.telescope_name,
     )?;
     let mut main_rows = populate_main_rows(
-        &mut ms,
         request,
         &sample_times,
         model.as_ref(),
@@ -739,12 +1062,17 @@ pub fn generate_synthetic_observation_ms(
 
     Ok(SyntheticObservationReport {
         output_ms: request.output_ms.clone(),
-        model_image: request.model_image.clone(),
+        model_image: active_model_path(request)
+            .unwrap_or(request.model_image.as_path())
+            .to_path_buf(),
+        model_kind: active_model_kind(request).to_string(),
         antenna_count: request.antennas.len(),
+        observation_mode: request.observation_mode,
         baseline_count,
         time_sample_count,
         main_row_count: baseline_count * time_sample_count,
         channel_count: request.spectral_setup.channel_count,
+        correlation_count: request.polarization_setup.correlation_count,
         nonzero_visibility_count: main_rows.nonzero_visibility_count,
         flagged_row_count: main_rows.flagged_row_count,
         elevation_flagged_row_count: main_rows.elevation_flagged_row_count,
@@ -762,17 +1090,317 @@ pub fn generate_synthetic_observation_ms(
     })
 }
 
-fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
-    if !request.model_image.exists() {
-        return Err(MsError::SyntheticObservation(format!(
-            "model image {} does not exist",
-            request.model_image.display()
-        )));
+fn active_model_kind(request: &SyntheticObservationRequest) -> &'static str {
+    if !request.predict_model {
+        return "none";
     }
-    if request.antennas.len() < 2 {
+    request
+        .model
+        .as_ref()
+        .map(SyntheticSkyModel::kind_name)
+        .unwrap_or("fits_image")
+}
+
+fn active_model_path(request: &SyntheticObservationRequest) -> Option<&Path> {
+    request
+        .model
+        .as_ref()
+        .and_then(SyntheticSkyModel::path)
+        .or(Some(request.model_image.as_path()))
+}
+
+fn prepare_sky_model(request: &SyntheticObservationRequest) -> MsResult<Option<PreparedSkyModel>> {
+    if !request.predict_model {
+        return Ok(None);
+    }
+    match request.model.as_ref() {
+        Some(SyntheticSkyModel::FitsImage {
+            path,
+            model_peak_jy_per_pixel,
+            direction_reference_rad,
+            cell_size_rad,
+        }) => Ok(Some(PreparedSkyModel::Sampled(Box::new(
+            read_fits_model_image(
+                path,
+                (*model_peak_jy_per_pixel).or(request.model_peak_jy_per_pixel),
+                *direction_reference_rad,
+                *cell_size_rad,
+                request.spectral_setup.channel_count,
+            )?,
+        )))),
+        Some(SyntheticSkyModel::AnalyticComponents {
+            path,
+            schema_version,
+            name,
+            components,
+        }) => {
+            let model = if components.is_empty() {
+                let path = path.as_ref().ok_or_else(|| {
+                    MsError::SyntheticObservation(
+                        "analytic component model requires either components or a path".to_string(),
+                    )
+                })?;
+                load_analytic_component_model(path)?
+            } else {
+                SyntheticAnalyticComponentModel {
+                    schema_version: *schema_version,
+                    name: name.clone(),
+                    components: components.clone(),
+                }
+            };
+            Ok(Some(PreparedSkyModel::Analytic(
+                prepare_analytic_component_model(&model)?,
+            )))
+        }
+        None => Ok(Some(PreparedSkyModel::Sampled(Box::new(
+            read_fits_model_image(
+                &request.model_image,
+                request.model_peak_jy_per_pixel,
+                None,
+                None,
+                request.spectral_setup.channel_count,
+            )?,
+        )))),
+    }
+}
+
+fn load_analytic_component_model(path: &Path) -> MsResult<SyntheticAnalyticComponentModel> {
+    let json = fs::read_to_string(path).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to read analytic component model {}: {error}",
+            path.display()
+        ))
+    })?;
+    if let Ok(model) = serde_json::from_str::<SyntheticAnalyticComponentModel>(&json) {
+        return Ok(model);
+    }
+    let sky_model = serde_json::from_str::<SyntheticSkyModel>(&json).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to parse analytic component model {}: {error}",
+            path.display()
+        ))
+    })?;
+    match sky_model {
+        SyntheticSkyModel::AnalyticComponents {
+            schema_version,
+            name,
+            components,
+            ..
+        } => Ok(SyntheticAnalyticComponentModel {
+            schema_version,
+            name,
+            components,
+        }),
+        SyntheticSkyModel::FitsImage { .. } => Err(MsError::SyntheticObservation(format!(
+            "analytic component model {} contains a FITS image model",
+            path.display()
+        ))),
+    }
+}
+
+fn prepare_analytic_component_model(
+    model: &SyntheticAnalyticComponentModel,
+) -> MsResult<PreparedAnalyticSkyModel> {
+    if model.components.is_empty() {
         return Err(MsError::SyntheticObservation(
-            "at least two antennas are required for interferometric simulation".to_string(),
+            "analytic component model must include at least one component".to_string(),
         ));
+    }
+    let mut components = Vec::with_capacity(model.components.len());
+    for component in &model.components {
+        components.push(prepare_analytic_component(component)?);
+    }
+    Ok(PreparedAnalyticSkyModel { components })
+}
+
+fn prepare_analytic_component(
+    component: &SyntheticAnalyticComponent,
+) -> MsResult<PreparedAnalyticComponent> {
+    match component {
+        SyntheticAnalyticComponent::Point {
+            l_rad,
+            m_rad,
+            spectrum,
+            ..
+        } => prepared_analytic_component(*l_rad, *m_rad, None, 0.0, 0.0, spectrum),
+        SyntheticAnalyticComponent::Gaussian {
+            l_rad,
+            m_rad,
+            major_fwhm_rad,
+            minor_fwhm_rad,
+            position_angle_rad,
+            spectrum,
+            ..
+        } => {
+            if *major_fwhm_rad <= 0.0 || !major_fwhm_rad.is_finite() {
+                return Err(MsError::SyntheticObservation(
+                    "analytic Gaussian major_fwhm_rad must be positive".to_string(),
+                ));
+            }
+            if *minor_fwhm_rad < 0.0 || !minor_fwhm_rad.is_finite() {
+                return Err(MsError::SyntheticObservation(
+                    "analytic Gaussian minor_fwhm_rad must be non-negative".to_string(),
+                ));
+            }
+            if !position_angle_rad.is_finite() {
+                return Err(MsError::SyntheticObservation(
+                    "analytic Gaussian position_angle_rad must be finite".to_string(),
+                ));
+            }
+            let minor_fwhm_rad = if *minor_fwhm_rad == 0.0 {
+                *major_fwhm_rad
+            } else {
+                *minor_fwhm_rad
+            };
+            let fwhm_to_sigma = 1.0 / (2.0 * (2.0_f64.ln()).sqrt());
+            prepared_analytic_component(
+                *l_rad,
+                *m_rad,
+                Some(*major_fwhm_rad * fwhm_to_sigma),
+                minor_fwhm_rad * fwhm_to_sigma,
+                *position_angle_rad,
+                spectrum,
+            )
+        }
+    }
+}
+
+fn prepared_analytic_component(
+    l_rad: f64,
+    m_rad: f64,
+    major_sigma_rad: Option<f64>,
+    minor_sigma_rad: f64,
+    position_angle_rad: f64,
+    spectrum: &SyntheticAnalyticSpectrum,
+) -> MsResult<PreparedAnalyticComponent> {
+    validate_direction_cosines(l_rad, m_rad)?;
+    validate_analytic_spectrum(spectrum)?;
+    Ok(PreparedAnalyticComponent {
+        l_rad,
+        m_rad,
+        n_minus_one: (1.0 - l_rad * l_rad - m_rad * m_rad).sqrt() - 1.0,
+        major_sigma_rad,
+        minor_sigma_rad,
+        position_angle_rad,
+        spectrum: spectrum.clone(),
+    })
+}
+
+fn validate_direction_cosines(l_rad: f64, m_rad: f64) -> MsResult<()> {
+    if !l_rad.is_finite() || !m_rad.is_finite() {
+        return Err(MsError::SyntheticObservation(
+            "analytic component l_rad and m_rad must be finite".to_string(),
+        ));
+    }
+    if l_rad * l_rad + m_rad * m_rad >= 1.0 {
+        return Err(MsError::SyntheticObservation(
+            "analytic component l_rad and m_rad must lie inside the visible hemisphere".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_analytic_spectrum(spectrum: &SyntheticAnalyticSpectrum) -> MsResult<()> {
+    let finite_values = [
+        spectrum.flux_jy,
+        spectrum.spectral_index,
+        spectrum.line_peak_jy,
+        spectrum.line_center_fraction,
+        spectrum.line_sigma_fraction,
+        spectrum.absorption_peak_jy,
+        spectrum.absorption_center_fraction,
+        spectrum.absorption_sigma_fraction,
+    ];
+    if finite_values.iter().any(|value| !value.is_finite()) {
+        return Err(MsError::SyntheticObservation(
+            "analytic spectrum values must be finite".to_string(),
+        ));
+    }
+    if let Some(reference_frequency_hz) = spectrum.reference_frequency_hz {
+        if reference_frequency_hz <= 0.0 || !reference_frequency_hz.is_finite() {
+            return Err(MsError::SyntheticObservation(
+                "analytic spectrum reference_frequency_hz must be positive".to_string(),
+            ));
+        }
+    }
+    if spectrum.line_peak_jy != 0.0 && spectrum.line_sigma_fraction <= 0.0 {
+        return Err(MsError::SyntheticObservation(
+            "analytic emission line sigma must be positive when line_peak_jy is non-zero"
+                .to_string(),
+        ));
+    }
+    if spectrum.absorption_peak_jy != 0.0 && spectrum.absorption_sigma_fraction <= 0.0 {
+        return Err(MsError::SyntheticObservation(
+            "analytic absorption sigma must be positive when absorption_peak_jy is non-zero"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
+    if request.predict_model {
+        match request.model.as_ref() {
+            Some(SyntheticSkyModel::FitsImage { path, .. }) => {
+                if !path.exists() {
+                    return Err(MsError::SyntheticObservation(format!(
+                        "model image {} does not exist",
+                        path.display()
+                    )));
+                }
+            }
+            Some(SyntheticSkyModel::AnalyticComponents {
+                path, components, ..
+            }) => {
+                if components.is_empty() {
+                    let Some(path) = path else {
+                        return Err(MsError::SyntheticObservation(
+                            "analytic component model requires either components or a path"
+                                .to_string(),
+                        ));
+                    };
+                    if !path.exists() {
+                        return Err(MsError::SyntheticObservation(format!(
+                            "analytic component model {} does not exist",
+                            path.display()
+                        )));
+                    }
+                } else {
+                    let model = SyntheticAnalyticComponentModel {
+                        schema_version: None,
+                        name: None,
+                        components: components.clone(),
+                    };
+                    prepare_analytic_component_model(&model)?;
+                }
+            }
+            None => {
+                if !request.model_image.exists() {
+                    return Err(MsError::SyntheticObservation(format!(
+                        "model image {} does not exist",
+                        request.model_image.display()
+                    )));
+                }
+            }
+        }
+    }
+    let minimum_antennas = match request.observation_mode {
+        SyntheticObservationMode::Interferometric => 2,
+        SyntheticObservationMode::TotalPower => 1,
+    };
+    if request.antennas.len() < minimum_antennas {
+        return Err(MsError::SyntheticObservation(format!(
+            "at least {minimum_antennas} antenna{} required for {} simulation",
+            if minimum_antennas == 1 {
+                " is"
+            } else {
+                "s are"
+            },
+            match request.observation_mode {
+                SyntheticObservationMode::Interferometric => "interferometric",
+                SyntheticObservationMode::TotalPower => "total-power",
+            }
+        )));
     }
     for antenna in &request.antennas {
         if antenna.name.trim().is_empty() {
@@ -818,6 +1446,12 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
             "spectral channel width must be finite and non-zero".to_string(),
         ));
     }
+    if request.row_workers == Some(0) || request.channel_workers == Some(0) {
+        return Err(MsError::SyntheticObservation(
+            "explicit worker counts must be positive".to_string(),
+        ));
+    }
+    request.polarization_setup.validate()?;
     if request.duration_seconds <= 0.0 || !request.duration_seconds.is_finite() {
         return Err(MsError::SyntheticObservation(
             "observation duration must be positive".to_string(),
@@ -1046,7 +1680,36 @@ fn populate_field(ms: &mut MeasurementSet, request: &SyntheticObservationRequest
 fn populate_pointing(
     ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
+    sample_times: &[f64],
 ) -> MsResult<()> {
+    if request.observation_mode == SyntheticObservationMode::TotalPower
+        || !request.fields.is_empty()
+    {
+        let fields = effective_fields(request);
+        for (sample, time) in sample_times.iter().copied().enumerate() {
+            let field = &fields[sample % fields.len()];
+            let direction = direction_poly_array(field.phase_center_rad);
+            for antenna_id in 0..request.antennas.len() {
+                let row = row_from_defs(
+                    schema::pointing::REQUIRED_COLUMNS,
+                    &[
+                        ("ANTENNA_ID", i(antenna_id as i32)),
+                        ("DIRECTION", direction.clone()),
+                        ("INTERVAL", f(request.integration_seconds)),
+                        ("NAME", s(&field.name)),
+                        ("NUM_POLY", i(0)),
+                        ("TARGET", direction.clone()),
+                        ("TIME", f(time)),
+                        ("TIME_ORIGIN", f(time - 0.5 * request.integration_seconds)),
+                        ("TRACKING", b(true)),
+                    ],
+                );
+                subtable_mut(ms, SubtableId::Pointing)?.add_row(row)?;
+            }
+        }
+        return Ok(());
+    }
+
     let time = request.start_time_mjd_seconds + 0.5 * request.duration_seconds;
     for field in effective_fields(request) {
         let direction = direction_poly_array(field.phase_center_rad);
@@ -1126,13 +1789,30 @@ fn populate_spectral_window(
     Ok(())
 }
 
-fn populate_polarization(ms: &mut MeasurementSet) -> MsResult<()> {
+fn populate_polarization(
+    ms: &mut MeasurementSet,
+    polarization_setup: &SyntheticPolarizationSetup,
+) -> MsResult<()> {
+    let correlation_types = polarization_setup.correlation_types();
+    let correlation_products = polarization_setup.correlation_products();
     let row = row_from_defs(
         schema::polarization::REQUIRED_COLUMNS,
         &[
-            ("NUM_CORR", i(2)),
-            ("CORR_TYPE", i32_array(&[5, 8], vec![2])),
-            ("CORR_PRODUCT", i32_array(&[0, 1, 0, 1], vec![2, 2])),
+            ("NUM_CORR", i(polarization_setup.correlation_count as i32)),
+            (
+                "CORR_TYPE",
+                i32_array(
+                    &correlation_types,
+                    vec![polarization_setup.correlation_count],
+                ),
+            ),
+            (
+                "CORR_PRODUCT",
+                i32_array(
+                    &correlation_products,
+                    vec![2, polarization_setup.correlation_count],
+                ),
+            ),
             ("FLAG_ROW", b(false)),
         ],
     );
@@ -1170,22 +1850,12 @@ fn populate_state(ms: &mut MeasurementSet) -> MsResult<()> {
     Ok(())
 }
 
-fn populate_processor(ms: &mut MeasurementSet) -> MsResult<()> {
-    let row = row_from_defs(
-        schema::processor::REQUIRED_COLUMNS,
-        &[
-            ("FLAG_ROW", b(false)),
-            ("MODE_ID", i(0)),
-            ("SUB_TYPE", s("SYNTHETIC")),
-            ("TYPE", s("CORRELATOR")),
-            ("TYPE_ID", i(0)),
-        ],
-    );
-    subtable_mut(ms, SubtableId::Processor)?.add_row(row)?;
-    Ok(())
-}
-
-fn populate_feed(ms: &mut MeasurementSet, request: &SyntheticObservationRequest) -> MsResult<()> {
+fn populate_feed(
+    ms: &mut MeasurementSet,
+    request: &SyntheticObservationRequest,
+    polarization_setup: &SyntheticPolarizationSetup,
+) -> MsResult<()> {
+    let receptor_types = polarization_setup.receptor_types();
     for antenna_id in 0..request.antennas.len() {
         let row = row_from_defs(
             schema::feed::REQUIRED_COLUMNS,
@@ -1208,7 +1878,7 @@ fn populate_feed(ms: &mut MeasurementSet, request: &SyntheticObservationRequest)
                         vec![2, 2],
                     ),
                 ),
-                ("POLARIZATION_TYPE", string_array(&["R", "L"], vec![2])),
+                ("POLARIZATION_TYPE", string_array(&receptor_types, vec![2])),
                 ("POSITION", f64_array(&[0.0, 0.0, 0.0], vec![3])),
                 ("RECEPTOR_ANGLE", f64_array(&[0.0, 0.0], vec![2])),
                 ("SPECTRAL_WINDOW_ID", i(0)),
@@ -1283,19 +1953,15 @@ fn populate_history(
 }
 
 fn populate_main_rows(
-    ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
     sample_times: &[f64],
-    model: Option<&FitsModelImage>,
+    model: Option<&PreparedSkyModel>,
     main_column_writer: &mut SimobserveMainColumnWriter,
 ) -> MsResult<MainRowsReport> {
     let samples = sample_times.len();
-    let num_corr = 2usize;
+    let num_corr = request.polarization_setup.correlation_count;
     let num_chan = request.spectral_setup.channel_count;
-    let channel_prediction_workers = simobserve_channel_worker_count(num_chan);
-    let template = MainRowTemplate {
-        flag_category: bool_array(&[], vec![0, num_corr, num_chan]),
-    };
+    let channel_prediction_workers = simobserve_channel_worker_count(request, num_chan);
     let field_plan_started = Instant::now();
     let field_plans = build_field_plans(request, model)?;
     if trace_simobserve_setup() {
@@ -1318,9 +1984,10 @@ fn populate_main_rows(
         channel_prediction_workers,
         ..MainRowTimingDurations::default()
     };
-    let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
-    let mut scalar_column_overrides =
-        MainScalarColumnOverrides::with_capacity(samples * baseline_count);
+    let row_pairs = observation_row_pairs(request);
+    let baseline_count = row_pairs.len();
+    let total_row_count = samples * baseline_count;
+    let mut all_flag_rows = Vec::with_capacity(total_row_count);
     let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
     let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
     let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
@@ -1338,43 +2005,49 @@ fn populate_main_rows(
             time,
             &observatory,
         )?;
-        let mut row_specs = Vec::with_capacity(request.antennas.len() * request.antennas.len());
-        for antenna1 in 0..request.antennas.len() {
-            for antenna2 in (antenna1 + 1)..request.antennas.len() {
-                let uvw = [
-                    antenna_uvws[antenna2][0] - antenna_uvws[antenna1][0],
-                    antenna_uvws[antenna2][1] - antenna_uvws[antenna1][1],
-                    antenna_uvws[antenna2][2] - antenna_uvws[antenna1][2],
-                ];
-                let row_number = sample * baseline_count + row_specs.len();
-                if uvw_production_trace
-                    .as_ref()
-                    .is_some_and(|trace| trace.matches(antenna1, antenna2, time))
-                {
-                    trace_simobserve_production_uvw(
-                        row_number,
-                        sample,
-                        antenna1,
-                        antenna2,
-                        time,
-                        field_plan.phase_center_rad,
-                        &observatory,
-                        &request.antennas,
-                        &antenna_uvws,
-                        uvw,
-                    );
-                }
-                row_specs.push(MainRowVisibilitySpec {
-                    antenna1,
-                    antenna2,
-                    field_id,
+        let mut row_specs = Vec::with_capacity(baseline_count);
+        let mut row_uvws = Vec::with_capacity(baseline_count);
+        for (baseline_index, pair) in row_pairs.iter().copied().enumerate() {
+            let uvw = if pair.antenna1 == pair.antenna2 {
+                [0.0, 0.0, 0.0]
+            } else {
+                [
+                    antenna_uvws[pair.antenna2][0] - antenna_uvws[pair.antenna1][0],
+                    antenna_uvws[pair.antenna2][1] - antenna_uvws[pair.antenna1][1],
+                    antenna_uvws[pair.antenna2][2] - antenna_uvws[pair.antenna1][2],
+                ]
+            };
+            let row_number = sample * baseline_count + baseline_index;
+            if uvw_production_trace
+                .as_ref()
+                .is_some_and(|trace| trace.matches(pair.antenna1, pair.antenna2, time))
+            {
+                trace_simobserve_production_uvw(
+                    row_number,
+                    sample,
+                    pair.antenna1,
+                    pair.antenna2,
                     time,
+                    field_plan.phase_center_rad,
+                    &observatory,
+                    &request.antennas,
+                    &antenna_uvws,
                     uvw,
-                });
+                );
             }
+            row_specs.push(MainRowVisibilitySpec {
+                antenna1: pair.antenna1,
+                antenna2: pair.antenna2,
+                uvw,
+            });
+            row_uvws.push(uvw);
         }
-        let row_uvws = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
-        let shadowed_antennas = shadowed_antennas_for_rows(&row_specs, &request.antennas);
+        let shadowed_antennas = if request.observation_mode == SyntheticObservationMode::TotalPower
+        {
+            vec![false; request.antennas.len()]
+        } else {
+            shadowed_antennas_for_rows(&row_specs, &request.antennas)
+        };
         let low_elevation_antennas = antennas_below_elevation_limit(
             field_plan.phase_center_rad,
             time,
@@ -1387,7 +2060,7 @@ fn populate_main_rows(
 
         let prediction_started = Instant::now();
         let prediction = predicted_data_values_for_rows_with_workers_timed(
-            field_plan.predictors.as_deref(),
+            field_plan.predictors.as_ref(),
             &request.spectral_setup,
             &row_uvws,
             num_corr,
@@ -1399,6 +2072,7 @@ fn populate_main_rows(
         timing.prediction += prediction_started.elapsed();
         let corruption_started = Instant::now();
         nonzero_visibility_count += apply_corruption_and_count_rows_with_workers(
+            request,
             corruption.as_ref(),
             &row_specs,
             &mut data_rows,
@@ -1417,36 +2091,36 @@ fn populate_main_rows(
             flagged_row_count += usize::from(elevation_flagged || shadow_flagged);
             flag_rows.push(elevation_flagged || shadow_flagged);
         }
-        let uvw_rows = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
+        let scalar_started = Instant::now();
+        all_flag_rows.extend(flag_rows.iter().copied());
+        timing.scalar_column += scalar_started.elapsed();
         let data_io_started = Instant::now();
         main_column_writer.send_batch(SimobserveMainColumnBatch {
             data_rows,
-            flag_rows: flag_rows.clone(),
-            uvw_rows,
+            flag_rows,
+            uvw_rows: row_uvws,
         })?;
         timing.data_io_enqueue += data_io_started.elapsed();
-        for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows) {
-            let write_started = Instant::now();
-            let scalar_started = Instant::now();
-            scalar_column_overrides.push(&spec, request.integration_seconds, shadowed_row);
-            timing.scalar_column += scalar_started.elapsed();
-            let row = RecordValue::new(vec![RecordField::new(
-                "FLAG_CATEGORY",
-                template.flag_category.clone(),
-            )]);
-            let row_add_started = Instant::now();
-            ms.main_table_mut().add_row_assuming_valid(row)?;
-            timing.main_row_add += row_add_started.elapsed();
-            timing.main_write += write_started.elapsed();
-        }
     }
+    let scalar_started = Instant::now();
+    let scalar_column_overrides = MainScalarColumnOverrides::new(
+        total_row_count,
+        row_pairs,
+        sample_times.to_vec(),
+        field_plans.len(),
+        request.integration_seconds,
+        request.observation_mode,
+        all_flag_rows,
+    )
+    .into_column_overrides()?;
+    timing.scalar_column += scalar_started.elapsed();
     Ok(MainRowsReport {
         nonzero_visibility_count,
         flagged_row_count,
         elevation_flagged_row_count,
         shadow_flagged_row_count,
         timing: timing.into_report(),
-        scalar_column_overrides: scalar_column_overrides.into_column_overrides(),
+        scalar_column_overrides,
     })
 }
 
@@ -1548,13 +2222,14 @@ fn field_elevation_rad(
 }
 
 fn apply_corruption_and_count_rows_with_workers(
+    request: &SyntheticObservationRequest,
     corruption: Option<&SyntheticCorruptionState>,
     row_specs: &[MainRowVisibilitySpec],
     data_rows: &mut [Vec<Complex32>],
     channel_count: usize,
     sample_index: usize,
 ) -> usize {
-    let worker_count = simobserve_row_worker_count(data_rows.len(), channel_count);
+    let worker_count = simobserve_row_worker_count(request, data_rows.len(), channel_count);
     if worker_count <= 1 {
         return apply_corruption_and_count_rows(
             corruption,
@@ -1629,7 +2304,7 @@ struct MainRowsReport {
     elevation_flagged_row_count: usize,
     shadow_flagged_row_count: usize,
     timing: SyntheticMainRowTimingReport,
-    scalar_column_overrides: HashMap<String, Vec<Option<Value>>>,
+    scalar_column_overrides: ColumnOverrides,
 }
 
 struct SimobserveMainColumnBatch {
@@ -1641,6 +2316,7 @@ struct SimobserveMainColumnBatch {
 struct StreamedSimobserveMainColumns {
     data: StreamedTiledShapeComplex32Column,
     flag: StreamedTiledPrimitiveColumn,
+    flag_category: StreamedTiledPrimitiveColumn,
     uvw: StreamedTiledPrimitiveColumn,
     weight: StreamedTiledPrimitiveColumn,
     sigma: StreamedTiledPrimitiveColumn,
@@ -1660,6 +2336,12 @@ impl StreamedSimobserveMainColumns {
                 self.flag.assemble_seconds(),
                 self.flag.write_seconds(),
                 self.flag.bytes_written(),
+            ),
+            self.column_timing_report(
+                "FLAG_CATEGORY",
+                self.flag_category.assemble_seconds(),
+                self.flag_category.write_seconds(),
+                self.flag_category.bytes_written(),
             ),
             self.column_timing_report(
                 "UVW",
@@ -1700,6 +2382,7 @@ impl StreamedSimobserveMainColumns {
     fn assemble_seconds(&self) -> f64 {
         self.data.assemble_seconds()
             + self.flag.assemble_seconds()
+            + self.flag_category.assemble_seconds()
             + self.uvw.assemble_seconds()
             + self.weight.assemble_seconds()
             + self.sigma.assemble_seconds()
@@ -1708,6 +2391,7 @@ impl StreamedSimobserveMainColumns {
     fn write_seconds(&self) -> f64 {
         self.data.write_seconds()
             + self.flag.write_seconds()
+            + self.flag_category.write_seconds()
             + self.uvw.write_seconds()
             + self.weight.write_seconds()
             + self.sigma.write_seconds()
@@ -1716,6 +2400,7 @@ impl StreamedSimobserveMainColumns {
     fn bytes_written(&self) -> usize {
         self.data.bytes_written()
             + self.flag.bytes_written()
+            + self.flag_category.bytes_written()
             + self.uvw.bytes_written()
             + self.weight.bytes_written()
             + self.sigma.bytes_written()
@@ -1739,6 +2424,12 @@ impl SimobserveMainColumnWriter {
             crate::ms::casa_visibility_tile_shape(num_corr, num_chan, telescope_name);
         let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
         let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
+        let flag_category_tile_shape = vec![
+            visibility_tile_shape[0],
+            visibility_tile_shape[1],
+            1,
+            visibility_tile_shape[2],
+        ];
 
         let data_writer = StreamingTiledShapeComplex32Writer::create(
             output_ms.join(".casa-rs.DATA.table.f.tmp"),
@@ -1760,6 +2451,19 @@ impl SimobserveMainColumnWriter {
         )
         .map_err(|error| {
             MsError::SyntheticObservation(format!("failed to create streamed FLAG writer: {error}"))
+        })?;
+        let flag_category_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.FLAG_CATEGORY.table.f.tmp"),
+            row_count,
+            vec![0, num_corr, num_chan],
+            flag_category_tile_shape,
+            StreamedTiledPrimitiveType::Bool,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to create streamed FLAG_CATEGORY writer: {error}"
+            ))
         })?;
         let uvw_writer = StreamingTiledPrimitiveWriter::create_column(
             output_ms.join(".casa-rs.UVW.table.f.tmp"),
@@ -1804,6 +2508,7 @@ impl SimobserveMainColumnWriter {
         let handle = thread::spawn(move || {
             let mut data_writer = data_writer;
             let mut flag_writer = flag_writer;
+            let mut flag_category_writer = flag_category_writer;
             let mut uvw_writer = uvw_writer;
             let mut weight_writer = weight_writer;
             let mut sigma_writer = sigma_writer;
@@ -1845,6 +2550,11 @@ impl SimobserveMainColumnWriter {
                             ))
                         })?;
                     }
+                    flag_category_writer.push_zero_row().map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream empty FLAG_CATEGORY row into tiled storage: {error}"
+                        ))
+                    })?;
                     uvw_writer.push_f64_row(&uvw_row).map_err(|error| {
                         MsError::SyntheticObservation(format!(
                             "failed to stream UVW row into tiled storage: {error}"
@@ -1871,6 +2581,11 @@ impl SimobserveMainColumnWriter {
                 flag: flag_writer.finish().map_err(|error| {
                     MsError::SyntheticObservation(format!(
                         "failed to finalize streamed FLAG writer: {error}"
+                    ))
+                })?,
+                flag_category: flag_category_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed FLAG_CATEGORY writer: {error}"
                     ))
                 })?,
                 uvw: uvw_writer.finish().map_err(|error| {
@@ -1930,6 +2645,19 @@ fn install_streamed_main_columns(
             ))
         })?;
 
+    let flag_category_seq = data_manager_sequence(main, "FLAG_CATEGORY")?;
+    install_streamed_tiled_shape_primitive_column(
+        output_ms,
+        flag_category_seq,
+        "FLAG_CATEGORY",
+        streamed.flag_category,
+    )
+    .map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to install streamed FLAG_CATEGORY column: {error}"
+        ))
+    })?;
+
     let uvw_seq = data_manager_sequence(main, "UVW")?;
     install_streamed_tiled_column_primitive_column(output_ms, uvw_seq, "UVW", streamed.uvw)
         .map_err(|error| {
@@ -1972,84 +2700,175 @@ fn simobserve_io_queue_depth() -> usize {
 }
 
 struct MainScalarColumnOverrides {
-    antenna1: Vec<Option<Value>>,
-    antenna2: Vec<Option<Value>>,
-    array_id: Vec<Option<Value>>,
-    data_desc_id: Vec<Option<Value>>,
-    exposure: Vec<Option<Value>>,
-    feed1: Vec<Option<Value>>,
-    feed2: Vec<Option<Value>>,
-    field_id: Vec<Option<Value>>,
-    flag_row: Vec<Option<Value>>,
-    interval: Vec<Option<Value>>,
-    observation_id: Vec<Option<Value>>,
-    processor_id: Vec<Option<Value>>,
-    scan_number: Vec<Option<Value>>,
-    state_id: Vec<Option<Value>>,
-    time: Vec<Option<Value>>,
-    time_centroid: Vec<Option<Value>>,
+    row_count: usize,
+    baseline_count: usize,
+    row_pairs: Arc<Vec<BaselinePair>>,
+    sample_times: Arc<Vec<f64>>,
+    field_count: usize,
+    integration_seconds: f64,
+    observation_mode: SyntheticObservationMode,
+    flag_rows: Arc<Vec<bool>>,
 }
 
 impl MainScalarColumnOverrides {
-    fn with_capacity(row_count: usize) -> Self {
+    fn new(
+        row_count: usize,
+        row_pairs: Vec<BaselinePair>,
+        sample_times: Vec<f64>,
+        field_count: usize,
+        integration_seconds: f64,
+        observation_mode: SyntheticObservationMode,
+        flag_rows: Vec<bool>,
+    ) -> Self {
+        debug_assert_eq!(row_count, row_pairs.len() * sample_times.len());
+        debug_assert_eq!(row_count, flag_rows.len());
         Self {
-            antenna1: Vec::with_capacity(row_count),
-            antenna2: Vec::with_capacity(row_count),
-            array_id: Vec::with_capacity(row_count),
-            data_desc_id: Vec::with_capacity(row_count),
-            exposure: Vec::with_capacity(row_count),
-            feed1: Vec::with_capacity(row_count),
-            feed2: Vec::with_capacity(row_count),
-            field_id: Vec::with_capacity(row_count),
-            flag_row: Vec::with_capacity(row_count),
-            interval: Vec::with_capacity(row_count),
-            observation_id: Vec::with_capacity(row_count),
-            processor_id: Vec::with_capacity(row_count),
-            scan_number: Vec::with_capacity(row_count),
-            state_id: Vec::with_capacity(row_count),
-            time: Vec::with_capacity(row_count),
-            time_centroid: Vec::with_capacity(row_count),
+            row_count,
+            baseline_count: row_pairs.len(),
+            row_pairs: Arc::new(row_pairs),
+            sample_times: Arc::new(sample_times),
+            field_count,
+            integration_seconds,
+            observation_mode,
+            flag_rows: Arc::new(flag_rows),
         }
     }
 
-    fn push(&mut self, spec: &MainRowVisibilitySpec, integration_seconds: f64, flag_row: bool) {
-        self.antenna1.push(Some(i(spec.antenna1 as i32)));
-        self.antenna2.push(Some(i(spec.antenna2 as i32)));
-        self.array_id.push(Some(i(0)));
-        self.data_desc_id.push(Some(i(0)));
-        self.exposure.push(Some(f(integration_seconds)));
-        self.feed1.push(Some(i(0)));
-        self.feed2.push(Some(i(0)));
-        self.field_id.push(Some(i(spec.field_id as i32)));
-        self.flag_row.push(Some(b(flag_row)));
-        self.interval.push(Some(f(integration_seconds)));
-        self.observation_id.push(Some(i(0)));
-        self.processor_id.push(Some(i(0)));
-        self.scan_number.push(Some(i(1)));
-        self.state_id.push(Some(i(0)));
-        self.time.push(Some(f(spec.time)));
-        self.time_centroid.push(Some(f(spec.time)));
+    fn into_column_overrides(self) -> MsResult<ColumnOverrides> {
+        let mut overrides = ColumnOverrides::for_row_count(self.row_count);
+        self.insert_deferred_tiled_columns(&mut overrides);
+        self.insert_baseline_columns(&mut overrides);
+        self.insert_sample_columns(&mut overrides)?;
+        self.insert_constant_columns(&mut overrides);
+        Ok(overrides)
     }
 
-    fn into_column_overrides(self) -> HashMap<String, Vec<Option<Value>>> {
-        HashMap::from([
-            ("ANTENNA1".to_string(), self.antenna1),
-            ("ANTENNA2".to_string(), self.antenna2),
-            ("ARRAY_ID".to_string(), self.array_id),
-            ("DATA_DESC_ID".to_string(), self.data_desc_id),
-            ("EXPOSURE".to_string(), self.exposure),
-            ("FEED1".to_string(), self.feed1),
-            ("FEED2".to_string(), self.feed2),
-            ("FIELD_ID".to_string(), self.field_id),
-            ("FLAG_ROW".to_string(), self.flag_row),
-            ("INTERVAL".to_string(), self.interval),
-            ("OBSERVATION_ID".to_string(), self.observation_id),
-            ("PROCESSOR_ID".to_string(), self.processor_id),
-            ("SCAN_NUMBER".to_string(), self.scan_number),
-            ("STATE_ID".to_string(), self.state_id),
-            ("TIME".to_string(), self.time),
-            ("TIME_CENTROID".to_string(), self.time_centroid),
-        ])
+    fn insert_deferred_tiled_columns(&self, overrides: &mut ColumnOverrides) {
+        for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
+            overrides.insert_deferred(column);
+        }
+    }
+
+    fn insert_baseline_columns(&self, overrides: &mut ColumnOverrides) {
+        let row_count = self.row_count;
+        let baseline_count = self.baseline_count;
+        let row_pairs = Arc::clone(&self.row_pairs);
+        overrides.insert_generated_scalar(
+            "ANTENNA1",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Int32(
+                    row_pairs[row % baseline_count].antenna1 as i32,
+                ))
+            }),
+        );
+
+        let row_pairs = Arc::clone(&self.row_pairs);
+        overrides.insert_generated_scalar(
+            "ANTENNA2",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Int32(
+                    row_pairs[row % baseline_count].antenna2 as i32,
+                ))
+            }),
+        );
+    }
+
+    fn insert_sample_columns(&self, overrides: &mut ColumnOverrides) -> MsResult<()> {
+        let row_count = self.row_count;
+        let time_runs =
+            self.sample_runs(|sample| Some(ScalarValue::Float64(self.sample_times[sample])));
+        overrides.insert_generated_scalar(
+            "TIME",
+            GeneratedScalarColumn::from_scalar_runs(row_count, time_runs.clone())?,
+        );
+
+        overrides.insert_generated_scalar(
+            "TIME_CENTROID",
+            GeneratedScalarColumn::from_scalar_runs(row_count, time_runs)?,
+        );
+
+        let field_count = self.field_count;
+        let field_runs =
+            self.sample_runs(|sample| Some(ScalarValue::Int32((sample % field_count) as i32)));
+        overrides.insert_generated_scalar(
+            "FIELD_ID",
+            GeneratedScalarColumn::from_scalar_runs(row_count, field_runs)?,
+        );
+
+        let scan_column = if self.observation_mode == SyntheticObservationMode::TotalPower {
+            GeneratedScalarColumn::from_scalar_runs(
+                row_count,
+                self.sample_runs(|sample| Some(ScalarValue::Int32(sample as i32 + 1))),
+            )?
+        } else {
+            GeneratedScalarColumn::constant(row_count, Some(ScalarValue::Int32(1)))
+        };
+        overrides.insert_generated_scalar("SCAN_NUMBER", scan_column);
+
+        let flag_rows = Arc::clone(&self.flag_rows);
+        overrides.insert_generated_scalar(
+            "FLAG_ROW",
+            GeneratedScalarColumn::new(row_count, move |row| {
+                Some(ScalarValue::Bool(flag_rows[row]))
+            }),
+        );
+        Ok(())
+    }
+
+    fn insert_constant_columns(&self, overrides: &mut ColumnOverrides) {
+        self.insert_constant_i32(overrides, "ARRAY_ID", 0);
+        self.insert_constant_i32(overrides, "DATA_DESC_ID", 0);
+        self.insert_constant_i32(overrides, "FEED1", 0);
+        self.insert_constant_i32(overrides, "FEED2", 0);
+        self.insert_constant_i32(overrides, "OBSERVATION_ID", 0);
+        self.insert_constant_i32(overrides, "PROCESSOR_ID", 0);
+        self.insert_constant_i32(overrides, "STATE_ID", 0);
+        self.insert_constant_f64(overrides, "EXPOSURE", self.integration_seconds);
+        self.insert_constant_f64(overrides, "INTERVAL", self.integration_seconds);
+    }
+
+    fn insert_constant_i32(
+        &self,
+        overrides: &mut ColumnOverrides,
+        column: &'static str,
+        value: i32,
+    ) {
+        overrides.insert_generated_scalar(
+            column,
+            GeneratedScalarColumn::constant(self.row_count, Some(ScalarValue::Int32(value))),
+        );
+    }
+
+    fn insert_constant_f64(
+        &self,
+        overrides: &mut ColumnOverrides,
+        column: &'static str,
+        value: f64,
+    ) {
+        overrides.insert_generated_scalar(
+            column,
+            GeneratedScalarColumn::constant(self.row_count, Some(ScalarValue::Float64(value))),
+        );
+    }
+
+    fn sample_runs(
+        &self,
+        mut value_for_sample: impl FnMut(usize) -> Option<ScalarValue>,
+    ) -> Vec<GeneratedScalarValueRun> {
+        let sample_count = self.sample_times.len();
+        let mut runs = Vec::with_capacity(sample_count);
+        let mut last_value: Option<ScalarValue> = None;
+        for sample in 0..sample_count {
+            let value = value_for_sample(sample);
+            if sample == 0 || value != last_value {
+                runs.push(GeneratedScalarValueRun::new(
+                    sample * self.baseline_count,
+                    value.clone(),
+                ));
+                last_value = value;
+            }
+        }
+        runs
     }
 }
 
@@ -2093,17 +2912,39 @@ fn elapsed_seconds_to_millis(seconds: f64) -> u128 {
     (seconds * 1000.0).round() as u128
 }
 
-#[derive(Clone)]
-struct MainRowTemplate {
-    flag_category: Value,
+#[derive(Clone, Copy)]
+struct BaselinePair {
+    antenna1: usize,
+    antenna2: usize,
+}
+
+fn baseline_pairs(antenna_count: usize) -> Vec<BaselinePair> {
+    let baseline_count = antenna_count * antenna_count.saturating_sub(1) / 2;
+    let mut pairs = Vec::with_capacity(baseline_count);
+    for antenna1 in 0..antenna_count {
+        for antenna2 in (antenna1 + 1)..antenna_count {
+            pairs.push(BaselinePair { antenna1, antenna2 });
+        }
+    }
+    pairs
+}
+
+fn observation_row_pairs(request: &SyntheticObservationRequest) -> Vec<BaselinePair> {
+    match request.observation_mode {
+        SyntheticObservationMode::Interferometric => baseline_pairs(request.antennas.len()),
+        SyntheticObservationMode::TotalPower => (0..request.antennas.len())
+            .map(|antenna| BaselinePair {
+                antenna1: antenna,
+                antenna2: antenna,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Clone, Copy)]
 struct MainRowVisibilitySpec {
     antenna1: usize,
     antenna2: usize,
-    field_id: usize,
-    time: f64,
     uvw: [f64; 3],
 }
 
@@ -2112,6 +2953,7 @@ struct FitsModelImage {
     pixels: Array2<f32>,
     channel_planes: Vec<Array2<f32>>,
     cell_size_rad: [f64; 2],
+    direction_increment_rad: Option<[f64; 2]>,
     direction_wcs: Option<FitsModelDirectionWcs>,
     ra_axis_increases_with_x: bool,
     reference_direction_rad: Option<[f64; 2]>,
@@ -2121,6 +2963,27 @@ impl FitsModelImage {
     fn pixels_for_channel(&self, channel: usize) -> &Array2<f32> {
         self.channel_planes.get(channel).unwrap_or(&self.pixels)
     }
+}
+
+enum PreparedSkyModel {
+    Sampled(Box<FitsModelImage>),
+    Analytic(PreparedAnalyticSkyModel),
+}
+
+#[derive(Debug, Clone)]
+struct PreparedAnalyticSkyModel {
+    components: Vec<PreparedAnalyticComponent>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedAnalyticComponent {
+    l_rad: f64,
+    m_rad: f64,
+    n_minus_one: f64,
+    major_sigma_rad: Option<f64>,
+    minor_sigma_rad: f64,
+    position_angle_rad: f64,
+    spectrum: SyntheticAnalyticSpectrum,
 }
 
 #[derive(Debug, Clone)]
@@ -2142,6 +3005,22 @@ struct SyntheticChannelPredictor {
     model_reference_direction_rad: Option<[f64; 2]>,
 }
 
+enum SyntheticFieldPredictor {
+    Sampled(Vec<SyntheticChannelPredictor>),
+    SampledTotalPower(Vec<Complex32>),
+    Analytic(AnalyticFieldPredictor),
+}
+
+struct AnalyticFieldPredictor {
+    components: Vec<AnalyticFieldComponent>,
+    inverse_wavelengths_m: Vec<f64>,
+}
+
+struct AnalyticFieldComponent {
+    component: PreparedAnalyticComponent,
+    channel_amplitudes_jy: Vec<f64>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ModelPhaseOffset {
     l_rad: f64,
@@ -2157,12 +3036,12 @@ impl ModelPhaseOffset {
 
 struct SyntheticFieldPlan {
     phase_center_rad: [f64; 2],
-    predictors: Option<Vec<SyntheticChannelPredictor>>,
+    predictors: Option<SyntheticFieldPredictor>,
 }
 
 fn build_field_plans(
     request: &SyntheticObservationRequest,
-    model: Option<&FitsModelImage>,
+    model: Option<&PreparedSkyModel>,
 ) -> MsResult<Vec<SyntheticFieldPlan>> {
     let primary_beam = synthetic_primary_beam(request);
     let pointing_offset_rad = request
@@ -2176,17 +3055,39 @@ fn build_field_plans(
     effective_fields(request)
         .into_iter()
         .map(|field| {
-            let predictors = model
-                .map(|model| {
-                    build_channel_predictors(
+            let predictors = match model {
+                Some(PreparedSkyModel::Sampled(model)) => {
+                    if request.observation_mode == SyntheticObservationMode::TotalPower {
+                        Some(SyntheticFieldPredictor::SampledTotalPower(
+                            build_total_power_sampled_values(
+                                model,
+                                request,
+                                field.phase_center_rad,
+                                pointing_offset_rad,
+                                primary_beam,
+                            ),
+                        ))
+                    } else {
+                        Some(SyntheticFieldPredictor::Sampled(build_channel_predictors(
+                            model,
+                            request,
+                            field.phase_center_rad,
+                            pointing_offset_rad,
+                            primary_beam,
+                        )?))
+                    }
+                }
+                Some(PreparedSkyModel::Analytic(model)) => Some(SyntheticFieldPredictor::Analytic(
+                    build_analytic_field_predictor(
                         model,
-                        &request.spectral_setup,
+                        request,
                         field.phase_center_rad,
                         pointing_offset_rad,
                         primary_beam,
-                    )
-                })
-                .transpose()?;
+                    )?,
+                )),
+                None => None,
+            };
             Ok(SyntheticFieldPlan {
                 phase_center_rad: field.phase_center_rad,
                 predictors,
@@ -2211,15 +3112,23 @@ fn synthetic_primary_beam(request: &SyntheticObservationRequest) -> SyntheticPri
         / request.antennas.len().max(1) as f64;
     let telescope_is_vla = request.telescope_name.eq_ignore_ascii_case("VLA");
     let telescope_is_alma_family = request.telescope_name.eq_ignore_ascii_case("ALMA")
-        || request.telescope_name.eq_ignore_ascii_case("ACA");
-    let (beam_dish_diameter_m, blockage_diameter_m) =
-        if telescope_is_alma_family && (dish_diameter_m - 12.0).abs() < 0.5 {
-            (10.7, 0.75)
-        } else if telescope_is_alma_family && (dish_diameter_m - 7.0).abs() < 0.5 {
-            (6.25, 0.75)
-        } else {
-            (dish_diameter_m, if telescope_is_vla { 2.36 } else { 0.0 })
-        };
+        || request.telescope_name.eq_ignore_ascii_case("ACA")
+        || request.telescope_name.eq_ignore_ascii_case("ALMASD");
+    let (beam_dish_diameter_m, blockage_diameter_m) = if request.observation_mode
+        == SyntheticObservationMode::TotalPower
+        && telescope_is_alma_family
+        && (dish_diameter_m - 12.0).abs() < 0.5
+    {
+        // CASA simobserve's ALMA single-dish path uses a slightly wider
+        // effective voltage pattern than the interferometric 12m override.
+        (10.86, 0.75)
+    } else if telescope_is_alma_family && (dish_diameter_m - 12.0).abs() < 0.5 {
+        (10.7, 0.75)
+    } else if telescope_is_alma_family && (dish_diameter_m - 7.0).abs() < 0.5 {
+        (6.25, 0.75)
+    } else {
+        (dish_diameter_m, if telescope_is_vla { 2.36 } else { 0.0 })
+    };
     SyntheticPrimaryBeam {
         use_casa_vla_q_table: telescope_is_vla && (dish_diameter_m - 25.0).abs() < 1.0e-6,
         dish_diameter_m: beam_dish_diameter_m,
@@ -2229,7 +3138,7 @@ fn synthetic_primary_beam(request: &SyntheticObservationRequest) -> SyntheticPri
 
 fn build_channel_predictors(
     model: &FitsModelImage,
-    spectral_setup: &SyntheticSpectralSetup,
+    request: &SyntheticObservationRequest,
     phase_center_rad: [f64; 2],
     pointing_offset_rad: [f64; 2],
     primary_beam: SyntheticPrimaryBeam,
@@ -2241,30 +3150,32 @@ fn build_channel_predictors(
     let phase_offset = casa_model_phase_offset(model, phase_center_rad);
     let context = ChannelPredictorContext {
         model,
-        spectral_setup,
+        spectral_setup: &request.spectral_setup,
         geometry,
         phase_center_rad,
         phase_offset,
         pointing_offset_rad,
         primary_beam,
     };
-    let worker_count = simobserve_channel_worker_count(spectral_setup.channel_count);
-    if worker_count <= 1 || spectral_setup.channel_count <= 1 {
-        return build_channel_predictor_range(&context, 0, spectral_setup.channel_count);
+    let worker_count =
+        simobserve_channel_worker_count(request, request.spectral_setup.channel_count);
+    if worker_count <= 1 || request.spectral_setup.channel_count <= 1 {
+        return build_channel_predictor_range(&context, 0, request.spectral_setup.channel_count);
     }
 
-    let chunk_size = spectral_setup.channel_count.div_ceil(worker_count);
+    let chunk_size = request.spectral_setup.channel_count.div_ceil(worker_count);
     thread::scope(|scope| {
         let mut handles = Vec::new();
-        for start_channel in (0..spectral_setup.channel_count).step_by(chunk_size) {
-            let end_channel = (start_channel + chunk_size).min(spectral_setup.channel_count);
+        for start_channel in (0..request.spectral_setup.channel_count).step_by(chunk_size) {
+            let end_channel =
+                (start_channel + chunk_size).min(request.spectral_setup.channel_count);
             let worker_context = context;
             handles.push(scope.spawn(move || {
                 build_channel_predictor_range(&worker_context, start_channel, end_channel)
             }));
         }
 
-        let mut predictors = Vec::with_capacity(spectral_setup.channel_count);
+        let mut predictors = Vec::with_capacity(request.spectral_setup.channel_count);
         for handle in handles {
             predictors.extend(
                 handle
@@ -2274,6 +3185,97 @@ fn build_channel_predictors(
         }
         Ok(predictors)
     })
+}
+
+fn build_total_power_sampled_values(
+    model: &FitsModelImage,
+    request: &SyntheticObservationRequest,
+    phase_center_rad: [f64; 2],
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+) -> Vec<Complex32> {
+    (0..request.spectral_setup.channel_count)
+        .map(|channel| {
+            let frequency_hz = request.spectral_setup.start_frequency_hz
+                + channel as f64 * request.spectral_setup.channel_width_hz;
+            let beam_corrected_pixels = apply_simulator_primary_beam(
+                model,
+                model.pixels_for_channel(channel),
+                phase_center_rad,
+                frequency_hz,
+                pointing_offset_rad,
+                primary_beam,
+            );
+            Complex32::new(beam_corrected_pixels.iter().sum::<f32>(), 0.0)
+        })
+        .collect()
+}
+
+fn build_analytic_field_predictor(
+    model: &PreparedAnalyticSkyModel,
+    request: &SyntheticObservationRequest,
+    field_phase_center_rad: [f64; 2],
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+) -> MsResult<AnalyticFieldPredictor> {
+    let mut components = Vec::with_capacity(model.components.len());
+    let inverse_wavelengths_m = (0..request.spectral_setup.channel_count)
+        .map(|channel| {
+            let frequency_hz = request.spectral_setup.start_frequency_hz
+                + channel as f64 * request.spectral_setup.channel_width_hz;
+            frequency_hz / 299_792_458.0
+        })
+        .collect::<Vec<_>>();
+    for component in &model.components {
+        let shifted = analytic_component_for_field(
+            component,
+            request.phase_center_rad,
+            field_phase_center_rad,
+        )?;
+        let channel_amplitudes_jy = (0..request.spectral_setup.channel_count)
+            .map(|channel| {
+                let frequency_hz = request.spectral_setup.start_frequency_hz
+                    + channel as f64 * request.spectral_setup.channel_width_hz;
+                shifted
+                    .spectrum
+                    .flux_for_channel(&request.spectral_setup, channel)
+                    * analytic_primary_beam_taper_for_direction(
+                        shifted.l_rad,
+                        shifted.m_rad,
+                        pointing_offset_rad,
+                        primary_beam,
+                        frequency_hz,
+                    )
+            })
+            .collect();
+        components.push(AnalyticFieldComponent {
+            component: shifted,
+            channel_amplitudes_jy,
+        });
+    }
+    Ok(AnalyticFieldPredictor {
+        components,
+        inverse_wavelengths_m,
+    })
+}
+
+fn analytic_component_for_field(
+    component: &PreparedAnalyticComponent,
+    reference_phase_center_rad: [f64; 2],
+    field_phase_center_rad: [f64; 2],
+) -> MsResult<PreparedAnalyticComponent> {
+    let delta_ra =
+        circular_angle_delta_rad(field_phase_center_rad[0] - reference_phase_center_rad[0]);
+    let delta_l = delta_ra * reference_phase_center_rad[1].cos();
+    let delta_m = field_phase_center_rad[1] - reference_phase_center_rad[1];
+    let l_rad = component.l_rad - delta_l;
+    let m_rad = component.m_rad - delta_m;
+    validate_direction_cosines(l_rad, m_rad)?;
+    let mut shifted = component.clone();
+    shifted.l_rad = l_rad;
+    shifted.m_rad = m_rad;
+    shifted.n_minus_one = (1.0 - l_rad * l_rad - m_rad * m_rad).sqrt() - 1.0;
+    Ok(shifted)
 }
 
 #[derive(Clone, Copy)]
@@ -2426,10 +3428,9 @@ fn apply_simulator_primary_beam_power(
         phase_center_rad[1] + pointing_offset_rad[1],
     ];
     let coordinate = wcs.coordinate();
-    let raw_increments = coordinate.increment();
-    if raw_increments.len() < 2 {
+    let Some(raw_increments) = model.direction_increment_rad else {
         return pixels;
-    }
+    };
     let imported_coordinate;
     let pb_coordinate: &dyn Coordinate =
         if let Some(reference_direction_rad) = model.reference_direction_rad {
@@ -2440,7 +3441,7 @@ fn apply_simulator_primary_beam_power(
                 DirectionRef::J2000,
                 Projection::new(ProjectionType::SIN),
                 reference_direction_rad,
-                [raw_increments[0], raw_increments[1]],
+                raw_increments,
                 [
                     model_pixels.shape()[0] as f64 / 2.0,
                     model_pixels.shape()[1] as f64 / 2.0,
@@ -2459,6 +3460,12 @@ fn apply_simulator_primary_beam_power(
     if pointing_pixel.len() < 2 || increments.len() < 2 {
         return pixels;
     }
+    let primary_beam_evaluator = (!primary_beam.use_casa_vla_q_table).then(|| {
+        PrimaryBeamVoltagePattern::new(PrimaryBeamModel::Airy {
+            dish_diameter_m: primary_beam.dish_diameter_m,
+            blockage_diameter_m: primary_beam.blockage_diameter_m,
+        })
+    });
 
     for x in 0..model_pixels.shape()[0] {
         for y in 0..model_pixels.shape()[1] {
@@ -2466,7 +3473,9 @@ fn apply_simulator_primary_beam_power(
             let m = (y as f64 - pointing_pixel[1]) * increments[1];
             let vp = synthetic_primary_beam_voltage_pattern(
                 primary_beam,
-                (l * l + m * m).sqrt(),
+                primary_beam_evaluator.as_ref(),
+                l,
+                m,
                 frequency_hz,
             );
             let taper = match beam_power {
@@ -2482,20 +3491,18 @@ fn apply_simulator_primary_beam_power(
 
 fn synthetic_primary_beam_voltage_pattern(
     primary_beam: SyntheticPrimaryBeam,
-    radius_rad: f64,
+    primary_beam_evaluator: Option<&PrimaryBeamVoltagePattern>,
+    l_rad: f64,
+    m_rad: f64,
     frequency_hz: f64,
 ) -> f32 {
     if primary_beam.use_casa_vla_q_table {
+        let radius_rad = (l_rad * l_rad + m_rad * m_rad).sqrt();
         return casa_vla_q_primary_beam_voltage_pattern(radius_rad, frequency_hz);
     }
-    primary_beam_voltage_pattern(
-        PrimaryBeamModel::Airy {
-            dish_diameter_m: primary_beam.dish_diameter_m,
-            blockage_diameter_m: primary_beam.blockage_diameter_m,
-        },
-        radius_rad,
-        frequency_hz,
-    )
+    primary_beam_evaluator
+        .map(|evaluator| evaluator.evaluate_offsets(l_rad, m_rad, frequency_hz))
+        .unwrap_or(0.0)
 }
 
 fn casa_vla_q_primary_beam_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
@@ -2558,24 +3565,39 @@ fn circular_angle_delta_rad(delta: f64) -> f64 {
 }
 
 fn predicted_data_values(
-    predictors: Option<&[SyntheticChannelPredictor]>,
+    predictor: Option<&SyntheticFieldPredictor>,
     spectral_setup: &SyntheticSpectralSetup,
     uvw_m: [f64; 3],
     num_corr: usize,
 ) -> Vec<Complex32> {
     let mut values = vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
-    if let Some(predictors) = predictors {
-        let prediction_uvw_m = prediction_uvw_for_row(predictors, uvw_m);
-        for (channel, predictor) in predictors.iter().enumerate() {
-            let visibility = predict_channel_visibility_preprojected(
-                predictor,
-                spectral_setup,
-                prediction_uvw_m,
-                channel,
-            );
-            for corr in 0..num_corr {
-                let index = ms_data_index(corr, channel, num_corr);
-                values[index] = visibility;
+    if let Some(predictor) = predictor {
+        match predictor {
+            SyntheticFieldPredictor::Sampled(predictors) => {
+                let prediction_uvw_m = prediction_uvw_for_row(predictors, uvw_m);
+                for (channel, predictor) in predictors.iter().enumerate() {
+                    let visibility = predict_channel_visibility_preprojected(
+                        predictor,
+                        spectral_setup,
+                        prediction_uvw_m,
+                        channel,
+                    );
+                    for corr in 0..num_corr {
+                        let index = ms_data_index(corr, channel, num_corr);
+                        values[index] = visibility;
+                    }
+                }
+            }
+            SyntheticFieldPredictor::SampledTotalPower(channel_values) => {
+                for (channel, visibility) in channel_values.iter().enumerate() {
+                    for corr in 0..num_corr {
+                        let index = ms_data_index(corr, channel, num_corr);
+                        values[index] = *visibility;
+                    }
+                }
+            }
+            SyntheticFieldPredictor::Analytic(predictor) => {
+                return predict_analytic_row_values(predictor, uvw_m, num_corr);
             }
         }
     }
@@ -2595,14 +3617,14 @@ struct ChannelPredictionChunk {
 
 #[cfg(test)]
 fn predicted_data_values_for_rows_with_workers(
-    predictors: Option<&[SyntheticChannelPredictor]>,
+    predictor: Option<&SyntheticFieldPredictor>,
     spectral_setup: &SyntheticSpectralSetup,
     row_uvws: &[[f64; 3]],
     num_corr: usize,
     worker_count: usize,
 ) -> Vec<Vec<Complex32>> {
     predicted_data_values_for_rows_with_workers_timed(
-        predictors,
+        predictor,
         spectral_setup,
         row_uvws,
         num_corr,
@@ -2612,13 +3634,13 @@ fn predicted_data_values_for_rows_with_workers(
 }
 
 fn predicted_data_values_for_rows_with_workers_timed(
-    predictors: Option<&[SyntheticChannelPredictor]>,
+    predictor: Option<&SyntheticFieldPredictor>,
     spectral_setup: &SyntheticSpectralSetup,
     row_uvws: &[[f64; 3]],
     num_corr: usize,
     worker_count: usize,
 ) -> TimedPredictionRows {
-    let Some(predictors) = predictors else {
+    let Some(predictor) = predictor else {
         return TimedPredictionRows {
             rows: vec![
                 vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
@@ -2632,13 +3654,25 @@ fn predicted_data_values_for_rows_with_workers_timed(
         let worker_started = Instant::now();
         let rows = row_uvws
             .iter()
-            .map(|uvw| predicted_data_values(Some(predictors), spectral_setup, *uvw, num_corr))
+            .map(|uvw| predicted_data_values(Some(predictor), spectral_setup, *uvw, num_corr))
             .collect();
         return TimedPredictionRows {
             rows,
             worker_wall: worker_started.elapsed(),
             gather: Duration::ZERO,
         };
+    }
+    if matches!(
+        predictor,
+        SyntheticFieldPredictor::Analytic(_) | SyntheticFieldPredictor::SampledTotalPower(_)
+    ) {
+        return predicted_data_values_for_row_chunks_timed(
+            predictor,
+            spectral_setup,
+            row_uvws,
+            num_corr,
+            worker_count,
+        );
     }
 
     let channel_count = spectral_setup.channel_count;
@@ -2650,7 +3684,7 @@ fn predicted_data_values_for_rows_with_workers_timed(
             let end_channel = (start_channel + chunk_size).min(channel_count);
             handles.push(scope.spawn(move || {
                 predict_channel_chunk(
-                    predictors,
+                    predictor,
                     spectral_setup,
                     row_uvws,
                     num_corr,
@@ -2693,8 +3727,52 @@ fn predicted_data_values_for_rows_with_workers_timed(
     }
 }
 
+fn predicted_data_values_for_row_chunks_timed(
+    predictor: &SyntheticFieldPredictor,
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    worker_count: usize,
+) -> TimedPredictionRows {
+    let chunk_size = row_uvws.len().div_ceil(worker_count);
+    let worker_started = Instant::now();
+    let chunks = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for row_chunk in row_uvws.chunks(chunk_size) {
+            handles.push(scope.spawn(move || {
+                row_chunk
+                    .iter()
+                    .map(|uvw| {
+                        predicted_data_values(Some(predictor), spectral_setup, *uvw, num_corr)
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("synthetic observation row prediction worker should not panic")
+            })
+            .collect::<Vec<_>>()
+    });
+    let worker_wall = worker_started.elapsed();
+
+    let gather_started = Instant::now();
+    let mut rows = Vec::with_capacity(row_uvws.len());
+    for mut chunk in chunks {
+        rows.append(&mut chunk);
+    }
+    TimedPredictionRows {
+        rows,
+        worker_wall,
+        gather: gather_started.elapsed(),
+    }
+}
+
 fn predict_channel_chunk(
-    predictors: &[SyntheticChannelPredictor],
+    predictor: &SyntheticFieldPredictor,
     spectral_setup: &SyntheticSpectralSetup,
     row_uvws: &[[f64; 3]],
     num_corr: usize,
@@ -2704,18 +3782,39 @@ fn predict_channel_chunk(
     let chunk_len = end_channel - start_channel;
     let mut values_by_row = Vec::with_capacity(row_uvws.len());
     for uvw_m in row_uvws {
-        let prediction_uvw_m = prediction_uvw_for_row(predictors, *uvw_m);
         let mut row_values = vec![Complex32::new(0.0, 0.0); num_corr * chunk_len];
-        for (offset, channel) in (start_channel..end_channel).enumerate() {
-            let predictor = &predictors[channel];
-            let visibility = predict_channel_visibility_preprojected(
-                predictor,
-                spectral_setup,
-                prediction_uvw_m,
-                channel,
-            );
-            for corr in 0..num_corr {
-                row_values[ms_data_index(corr, offset, num_corr)] = visibility;
+        match predictor {
+            SyntheticFieldPredictor::Sampled(predictors) => {
+                let prediction_uvw_m = prediction_uvw_for_row(predictors, *uvw_m);
+                for (offset, channel) in (start_channel..end_channel).enumerate() {
+                    let predictor = &predictors[channel];
+                    let visibility = predict_channel_visibility_preprojected(
+                        predictor,
+                        spectral_setup,
+                        prediction_uvw_m,
+                        channel,
+                    );
+                    for corr in 0..num_corr {
+                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
+                    }
+                }
+            }
+            SyntheticFieldPredictor::Analytic(predictor) => {
+                for (offset, channel) in (start_channel..end_channel).enumerate() {
+                    let visibility =
+                        predict_analytic_visibility(predictor, spectral_setup, *uvw_m, channel);
+                    for corr in 0..num_corr {
+                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
+                    }
+                }
+            }
+            SyntheticFieldPredictor::SampledTotalPower(channel_values) => {
+                for (offset, channel) in (start_channel..end_channel).enumerate() {
+                    let visibility = channel_values[channel];
+                    for corr in 0..num_corr {
+                        row_values[ms_data_index(corr, offset, num_corr)] = visibility;
+                    }
+                }
             }
         }
         values_by_row.push(row_values);
@@ -2762,21 +3861,169 @@ fn predict_channel_visibility_preprojected(
     predictor.predictor.predict(u_lambda, v_lambda) * phase_shift
 }
 
-fn simobserve_channel_worker_count(channel_count: usize) -> usize {
+fn predict_analytic_visibility(
+    predictor: &AnalyticFieldPredictor,
+    _spectral_setup: &SyntheticSpectralSetup,
+    uvw_m: [f64; 3],
+    channel: usize,
+) -> Complex32 {
+    let inverse_wavelength_m = predictor
+        .inverse_wavelengths_m
+        .get(channel)
+        .copied()
+        .unwrap_or(0.0);
+    let u_lambda = uvw_m[0] * inverse_wavelength_m;
+    let v_lambda = uvw_m[1] * inverse_wavelength_m;
+    let w_lambda = uvw_m[2] * inverse_wavelength_m;
+    let mut visibility = Complex32::new(0.0, 0.0);
+    for field_component in &predictor.components {
+        let component = &field_component.component;
+        let mut amplitude = field_component
+            .channel_amplitudes_jy
+            .get(channel)
+            .copied()
+            .unwrap_or(0.0);
+        if amplitude == 0.0 {
+            continue;
+        }
+        if let Some(major_sigma_rad) = component.major_sigma_rad {
+            let (sin_pa, cos_pa) = component.position_angle_rad.sin_cos();
+            let u_rot = u_lambda * cos_pa + v_lambda * sin_pa;
+            let v_rot = -u_lambda * sin_pa + v_lambda * cos_pa;
+            let attenuation = (-2.0
+                * std::f64::consts::PI
+                * std::f64::consts::PI
+                * (major_sigma_rad * major_sigma_rad * u_rot * u_rot
+                    + component.minor_sigma_rad * component.minor_sigma_rad * v_rot * v_rot))
+                .exp();
+            amplitude *= attenuation;
+        }
+        let phase = std::f64::consts::TAU
+            * (u_lambda * component.l_rad + v_lambda * component.m_rad
+                - w_lambda * component.n_minus_one);
+        visibility += Complex32::new(
+            (amplitude * phase.cos()) as f32,
+            (amplitude * phase.sin()) as f32,
+        );
+    }
+    visibility
+}
+
+fn predict_analytic_row_values(
+    predictor: &AnalyticFieldPredictor,
+    uvw_m: [f64; 3],
+    num_corr: usize,
+) -> Vec<Complex32> {
+    let channel_count = predictor.inverse_wavelengths_m.len();
+    let Some(inverse_wavelength_0) = predictor.inverse_wavelengths_m.first().copied() else {
+        return Vec::new();
+    };
+    let inverse_wavelength_step = predictor
+        .inverse_wavelengths_m
+        .get(1)
+        .map(|next| next - inverse_wavelength_0)
+        .unwrap_or(0.0);
+    let mut values = vec![Complex32::new(0.0, 0.0); num_corr * channel_count];
+
+    for field_component in &predictor.components {
+        let component = &field_component.component;
+        let phase_coefficient = std::f64::consts::TAU
+            * (uvw_m[0] * component.l_rad + uvw_m[1] * component.m_rad
+                - uvw_m[2] * component.n_minus_one);
+        let (mut phase_sin, mut phase_cos) = (phase_coefficient * inverse_wavelength_0).sin_cos();
+        let (step_sin, step_cos) = (phase_coefficient * inverse_wavelength_step).sin_cos();
+        let gaussian_scale = component.major_sigma_rad.map(|major_sigma_rad| {
+            let (sin_pa, cos_pa) = component.position_angle_rad.sin_cos();
+            let u_rot_per_inverse_wavelength = uvw_m[0] * cos_pa + uvw_m[1] * sin_pa;
+            let v_rot_per_inverse_wavelength = -uvw_m[0] * sin_pa + uvw_m[1] * cos_pa;
+            -2.0 * std::f64::consts::PI
+                * std::f64::consts::PI
+                * (major_sigma_rad
+                    * major_sigma_rad
+                    * u_rot_per_inverse_wavelength
+                    * u_rot_per_inverse_wavelength
+                    + component.minor_sigma_rad
+                        * component.minor_sigma_rad
+                        * v_rot_per_inverse_wavelength
+                        * v_rot_per_inverse_wavelength)
+        });
+
+        for channel in 0..channel_count {
+            let mut amplitude = field_component.channel_amplitudes_jy[channel];
+            if let Some(gaussian_scale) = gaussian_scale {
+                let inverse_wavelength_m = predictor.inverse_wavelengths_m[channel];
+                amplitude *= (gaussian_scale * inverse_wavelength_m * inverse_wavelength_m).exp();
+            }
+            if amplitude != 0.0 {
+                let value = &mut values[channel * num_corr];
+                value.re += (amplitude * phase_cos) as f32;
+                value.im += (amplitude * phase_sin) as f32;
+            }
+
+            let next_phase_cos = phase_cos * step_cos - phase_sin * step_sin;
+            phase_sin = phase_sin * step_cos + phase_cos * step_sin;
+            phase_cos = next_phase_cos;
+        }
+    }
+
+    for channel in 0..channel_count {
+        let row_start = channel * num_corr;
+        let visibility = values[row_start];
+        values[row_start + 1..row_start + num_corr].fill(visibility);
+    }
+    values
+}
+
+fn analytic_primary_beam_taper_for_direction(
+    l_rad: f64,
+    m_rad: f64,
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+    frequency_hz: f64,
+) -> f64 {
+    let l_from_pointing = l_rad - pointing_offset_rad[0];
+    let m_from_pointing = m_rad - pointing_offset_rad[1];
+    let primary_beam_evaluator = (!primary_beam.use_casa_vla_q_table).then(|| {
+        PrimaryBeamVoltagePattern::new(PrimaryBeamModel::Airy {
+            dish_diameter_m: primary_beam.dish_diameter_m,
+            blockage_diameter_m: primary_beam.blockage_diameter_m,
+        })
+    });
+    let voltage = synthetic_primary_beam_voltage_pattern(
+        primary_beam,
+        primary_beam_evaluator.as_ref(),
+        l_from_pointing,
+        m_from_pointing,
+        frequency_hz,
+    ) as f64;
+    voltage * voltage
+}
+
+fn simobserve_channel_worker_count(
+    request: &SyntheticObservationRequest,
+    channel_count: usize,
+) -> usize {
     let available = thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1);
-    let requested = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_WORKERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(available);
+    let requested = request.channel_workers.unwrap_or_else(|| {
+        std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_WORKERS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(available)
+    });
     let min_channels = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_PARALLEL_MIN_CHANNELS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(64);
-    simobserve_channel_worker_count_for(channel_count, requested, available, min_channels)
+    match request.worker_policy {
+        SyntheticWorkerPolicy::Auto => {
+            simobserve_channel_worker_count_for(channel_count, requested, available, min_channels)
+        }
+        SyntheticWorkerPolicy::Fixed => requested.max(1).min(channel_count.max(1)),
+    }
 }
 
 fn simobserve_channel_worker_count_for(
@@ -2799,15 +4046,30 @@ fn trace_simobserve_setup() -> bool {
     std::env::var("CASA_RS_SIMOBSERVE_TRACE_SETUP").is_ok_and(|value| value != "0")
 }
 
-fn simobserve_row_worker_count(row_count: usize, channel_count: usize) -> usize {
+fn simobserve_row_worker_count(
+    request: &SyntheticObservationRequest,
+    row_count: usize,
+    channel_count: usize,
+) -> usize {
     let available = thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1);
-    let requested = std::env::var("CASA_RS_SIMOBSERVE_ROW_WORKERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(available);
-    simobserve_row_worker_count_for(row_count, channel_count, requested, available, 64 * 1024)
+    let requested = request.row_workers.unwrap_or_else(|| {
+        std::env::var("CASA_RS_SIMOBSERVE_ROW_WORKERS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(available)
+    });
+    match request.worker_policy {
+        SyntheticWorkerPolicy::Auto => simobserve_row_worker_count_for(
+            row_count,
+            channel_count,
+            requested,
+            available,
+            64 * 1024,
+        ),
+        SyntheticWorkerPolicy::Fixed => requested.max(1).min(row_count.max(1)),
+    }
 }
 
 fn simobserve_row_worker_count_for(
@@ -3164,6 +4426,8 @@ impl DeterministicRng {
 fn read_fits_model_image(
     path: &PathBuf,
     model_peak_jy_per_pixel: Option<f32>,
+    direction_reference_rad: Option<[f64; 2]>,
+    cell_size_rad_override: Option<[f64; 2]>,
     spectral_channel_count: usize,
 ) -> MsResult<FitsModelImage> {
     let mut file = fs::File::open(path).map_err(|error| {
@@ -3205,18 +4469,48 @@ fn read_fits_model_image(
         fits_axis_cell_rad(&cards, 2, path)?,
     ];
     let direction_wcs = fits_model_direction_wcs(&cards, &shape, path)?;
-    let (cell_size_rad, ra_axis_increases_with_x, reference_direction_rad) =
+    let (cell_size_rad, direction_increment_rad, ra_axis_increases_with_x, reference_direction_rad) =
         if let Some(wcs) = direction_wcs.as_ref() {
+            let raw_increment = wcs.coordinate().increment();
+            let raw_direction_increment_rad = if raw_increment.len() >= 2 {
+                Some([raw_increment[0], raw_increment[1]])
+            } else {
+                None
+            };
+            let cell_size_rad =
+                cell_size_rad_override.unwrap_or(fits_direction_cell_size_rad(wcs)?);
+            let direction_increment_rad = raw_direction_increment_rad.map(|increment| {
+                [
+                    signed_cell_increment(increment[0], cell_size_rad[0]),
+                    signed_cell_increment(increment[1], cell_size_rad[1]),
+                ]
+            });
             (
-                fits_direction_cell_size_rad(wcs)?,
+                cell_size_rad,
+                direction_increment_rad,
                 fits_direction_ra_axis_increases_with_x(wcs, path)?,
-                Some(fits_direction_center_rad(wcs, nx, ny, path)?),
+                Some(
+                    direction_reference_rad
+                        .unwrap_or(fits_direction_center_rad(wcs, nx, ny, path)?),
+                ),
             )
         } else {
             (
-                [axis_cell_rad[0].abs(), axis_cell_rad[1].abs()],
+                cell_size_rad_override.unwrap_or([axis_cell_rad[0].abs(), axis_cell_rad[1].abs()]),
+                Some([
+                    signed_cell_increment(
+                        axis_cell_rad[0],
+                        cell_size_rad_override
+                            .unwrap_or([axis_cell_rad[0].abs(), axis_cell_rad[1].abs()])[0],
+                    ),
+                    signed_cell_increment(
+                        axis_cell_rad[1],
+                        cell_size_rad_override
+                            .unwrap_or([axis_cell_rad[0].abs(), axis_cell_rad[1].abs()])[1],
+                    ),
+                ]),
                 axis_cell_rad[0] > 0.0,
-                None,
+                direction_reference_rad,
             )
         };
     let plane_pixel_count = nx
@@ -3291,10 +4585,19 @@ fn read_fits_model_image(
         pixels,
         channel_planes,
         cell_size_rad,
+        direction_increment_rad,
         direction_wcs,
         ra_axis_increases_with_x,
         reference_direction_rad,
     })
+}
+
+fn signed_cell_increment(original_increment_rad: f64, absolute_cell_size_rad: f64) -> f64 {
+    if original_increment_rad.is_sign_negative() {
+        -absolute_cell_size_rad.abs()
+    } else {
+        absolute_cell_size_rad.abs()
+    }
 }
 
 fn fits_model_channel_axis(
@@ -3701,39 +5004,146 @@ fn antenna_uvw_positions(
     time_mjd_seconds: f64,
     observatory: &MPosition,
 ) -> MsResult<Vec<[f64; 3]>> {
-    let phase_center = MDirection::from_angles(
-        phase_center_rad[0],
-        phase_center_rad[1],
-        DirectionRef::J2000,
-    );
-    let frame = MeasFrame::new()
-        .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
-        .with_position(observatory.clone())
-        .with_direction(phase_center.clone())
-        .with_bundled_eop();
-
+    let context = UvwConversionContext::new(phase_center_rad, time_mjd_seconds, observatory)?;
+    let obs_itrf = observatory.as_itrf();
     antennas
         .iter()
         .map(|antenna| {
-            let obs_itrf = observatory.as_itrf();
             let ant_itrf = antenna.position_m;
             let baseline = [
                 obs_itrf[0] - ant_itrf[0],
                 obs_itrf[1] - ant_itrf[1],
                 obs_itrf[2] - ant_itrf[2],
             ];
-            let baseline_j2000 = baseline_itrf_to_j2000(baseline, &phase_center, &frame)?;
-            Ok(project_j2000_baseline_to_uvw(baseline_j2000, &phase_center))
+            Ok(context.baseline_itrf_to_uvw(baseline))
         })
         .collect()
+}
+
+struct UvwConversionContext {
+    phase_center: MDirection,
+    observatory_longitude_sin_cos: (f64, f64),
+    polar_motion_rotation: [[f64; 3]; 3],
+    diurnal_aberration_rotation: [[f64; 3]; 3],
+    precession_nutation_inverse: [[f64; 3]; 3],
+    inverse_aberration_rotation: [[f64; 3]; 3],
+    inverse_solar_deflection_rotation: [[f64; 3]; 3],
+}
+
+impl UvwConversionContext {
+    fn new(
+        phase_center_rad: [f64; 2],
+        time_mjd_seconds: f64,
+        observatory: &MPosition,
+    ) -> MsResult<Self> {
+        let phase_center = MDirection::from_angles(
+            phase_center_rad[0],
+            phase_center_rad[1],
+            DirectionRef::J2000,
+        );
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
+            .with_position(observatory.clone())
+            .with_direction(phase_center.clone())
+            .with_bundled_eop();
+        let longitude = observatory.longitude_rad();
+        let observatory_longitude_sin_cos = longitude.sin_cos();
+        let last = local_apparent_sidereal_time(&frame)?;
+        let tdb_mjd = epoch_mjd(&frame, EpochRef::TDB)?;
+        let (xp, yp) = polar_motion_rad(&frame, tdb_mjd);
+        let polar_motion_rotation = polar_motion_euler(-xp, -yp, last);
+        let radius = vector_norm(observatory.as_itrf());
+        let v_c = diurnal_aberration_factor(radius);
+        let aberration_direction =
+            spherical_to_cartesian(last, observatory.geocentric_latitude_rad());
+        let diurnal_aberration_shift = scale_vector(aberration_direction, -v_c);
+        let app_phase_center =
+            phase_center
+                .convert_to(DirectionRef::APP, &frame)
+                .map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "UVW phase-center APP conversion failed: {error}"
+                    ))
+                })?;
+        let tt = epoch_jd_pair(&frame, EpochRef::TT)?;
+        let nutation = sofars::pnp::nutm80(tt.0, tt.1);
+        let precession = sofars::pnp::pmat76(tt.0, tt.1);
+        let precession_nutation_inverse =
+            precession_nutation_inverse_matrix(&nutation, &precession);
+        let phase_center_cosines = phase_center.cosines();
+        let inverse_aberration_rotation = rotate_shift_matrix(
+            inverse_aberration_shift(&phase_center, &frame)?,
+            phase_center_cosines,
+        );
+        let inverse_solar_deflection_rotation = rotate_shift_matrix(
+            inverse_solar_deflection_shift(&phase_center, &frame)?,
+            phase_center_cosines,
+        );
+
+        Ok(Self {
+            phase_center,
+            observatory_longitude_sin_cos,
+            polar_motion_rotation,
+            diurnal_aberration_rotation: rotate_shift_matrix(
+                diurnal_aberration_shift,
+                app_phase_center.cosines(),
+            ),
+            precession_nutation_inverse,
+            inverse_aberration_rotation,
+            inverse_solar_deflection_rotation,
+        })
+    }
+
+    fn baseline_itrf_to_uvw(&self, baseline_itrf_m: [f64; 3]) -> [f64; 3] {
+        let baseline_len = vector_norm(baseline_itrf_m);
+        if baseline_len == 0.0 {
+            return [0.0, 0.0, 0.0];
+        }
+
+        let mut unit = scale_vector(baseline_itrf_m, 1.0 / baseline_len);
+        unit = self.itrf_to_hadec(unit);
+        unit = self.hadec_to_topo(unit);
+        unit = rotate(&self.precession_nutation_inverse, &unit);
+        unit = rotate(&self.inverse_aberration_rotation, &unit);
+        unit = rotate(&self.inverse_solar_deflection_rotation, &unit);
+        project_j2000_baseline_to_uvw(scale_vector(unit, baseline_len), &self.phase_center)
+    }
+
+    fn itrf_to_hadec(&self, vector: [f64; 3]) -> [f64; 3] {
+        let (s, c) = self.observatory_longitude_sin_cos;
+        let negated_y = -vector[1];
+        [
+            c * vector[0] - s * negated_y,
+            s * vector[0] + c * negated_y,
+            vector[2],
+        ]
+    }
+
+    fn hadec_to_topo(&self, vector: [f64; 3]) -> [f64; 3] {
+        let vector = rotate(
+            &self.polar_motion_rotation,
+            &[vector[0], -vector[1], vector[2]],
+        );
+        rotate(&self.diurnal_aberration_rotation, &vector)
+    }
 }
 
 fn simulation_observatory_position(
     telescope_name: &str,
     antennas: &[SyntheticAntenna],
 ) -> MPosition {
-    MPosition::from_observatory_name(telescope_name)
+    observatory_position_from_name(telescope_name)
         .unwrap_or_else(|| antenna_centroid_position(antennas))
+}
+
+fn observatory_position_from_name(name: &str) -> Option<MPosition> {
+    MPosition::from_observatory_name(name).or_else(|| {
+        if name.eq_ignore_ascii_case("ALMASD") {
+            MPosition::from_observatory_name("ALMA")
+        } else {
+            None
+        }
+    })
 }
 
 fn antenna_centroid_position(antennas: &[SyntheticAntenna]) -> MPosition {
@@ -3824,97 +5234,6 @@ fn project_j2000_baseline_to_uvw(
         -sin_dec * cos_ra * x - sin_dec * sin_ra * y + cos_dec * z,
         cos_dec * cos_ra * x + cos_dec * sin_ra * y + sin_dec * z,
     ]
-}
-
-fn baseline_itrf_to_j2000(
-    baseline_itrf_m: [f64; 3],
-    phase_center: &MDirection,
-    frame: &MeasFrame,
-) -> MsResult<[f64; 3]> {
-    let baseline_len = vector_norm(baseline_itrf_m);
-    if baseline_len == 0.0 {
-        return Ok([0.0, 0.0, 0.0]);
-    }
-
-    let mut unit = scale_vector(baseline_itrf_m, 1.0 / baseline_len);
-    unit = itrf_to_hadec(unit, frame)?;
-    unit = hadec_to_topo(unit, phase_center, frame)?;
-    unit = app_to_jnat(unit, phase_center, frame)?;
-    unit = jnat_to_j2000(unit, phase_center, frame)?;
-    Ok(scale_vector(unit, baseline_len))
-}
-
-fn itrf_to_hadec(vector: [f64; 3], frame: &MeasFrame) -> MsResult<[f64; 3]> {
-    let position = frame.position().ok_or_else(|| {
-        MsError::SyntheticObservation("UVW conversion missing observatory position".to_string())
-    })?;
-    let lon = position.longitude_rad();
-    let (s, c) = lon.sin_cos();
-    let negated_y = -vector[1];
-    Ok([
-        c * vector[0] - s * negated_y,
-        s * vector[0] + c * negated_y,
-        vector[2],
-    ])
-}
-
-fn hadec_to_topo(
-    vector: [f64; 3],
-    phase_center: &MDirection,
-    frame: &MeasFrame,
-) -> MsResult<[f64; 3]> {
-    let last = local_apparent_sidereal_time(frame)?;
-    let tdb_mjd = epoch_mjd(frame, EpochRef::TDB)?;
-    let (xp, yp) = polar_motion_rad(frame, tdb_mjd);
-    let mut vector = rotate(
-        &polar_motion_euler(-xp, -yp, last),
-        &[vector[0], -vector[1], vector[2]],
-    );
-
-    let position = frame.position().ok_or_else(|| {
-        MsError::SyntheticObservation("UVW conversion missing observatory position".to_string())
-    })?;
-    let radius = vector_norm(position.as_itrf());
-    let v_c = diurnal_aberration_factor(radius);
-    let aberration_direction = spherical_to_cartesian(last, position.geocentric_latitude_rad());
-    let shift = scale_vector(aberration_direction, -v_c);
-    let app_phase_center = phase_center
-        .convert_to(DirectionRef::APP, frame)
-        .map_err(|error| {
-            MsError::SyntheticObservation(format!(
-                "UVW phase-center APP conversion failed: {error}"
-            ))
-        })?;
-    vector = rotate_shift(vector, shift, app_phase_center.cosines());
-    Ok(vector)
-}
-
-fn app_to_jnat(
-    vector: [f64; 3],
-    phase_center: &MDirection,
-    frame: &MeasFrame,
-) -> MsResult<[f64; 3]> {
-    let mut vector = deapply_precession_nutation(vector, frame)?;
-    let shift = inverse_aberration_shift(phase_center, frame)?;
-    vector = rotate_shift(vector, shift, phase_center.cosines());
-    Ok(vector)
-}
-
-fn jnat_to_j2000(
-    vector: [f64; 3],
-    phase_center: &MDirection,
-    frame: &MeasFrame,
-) -> MsResult<[f64; 3]> {
-    let shift = inverse_solar_deflection_shift(phase_center, frame)?;
-    Ok(rotate_shift(vector, shift, phase_center.cosines()))
-}
-
-fn deapply_precession_nutation(vector: [f64; 3], frame: &MeasFrame) -> MsResult<[f64; 3]> {
-    let tt = epoch_jd_pair(frame, EpochRef::TT)?;
-    let nutation = sofars::pnp::nutm80(tt.0, tt.1);
-    let precession = sofars::pnp::pmat76(tt.0, tt.1);
-    let vector = rotate_t(&nutation, &vector);
-    Ok(rotate_t(&precession, &vector))
 }
 
 fn inverse_aberration_shift(phase_center: &MDirection, frame: &MeasFrame) -> MsResult<[f64; 3]> {
@@ -4087,7 +5406,7 @@ fn diurnal_aberration_factor(radius_m: f64) -> f64 {
     (2.0 * std::f64::consts::PI * radius_m) / 86_400.0 * SIDEREAL_RATIO / C
 }
 
-fn rotate_shift(vector: [f64; 3], shift: [f64; 3], reference_direction: [f64; 3]) -> [f64; 3] {
+fn rotate_shift_matrix(shift: [f64; 3], reference_direction: [f64; 3]) -> [[f64; 3]; 3] {
     let reference = normalize(reference_direction);
     let reference_long = reference[1].atan2(reference[0]);
     let reference_lat = reference[2].asin();
@@ -4115,7 +5434,23 @@ fn rotate_shift(vector: [f64; 3], shift: [f64; 3], reference_direction: [f64; 3]
     }
     casacore_apply_single_euler(&mut correction_rot, shifted_twice[0], 2);
     let corrected = multiply_matrices(&correction_rot, &rot);
-    rotate_t(&rot, &rotate(&corrected, &vector))
+    multiply_transpose_left(&rot, &corrected)
+}
+
+fn precession_nutation_inverse_matrix(
+    nutation: &[[f64; 3]; 3],
+    precession: &[[f64; 3]; 3],
+) -> [[f64; 3]; 3] {
+    let mut result = [[0.0; 3]; 3];
+    for col in 0..3 {
+        let mut basis = [0.0; 3];
+        basis[col] = 1.0;
+        let transformed = rotate_t(precession, &rotate_t(nutation, &basis));
+        for row in 0..3 {
+            result[row][col] = transformed[row];
+        }
+    }
+    result
 }
 
 fn rotate(matrix: &[[f64; 3]; 3], vector: &[f64; 3]) -> [f64; 3] {
@@ -4141,6 +5476,18 @@ fn multiply_matrices(left: &[[f64; 3]; 3], right: &[[f64; 3]; 3]) -> [[f64; 3]; 
             result[row][col] = left[row][0] * right[0][col]
                 + left[row][1] * right[1][col]
                 + left[row][2] * right[2][col];
+        }
+    }
+    result
+}
+
+fn multiply_transpose_left(left: &[[f64; 3]; 3], right: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut result = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for col in 0..3 {
+            result[row][col] = left[0][row] * right[0][col]
+                + left[1][row] * right[1][col]
+                + left[2][row] * right[2][col];
         }
     }
     result
@@ -4337,13 +5684,55 @@ mod tests {
         assert_eq!(base, row_noise_seed(42, 0, 0, 1, 0));
     }
 
+    fn analytic_test_spectral_setup(channel_count: usize) -> SyntheticSpectralSetup {
+        SyntheticSpectralSetup {
+            name: "test".to_string(),
+            start_frequency_hz: 1.0e9,
+            channel_width_hz: 1.0e6,
+            channel_count,
+        }
+    }
+
+    fn analytic_test_predictor(
+        spectral_setup: &SyntheticSpectralSetup,
+        components: Vec<SyntheticAnalyticComponent>,
+    ) -> AnalyticFieldPredictor {
+        let model = SyntheticAnalyticComponentModel {
+            schema_version: Some(1),
+            name: None,
+            components,
+        };
+        let prepared = prepare_analytic_component_model(&model).expect("prepare analytic model");
+        let mut request = SyntheticObservationRequest::vla_ppdisk(
+            "model.fits",
+            "out.ms",
+            vec![
+                SyntheticAntenna::vla("A0", "A0", [0.0, 0.0, 0.0]),
+                SyntheticAntenna::vla("A1", "A1", [1.0, 0.0, 0.0]),
+            ],
+        );
+        request.spectral_setup = spectral_setup.clone();
+        build_analytic_field_predictor(
+            &prepared,
+            &request,
+            request.phase_center_rad,
+            [0.0, 0.0],
+            SyntheticPrimaryBeam {
+                use_casa_vla_q_table: false,
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 0.0,
+            },
+        )
+        .expect("build analytic predictor")
+    }
+
     #[test]
     fn fits_model_cube_uses_per_channel_planes() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("cube.fits");
         write_test_fits_cube(&path, 3);
 
-        let model = read_fits_model_image(&path, None, 3).expect("read model cube");
+        let model = read_fits_model_image(&path, None, None, None, 3).expect("read model cube");
 
         assert_eq!(model.channel_planes.len(), 3);
         assert_eq!(model.pixels_for_channel(0)[(2, 3)], 32.0);
@@ -4357,7 +5746,7 @@ mod tests {
         let path = temp.path().join("plane.fits");
         write_test_fits_plane(&path);
 
-        let model = read_fits_model_image(&path, None, 4).expect("read model plane");
+        let model = read_fits_model_image(&path, None, None, None, 4).expect("read model plane");
 
         assert_eq!(model.channel_planes.len(), 1);
         assert_eq!(model.pixels_for_channel(0)[(2, 3)], 32.0);
@@ -4380,6 +5769,159 @@ mod tests {
         assert_eq!(simobserve_row_worker_count_for(351, 512, 16, 4, 1024), 4);
         assert_eq!(simobserve_row_worker_count_for(3, 512, 16, 16, 1024), 3);
         assert_eq!(simobserve_row_worker_count_for(351, 512, 0, 16, 1024), 1);
+    }
+
+    #[test]
+    fn simobserve_fixed_worker_policy_honors_explicit_counts() {
+        let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", vec![]);
+        request.worker_policy = SyntheticWorkerPolicy::Fixed;
+        request.channel_workers = Some(12);
+        request.row_workers = Some(3);
+
+        assert_eq!(simobserve_channel_worker_count(&request, 8), 8);
+        assert_eq!(simobserve_row_worker_count(&request, 100, 1), 3);
+    }
+
+    #[test]
+    fn analytic_point_source_predicts_exact_zero_baseline_flux() {
+        let setup = analytic_test_spectral_setup(1);
+        let predictor = analytic_test_predictor(
+            &setup,
+            vec![SyntheticAnalyticComponent::Point {
+                name: None,
+                l_rad: 0.0,
+                m_rad: 0.0,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 2.5,
+                    spectral_index: 0.0,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 0.0,
+                    line_center_fraction: 0.5,
+                    line_sigma_fraction: 0.1,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            }],
+        );
+
+        let visibility = predict_analytic_visibility(&predictor, &setup, [0.0, 0.0, 0.0], 0);
+
+        assert!((visibility.re - 2.5).abs() < 1.0e-6);
+        assert!(visibility.im.abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn analytic_gaussian_visibility_falls_with_baseline() {
+        let setup = analytic_test_spectral_setup(1);
+        let predictor = analytic_test_predictor(
+            &setup,
+            vec![SyntheticAnalyticComponent::Gaussian {
+                name: None,
+                l_rad: 0.0,
+                m_rad: 0.0,
+                major_fwhm_rad: 2.0e-4,
+                minor_fwhm_rad: 2.0e-4,
+                position_angle_rad: 0.0,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 1.0,
+                    spectral_index: 0.0,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 0.0,
+                    line_center_fraction: 0.5,
+                    line_sigma_fraction: 0.1,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            }],
+        );
+
+        let zero = predict_analytic_visibility(&predictor, &setup, [0.0, 0.0, 0.0], 0);
+        let long = predict_analytic_visibility(&predictor, &setup, [1_000.0, 0.0, 0.0], 0);
+
+        assert!((zero.re - 1.0).abs() < 1.0e-6);
+        assert!(long.norm() < zero.norm());
+        assert!(long.re > 0.0);
+    }
+
+    #[test]
+    fn analytic_component_spectrum_varies_by_channel() {
+        let setup = analytic_test_spectral_setup(5);
+        let predictor = analytic_test_predictor(
+            &setup,
+            vec![SyntheticAnalyticComponent::Point {
+                name: None,
+                l_rad: 0.0,
+                m_rad: 0.0,
+                spectrum: SyntheticAnalyticSpectrum {
+                    flux_jy: 1.0,
+                    spectral_index: -0.5,
+                    reference_frequency_hz: None,
+                    line_peak_jy: 5.0,
+                    line_center_fraction: 0.0,
+                    line_sigma_fraction: 0.05,
+                    absorption_peak_jy: 0.0,
+                    absorption_center_fraction: 0.5,
+                    absorption_sigma_fraction: 0.1,
+                },
+            }],
+        );
+
+        let first = predict_analytic_visibility(&predictor, &setup, [0.0, 0.0, 0.0], 0);
+        let last = predict_analytic_visibility(&predictor, &setup, [0.0, 0.0, 0.0], 4);
+
+        assert!(first.re > last.re * 4.0);
+        assert_ne!(first, last);
+    }
+
+    #[test]
+    fn analytic_row_predictor_matches_scalar_channel_predictor() {
+        let setup = analytic_test_spectral_setup(8);
+        let spectrum = SyntheticAnalyticSpectrum {
+            flux_jy: 1.0,
+            spectral_index: -0.4,
+            reference_frequency_hz: None,
+            line_peak_jy: 0.7,
+            line_center_fraction: 0.35,
+            line_sigma_fraction: 0.08,
+            absorption_peak_jy: 0.2,
+            absorption_center_fraction: 0.7,
+            absorption_sigma_fraction: 0.12,
+        };
+        let predictor = analytic_test_predictor(
+            &setup,
+            vec![
+                SyntheticAnalyticComponent::Point {
+                    name: None,
+                    l_rad: 2.0e-5,
+                    m_rad: -1.5e-5,
+                    spectrum: spectrum.clone(),
+                },
+                SyntheticAnalyticComponent::Gaussian {
+                    name: None,
+                    l_rad: -3.0e-5,
+                    m_rad: 2.5e-5,
+                    major_fwhm_rad: 1.8e-4,
+                    minor_fwhm_rad: 1.1e-4,
+                    position_angle_rad: 0.4,
+                    spectrum,
+                },
+            ],
+        );
+        let uvw = [810.0, -125.0, 19.0];
+        let row = predict_analytic_row_values(&predictor, uvw, 4);
+
+        for channel in 0..setup.channel_count {
+            let scalar = predict_analytic_visibility(&predictor, &setup, uvw, channel);
+            for corr in 0..4 {
+                let value = row[ms_data_index(corr, channel, 4)];
+                assert!(
+                    (value - scalar).norm() < 2.0e-6,
+                    "channel {channel} corr {corr}: row={value:?} scalar={scalar:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -4413,8 +5955,6 @@ mod tests {
                 ((antenna1 + 1)..8).map(move |antenna2| MainRowVisibilitySpec {
                     antenna1,
                     antenna2,
-                    field_id: 0,
-                    time: 0.0,
                     uvw: [antenna1 as f64, antenna2 as f64, 0.0],
                 })
             })
@@ -4430,10 +5970,14 @@ mod tests {
             .collect::<Vec<_>>();
         let mut serial = base_rows.clone();
         let mut parallel = base_rows;
+        let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", vec![]);
+        request.worker_policy = SyntheticWorkerPolicy::Fixed;
+        request.row_workers = Some(4);
 
         let serial_nonzero =
             apply_corruption_and_count_rows(Some(&corruption), &row_specs, &mut serial, 16, 3);
         let parallel_nonzero = apply_corruption_and_count_rows_with_workers(
+            &request,
             Some(&corruption),
             &row_specs,
             &mut parallel,
@@ -4475,17 +6019,18 @@ mod tests {
                 model_reference_direction_rad: None,
             })
             .collect::<Vec<_>>();
+        let predictor = SyntheticFieldPredictor::Sampled(predictors);
         let row_uvws = [[10.0, 20.0, 0.0], [100.0, -30.0, 5.0], [-55.0, 7.0, -3.0]];
 
         let serial = predicted_data_values_for_rows_with_workers(
-            Some(&predictors),
+            Some(&predictor),
             &spectral_setup,
             &row_uvws,
             2,
             1,
         );
         let parallel = predicted_data_values_for_rows_with_workers(
-            Some(&predictors),
+            Some(&predictor),
             &spectral_setup,
             &row_uvws,
             2,
@@ -4616,6 +6161,7 @@ mod tests {
             pixels,
             channel_planes: Vec::new(),
             cell_size_rad: [1.0e-3, 1.0e-3],
+            direction_increment_rad: Some([-1.0e-3, 1.0e-3]),
             direction_wcs: Some(FitsModelDirectionWcs {
                 coordinate_system,
                 coordinate_index: 0,
@@ -4672,6 +6218,14 @@ mod tests {
         assert_eq!(primary_beam.dish_diameter_m, 10.7);
         assert_eq!(primary_beam.blockage_diameter_m, 0.75);
         assert!(!primary_beam.use_casa_vla_q_table);
+
+        request.telescope_name = "ALMASD".to_string();
+        request.observation_mode = SyntheticObservationMode::TotalPower;
+        let total_power_primary_beam = synthetic_primary_beam(&request);
+
+        assert_eq!(total_power_primary_beam.dish_diameter_m, 10.86);
+        assert_eq!(total_power_primary_beam.blockage_diameter_m, 0.75);
+        assert!(!total_power_primary_beam.use_casa_vla_q_table);
     }
 
     #[test]
@@ -4688,11 +6242,7 @@ mod tests {
         let a1 = parse_trace_triplet(&a1_text);
         let a2 = parse_trace_triplet(&a2_text);
         let time_s = time_text.parse::<f64>().expect("trace time seconds");
-        let phase_center = MDirection::from_angles(
-            -1.570_794_075_320_161_2,
-            -0.401_423_790_643_226_1,
-            DirectionRef::J2000,
-        );
+        let phase_center_rad = [-1.570_794_075_320_161_2, -0.401_423_790_643_226_1];
         let observatory = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_OBSERVATORY")
             .ok()
             .and_then(|name| MPosition::from_observatory_name(&name))
@@ -4703,17 +6253,9 @@ mod tests {
                     -2_481_673.806_727_262_7,
                 )
             });
-        let frame = MeasFrame::new()
-            .with_epoch(MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1))
-            .with_position(observatory)
-            .with_direction(phase_center.clone())
-            .with_bundled_eop();
-        let a1_j2000 = baseline_itrf_to_j2000(a1, &phase_center, &frame).unwrap();
-        let a2_j2000 = baseline_itrf_to_j2000(a2, &phase_center, &frame).unwrap();
-        let a1_uvw = project_j2000_baseline_to_uvw(a1_j2000, &phase_center);
-        let a2_uvw = project_j2000_baseline_to_uvw(a2_j2000, &phase_center);
-        eprintln!("TRACE_A1_J2000={a1_j2000:?}");
-        eprintln!("TRACE_A2_J2000={a2_j2000:?}");
+        let context = UvwConversionContext::new(phase_center_rad, time_s, &observatory).unwrap();
+        let a1_uvw = context.baseline_itrf_to_uvw(a1);
+        let a2_uvw = context.baseline_itrf_to_uvw(a2);
         eprintln!("TRACE_A1_UVW={a1_uvw:?}");
         eprintln!("TRACE_A2_UVW={a2_uvw:?}");
         eprintln!(
@@ -4753,8 +6295,8 @@ mod tests {
             .unwrap_or(2.0e6);
         let frequency_hz = start_frequency_hz + channel as f64 * channel_width_hz;
         let model_path = PathBuf::from(model_path);
-        let model =
-            read_fits_model_image(&model_path, None, channel_count).expect("read trace FITS model");
+        let model = read_fits_model_image(&model_path, None, None, None, channel_count)
+            .expect("read trace FITS model");
         let phase_center_rad = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_PHASE_CENTER_RAD")
             .ok()
             .map(|value| parse_trace_triplet(&value)[0..2].try_into().unwrap())
@@ -5057,22 +6599,16 @@ mod tests {
             MainRowVisibilitySpec {
                 antenna1: 0,
                 antenna2: 1,
-                field_id: 0,
-                time: 0.0,
                 uvw: [10.0, 0.0, 1.0],
             },
             MainRowVisibilitySpec {
                 antenna1: 0,
                 antenna2: 2,
-                field_id: 0,
-                time: 0.0,
                 uvw: [100.0, 0.0, -1.0],
             },
             MainRowVisibilitySpec {
                 antenna1: 1,
                 antenna2: 2,
-                field_id: 0,
-                time: 0.0,
                 uvw: [10.0, 0.0, -1.0],
             },
         ];

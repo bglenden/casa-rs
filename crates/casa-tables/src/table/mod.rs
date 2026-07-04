@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use casa_types::{ArrayValue, Complex64, RecordField, RecordValue, ScalarValue, Value, ValueKind};
+use casa_types::{
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+    ValueKind,
+};
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -224,6 +228,387 @@ pub struct ColumnBinding {
     pub data_manager: DataManagerKind,
     /// Optional tile shape (only used with tiled storage managers).
     pub tile_shape: Option<Vec<usize>>,
+}
+
+/// Typed selected 2-D array cells packed as `[channel][row][axis0]`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectedArray2D<T> {
+    row_count: usize,
+    axis0_count: usize,
+    channel_count: usize,
+    values: Vec<T>,
+}
+
+impl<T> SelectedArray2D<T> {
+    /// Create a packed selected-cell block.
+    pub fn new(row_count: usize, axis0_count: usize, channel_count: usize, values: Vec<T>) -> Self {
+        Self {
+            row_count,
+            axis0_count,
+            channel_count,
+            values,
+        }
+    }
+
+    /// Number of selected rows represented by this block.
+    pub fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Size of axis 0 in every selected 2-D cell.
+    pub fn axis0_count(&self) -> usize {
+        self.axis0_count
+    }
+
+    /// Number of selected axis-1 channels represented by this block.
+    pub fn channel_count(&self) -> usize {
+        self.channel_count
+    }
+
+    /// Borrow packed values laid out as `[channel][row][axis0]`.
+    pub fn values(&self) -> &[T] {
+        &self.values
+    }
+
+    /// Consume the block and return packed values laid out as `[channel][row][axis0]`.
+    pub fn into_values(self) -> Vec<T> {
+        self.values
+    }
+}
+
+/// Typed selected 2-D array cells for MS visibility-column primitive types.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelectedArray2DCells {
+    /// Boolean cells, packed as `[channel][row][axis0]`.
+    Bool(SelectedArray2D<bool>),
+    /// 32-bit float cells, packed as `[channel][row][axis0]`.
+    Float32(SelectedArray2D<f32>),
+    /// 64-bit float cells, packed as `[channel][row][axis0]`.
+    Float64(SelectedArray2D<f64>),
+    /// 32-bit complex cells, packed as `[channel][row][axis0]`.
+    Complex32(SelectedArray2D<Complex32>),
+    /// 64-bit complex cells, packed as `[channel][row][axis0]`.
+    Complex64(SelectedArray2D<Complex64>),
+}
+
+impl SelectedArray2DCells {
+    /// Primitive type represented by this block.
+    pub fn primitive_type(&self) -> PrimitiveType {
+        match self {
+            Self::Bool(_) => PrimitiveType::Bool,
+            Self::Float32(_) => PrimitiveType::Float32,
+            Self::Float64(_) => PrimitiveType::Float64,
+            Self::Complex32(_) => PrimitiveType::Complex32,
+            Self::Complex64(_) => PrimitiveType::Complex64,
+        }
+    }
+
+    /// Number of selected rows represented by this block.
+    pub fn row_count(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.row_count(),
+            Self::Float32(values) => values.row_count(),
+            Self::Float64(values) => values.row_count(),
+            Self::Complex32(values) => values.row_count(),
+            Self::Complex64(values) => values.row_count(),
+        }
+    }
+
+    /// Size of axis 0 in every selected 2-D cell.
+    pub fn axis0_count(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.axis0_count(),
+            Self::Float32(values) => values.axis0_count(),
+            Self::Float64(values) => values.axis0_count(),
+            Self::Complex32(values) => values.axis0_count(),
+            Self::Complex64(values) => values.axis0_count(),
+        }
+    }
+
+    /// Number of selected axis-1 channels represented by this block.
+    pub fn channel_count(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.channel_count(),
+            Self::Float32(values) => values.channel_count(),
+            Self::Float64(values) => values.channel_count(),
+            Self::Complex32(values) => values.channel_count(),
+            Self::Complex64(values) => values.channel_count(),
+        }
+    }
+}
+
+/// A scalar value that starts at `start_row` and remains active until the next
+/// run start or the end of the generated column.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GeneratedScalarValueRun {
+    start_row: usize,
+    value: Option<ScalarValue>,
+}
+
+impl GeneratedScalarValueRun {
+    /// Create a scalar run starting at `start_row`.
+    pub fn new(start_row: usize, value: Option<ScalarValue>) -> Self {
+        Self { start_row, value }
+    }
+
+    /// First row covered by this run.
+    pub fn start_row(&self) -> usize {
+        self.start_row
+    }
+
+    /// Value active from `start_row` until the next run.
+    pub fn value(&self) -> Option<&ScalarValue> {
+        self.value.as_ref()
+    }
+
+    pub(crate) fn cloned_value(&self) -> Option<ScalarValue> {
+        self.value.clone()
+    }
+}
+
+#[derive(Clone)]
+enum GeneratedScalarColumnValues {
+    PerRow(Arc<dyn Fn(usize) -> Option<ScalarValue> + Send + Sync>),
+    Runs(Arc<Vec<GeneratedScalarValueRun>>),
+}
+
+/// Generated scalar-column override for high-volume table writers.
+///
+/// This lets callers provide scalar cells by row index without first
+/// materializing one generic [`Value`] per cell. It is intended for writers
+/// such as synthetic MeasurementSet generation where MAIN scalar columns are
+/// deterministic functions of row number.
+#[derive(Clone)]
+pub struct GeneratedScalarColumn {
+    row_count: usize,
+    values: GeneratedScalarColumnValues,
+}
+
+impl GeneratedScalarColumn {
+    /// Create a generated scalar override with exactly `row_count` rows.
+    pub fn new(
+        row_count: usize,
+        value_fn: impl Fn(usize) -> Option<ScalarValue> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            row_count,
+            values: GeneratedScalarColumnValues::PerRow(Arc::new(value_fn)),
+        }
+    }
+
+    /// Create a generated scalar override where one value applies to every row.
+    pub fn constant(row_count: usize, value: Option<ScalarValue>) -> Self {
+        let runs = if row_count == 0 {
+            Vec::new()
+        } else {
+            vec![GeneratedScalarValueRun::new(0, value)]
+        };
+        Self {
+            row_count,
+            values: GeneratedScalarColumnValues::Runs(Arc::new(runs)),
+        }
+    }
+
+    /// Create a generated scalar override from sparse run starts.
+    ///
+    /// The first run must start at row 0. Runs must be strictly increasing and
+    /// start before `row_count`. Each run remains active until the next run
+    /// start or the end of the generated column.
+    pub fn from_scalar_runs(
+        row_count: usize,
+        runs: Vec<GeneratedScalarValueRun>,
+    ) -> Result<Self, TableError> {
+        if row_count == 0 {
+            if runs.is_empty() {
+                return Ok(Self {
+                    row_count,
+                    values: GeneratedScalarColumnValues::Runs(Arc::new(runs)),
+                });
+            }
+            return Err(TableError::InvalidGeneratedScalarRuns {
+                message: "generated scalar runs for zero rows must be empty".to_string(),
+            });
+        }
+        if runs.first().map(GeneratedScalarValueRun::start_row) != Some(0) {
+            return Err(TableError::InvalidGeneratedScalarRuns {
+                message: "generated scalar runs must start at row 0".to_string(),
+            });
+        }
+        for pair in runs.windows(2) {
+            if pair[0].start_row >= pair[1].start_row {
+                return Err(TableError::InvalidGeneratedScalarRuns {
+                    message: "generated scalar runs must be strictly increasing".to_string(),
+                });
+            }
+        }
+        if runs.last().is_some_and(|run| run.start_row() >= row_count) {
+            return Err(TableError::InvalidGeneratedScalarRuns {
+                message: format!("generated scalar run starts beyond row count {row_count}"),
+            });
+        }
+        Ok(Self {
+            row_count,
+            values: GeneratedScalarColumnValues::Runs(Arc::new(runs)),
+        })
+    }
+
+    /// Number of rows covered by this generated column.
+    pub fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Return the scalar value for `row`, or `None` for an undefined cell.
+    pub fn value(&self, row: usize) -> Option<ScalarValue> {
+        if row >= self.row_count {
+            return None;
+        }
+        match &self.values {
+            GeneratedScalarColumnValues::PerRow(value_fn) => value_fn(row),
+            GeneratedScalarColumnValues::Runs(runs) => {
+                let idx = runs.partition_point(|run| run.start_row <= row);
+                idx.checked_sub(1)
+                    .and_then(|run_idx| runs.get(run_idx))
+                    .and_then(GeneratedScalarValueRun::cloned_value)
+            }
+        }
+    }
+
+    pub(crate) fn scalar_runs(&self) -> Option<&[GeneratedScalarValueRun]> {
+        match &self.values {
+            GeneratedScalarColumnValues::PerRow(_) => None,
+            GeneratedScalarColumnValues::Runs(runs) => Some(runs),
+        }
+    }
+}
+
+impl std::fmt::Debug for GeneratedScalarColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode = match self.values {
+            GeneratedScalarColumnValues::PerRow(_) => "per_row",
+            GeneratedScalarColumnValues::Runs(_) => "runs",
+        };
+        f.debug_struct("GeneratedScalarColumn")
+            .field("row_count", &self.row_count)
+            .field("mode", &mode)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Per-column override used by high-volume save paths.
+#[derive(Clone, Debug)]
+pub enum ColumnOverride {
+    /// Complete materialized values for a column.
+    Values(Vec<Option<Value>>),
+    /// Scalar values generated on demand by row number.
+    GeneratedScalar(GeneratedScalarColumn),
+    /// The column is written by another path after table metadata is saved.
+    ///
+    /// This is only valid for single-column data-manager groups whose on-disk
+    /// payload is installed separately, such as streamed tiled MeasurementSet
+    /// visibility columns.
+    Deferred,
+}
+
+impl ColumnOverride {
+    fn row_count(&self) -> Option<usize> {
+        match self {
+            Self::Values(values) => Some(values.len()),
+            Self::GeneratedScalar(column) => Some(column.row_count()),
+            Self::Deferred => None,
+        }
+    }
+}
+
+/// Column overrides for [`Table::save_with_bindings_and_column_overrides_assuming_valid`].
+#[derive(Clone, Debug, Default)]
+pub struct ColumnOverrides {
+    row_count: Option<usize>,
+    columns: HashMap<String, ColumnOverride>,
+}
+
+impl ColumnOverrides {
+    /// Create an empty override set whose row count is inferred from the table.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create an override set for a table with `row_count` rows.
+    pub fn for_row_count(row_count: usize) -> Self {
+        Self {
+            row_count: Some(row_count),
+            columns: HashMap::new(),
+        }
+    }
+
+    /// Return the explicit row count, if present.
+    pub fn row_count(&self) -> Option<usize> {
+        self.row_count
+    }
+
+    /// Resolve the effective row count for saving.
+    pub(crate) fn effective_row_count(&self, table_row_count: usize) -> Result<usize, TableError> {
+        let row_count = self.row_count.unwrap_or(table_row_count);
+        for (column, override_value) in &self.columns {
+            if let Some(column_rows) = override_value.row_count() {
+                if column_rows != row_count {
+                    return Err(TableError::Storage(format!(
+                        "column override {column} has {column_rows} values for {row_count} rows"
+                    )));
+                }
+            }
+        }
+        Ok(row_count)
+    }
+
+    /// Insert materialized override values.
+    pub fn insert_values(
+        &mut self,
+        column: impl Into<String>,
+        values: Vec<Option<Value>>,
+    ) -> Option<ColumnOverride> {
+        self.columns
+            .insert(column.into(), ColumnOverride::Values(values))
+    }
+
+    /// Insert a generated scalar override.
+    pub fn insert_generated_scalar(
+        &mut self,
+        column: impl Into<String>,
+        values: GeneratedScalarColumn,
+    ) -> Option<ColumnOverride> {
+        self.columns
+            .insert(column.into(), ColumnOverride::GeneratedScalar(values))
+    }
+
+    /// Mark a column as externally streamed/deferred.
+    pub fn insert_deferred(&mut self, column: impl Into<String>) -> Option<ColumnOverride> {
+        self.columns.insert(column.into(), ColumnOverride::Deferred)
+    }
+
+    /// Return a column override by name.
+    pub fn get(&self, column: &str) -> Option<&ColumnOverride> {
+        self.columns.get(column)
+    }
+
+    /// Return whether an override exists for a column.
+    pub fn contains_key(&self, column: &str) -> bool {
+        self.columns.contains_key(column)
+    }
+
+    /// Iterate over overridden column names and override values.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ColumnOverride)> {
+        self.columns.iter()
+    }
+
+    /// Number of overridden columns.
+    pub fn len(&self) -> usize {
+        self.columns.len()
+    }
+
+    /// Return whether no columns are overridden.
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
 }
 
 /// Configuration for opening or saving a [`Table`] to disk.
@@ -882,6 +1267,9 @@ pub enum TableError {
     /// [`Table::put_column`] or [`Table::put_column_range`] received more values than rows.
     #[error("column write received too many values: expected {expected}")]
     ColumnWriteTooManyValues { expected: usize },
+    /// Generated scalar run starts were malformed.
+    #[error("invalid generated scalar runs: {message}")]
+    InvalidGeneratedScalarRuns { message: String },
     /// A [`SchemaError`][crate::schema::SchemaError] was encountered during validation.
     #[error("schema error: {0}")]
     Schema(String),

@@ -379,17 +379,20 @@ public struct GenericTaskResult: Equatable {
     public var arguments: [String]
     public var stdout: String
     public var stderr: String
+    public var requestJSONPath: String?
 
     public init(
         taskID: String,
         arguments: [String],
         stdout: String,
-        stderr: String
+        stderr: String,
+        requestJSONPath: String? = nil
     ) {
         self.taskID = taskID
         self.arguments = arguments
         self.stdout = stdout
         self.stderr = stderr
+        self.requestJSONPath = requestJSONPath
     }
 }
 
@@ -429,15 +432,22 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         request: GenericTaskRequest,
         eventHandler: @escaping (GenericTaskEvent) -> Void
     ) throws -> DirtyImagingTaskExecution {
-        let arguments = try Self.arguments(for: request)
+        let prepared = try Self.prepareInvocation(for: request)
         let execution = ProcessDirtyImagingTaskExecution()
         queue.async {
             do {
                 try Self.createOutputParentDirectories(for: request)
+                if let requestJSON = prepared.requestJSON {
+                    try FileManager.default.createDirectory(
+                        at: requestJSON.url.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try requestJSON.data.write(to: requestJSON.url, options: .atomic)
+                }
                 let output = try Self.runProcess(
                     binaryName: request.task.binaryName,
                     overrideEnv: request.task.overrideEnv,
-                    arguments: arguments,
+                    arguments: prepared.arguments,
                     workingDirectoryPath: request.workingDirectoryPath,
                     execution: execution
                 )
@@ -446,9 +456,10 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 } else if output.exitCode == 0 {
                     eventHandler(.succeeded(GenericTaskResult(
                         taskID: request.task.id,
-                        arguments: arguments,
+                        arguments: prepared.arguments,
                         stdout: output.stdout,
-                        stderr: output.stderr
+                        stderr: output.stderr,
+                        requestJSONPath: prepared.requestJSON?.url.path
                     )))
                 } else {
                     eventHandler(.failed(GenericTaskFailure(
@@ -463,6 +474,145 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         return execution
     }
 
+    public static func savedJSONRequestData(for request: GenericTaskRequest) throws -> Data {
+        try simobserveFamilyEnvelope(for: request)
+    }
+
+    public static func savedJSONRequestURL(for request: GenericTaskRequest) -> URL {
+        resolvedTaskPath(
+            genericValue("request_json", request: request, defaultValue: ".casa-rs/requests/simobserve-family.json"),
+            workingDirectoryPath: request.workingDirectoryPath
+        )
+    }
+
+    private struct PreparedJSONRequest {
+        var url: URL
+        var data: Data
+    }
+
+    private struct PreparedInvocation {
+        var arguments: [String]
+        var requestJSON: PreparedJSONRequest?
+    }
+
+    private static func prepareInvocation(for request: GenericTaskRequest) throws -> PreparedInvocation {
+        if isSimobserveFamilyRequest(request) {
+            let requestURL = savedJSONRequestURL(for: request)
+            return PreparedInvocation(
+                arguments: ["--json-run", requestURL.path],
+                requestJSON: PreparedJSONRequest(
+                    url: requestURL,
+                    data: try savedJSONRequestData(for: request)
+                )
+            )
+        }
+        return PreparedInvocation(arguments: try arguments(for: request), requestJSON: nil)
+    }
+
+    private static func isSimobserveFamilyRequest(_ request: GenericTaskRequest) -> Bool {
+        request.task.id == "simobserve"
+            && genericValue("request_kind", request: request, defaultValue: "run") == "family"
+    }
+
+    private static func simobserveFamilyEnvelope(for request: GenericTaskRequest) throws -> Data {
+        guard isSimobserveFamilyRequest(request) else {
+            throw GenericTaskFailure(message: "Only simobserve family requests can be saved as canonical JSON.", diagnostics: [])
+        }
+        let sourceModelText = genericValue("source_model", request: request, defaultValue: "{}")
+        guard let sourceModelData = sourceModelText.data(using: .utf8),
+              let sourceModel = try JSONSerialization.jsonObject(with: sourceModelData) as? [String: Any]
+        else {
+            throw GenericTaskFailure(message: "Source Model must be a JSON object.", diagnostics: [])
+        }
+        var familyRequest: [String: Any] = [
+            "source_model": sourceModel,
+            "telescope": genericValue("telescope", request: request, defaultValue: "VLA"),
+            "array_config": genericValue("array_config", request: request, defaultValue: "A"),
+            "band": genericValue("band", request: request, defaultValue: "Q"),
+            "target_ms_size_gib": try genericDouble("target_ms_size_gib", request: request, defaultValue: "0.01"),
+            "polarizations": try genericInt("polarizations", request: request, defaultValue: "2"),
+            "ms_channels": try genericInt("ms_channels", request: request, defaultValue: "4"),
+            "image_channels": try genericInt("image_channels", request: request, defaultValue: "1"),
+            "pointing_count": try genericInt("pointing_count", request: request, defaultValue: "1"),
+            "imaging_mode": genericValue("imaging_mode", request: request, defaultValue: "mfs"),
+            "output_ms": genericValue("output_ms", request: request, defaultValue: "simobserve-family.ms"),
+            "measure_actual_size": try genericBool("measure_actual_size", request: request, defaultValue: "false"),
+            "worker_policy": genericValue("worker_policy", request: request, defaultValue: "auto")
+        ]
+        if let rowWorkers = try genericOptionalInt("row_workers", request: request) {
+            familyRequest["row_workers"] = rowWorkers
+        }
+        if let channelWorkers = try genericOptionalInt("channel_workers", request: request) {
+            familyRequest["channel_workers"] = channelWorkers
+        }
+        return try JSONSerialization.data(
+            withJSONObject: ["kind": "family", "request": familyRequest],
+            options: [.prettyPrinted, .sortedKeys]
+        )
+    }
+
+    private static func genericValue(
+        _ id: String,
+        request: GenericTaskRequest,
+        defaultValue: String
+    ) -> String {
+        let value = (request.values[id] ?? argumentDefault(id, request: request) ?? defaultValue)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? defaultValue : value
+    }
+
+    private static func argumentDefault(_ id: String, request: GenericTaskRequest) -> String? {
+        request.schema.arguments.first { $0.id == id }?.default
+    }
+
+    private static func genericInt(
+        _ id: String,
+        request: GenericTaskRequest,
+        defaultValue: String
+    ) throws -> Int {
+        let value = genericValue(id, request: request, defaultValue: defaultValue)
+        guard let parsed = Int(value) else {
+            throw GenericTaskFailure(message: "\(id) must be an integer.", diagnostics: [])
+        }
+        return parsed
+    }
+
+    private static func genericOptionalInt(_ id: String, request: GenericTaskRequest) throws -> Int? {
+        let value = (request.values[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        guard let parsed = Int(value) else {
+            throw GenericTaskFailure(message: "\(id) must be an integer.", diagnostics: [])
+        }
+        return parsed
+    }
+
+    private static func genericDouble(
+        _ id: String,
+        request: GenericTaskRequest,
+        defaultValue: String
+    ) throws -> Double {
+        let value = genericValue(id, request: request, defaultValue: defaultValue)
+        guard let parsed = Double(value) else {
+            throw GenericTaskFailure(message: "\(id) must be a number.", diagnostics: [])
+        }
+        return parsed
+    }
+
+    private static func genericBool(
+        _ id: String,
+        request: GenericTaskRequest,
+        defaultValue: String
+    ) throws -> Bool {
+        let value = genericValue(id, request: request, defaultValue: defaultValue).lowercased()
+        if ["true", "yes", "1"].contains(value) {
+            return true
+        }
+        if ["false", "no", "0"].contains(value) {
+            return false
+        }
+        throw GenericTaskFailure(message: "\(id) must be true or false.", diagnostics: [])
+    }
+
     static func createOutputParentDirectories(for request: GenericTaskRequest) throws {
         for path in outputArgumentPaths(for: request) {
             let url = resolvedTaskPath(path, workingDirectoryPath: request.workingDirectoryPath)
@@ -474,7 +624,13 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
     }
 
     static func outputArgumentPaths(for request: GenericTaskRequest) -> [String] {
-        request.schema.arguments
+        if isSimobserveFamilyRequest(request) {
+            return [
+                genericValue("output_ms", request: request, defaultValue: "simobserve-family.ms"),
+                genericValue("request_json", request: request, defaultValue: ".casa-rs/requests/simobserve-family.json")
+            ]
+        }
+        return request.schema.arguments
             .filter { argument in
                 !argument.hiddenInTUI
                     && ["option", "positional"].contains(argument.parser.kind)

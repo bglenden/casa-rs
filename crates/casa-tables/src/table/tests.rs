@@ -12,7 +12,8 @@ use ndarray::ShapeBuilder;
 use crate::schema::{ColumnSchema, TableSchema};
 
 use super::{
-    ColumnBinding, DataManagerKind, EndianFormat, RequiredScalarColumnValues, RowRange, SortOrder,
+    ColumnBinding, ColumnOverrides, DataManagerKind, EndianFormat, GeneratedScalarColumn,
+    GeneratedScalarValueRun, RequiredScalarColumnValues, RowRange, SelectedArray2DCells, SortOrder,
     Table, TableError, TableOptions,
 };
 
@@ -182,18 +183,6 @@ fn table_array_cells_owned(
     table
         .column_accessor(column)?
         .array_cells_owned(row_indices)
-}
-
-fn table_array_cells_2d_channel_range_owned_uncached(
-    table: &Table,
-    column: &str,
-    row_indices: &[usize],
-    channel_start: usize,
-    channel_count: usize,
-) -> Result<Vec<Option<ArrayValue>>, TableError> {
-    table
-        .column_accessor(column)?
-        .array_cells_2d_channel_range_owned_uncached(row_indices, channel_start, channel_count)
 }
 
 #[test]
@@ -2315,26 +2304,21 @@ fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column(
     assert!(!reopened.inner.has_loaded_rows());
     assert!(!reopened.inner.has_loaded_array_column("data"));
 
-    let selected =
-        table_array_cells_2d_channel_range_owned_uncached(&reopened, "data", &[7, 2], 1, 3)
-            .expect("read selected channel ranges");
+    let typed = reopened
+        .column_accessor("data")
+        .expect("data accessor")
+        .array_cells_2d_channel_range_typed_uncached(&[7, 2], 1, 3)
+        .expect("typed selected channel ranges");
+    let SelectedArray2DCells::Float32(typed) = typed else {
+        panic!("expected Float32 typed selected cells");
+    };
+    assert_eq!(typed.row_count(), 2);
+    assert_eq!(typed.axis0_count(), 2);
+    assert_eq!(typed.channel_count(), 3);
     assert_eq!(
-        selected,
-        vec![
-            Some(ArrayValue::Float32(
-                ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[2, 3]).f(),
-                    vec![710.0, 711.0, 720.0, 721.0, 730.0, 731.0]
-                )
-                .unwrap()
-            )),
-            Some(ArrayValue::Float32(
-                ArrayD::from_shape_vec(
-                    ndarray::IxDyn(&[2, 3]).f(),
-                    vec![210.0, 211.0, 220.0, 221.0, 230.0, 231.0]
-                )
-                .unwrap()
-            )),
+        typed.values(),
+        &[
+            710.0, 711.0, 210.0, 211.0, 720.0, 721.0, 220.0, 221.0, 730.0, 731.0, 230.0, 231.0,
         ]
     );
     assert!(
@@ -3490,8 +3474,9 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
             tile_shape: None,
         },
     )]);
-    let overrides = HashMap::from([(
-        "DATA".to_string(),
+    let mut overrides = ColumnOverrides::for_row_count(3);
+    overrides.insert_values(
+        "DATA",
         vec![
             Some(Value::Array(ArrayValue::Int32(
                 ArrayD::from_shape_vec(vec![2, 2], vec![1, 2, 3, 4]).expect("row 0 shape"),
@@ -3503,7 +3488,7 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
                 ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("row 2 shape"),
             ))),
         ],
-    )]);
+    );
 
     table
         .save_with_bindings_and_column_overrides_assuming_valid(
@@ -3523,6 +3508,250 @@ fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
         &ArrayValue::Int32(
             ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("expected shape")
         )
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn save_with_bindings_generated_scalar_overrides_define_row_count() {
+    let row_count = 4096usize;
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ROW_ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("SCAN", PrimitiveType::Int32),
+        ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool),
+    ])
+    .expect("schema");
+    let table = Table::with_schema(schema);
+
+    let root = unique_test_dir("save_with_bindings_generated_scalar_overrides");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let bindings = HashMap::from([
+        (
+            "SCAN".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "FLAG_ROW".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::StandardStMan,
+                tile_shape: None,
+            },
+        ),
+    ]);
+    let mut overrides = ColumnOverrides::for_row_count(row_count);
+    overrides.insert_generated_scalar(
+        "ROW_ID",
+        GeneratedScalarColumn::new(row_count, |row| Some(ScalarValue::Int32(row as i32))),
+    );
+    overrides.insert_generated_scalar(
+        "SCAN",
+        GeneratedScalarColumn::new(row_count, |row| {
+            Some(ScalarValue::Int32((row / 128) as i32))
+        }),
+    );
+    overrides.insert_generated_scalar(
+        "FLAG_ROW",
+        GeneratedScalarColumn::new(row_count, |row| Some(ScalarValue::Bool(row % 17 == 0))),
+    );
+
+    table
+        .save_with_bindings_and_column_overrides_assuming_valid(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+            &overrides,
+        )
+        .expect("save generated overrides");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    assert_eq!(reopened.row_count(), row_count);
+    assert_eq!(
+        table_scalar(&reopened, 0, "ROW_ID").expect("row 0 id"),
+        &ScalarValue::Int32(0)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 1025, "ROW_ID").expect("row 1025 id"),
+        &ScalarValue::Int32(1025)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 4095, "SCAN").expect("last scan"),
+        &ScalarValue::Int32(31)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 34, "FLAG_ROW").expect("flag row"),
+        &ScalarValue::Bool(true)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 35, "FLAG_ROW").expect("flag row"),
+        &ScalarValue::Bool(false)
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn generated_scalar_column_runs_validate_and_resolve_values() {
+    let column = GeneratedScalarColumn::from_scalar_runs(
+        10,
+        vec![
+            GeneratedScalarValueRun::new(0, Some(ScalarValue::Int32(1))),
+            GeneratedScalarValueRun::new(4, Some(ScalarValue::Int32(2))),
+            GeneratedScalarValueRun::new(8, None),
+        ],
+    )
+    .expect("valid runs");
+
+    assert_eq!(column.value(0), Some(ScalarValue::Int32(1)));
+    assert_eq!(column.value(3), Some(ScalarValue::Int32(1)));
+    assert_eq!(column.value(4), Some(ScalarValue::Int32(2)));
+    assert_eq!(column.value(7), Some(ScalarValue::Int32(2)));
+    assert_eq!(column.value(8), None);
+    assert_eq!(column.value(10), None);
+
+    assert!(matches!(
+        GeneratedScalarColumn::from_scalar_runs(
+            2,
+            vec![GeneratedScalarValueRun::new(1, Some(ScalarValue::Int32(1)))],
+        ),
+        Err(TableError::InvalidGeneratedScalarRuns { .. })
+    ));
+    assert!(matches!(
+        GeneratedScalarColumn::from_scalar_runs(
+            2,
+            vec![
+                GeneratedScalarValueRun::new(0, Some(ScalarValue::Int32(1))),
+                GeneratedScalarValueRun::new(0, Some(ScalarValue::Int32(2))),
+            ],
+        ),
+        Err(TableError::InvalidGeneratedScalarRuns { .. })
+    ));
+    assert!(matches!(
+        GeneratedScalarColumn::from_scalar_runs(
+            2,
+            vec![
+                GeneratedScalarValueRun::new(0, Some(ScalarValue::Int32(1))),
+                GeneratedScalarValueRun::new(2, Some(ScalarValue::Int32(2))),
+            ],
+        ),
+        Err(TableError::InvalidGeneratedScalarRuns { .. })
+    ));
+}
+
+#[test]
+fn save_with_bindings_generated_scalar_run_overrides_round_trip_ism() {
+    let row_count = 10_000usize;
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("CONST_ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("SCAN", PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME", PrimitiveType::Float64),
+    ])
+    .expect("schema");
+    let table = Table::with_schema(schema);
+
+    let root = unique_test_dir("save_with_bindings_generated_scalar_run_overrides");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let bindings = HashMap::from([
+        (
+            "CONST_ID".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "SCAN".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+        (
+            "TIME".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        ),
+    ]);
+    let mut overrides = ColumnOverrides::for_row_count(row_count);
+    overrides.insert_generated_scalar(
+        "CONST_ID",
+        GeneratedScalarColumn::constant(row_count, Some(ScalarValue::Int32(7))),
+    );
+    overrides.insert_generated_scalar(
+        "SCAN",
+        GeneratedScalarColumn::from_scalar_runs(
+            row_count,
+            vec![
+                GeneratedScalarValueRun::new(0, Some(ScalarValue::Int32(1))),
+                GeneratedScalarValueRun::new(128, Some(ScalarValue::Int32(2))),
+                GeneratedScalarValueRun::new(8192, Some(ScalarValue::Int32(5))),
+            ],
+        )
+        .expect("scan runs"),
+    );
+    overrides.insert_generated_scalar(
+        "TIME",
+        GeneratedScalarColumn::from_scalar_runs(
+            row_count,
+            vec![
+                GeneratedScalarValueRun::new(0, Some(ScalarValue::Float64(10.0))),
+                GeneratedScalarValueRun::new(351, Some(ScalarValue::Float64(12.0))),
+                GeneratedScalarValueRun::new(702, Some(ScalarValue::Float64(14.0))),
+                GeneratedScalarValueRun::new(9000, Some(ScalarValue::Float64(16.0))),
+            ],
+        )
+        .expect("time runs"),
+    );
+
+    table
+        .save_with_bindings_and_column_overrides_assuming_valid(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+            &overrides,
+        )
+        .expect("save run overrides");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    assert_eq!(reopened.row_count(), row_count);
+    for row in [0, 127, 128, 8191, 8192, 9999] {
+        assert_eq!(
+            table_scalar(&reopened, row, "CONST_ID").expect("const id"),
+            &ScalarValue::Int32(7)
+        );
+    }
+    assert_eq!(
+        table_scalar(&reopened, 127, "SCAN").expect("scan before change"),
+        &ScalarValue::Int32(1)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 128, "SCAN").expect("scan at change"),
+        &ScalarValue::Int32(2)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 8192, "SCAN").expect("scan later change"),
+        &ScalarValue::Int32(5)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 350, "TIME").expect("time before change"),
+        &ScalarValue::Float64(10.0)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 351, "TIME").expect("time at change"),
+        &ScalarValue::Float64(12.0)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 8999, "TIME").expect("time before final change"),
+        &ScalarValue::Float64(14.0)
+    );
+    assert_eq!(
+        table_scalar(&reopened, 9000, "TIME").expect("time final change"),
+        &ScalarValue::Float64(16.0)
     );
 
     std::fs::remove_dir_all(&root).expect("cleanup");
