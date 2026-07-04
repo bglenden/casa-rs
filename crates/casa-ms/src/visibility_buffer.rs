@@ -2458,11 +2458,16 @@ mod tests {
 
     #[test]
     fn fill_visibility_buffer_rejects_source_partition_shape_mismatch() {
-        let mut ms = MeasurementSet::create_memory(
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ms_path = dir.path().join("visibility-buffer-shape-mismatch.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
             MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
         )
         .unwrap();
         add_visibility_test_row(ms.main_table_mut(), 0);
+        ms.save().expect("save visibility-buffer mismatch test MS");
+        let ms = MeasurementSet::open(&ms_path).expect("reopen visibility-buffer mismatch test MS");
 
         let request = VisibilityBufferRequest::imaging(VisibilityDataColumn::Data, vec![0], 1, 2)
             .with_source_partition(SourcePartition::new(SourcePartitionId(0), 0, 0, 0, 0, 2, 2));
