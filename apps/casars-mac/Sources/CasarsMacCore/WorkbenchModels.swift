@@ -617,6 +617,7 @@ public struct TaskRun: Codable, Equatable {
     public var diagnostics: [String]
     public var outputPaths: [String]
     public var requestSummary: String?
+    public var imagerProgress: ImagerProgressSnapshot?
 
     public init(
         runID: String? = nil,
@@ -627,7 +628,8 @@ public struct TaskRun: Codable, Equatable {
         products: [String],
         diagnostics: [String] = [],
         outputPaths: [String] = [],
-        requestSummary: String? = nil
+        requestSummary: String? = nil,
+        imagerProgress: ImagerProgressSnapshot? = nil
     ) {
         self.runID = runID
         self.state = state
@@ -638,6 +640,7 @@ public struct TaskRun: Codable, Equatable {
         self.diagnostics = diagnostics
         self.outputPaths = outputPaths
         self.requestSummary = requestSummary
+        self.imagerProgress = imagerProgress
     }
 }
 
@@ -2673,6 +2676,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var taskLogLines: [String]
     public var taskDiagnostics: [String]
     public var taskOutputPaths: [String]
+    public var taskImagerProgress: ImagerProgressSnapshot?
     public var taskCatalog: [TaskCatalogEntry]
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
@@ -2714,6 +2718,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         taskLogLines = state.taskRun.logLines
         taskDiagnostics = state.taskRun.diagnostics
         taskOutputPaths = state.taskRun.outputPaths
+        taskImagerProgress = state.taskRun.imagerProgress
         taskCatalog = state.taskCatalog
         aiProposalStates = Dictionary(
             uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }

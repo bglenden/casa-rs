@@ -127,15 +127,18 @@ pub use oracle::{
 };
 pub use schema::command_schema;
 pub use task_contract::{
-    IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
+    IMAGER_PROGRESS_EVENT_SCHEMA_VERSION, IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME,
+    IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
     ImagerAutoMultiThresholdConfig, ImagerChannelRunResult, ImagerCleanMaskMode,
     ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue,
     ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
-    ImagerPlaneSelection, ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport,
-    ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
-    ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
-    ImagerWTermMode, ImagerWeighting,
+    ImagerPlaneSelection, ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressEvent,
+    ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage,
+    ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo, ImagerRestoringBeamMode,
+    ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel,
+    ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper,
+    ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -166,6 +169,476 @@ const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "deconvolver",
     "wprojplanes",
 ];
+
+static IMAGER_PROGRESS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static IMAGER_PROGRESS_CONTEXT: Mutex<Option<ImagerProgressContext>> = Mutex::new(None);
+
+#[derive(Debug, Clone)]
+struct BoundedUvCoverageAccumulator {
+    sample_limit: usize,
+    accepted_points: u64,
+    measured: Vec<ImagerProgressUvPoint>,
+    u_extent_klambda: f64,
+    v_extent_klambda: f64,
+}
+
+impl BoundedUvCoverageAccumulator {
+    fn new(sample_limit: usize) -> Self {
+        Self {
+            sample_limit,
+            accepted_points: 0,
+            measured: Vec::with_capacity(sample_limit.min(4096)),
+            u_extent_klambda: 0.0,
+            v_extent_klambda: 0.0,
+        }
+    }
+
+    fn observe_point(&mut self, u_lambda: f64, v_lambda: f64, weight: f32) {
+        if !(u_lambda.is_finite() && v_lambda.is_finite() && weight.is_finite() && weight > 0.0) {
+            return;
+        }
+        let point = ImagerProgressUvPoint {
+            u_klambda: u_lambda / 1000.0,
+            v_klambda: v_lambda / 1000.0,
+            weight,
+        };
+        self.u_extent_klambda = self.u_extent_klambda.max(point.u_klambda.abs());
+        self.v_extent_klambda = self.v_extent_klambda.max(point.v_klambda.abs());
+        self.accepted_points = self.accepted_points.saturating_add(1);
+        if self.sample_limit == 0 {
+            return;
+        }
+        if self.measured.len() < self.sample_limit {
+            self.measured.push(point);
+            return;
+        }
+        let index = (self.accepted_points as usize - 1) % self.sample_limit;
+        self.measured[index] = point;
+    }
+
+    fn observe_batch(&mut self, batch: &VisibilityBatch) {
+        for index in 0..batch.len() {
+            let Some(gridable) = batch.gridable.get(index).copied() else {
+                continue;
+            };
+            if !gridable {
+                continue;
+            }
+            let Some(u_lambda) = batch.u_lambda.get(index).copied() else {
+                continue;
+            };
+            let Some(v_lambda) = batch.v_lambda.get(index).copied() else {
+                continue;
+            };
+            let Some(weight) = batch.weight.get(index).copied() else {
+                continue;
+            };
+            self.observe_point(u_lambda, v_lambda, weight);
+        }
+    }
+
+    fn snapshot(&self) -> ImagerProgressUvCoverage {
+        let conjugate = self
+            .measured
+            .iter()
+            .map(|point| ImagerProgressUvPoint {
+                u_klambda: -point.u_klambda,
+                v_klambda: -point.v_klambda,
+                weight: point.weight,
+            })
+            .collect::<Vec<_>>();
+        ImagerProgressUvCoverage {
+            u_extent_klambda: self.u_extent_klambda,
+            v_extent_klambda: self.v_extent_klambda,
+            measured: self.measured.clone(),
+            conjugate,
+            dropped_points: self
+                .accepted_points
+                .saturating_sub(self.measured.len() as u64),
+            sample_limit: self.sample_limit,
+        }
+    }
+}
+
+struct ImagerProgressContext {
+    options: ImagerProgressOptions,
+    started_at: Instant,
+    last_emit_at: Option<Instant>,
+    sequence: u64,
+    uv_coverage: BoundedUvCoverageAccumulator,
+}
+
+struct ImagerProgressGuard;
+
+impl Drop for ImagerProgressGuard {
+    fn drop(&mut self) {
+        IMAGER_PROGRESS_ACTIVE.store(false, Ordering::Relaxed);
+        if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
+            *context = None;
+        }
+    }
+}
+
+fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgressGuard> {
+    if !options.enabled {
+        return None;
+    }
+    let normalized = ImagerProgressOptions {
+        enabled: true,
+        max_uv_points: options.max_uv_points.min(4096),
+        min_interval_ms: options.min_interval_ms.max(50),
+    };
+    let context = ImagerProgressContext {
+        uv_coverage: BoundedUvCoverageAccumulator::new(normalized.max_uv_points),
+        options: normalized,
+        started_at: Instant::now(),
+        last_emit_at: None,
+        sequence: 0,
+    };
+    if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
+        *slot = Some(context);
+        IMAGER_PROGRESS_ACTIVE.store(true, Ordering::Relaxed);
+        Some(ImagerProgressGuard)
+    } else {
+        None
+    }
+}
+
+fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let serialized = {
+        let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+            return;
+        };
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        if !force
+            && context.last_emit_at.is_some_and(|last| {
+                now.duration_since(last).as_millis() < context.options.min_interval_ms as u128
+            })
+        {
+            return;
+        }
+        context.sequence = context.sequence.saturating_add(1);
+        event.schema_version = IMAGER_PROGRESS_EVENT_SCHEMA_VERSION;
+        event.sequence = context.sequence;
+        event.elapsed_ms = now.duration_since(context.started_at).as_millis() as u64;
+        if event.uv_coverage.is_none() && !context.uv_coverage.measured.is_empty() {
+            event.uv_coverage = Some(context.uv_coverage.snapshot());
+        }
+        context.last_emit_at = Some(now);
+        serde_json::to_string(&event)
+    };
+    if let Ok(payload) = serialized {
+        eprintln!("{IMAGER_PROGRESS_STDERR_PREFIX}{payload}");
+    }
+}
+
+fn observe_imager_progress_uv_batch(batch: &VisibilityBatch) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
+        if let Some(context) = context.as_mut() {
+            context.uv_coverage.observe_batch(batch);
+        }
+    }
+}
+
+fn observe_imager_progress_prepared_input(input: &PreparedInput) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    match input {
+        PreparedInput::Mfs(plane) => {
+            for batch in &plane.batches {
+                observe_imager_progress_uv_batch(batch);
+            }
+        }
+        PreparedInput::Cube(cube) => {
+            for channel in &cube.channels {
+                for batch in &channel.visibility_batches {
+                    observe_imager_progress_uv_batch(batch);
+                }
+            }
+        }
+    }
+}
+
+fn progress_output_cube_from_config(
+    config: &CliConfig,
+    active_plane_start: usize,
+    active_plane_end: usize,
+) -> ImagerProgressCube {
+    let z_planes = if config.spectral_mode.is_cube_like() {
+        config.channel_count.unwrap_or(1).max(1)
+    } else {
+        1
+    };
+    ImagerProgressCube {
+        x_pixels: config.imsize,
+        y_pixels: config.imsize,
+        z_planes,
+        active_plane_start: active_plane_start.min(z_planes),
+        active_plane_end: active_plane_end
+            .min(z_planes)
+            .max(active_plane_start.min(z_planes)),
+    }
+}
+
+fn progress_runtime_from_config(
+    config: &CliConfig,
+    active_threads: usize,
+) -> ImagerProgressRuntime {
+    let total_threads = thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    let backend = standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration);
+    let gpu_active = matches!(
+        config.standard_mfs_acceleration,
+        StandardMfsAccelerationPolicy::Metal
+    ) || config
+        .standard_mfs_backend
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().contains("metal"));
+    ImagerProgressRuntime {
+        active_threads: active_threads.min(total_threads.max(active_threads)),
+        total_threads: total_threads.max(active_threads),
+        gpu_active,
+        backend: backend.to_string(),
+    }
+}
+
+fn progress_work_from_config(
+    config: &CliConfig,
+    completed_planes: usize,
+    completed_minor_iterations: usize,
+) -> ImagerProgressWork {
+    let plane_units = if config.spectral_mode.is_cube_like() {
+        config.channel_count.unwrap_or(1).max(1) as u64
+    } else {
+        1
+    };
+    let major_limit = config.nmajor.unwrap_or(1).max(1) as u64;
+    let minor_units = if config.dirty_only {
+        0
+    } else {
+        major_limit.saturating_mul(config.niter as u64)
+    };
+    let completed_units =
+        (completed_planes as u64).saturating_add(completed_minor_iterations as u64);
+    ImagerProgressWork {
+        completed_units: completed_units.min(plane_units.saturating_add(minor_units)),
+        total_units: plane_units.saturating_add(minor_units).max(1),
+        unit_label: "scheduled units".to_string(),
+        basis: "output planes plus configured CLEAN iteration budget".to_string(),
+        confidence: "coarse".to_string(),
+    }
+}
+
+fn emit_imager_progress_run_started(request: &ImagerRunTaskRequest) {
+    let Ok(config) = request.to_cli_config() else {
+        return;
+    };
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: "starting".to_string(),
+            summary: "imager task accepted progress-enabled request".to_string(),
+            work: Some(progress_work_from_config(&config, 0, 0)),
+            ms_read: None,
+            output_cube: Some(progress_output_cube_from_config(
+                &config,
+                0,
+                if config.spectral_mode.is_cube_like() {
+                    0
+                } else {
+                    1
+                },
+            )),
+            uv_coverage: None,
+            deconvolution: Some(ImagerProgressDeconvolution {
+                phase: if config.dirty_only {
+                    "dirty imaging".to_string()
+                } else {
+                    "pending deconvolution".to_string()
+                },
+                major_cycle: 0,
+                major_cycle_limit: config.nmajor,
+                minor_iterations: 0,
+                minor_iteration_limit: config.niter,
+                components_cleaned: 0,
+                peak_residual_mjy_per_beam: None,
+                target_residual_mjy_per_beam: Some(config.threshold_jy * 1000.0),
+                residual_history_mjy_per_beam: Vec::new(),
+            }),
+            runtime: Some(progress_runtime_from_config(&config, 0)),
+        },
+        true,
+    );
+}
+
+fn emit_imager_progress_ms_window(
+    ms: &MeasurementSet,
+    table_values: &PreparedSelectionTableValues,
+    row_chunk: &[SelectedMainRow],
+    channel_read_range: Option<SelectedChannelReadRange>,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) || row_chunk.is_empty() {
+        return;
+    }
+    let row_start = row_chunk.iter().map(|row| row.row_index).min().unwrap_or(0);
+    let row_end = row_chunk
+        .iter()
+        .map(|row| row.row_index.saturating_add(1))
+        .max()
+        .unwrap_or(row_start);
+    let (channel_start, channel_count) = channel_read_range
+        .map(|range| (range.start, range.count))
+        .unwrap_or((0, table_values.spw_freqs_hz.len()));
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: "reading_ms".to_string(),
+            summary: format!(
+                "reading rows {row_start}..{row_end}, channels {}..{}",
+                channel_start,
+                channel_start.saturating_add(channel_count)
+            ),
+            work: None,
+            ms_read: Some(ImagerProgressMsWindow {
+                total_rows: ms.row_count(),
+                total_channels: table_values.spw_freqs_hz.len(),
+                row_start,
+                row_end,
+                channel_start,
+                channel_end: channel_start.saturating_add(channel_count),
+            }),
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: None,
+        },
+        false,
+    );
+}
+
+fn emit_imager_progress_cube_slab(
+    config: &CliConfig,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    phase: &str,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: phase.to_string(),
+            summary: format!("working output planes {active_plane_start}..{active_plane_end}"),
+            work: Some(progress_work_from_config(config, active_plane_start, 0)),
+            ms_read: None,
+            output_cube: Some(progress_output_cube_from_config(
+                config,
+                active_plane_start,
+                active_plane_end,
+            )),
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(progress_runtime_from_config(config, active_threads)),
+        },
+        false,
+    );
+}
+
+fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &RunSummary) {
+    let Ok(config) = request.to_cli_config() else {
+        return;
+    };
+    let z_planes = if config.spectral_mode.is_cube_like() {
+        config
+            .channel_count
+            .unwrap_or(summary.channel_summaries.len())
+            .max(1)
+    } else {
+        1
+    };
+    let residual_history = if summary.channel_summaries.is_empty() {
+        summary
+            .minor_cycle_traces
+            .iter()
+            .map(|trace| trace.end_peak_residual_jy_per_beam * 1000.0)
+            .collect::<Vec<_>>()
+    } else {
+        summary
+            .channel_summaries
+            .iter()
+            .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
+            .collect::<Vec<_>>()
+    };
+    let peak_residual = residual_history.last().copied().or_else(|| {
+        summary
+            .channel_summaries
+            .last()
+            .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
+    });
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: "finished".to_string(),
+            summary: format!(
+                "imager completed with {} gridded samples",
+                summary.gridded_samples
+            ),
+            work: Some(progress_work_from_config(
+                &config,
+                z_planes,
+                summary.minor_iterations,
+            )),
+            ms_read: None,
+            output_cube: Some(progress_output_cube_from_config(&config, 0, z_planes)),
+            uv_coverage: None,
+            deconvolution: Some(ImagerProgressDeconvolution {
+                phase: if summary.minor_iterations == 0 {
+                    "dirty imaging complete".to_string()
+                } else {
+                    "deconvolution complete".to_string()
+                },
+                major_cycle: summary.major_cycles,
+                major_cycle_limit: config.nmajor,
+                minor_iterations: summary.minor_iterations,
+                minor_iteration_limit: config.niter,
+                components_cleaned: summary.minor_iterations,
+                peak_residual_mjy_per_beam: peak_residual,
+                target_residual_mjy_per_beam: Some(config.threshold_jy * 1000.0),
+                residual_history_mjy_per_beam: residual_history
+                    .into_iter()
+                    .rev()
+                    .take(64)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect(),
+            }),
+            runtime: Some(progress_runtime_from_config(&config, 0)),
+        },
+        true,
+    );
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OutlierFileDefinition {
@@ -913,7 +1386,11 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     let (json_run, filtered_args) = extract_string_option(&args, "--json-run")?;
     if let Some(source) = json_run {
         let request = ImagerTaskRequest::read_from_source(&source)?;
-        let result = request.execute()?;
+        let progress_options = match &request {
+            ImagerTaskRequest::Run(request) => request.progress.as_ref(),
+        };
+        let _progress_guard = progress_options.and_then(begin_imager_progress);
+        let result = execute_json_task_request_with_progress(&request)?;
         println!(
             "{}",
             serde_json::to_string_pretty(&result)
@@ -2232,6 +2709,44 @@ fn run_single_image_from_config_with_gridder_override(
     ))
 }
 
+fn execute_json_task_request_with_progress(
+    request: &ImagerTaskRequest,
+) -> Result<ImagerTaskResult, String> {
+    match request {
+        ImagerTaskRequest::Run(run_request) => {
+            emit_imager_progress_run_started(run_request);
+            match run_from_request(run_request) {
+                Ok(summary) => {
+                    emit_imager_progress_run_finished(run_request, &summary);
+                    Ok(ImagerTaskResult::Run(ImagerRunTaskResult::from_run(
+                        run_request.clone(),
+                        &summary,
+                    )))
+                }
+                Err(error) => {
+                    emit_imager_progress_event(
+                        ImagerProgressEvent {
+                            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                            sequence: 0,
+                            elapsed_ms: 0,
+                            phase: "failed".to_string(),
+                            summary: error.clone(),
+                            work: None,
+                            ms_read: None,
+                            output_cube: None,
+                            uv_coverage: None,
+                            deconvolution: None,
+                            runtime: None,
+                        },
+                        true,
+                    );
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
 fn bounded_source_stream_rejection(
     config: &CliConfig,
     force_standard_gridder: bool,
@@ -3361,13 +3876,15 @@ fn finish_source_row_block_prepared_selection(
     prepared: PreparedSelection,
     finish: SourceRowBlockFinish,
 ) -> Result<PreparedInput, String> {
-    match finish {
+    let input = match finish {
         SourceRowBlockFinish::StandardMfs { batch_size } => {
             prepared.finish_standard_mfs_without_trace_with_batch_size(batch_size)
         }
         SourceRowBlockFinish::MfsMosaic => prepared.finish_mfs_mosaic_without_trace(ms),
         SourceRowBlockFinish::Cube => prepared.finish_cube_without_trace(ms),
-    }
+    }?;
+    observe_imager_progress_prepared_input(&input);
+    Ok(input)
 }
 
 fn run_mfs_mosaic_from_single_plane_stream_open_ms(
@@ -4308,6 +4825,13 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         eprintln!(
             "mosaic_cube_slab_start slab_id={} plane_start={} plane_end={} worker_count={}",
             slab.slab_id, slab.plane_start, slab.plane_end, worker_count
+        );
+        emit_imager_progress_cube_slab(
+            config,
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            "working_cube_slab",
         );
         let slab_source_config =
             slab_config_for_cube_planes(config, channel_start, slab.plane_start, slab.plane_end)?;
@@ -7451,6 +7975,13 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 estimated_resident_bytes: Some(slab_resident_bytes),
             }
             .log_line()
+        );
+        emit_imager_progress_cube_slab(
+            config,
+            slab.plane_start,
+            slab.plane_end,
+            memory_plan.worker_count,
+            "working_cube_slab",
         );
         memory_logger.log(
             config,
@@ -17881,6 +18412,7 @@ fn read_columnar_prepared_source(
     let fill_report = ms
         .fill_visibility_buffer(&request, &mut visibility)
         .map_err(|error| format!("fill columnar visibility buffer: {error}"))?;
+    emit_imager_progress_ms_window(ms, table_values, row_chunk, channel_read_range);
     let geometry_started_at = Instant::now();
     let (geometry_rows, geometry_cache_lookup) =
         if let (Some(cache), Some(key)) = (geometry_cache, geometry_cache_key) {
@@ -37418,6 +37950,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn bounded_uv_coverage_accumulator_keeps_limit_and_conjugates() {
+        let mut accumulator = BoundedUvCoverageAccumulator::new(2);
+        accumulator.observe_point(1000.0, -2000.0, 0.5);
+        accumulator.observe_point(-3000.0, 4000.0, 1.5);
+        accumulator.observe_point(5000.0, 6000.0, 2.5);
+
+        let snapshot = accumulator.snapshot();
+        assert_eq!(snapshot.sample_limit, 2);
+        assert_eq!(snapshot.measured.len(), 2);
+        assert_eq!(snapshot.conjugate.len(), 2);
+        assert_eq!(snapshot.dropped_points, 1);
+        assert_eq!(snapshot.u_extent_klambda, 5.0);
+        assert_eq!(snapshot.v_extent_klambda, 6.0);
+        for (measured, conjugate) in snapshot.measured.iter().zip(snapshot.conjugate.iter()) {
+            assert_eq!(conjugate.u_klambda, -measured.u_klambda);
+            assert_eq!(conjugate.v_klambda, -measured.v_klambda);
+            assert_eq!(conjugate.weight, measured.weight);
+        }
+    }
+
+    #[test]
+    fn bounded_uv_coverage_accumulator_skips_invalid_and_ungridable_samples() {
+        let mut batch = empty_visibility_batch(0);
+        batch.u_lambda = vec![1000.0, 2000.0, f64::NAN, 3000.0];
+        batch.v_lambda = vec![-1000.0, -2000.0, 3000.0, 4000.0];
+        batch.w_lambda = vec![0.0; 4];
+        batch.weight = vec![1.0, 2.0, 3.0, -4.0];
+        batch.sumwt_factor = vec![1.0; 4];
+        batch.gridable = vec![true, false, true, true];
+        batch.visibility = vec![Complex32::new(0.0, 0.0); 4];
+
+        let mut accumulator = BoundedUvCoverageAccumulator::new(8);
+        accumulator.observe_batch(&batch);
+        let snapshot = accumulator.snapshot();
+
+        assert_eq!(snapshot.measured.len(), 1);
+        assert_eq!(snapshot.measured[0].u_klambda, 1.0);
+        assert_eq!(snapshot.measured[0].v_klambda, -1.0);
+        assert_eq!(snapshot.dropped_points, 0);
     }
 
     #[test]

@@ -246,7 +246,12 @@ public struct DirtyImagingTaskRequest: Codable, Equatable {
                 weighting: ImagerWeightingPayload(weighting: parameters.weighting),
                 niter: 0,
                 dirtyOnly: parameters.dirtyOnly,
-                writePreviewPngs: true
+                writePreviewPngs: true,
+                progress: ImagerProgressOptionsPayload(
+                    enabled: true,
+                    maxUVPoints: 64,
+                    minIntervalMs: 250
+                )
             )
         )
         let encoder = JSONEncoder()
@@ -340,6 +345,7 @@ public struct DirtyImagingTaskFailure: Error, Codable, Equatable {
 }
 
 public enum DirtyImagingTaskEvent {
+    case progress(ImagerProgressSnapshot)
     case succeeded(DirtyImagingTaskResult)
     case failed(DirtyImagingTaskFailure)
     case cancelled(DirtyImagingTaskFailure)
@@ -904,7 +910,31 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
                 return
             }
 
-            let output = try runProcess(["--json-run", requestURL.path], execution: execution)
+            var progressParser = ImagerProgressStderrParser()
+            let progressParserLock = NSLock()
+            let handleProgressChunk: (String) -> Void = { chunk in
+                progressParserLock.lock()
+                let records = progressParser.append(chunk, runID: request.runID, state: .running)
+                progressParserLock.unlock()
+                for record in records {
+                    if case .progress(let snapshot) = record {
+                        eventHandler(.progress(snapshot))
+                    }
+                }
+            }
+            let output = try runProcess(
+                ["--json-run", requestURL.path],
+                execution: execution,
+                stderrChunkHandler: handleProgressChunk
+            )
+            progressParserLock.lock()
+            let finalProgressRecords = progressParser.finish(runID: request.runID, state: .running)
+            progressParserLock.unlock()
+            for record in finalProgressRecords {
+                if case .progress(let snapshot) = record {
+                    eventHandler(.progress(snapshot))
+                }
+            }
             try output.stdout.data(using: .utf8)?.write(to: stdoutURL, options: .atomic)
             try output.stderr.data(using: .utf8)?.write(to: stderrURL, options: .atomic)
 
@@ -946,7 +976,11 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
         }
     }
 
-    private func runProcess(_ arguments: [String], execution: ProcessDirtyImagingTaskExecution) throws -> ProcessOutput {
+    private func runProcess(
+        _ arguments: [String],
+        execution: ProcessDirtyImagingTaskExecution,
+        stderrChunkHandler: ((String) -> Void)? = nil
+    ) throws -> ProcessOutput {
         if execution.isCancelled {
             return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
         }
@@ -964,14 +998,21 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        let stderrCollector = ProcessPipeTextCollector(chunkHandler: stderrChunkHandler)
         guard execution.setProcess(process) else {
             return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
         }
         do {
+            stderr.fileHandleForReading.readabilityHandler = { handle in
+                stderrCollector.append(handle.availableData)
+            }
             try process.run()
             process.waitUntilExit()
+            stderr.fileHandleForReading.readabilityHandler = nil
+            stderrCollector.append(stderr.fileHandleForReading.readDataToEndOfFile())
             execution.clearProcess(process)
         } catch {
+            stderr.fileHandleForReading.readabilityHandler = nil
             execution.clearProcess(process)
             throw error
         }
@@ -979,7 +1020,7 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
         return ProcessOutput(
             exitCode: process.terminationStatus,
             stdout: String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
-            stderr: String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            stderr: stderrCollector.text()
         )
     }
 
@@ -1060,6 +1101,30 @@ private final class ProcessDirtyImagingTaskExecution: DirtyImagingTaskExecution 
     }
 }
 
+private final class ProcessPipeTextCollector {
+    private let lock = NSLock()
+    private var data = Data()
+    private let chunkHandler: ((String) -> Void)?
+
+    init(chunkHandler: ((String) -> Void)?) {
+        self.chunkHandler = chunkHandler
+    }
+
+    func append(_ newData: Data) {
+        guard !newData.isEmpty else { return }
+        lock.lock()
+        data.append(newData)
+        lock.unlock()
+        chunkHandler?(String(decoding: newData, as: UTF8.self))
+    }
+
+    func text() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
 private struct ProcessOutput {
     var exitCode: Int32
     var stdout: String
@@ -1087,6 +1152,7 @@ private struct ImagerRunRequestPayload: Encodable {
     var niter: Int
     var dirtyOnly: Bool
     var writePreviewPngs: Bool
+    var progress: ImagerProgressOptionsPayload
 
     enum CodingKeys: String, CodingKey {
         case measurementSet = "measurement_set"
@@ -1104,6 +1170,19 @@ private struct ImagerRunRequestPayload: Encodable {
         case niter
         case dirtyOnly = "dirty_only"
         case writePreviewPngs = "write_preview_pngs"
+        case progress
+    }
+}
+
+private struct ImagerProgressOptionsPayload: Encodable {
+    var enabled: Bool
+    var maxUVPoints: Int
+    var minIntervalMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case maxUVPoints = "max_uv_points"
+        case minIntervalMs = "min_interval_ms"
     }
 }
 

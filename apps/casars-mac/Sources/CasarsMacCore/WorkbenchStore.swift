@@ -568,6 +568,7 @@ public final class WorkbenchStore: ObservableObject {
     private let genericTaskClient: GenericTaskClient
     private let taskUISchemaClient: TaskUISchemaClient
     private let taskExecutionMatrixClient: TaskExecutionMatrixClient
+    private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
@@ -586,7 +587,8 @@ public final class WorkbenchStore: ObservableObject {
         genericTaskClient: GenericTaskClient = ProcessGenericTaskClient(),
         taskCatalogClient: TaskCatalogClient = UniFFITaskCatalogClient(),
         taskUISchemaClient: TaskUISchemaClient = UniFFITaskUISchemaClient(),
-        taskExecutionMatrixClient: TaskExecutionMatrixClient = UniFFITaskExecutionMatrixClient()
+        taskExecutionMatrixClient: TaskExecutionMatrixClient = UniFFITaskExecutionMatrixClient(),
+        imagerProgressSource: ImagerProgressSource = StubImagerProgressSource()
     ) {
         var initialState = state
         if initialState.taskCatalog.isEmpty {
@@ -613,6 +615,7 @@ public final class WorkbenchStore: ObservableObject {
         self.genericTaskClient = genericTaskClient
         self.taskUISchemaClient = taskUISchemaClient
         self.taskExecutionMatrixClient = taskExecutionMatrixClient
+        self.imagerProgressSource = imagerProgressSource
     }
 
     deinit {
@@ -1736,6 +1739,39 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    public func openImagerProgressMockup() {
+        if !state.hasProject {
+            openFixtureProject()
+        }
+        if let dataset = state.project.datasets.first(where: { $0.kind == .measurementSet }) {
+            selectDataset(dataset.id)
+            openDirtyImagingTaskForSelectedDataset()
+        } else {
+            openDefaultTab(kind: .task)
+        }
+        selectTask("imager")
+        let mockRunID = state.taskRun.runID ?? "imager-progress-mockup"
+        let requestSummary = state.dirtyImagingTaskParameters?.requestSummary ?? state.taskRun.requestSummary
+        let progressSnapshot = imagerProgressSnapshot(
+            taskID: "imager",
+            runID: mockRunID,
+            taskState: .running,
+            progress: 0
+        )
+        let workFraction = progressSnapshot?.workEstimate.fraction ?? 0
+        state.taskRun = TaskRun(
+            runID: mockRunID,
+            state: .running,
+            progress: workFraction,
+            logLines: ["Imager progress mockup is using deterministic stub telemetry."],
+            warnings: [],
+            products: [],
+            diagnostics: ["Mockup review state: estimated work is computed from scheduled units, not wall-clock lifecycle."],
+            requestSummary: requestSummary,
+            imagerProgress: progressSnapshot
+        )
+    }
+
     public func applyWorkbenchPlotEdit(plotID: String, action: WorkbenchPlotEditAction) {
         guard let index = state.plotDocuments.firstIndex(where: { $0.id == plotID }) else {
             state.lastErrors.append("Unknown workbench plot \(plotID)")
@@ -1753,6 +1789,7 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Open a project with a dataset before opening an imaging task")
             return
         }
+        state.activeTaskID = "imager"
 
         if let dataset = state.selectedDataset, dataset.kind == .measurementSet {
             if state.dirtyImagingTaskParameters?.datasetID != dataset.id {
@@ -1763,7 +1800,8 @@ public final class WorkbenchStore: ObservableObject {
                     logLines: ["Dirty imaging task initialized from selected MeasurementSet metadata."],
                     warnings: [],
                     products: [],
-                    requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+                    requestSummary: state.dirtyImagingTaskParameters?.requestSummary,
+                    imagerProgress: imagerProgressSnapshot(taskID: "imager", taskState: .idle, progress: 0)
                 )
             }
 
@@ -1772,7 +1810,8 @@ public final class WorkbenchStore: ObservableObject {
                     id: "tab-dirty-imaging-\(dataset.id)",
                     title: "Dirty Image: \(dataset.name)",
                     kind: .task,
-                    datasetID: dataset.id
+                    datasetID: dataset.id,
+                    taskID: "imager"
                 )
             )
         } else {
@@ -1783,14 +1822,16 @@ public final class WorkbenchStore: ObservableObject {
                 logLines: ["Dirty imaging task opened. Select a MeasurementSet before running."],
                 warnings: [],
                 products: [],
-                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary,
+                imagerProgress: imagerProgressSnapshot(taskID: "imager", taskState: .idle, progress: 0)
             )
 
             openTab(
                 WorkbenchTab(
                     id: "tab-dirty-imaging-unbound",
                     title: "Dirty Image",
-                    kind: .task
+                    kind: .task,
+                    taskID: "imager"
                 )
             )
         }
@@ -1897,7 +1938,8 @@ public final class WorkbenchStore: ObservableObject {
                 logLines: ["Dirty imaging task input MeasurementSet cleared."],
                 warnings: [],
                 products: [],
-                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary,
+                imagerProgress: imagerProgressSnapshot(taskID: "imager", taskState: .idle, progress: 0)
             )
             if let activeIndex = state.tabs.firstIndex(where: { $0.id == state.activeTabID && $0.kind == .task }) {
                 state.tabs[activeIndex].title = "Dirty Image"
@@ -1929,7 +1971,8 @@ public final class WorkbenchStore: ObservableObject {
             logLines: ["Dirty imaging task input MeasurementSet changed to \(dataset.name)."],
             warnings: [],
             products: [],
-            requestSummary: parameters.requestSummary
+            requestSummary: parameters.requestSummary,
+            imagerProgress: imagerProgressSnapshot(taskID: "imager", taskState: .idle, progress: 0)
         )
 
         if let activeIndex = state.tabs.firstIndex(where: { $0.id == state.activeTabID && $0.kind == .task }) {
@@ -2833,6 +2876,12 @@ public final class WorkbenchStore: ObservableObject {
             state.tabs[index].title = taskTitle(taskID)
         }
         loadTaskUISchemaIfNeeded(taskID)
+        state.taskRun.imagerProgress = imagerProgressSnapshot(
+            taskID: taskID,
+            runID: state.taskRun.runID,
+            taskState: state.taskRun.state,
+            progress: state.taskRun.progress
+        )
     }
 
     public func taskID(forTab tabID: String) -> String {
@@ -2860,7 +2909,8 @@ public final class WorkbenchStore: ObservableObject {
                 logLines: ["Loaded \(schema.displayName) task schema."],
                 warnings: [],
                 products: [],
-                requestSummary: genericTaskRequestSummary(taskID: resolvedTaskID)
+                requestSummary: genericTaskRequestSummary(taskID: resolvedTaskID),
+                imagerProgress: imagerProgressSnapshot(taskID: resolvedTaskID, taskState: .idle, progress: 0)
             )
         } catch {
             state.lastErrors.append("Load task schema for \(resolvedTaskID): \(error)")
@@ -2956,9 +3006,15 @@ public final class WorkbenchStore: ObservableObject {
                 warnings: [],
                 products: [],
                 diagnostics: ["Confirm this task may modify data or create products before running it."],
-                requestSummary: genericTaskRequestSummary(taskID: taskID)
+                requestSummary: genericTaskRequestSummary(taskID: taskID),
+                imagerProgress: imagerProgressSnapshot(taskID: taskID, taskState: .failed, progress: 1.0)
             )
             state.lastErrors.append("Confirm \(task.displayName) before running.")
+            return
+        }
+
+        if taskID == "imager", let parameters = state.dirtyImagingTaskParameters {
+            runDirtyImagingTask(parameters: parameters, task: task, schema: schema)
             return
         }
 
@@ -2987,7 +3043,8 @@ public final class WorkbenchStore: ObservableObject {
             warnings: [],
             products: [],
             diagnostics: [],
-            requestSummary: summary
+            requestSummary: summary,
+            imagerProgress: imagerProgressSnapshot(taskID: taskID, runID: runID, taskState: .running, progress: 0.05)
         )
 
         do {
@@ -3014,8 +3071,71 @@ public final class WorkbenchStore: ObservableObject {
                 warnings: [],
                 products: [],
                 diagnostics: ["\(error)"],
-                requestSummary: summary
+                requestSummary: summary,
+                imagerProgress: imagerProgressSnapshot(taskID: taskID, runID: runID, taskState: .failed, progress: 1.0)
             )
+            state.lastErrors.append("Start \(task.displayName): \(error)")
+        }
+    }
+
+    private func runDirtyImagingTask(
+        parameters: DirtyImagingTaskParameters,
+        task: TaskCatalogEntry,
+        schema: TaskUISchema
+    ) {
+        let validationErrors = parameters.validationErrors()
+        guard validationErrors.isEmpty else {
+            state.taskRun = TaskRun(
+                state: .failed,
+                progress: 1.0,
+                logLines: ["Dirty imaging task validation failed."],
+                warnings: [],
+                products: [],
+                diagnostics: validationErrors,
+                requestSummary: parameters.requestSummary,
+                imagerProgress: imagerProgressSnapshot(taskID: "imager", taskState: .failed, progress: 1.0)
+            )
+            state.lastErrors.append("Dirty imaging parameters are incomplete.")
+            return
+        }
+
+        let runID = nextJobID(prefix: "imager")
+        let summary = parameters.requestSummary
+        let tabID = activeTaskTabID(parameters: parameters)
+        startJob(WorkbenchJob(
+            id: runID,
+            tabID: tabID,
+            kind: .dirtyImagingTask,
+            owner: .user,
+            status: .running,
+            progress: 0.05,
+            title: schema.displayName,
+            detail: summary,
+            logLines: ["Starting \(task.binaryName).", summary],
+            lastEvent: "started"
+        ))
+        state.taskRun = TaskRun(
+            runID: runID,
+            state: .running,
+            progress: 0.05,
+            logLines: ["Starting \(task.binaryName).", summary],
+            warnings: [],
+            products: [],
+            diagnostics: [],
+            requestSummary: summary,
+            imagerProgress: imagerProgressSnapshot(taskID: "imager", runID: runID, taskState: .running, progress: 0.05)
+        )
+
+        do {
+            let request = DirtyImagingTaskRequest(runID: runID, parameters: parameters)
+            let execution = try dirtyImagingClient.startDirtyImaging(request: request) { [weak self] event in
+                DispatchQueue.main.async {
+                    self?.handleDirtyImagingEvent(event, runID: runID, jobID: runID)
+                }
+            }
+            activeTaskExecutions[runID] = execution
+        } catch {
+            failDirtyImagingJob(runID: runID, message: "Failed to start \(task.binaryName).", diagnostics: ["\(error)"])
             state.lastErrors.append("Start \(task.displayName): \(error)")
         }
     }
@@ -3079,6 +3199,25 @@ public final class WorkbenchStore: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
+    private func imagerProgressSnapshot(
+        taskID: String? = nil,
+        runID: String? = nil,
+        taskState: TaskRunState? = nil,
+        progress: Double? = nil
+    ) -> ImagerProgressSnapshot? {
+        let resolvedTaskID = taskID ?? state.activeTaskID
+        let selectedDatasetName = state.selectedDataset?.name
+        let request = ImagerProgressRequest(
+            taskID: resolvedTaskID,
+            runID: runID ?? state.taskRun.runID,
+            taskState: taskState ?? state.taskRun.state,
+            progress: progress ?? state.taskRun.progress,
+            datasetName: selectedDatasetName,
+            requestSummary: state.dirtyImagingTaskParameters?.requestSummary ?? state.taskRun.requestSummary
+        )
+        return imagerProgressSource.snapshot(for: request)
+    }
+
     public func cancelJob(_ jobID: String) {
         cancelJob(jobID, recordError: true)
     }
@@ -3127,6 +3266,12 @@ public final class WorkbenchStore: ObservableObject {
                 state.taskRun.state = .cancelled
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+                state.taskRun.imagerProgress = imagerProgressSnapshot(
+                    taskID: "imager",
+                    runID: jobID,
+                    taskState: .cancelled,
+                    progress: 1.0
+                )
             }
         case .genericTask:
             activeTaskExecutions[jobID]?.cancel()
@@ -3135,6 +3280,12 @@ public final class WorkbenchStore: ObservableObject {
                 state.taskRun.state = .cancelled
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append("Cancellation requested for task.")
+                state.taskRun.imagerProgress = imagerProgressSnapshot(
+                    taskID: state.activeTaskID,
+                    runID: jobID,
+                    taskState: .cancelled,
+                    progress: 1.0
+                )
             }
         }
     }
@@ -4044,6 +4195,12 @@ public final class WorkbenchStore: ObservableObject {
         state.dirtyImagingTaskParameters = parameters
         if state.taskRun.state == .idle || state.taskRun.state == .failed {
             state.taskRun.requestSummary = parameters.requestSummary
+            state.taskRun.imagerProgress = imagerProgressSnapshot(
+                taskID: "imager",
+                runID: state.taskRun.runID,
+                taskState: state.taskRun.state,
+                progress: state.taskRun.progress
+            )
         }
     }
 
@@ -4071,7 +4228,8 @@ public final class WorkbenchStore: ObservableObject {
                 warnings: [],
                 products: [],
                 diagnostics: diagnostics,
-                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary,
+                imagerProgress: imagerProgressSnapshot(taskID: "imager", runID: runID, taskState: .failed, progress: 1.0)
             )
         }
     }
@@ -4121,6 +4279,25 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         switch event {
+        case .progress(let progress):
+            if var job = state.jobs[jobID] {
+                job.status = .running
+                job.progress = max(0.05, progress.workEstimate.fraction)
+                job.lastEvent = progress.phase
+                if job.logLines.last != progress.summary {
+                    job.logLines.append(progress.summary)
+                }
+                state.jobs[jobID] = job
+            }
+            if state.taskRun.runID == runID {
+                state.taskRun.state = .running
+                state.taskRun.progress = max(0.05, progress.workEstimate.fraction)
+                state.taskRun.imagerProgress = progress
+                if state.taskRun.logLines.last != progress.summary {
+                    state.taskRun.logLines.append(progress.summary)
+                }
+            }
+
         case .succeeded(let result):
             finishDirtyImagingJob(runID: jobID, result: result)
             if state.taskRun.runID == runID {
@@ -4137,7 +4314,8 @@ public final class WorkbenchStore: ObservableObject {
                     products: result.artifacts.map(\.path),
                     diagnostics: result.diagnostics,
                     outputPaths: result.outputPaths,
-                    requestSummary: result.request.parameters.requestSummary
+                    requestSummary: result.request.parameters.requestSummary,
+                    imagerProgress: imagerProgressSnapshot(taskID: "imager", runID: runID, taskState: .succeeded, progress: 1.0)
                 )
             }
             let products = appendProducedDatasets(from: result)
@@ -4167,6 +4345,12 @@ public final class WorkbenchStore: ObservableObject {
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append(failure.message)
                 state.taskRun.outputPaths = [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 }
+                state.taskRun.imagerProgress = imagerProgressSnapshot(
+                    taskID: "imager",
+                    runID: runID,
+                    taskState: .cancelled,
+                    progress: 1.0
+                )
                 state.history.append(
                     ProcessingHistoryEvent(
                         id: "hist-run-\(state.history.count + 1)",
@@ -4220,7 +4404,8 @@ public final class WorkbenchStore: ObservableObject {
                             products: managedImagerResult.artifacts.map(\.path),
                             diagnostics: managedImagerResult.diagnostics,
                             outputPaths: managedImagerResult.outputPaths,
-                            requestSummary: state.taskRun.requestSummary
+                            requestSummary: state.taskRun.requestSummary,
+                            imagerProgress: imagerProgressSnapshot(taskID: result.taskID, runID: runID, taskState: .succeeded, progress: 1.0)
                         )
                     } else {
                         let genericProducts = genericTaskProducts(from: result)
@@ -4234,7 +4419,8 @@ public final class WorkbenchStore: ObservableObject {
                             products: genericProducts.map(\.path),
                             diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
                             outputPaths: outputPaths,
-                            requestSummary: state.taskRun.requestSummary
+                            requestSummary: state.taskRun.requestSummary,
+                            imagerProgress: imagerProgressSnapshot(taskID: result.taskID, runID: runID, taskState: .succeeded, progress: 1.0)
                         )
                     }
                 }
@@ -4268,6 +4454,12 @@ public final class WorkbenchStore: ObservableObject {
                     state.taskRun.progress = 1.0
                     state.taskRun.logLines.append(failure.message)
                     state.taskRun.diagnostics.append(contentsOf: failure.diagnostics)
+                    state.taskRun.imagerProgress = imagerProgressSnapshot(
+                        taskID: state.activeTaskID,
+                        runID: runID,
+                        taskState: .failed,
+                        progress: 1.0
+                    )
                 }
                 state.lastErrors.append("Task failed: \(failure.message)")
             case .cancelled(let failure):
@@ -4282,6 +4474,12 @@ public final class WorkbenchStore: ObservableObject {
                     state.taskRun.progress = 1.0
                     state.taskRun.logLines.append(failure.message)
                     state.taskRun.diagnostics.append(contentsOf: failure.diagnostics)
+                    state.taskRun.imagerProgress = imagerProgressSnapshot(
+                        taskID: state.activeTaskID,
+                        runID: runID,
+                        taskState: .cancelled,
+                        progress: 1.0
+                    )
                 }
             }
         }

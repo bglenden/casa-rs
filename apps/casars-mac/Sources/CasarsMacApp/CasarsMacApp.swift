@@ -18,6 +18,7 @@ struct CasarsMacApp: App {
     private let startupOpenSelectedDatasetExplorer: Bool
     private let startupImageRegionBoxes: [(Int, Int, Int, Int)]
     private let startupImageRegionExportPath: String?
+    private let startupShowImagerProgressMockup: Bool
 
     init() {
         let arguments = CommandLine.arguments
@@ -36,6 +37,7 @@ struct CasarsMacApp: App {
                 openSelectedDatasetExplorer: arguments.contains("--open-selected-dataset-explorer"),
                 imageRegionBoxes: Self.regionBoxes(after: "--image-region-box", in: arguments),
                 imageRegionExportPath: Self.argumentValue(after: "--export-image-region-file", in: arguments),
+                showImagerProgressMockup: arguments.contains("--show-imager-progress-mockup"),
                 projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
                     ?? Self.argumentValue(after: "--open-project", in: arguments)
             )
@@ -49,6 +51,7 @@ struct CasarsMacApp: App {
         startupOpenSelectedDatasetExplorer = arguments.contains("--open-selected-dataset-explorer")
         startupImageRegionBoxes = Self.regionBoxes(after: "--image-region-box", in: arguments)
         startupImageRegionExportPath = Self.argumentValue(after: "--export-image-region-file", in: arguments)
+        startupShowImagerProgressMockup = arguments.contains("--show-imager-progress-mockup")
     }
 
     var body: some Scene {
@@ -162,6 +165,7 @@ struct CasarsMacApp: App {
         openSelectedDatasetExplorer: Bool,
         imageRegionBoxes: [(Int, Int, Int, Int)],
         imageRegionExportPath: String?,
+        showImagerProgressMockup: Bool,
         projectPath: String?
     ) {
         let store = WorkbenchStore.empty()
@@ -188,6 +192,9 @@ struct CasarsMacApp: App {
             store.openDefaultTab(kind: .datasetExplorer)
             Self.applyImageRegionBoxes(imageRegionBoxes, store: store)
             Self.exportImageRegionIfNeeded(imageRegionExportPath, store: store)
+        }
+        if showImagerProgressMockup {
+            store.openImagerProgressMockup()
         }
         if simulateMainFlow {
             if tutorialPackPath == nil && projectPath == nil {
@@ -325,6 +332,9 @@ struct CasarsMacApp: App {
             store.openDefaultTab(kind: .datasetExplorer)
             Self.applyImageRegionBoxes(startupImageRegionBoxes, store: store)
             Self.exportImageRegionIfNeeded(startupImageRegionExportPath, store: store)
+        }
+        if startupShowImagerProgressMockup {
+            store.openImagerProgressMockup()
         }
     }
 
