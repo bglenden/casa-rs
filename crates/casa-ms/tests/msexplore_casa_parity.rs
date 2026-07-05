@@ -2015,6 +2015,8 @@ fn run_casa_plotms_sequence_png(calls: &[CasaPlotmsCall<'_>]) -> Result<CasaPlot
     let casa = discover_casa_python().ok_or_else(|| skip_reason(false))?;
     let ms_path = ngc5921_ms_path().ok_or_else(|| skip_reason(true))?;
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let local_ms_path = temp.path().join("casa-plotms-input.ms");
+    copy_measurement_set(&ms_path, &local_ms_path)?;
     let output = temp.path().join("casa-plotms.png");
 
     let mut script = String::from(
@@ -2049,7 +2051,7 @@ except Exception:
         .current_dir(temp.path())
         .arg("-c")
         .arg(&script)
-        .env("CASA_VIS", &ms_path)
+        .env("CASA_VIS", &local_ms_path)
         .env("CASA_OUT", &output)
         .env(
             "DISPLAY",
@@ -2090,6 +2092,8 @@ fn run_casa_plotms_export_on_with_expr(
     let _guard = casa_plotms_lock().lock().expect("lock CASA plotms");
     let casa = discover_casa_python().ok_or_else(|| skip_reason(false))?;
     let temp = tempdir().map_err(|error| format!("tempdir: {error}"))?;
+    let local_ms_path = temp.path().join("casa-plotms-input.ms");
+    copy_measurement_set(ms_path, &local_ms_path)?;
     let output = temp.path().join(match expformat {
         "png" => "casa-plotms.png",
         _ => "casa-plotms.txt",
@@ -2128,7 +2132,7 @@ kwargs = {
         .current_dir(temp.path())
         .arg("-c")
         .arg(&script)
-        .env("CASA_VIS", ms_path)
+        .env("CASA_VIS", &local_ms_path)
         .env("CASA_OUT", &output)
         .env("CASA_EXPFORMAT", expformat)
         // `casaplotms` checks only for the presence of DISPLAY, even when
