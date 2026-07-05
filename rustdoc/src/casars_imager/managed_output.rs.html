@@ -981,176 +981,177 @@
 <a href=#981 id=981 data-nosnippet>981</a>                imaging_row_block_rows: <span class="prelude-val">None</span>,
 <a href=#982 id=982 data-nosnippet>982</a>                imaging_prepare_workers: <span class="prelude-val">None</span>,
 <a href=#983 id=983 data-nosnippet>983</a>                write_preview_pngs: <span class="bool-val">false</span>,
-<a href=#984 id=984 data-nosnippet>984</a>            },
-<a href=#985 id=985 data-nosnippet>985</a>            run: ImagerRunReport {
-<a href=#986 id=986 data-nosnippet>986</a>                warnings: <span class="macro">vec!</span>[<span class="string">"watch residuals"</span>.to_string()],
-<a href=#987 id=987 data-nosnippet>987</a>                gridded_samples: <span class="number">1024</span>,
-<a href=#988 id=988 data-nosnippet>988</a>                major_cycles: <span class="number">6</span>,
-<a href=#989 id=989 data-nosnippet>989</a>                minor_iterations: <span class="number">24</span>,
-<a href=#990 id=990 data-nosnippet>990</a>                iterdone: <span class="number">24</span>,
-<a href=#991 id=991 data-nosnippet>991</a>                nmajordone: <span class="number">6</span>,
-<a href=#992 id=992 data-nosnippet>992</a>                stopcode: <span class="number">10</span>,
-<a href=#993 id=993 data-nosnippet>993</a>                clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::DivergenceDetected),
-<a href=#994 id=994 data-nosnippet>994</a>                summaryminor: Vec::new(),
-<a href=#995 id=995 data-nosnippet>995</a>                stage_timings: <span class="kw">crate</span>::ImagerCoreStageTimings {
-<a href=#996 id=996 data-nosnippet>996</a>                    controller_overhead_ns: <span class="number">1</span>,
-<a href=#997 id=997 data-nosnippet>997</a>                    weighting_ns: <span class="number">2</span>,
-<a href=#998 id=998 data-nosnippet>998</a>                    executor_build_ns: <span class="number">3</span>,
-<a href=#999 id=999 data-nosnippet>999</a>                    psf_grid_alloc_ns: <span class="number">17</span>,
-<a href=#1000 id=1000 data-nosnippet>1000</a>                    planned_sample_replay_ns: <span class="number">21</span>,
-<a href=#1001 id=1001 data-nosnippet>1001</a>                    grid_update_ns: <span class="number">22</span>,
-<a href=#1002 id=1002 data-nosnippet>1002</a>                    psf_grid_ns: <span class="number">4</span>,
-<a href=#1003 id=1003 data-nosnippet>1003</a>                    psf_fft_ns: <span class="number">5</span>,
-<a href=#1004 id=1004 data-nosnippet>1004</a>                    psf_image_correction_ns: <span class="number">18</span>,
-<a href=#1005 id=1005 data-nosnippet>1005</a>                    psf_normalize_ns: <span class="number">6</span>,
-<a href=#1006 id=1006 data-nosnippet>1006</a>                    model_fft_ns: <span class="number">7</span>,
-<a href=#1007 id=1007 data-nosnippet>1007</a>                    residual_grid_alloc_ns: <span class="number">19</span>,
-<a href=#1008 id=1008 data-nosnippet>1008</a>                    residual_degrid_grid_ns: <span class="number">8</span>,
-<a href=#1009 id=1009 data-nosnippet>1009</a>                    residual_fft_ns: <span class="number">9</span>,
-<a href=#1010 id=1010 data-nosnippet>1010</a>                    residual_image_correction_ns: <span class="number">20</span>,
-<a href=#1011 id=1011 data-nosnippet>1011</a>                    residual_normalize_ns: <span class="number">10</span>,
-<a href=#1012 id=1012 data-nosnippet>1012</a>                    minor_cycle_ns: <span class="number">11</span>,
-<a href=#1013 id=1013 data-nosnippet>1013</a>                    minor_cycle_solve_ns: <span class="number">12</span>,
-<a href=#1014 id=1014 data-nosnippet>1014</a>                    major_cycle_refresh_ns: <span class="number">13</span>,
-<a href=#1015 id=1015 data-nosnippet>1015</a>                    beam_fit_ns: <span class="number">14</span>,
-<a href=#1016 id=1016 data-nosnippet>1016</a>                    restore_ns: <span class="number">15</span>,
-<a href=#1017 id=1017 data-nosnippet>1017</a>                    total_ns: <span class="number">16</span>,
-<a href=#1018 id=1018 data-nosnippet>1018</a>                },
-<a href=#1019 id=1019 data-nosnippet>1019</a>                frontend_timings: <span class="kw">crate</span>::ImagerFrontendTaskStageTimings {
-<a href=#1020 id=1020 data-nosnippet>1020</a>                    open_measurement_set_ns: <span class="number">16</span>,
-<a href=#1021 id=1021 data-nosnippet>1021</a>                    prepare_plane_input_ns: <span class="number">17</span>,
-<a href=#1022 id=1022 data-nosnippet>1022</a>                    extract_phase_center_ns: <span class="number">18</span>,
-<a href=#1023 id=1023 data-nosnippet>1023</a>                    run_imaging_ns: <span class="number">19</span>,
-<a href=#1024 id=1024 data-nosnippet>1024</a>                    build_coordinate_system_ns: <span class="number">20</span>,
-<a href=#1025 id=1025 data-nosnippet>1025</a>                    write_products_ns: <span class="number">21</span>,
-<a href=#1026 id=1026 data-nosnippet>1026</a>                    total_ns: <span class="number">22</span>,
-<a href=#1027 id=1027 data-nosnippet>1027</a>                },
-<a href=#1028 id=1028 data-nosnippet>1028</a>                channels: <span class="macro">vec!</span>[<span class="kw">crate</span>::ImagerChannelRunResult {
-<a href=#1029 id=1029 data-nosnippet>1029</a>                    channel_index: <span class="number">2</span>,
-<a href=#1030 id=1030 data-nosnippet>1030</a>                    major_cycles: <span class="number">5</span>,
-<a href=#1031 id=1031 data-nosnippet>1031</a>                    minor_iterations: <span class="number">9</span>,
-<a href=#1032 id=1032 data-nosnippet>1032</a>                    clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::NoCleanablePixels),
-<a href=#1033 id=1033 data-nosnippet>1033</a>                    initial_residual_peak_jy_per_beam: <span class="number">4.0</span>,
-<a href=#1034 id=1034 data-nosnippet>1034</a>                    final_residual_peak_jy_per_beam: <span class="number">2.0</span>,
-<a href=#1035 id=1035 data-nosnippet>1035</a>                    final_cycle_threshold_jy_per_beam: <span class="number">0.4</span>,
-<a href=#1036 id=1036 data-nosnippet>1036</a>                    beam_fit_available: <span class="bool-val">true</span>,
-<a href=#1037 id=1037 data-nosnippet>1037</a>                }],
-<a href=#1038 id=1038 data-nosnippet>1038</a>            },
-<a href=#1039 id=1039 data-nosnippet>1039</a>            artifacts: <span class="macro">vec!</span>[ImagerArtifact {
-<a href=#1040 id=1040 data-nosnippet>1040</a>                kind: ImagerArtifactKind::Alpha,
-<a href=#1041 id=1041 data-nosnippet>1041</a>                label: <span class="string">"Spectral Index"</span>.to_string(),
-<a href=#1042 id=1042 data-nosnippet>1042</a>                path: <span class="string">"/tmp/from-task.alpha"</span>.to_string(),
-<a href=#1043 id=1043 data-nosnippet>1043</a>                exists: <span class="bool-val">true</span>,
-<a href=#1044 id=1044 data-nosnippet>1044</a>                preview_png_path: <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>.to_string()),
-<a href=#1045 id=1045 data-nosnippet>1045</a>                preview_png_exists: <span class="bool-val">false</span>,
-<a href=#1046 id=1046 data-nosnippet>1046</a>            }],
-<a href=#1047 id=1047 data-nosnippet>1047</a>        };
-<a href=#1048 id=1048 data-nosnippet>1048</a>
-<a href=#1049 id=1049 data-nosnippet>1049</a>        <span class="kw">let </span>output = ManagedImagingOutput::from_task_result(<span class="kw-2">&amp;</span>result);
-<a href=#1050 id=1050 data-nosnippet>1050</a>
-<a href=#1051 id=1051 data-nosnippet>1051</a>        <span class="macro">assert_eq!</span>(output.request.spectral_mode, <span class="string">"cube"</span>);
-<a href=#1052 id=1052 data-nosnippet>1052</a>        <span class="macro">assert_eq!</span>(output.request.weighting, <span class="string">"briggs:-0.25"</span>);
-<a href=#1053 id=1053 data-nosnippet>1053</a>        <span class="macro">assert_eq!</span>(output.request.deconvolver, <span class="string">"clark"</span>);
-<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="macro">assert_eq!</span>(output.request.w_term_mode, <span class="string">"wproject"</span>);
-<a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="macro">assert_eq!</span>(output.request.save_model, <span class="string">"modelcolumn"</span>);
-<a href=#1056 id=1056 data-nosnippet>1056</a>        <span class="macro">assert_eq!</span>(output.request.restoring_beam_mode, <span class="string">"per_plane"</span>);
-<a href=#1057 id=1057 data-nosnippet>1057</a>        <span class="macro">assert_eq!</span>(output.request.output_channels, <span class="number">1</span>);
-<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="macro">assert_eq!</span>(output.request.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
-<a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="macro">assert!</span>(output.request.dirty_only);
-<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="macro">assert!</span>(!output.request.write_preview_pngs);
-<a href=#1061 id=1061 data-nosnippet>1061</a>
-<a href=#1062 id=1062 data-nosnippet>1062</a>        <span class="macro">assert_eq!</span>(
-<a href=#1063 id=1063 data-nosnippet>1063</a>            output.run.clean_stop_reason.as_deref(),
-<a href=#1064 id=1064 data-nosnippet>1064</a>            <span class="prelude-val">Some</span>(<span class="string">"DivergenceDetected"</span>)
-<a href=#1065 id=1065 data-nosnippet>1065</a>        );
-<a href=#1066 id=1066 data-nosnippet>1066</a>        <span class="macro">assert_eq!</span>(
-<a href=#1067 id=1067 data-nosnippet>1067</a>            output.run.stage_timings.values_ns[<span class="number">0</span>],
-<a href=#1068 id=1068 data-nosnippet>1068</a>            (<span class="string">"controller_total"</span>.to_string(), <span class="number">16</span>)
-<a href=#1069 id=1069 data-nosnippet>1069</a>        );
-<a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="kw">let </span>stage_timings = output
-<a href=#1071 id=1071 data-nosnippet>1071</a>            .run
-<a href=#1072 id=1072 data-nosnippet>1072</a>            .stage_timings
-<a href=#1073 id=1073 data-nosnippet>1073</a>            .values_ns
-<a href=#1074 id=1074 data-nosnippet>1074</a>            .iter()
-<a href=#1075 id=1075 data-nosnippet>1075</a>            .cloned()
-<a href=#1076 id=1076 data-nosnippet>1076</a>            .collect::&lt;std::collections::BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;();
-<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"executor_build"</span>], <span class="number">3</span>);
-<a href=#1078 id=1078 data-nosnippet>1078</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"psf_normalize"</span>], <span class="number">6</span>);
-<a href=#1079 id=1079 data-nosnippet>1079</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"model_fft"</span>], <span class="number">7</span>);
-<a href=#1080 id=1080 data-nosnippet>1080</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"minor_cycle"</span>], <span class="number">11</span>);
-<a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"minor_cycle_solve"</span>], <span class="number">12</span>);
-<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"major_cycle_refresh"</span>], <span class="number">13</span>);
-<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"beam_fit"</span>], <span class="number">14</span>);
-<a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"restore"</span>], <span class="number">15</span>);
-<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="macro">assert_eq!</span>(
-<a href=#1086 id=1086 data-nosnippet>1086</a>            output.run.frontend_timings.values_ns[<span class="number">6</span>],
-<a href=#1087 id=1087 data-nosnippet>1087</a>            (<span class="string">"total"</span>.to_string(), <span class="number">22</span>)
-<a href=#1088 id=1088 data-nosnippet>1088</a>        );
-<a href=#1089 id=1089 data-nosnippet>1089</a>        <span class="macro">assert!</span>(output.run.channels[<span class="number">0</span>].beam_fit_available);
-<a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="macro">assert_eq!</span>(
-<a href=#1091 id=1091 data-nosnippet>1091</a>            output.run.channels[<span class="number">0</span>].clean_stop_reason.as_deref(),
-<a href=#1092 id=1092 data-nosnippet>1092</a>            <span class="prelude-val">Some</span>(<span class="string">"NoCleanablePixels"</span>)
-<a href=#1093 id=1093 data-nosnippet>1093</a>        );
-<a href=#1094 id=1094 data-nosnippet>1094</a>
-<a href=#1095 id=1095 data-nosnippet>1095</a>        <span class="macro">assert_eq!</span>(output.artifacts.len(), <span class="number">1</span>);
-<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].kind, <span class="string">"alpha"</span>);
-<a href=#1097 id=1097 data-nosnippet>1097</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].label, <span class="string">"Spectral Index"</span>);
-<a href=#1098 id=1098 data-nosnippet>1098</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].exists);
-<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="macro">assert_eq!</span>(
-<a href=#1100 id=1100 data-nosnippet>1100</a>            output.artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
-<a href=#1101 id=1101 data-nosnippet>1101</a>            <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>)
-<a href=#1102 id=1102 data-nosnippet>1102</a>        );
-<a href=#1103 id=1103 data-nosnippet>1103</a>        <span class="macro">assert!</span>(!output.artifacts[<span class="number">0</span>].preview_png_exists);
-<a href=#1104 id=1104 data-nosnippet>1104</a>    }
-<a href=#1105 id=1105 data-nosnippet>1105</a>
-<a href=#1106 id=1106 data-nosnippet>1106</a>    <span class="attr">#[test]
-<a href=#1107 id=1107 data-nosnippet>1107</a>    </span><span class="kw">fn </span>artifact_helpers_cover_standard_products_and_preview_flags() {
-<a href=#1108 id=1108 data-nosnippet>1108</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
-<a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"standard-output"</span>);
-<a href=#1110 id=1110 data-nosnippet>1110</a>        fs::write(imagename.with_extension(<span class="string">"image"</span>), <span class="string">b"image"</span>).unwrap();
-<a href=#1111 id=1111 data-nosnippet>1111</a>        fs::write(imagename.with_extension(<span class="string">"image.png"</span>), <span class="string">b"png"</span>).unwrap();
-<a href=#1112 id=1112 data-nosnippet>1112</a>
-<a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = sample_cli_config(imagename.clone());
-<a href=#1114 id=1114 data-nosnippet>1114</a>        config.deconvolver = Deconvolver::Clark;
-<a href=#1115 id=1115 data-nosnippet>1115</a>        config.nterms = <span class="number">1</span>;
-<a href=#1116 id=1116 data-nosnippet>1116</a>        config.spectral_mode = SpectralMode::Cube;
-<a href=#1117 id=1117 data-nosnippet>1117</a>        config.write_preview_pngs = <span class="bool-val">true</span>;
-<a href=#1118 id=1118 data-nosnippet>1118</a>
-<a href=#1119 id=1119 data-nosnippet>1119</a>        <span class="kw">let </span>artifacts = imaging_artifacts(<span class="kw-2">&amp;</span>config);
-<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="macro">assert_eq!</span>(artifacts.len(), <span class="number">4</span>);
-<a href=#1121 id=1121 data-nosnippet>1121</a>        <span class="macro">assert_eq!</span>(
-<a href=#1122 id=1122 data-nosnippet>1122</a>            artifacts
-<a href=#1123 id=1123 data-nosnippet>1123</a>                .iter()
-<a href=#1124 id=1124 data-nosnippet>1124</a>                .map(|artifact| artifact.kind.as_str())
-<a href=#1125 id=1125 data-nosnippet>1125</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#1126 id=1126 data-nosnippet>1126</a>            <span class="macro">vec!</span>[<span class="string">"psf"</span>, <span class="string">"residual"</span>, <span class="string">"model"</span>, <span class="string">"image"</span>]
-<a href=#1127 id=1127 data-nosnippet>1127</a>        );
-<a href=#1128 id=1128 data-nosnippet>1128</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">0</span>].label, <span class="string">"PSF"</span>);
-<a href=#1129 id=1129 data-nosnippet>1129</a>        <span class="macro">assert!</span>(!artifacts[<span class="number">0</span>].exists);
-<a href=#1130 id=1130 data-nosnippet>1130</a>        <span class="macro">assert_eq!</span>(
-<a href=#1131 id=1131 data-nosnippet>1131</a>            artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
-<a href=#1132 id=1132 data-nosnippet>1132</a>            <span class="prelude-val">Some</span>(
-<a href=#1133 id=1133 data-nosnippet>1133</a>                imagename
-<a href=#1134 id=1134 data-nosnippet>1134</a>                    .with_extension(<span class="string">"psf.png"</span>)
-<a href=#1135 id=1135 data-nosnippet>1135</a>                    .to_string_lossy()
-<a href=#1136 id=1136 data-nosnippet>1136</a>                    .as_ref()
-<a href=#1137 id=1137 data-nosnippet>1137</a>            )
-<a href=#1138 id=1138 data-nosnippet>1138</a>        );
-<a href=#1139 id=1139 data-nosnippet>1139</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">3</span>].label, <span class="string">"Restored Image"</span>);
-<a href=#1140 id=1140 data-nosnippet>1140</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].exists);
-<a href=#1141 id=1141 data-nosnippet>1141</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].preview_png_exists);
-<a href=#1142 id=1142 data-nosnippet>1142</a>
-<a href=#1143 id=1143 data-nosnippet>1143</a>        <span class="kw">let </span>manual = artifact(
-<a href=#1144 id=1144 data-nosnippet>1144</a>            label_for_term(<span class="string">"Residual"</span>, <span class="number">2</span>),
-<a href=#1145 id=1145 data-nosnippet>1145</a>            <span class="string">"residual"</span>,
-<a href=#1146 id=1146 data-nosnippet>1146</a>            imagename.with_extension(<span class="string">"residual"</span>),
-<a href=#1147 id=1147 data-nosnippet>1147</a>            <span class="prelude-val">None</span>,
-<a href=#1148 id=1148 data-nosnippet>1148</a>        );
-<a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="macro">assert_eq!</span>(manual.label, <span class="string">"Residual TT2"</span>);
-<a href=#1150 id=1150 data-nosnippet>1150</a>        <span class="macro">assert_eq!</span>(manual.kind, <span class="string">"residual"</span>);
-<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="macro">assert!</span>(!manual.exists);
-<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="macro">assert_eq!</span>(manual.preview_png_path, <span class="prelude-val">None</span>);
-<a href=#1153 id=1153 data-nosnippet>1153</a>        <span class="macro">assert!</span>(!manual.preview_png_exists);
-<a href=#1154 id=1154 data-nosnippet>1154</a>    }
-<a href=#1155 id=1155 data-nosnippet>1155</a>}
+<a href=#984 id=984 data-nosnippet>984</a>                progress: <span class="prelude-val">None</span>,
+<a href=#985 id=985 data-nosnippet>985</a>            },
+<a href=#986 id=986 data-nosnippet>986</a>            run: ImagerRunReport {
+<a href=#987 id=987 data-nosnippet>987</a>                warnings: <span class="macro">vec!</span>[<span class="string">"watch residuals"</span>.to_string()],
+<a href=#988 id=988 data-nosnippet>988</a>                gridded_samples: <span class="number">1024</span>,
+<a href=#989 id=989 data-nosnippet>989</a>                major_cycles: <span class="number">6</span>,
+<a href=#990 id=990 data-nosnippet>990</a>                minor_iterations: <span class="number">24</span>,
+<a href=#991 id=991 data-nosnippet>991</a>                iterdone: <span class="number">24</span>,
+<a href=#992 id=992 data-nosnippet>992</a>                nmajordone: <span class="number">6</span>,
+<a href=#993 id=993 data-nosnippet>993</a>                stopcode: <span class="number">10</span>,
+<a href=#994 id=994 data-nosnippet>994</a>                clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::DivergenceDetected),
+<a href=#995 id=995 data-nosnippet>995</a>                summaryminor: Vec::new(),
+<a href=#996 id=996 data-nosnippet>996</a>                stage_timings: <span class="kw">crate</span>::ImagerCoreStageTimings {
+<a href=#997 id=997 data-nosnippet>997</a>                    controller_overhead_ns: <span class="number">1</span>,
+<a href=#998 id=998 data-nosnippet>998</a>                    weighting_ns: <span class="number">2</span>,
+<a href=#999 id=999 data-nosnippet>999</a>                    executor_build_ns: <span class="number">3</span>,
+<a href=#1000 id=1000 data-nosnippet>1000</a>                    psf_grid_alloc_ns: <span class="number">17</span>,
+<a href=#1001 id=1001 data-nosnippet>1001</a>                    planned_sample_replay_ns: <span class="number">21</span>,
+<a href=#1002 id=1002 data-nosnippet>1002</a>                    grid_update_ns: <span class="number">22</span>,
+<a href=#1003 id=1003 data-nosnippet>1003</a>                    psf_grid_ns: <span class="number">4</span>,
+<a href=#1004 id=1004 data-nosnippet>1004</a>                    psf_fft_ns: <span class="number">5</span>,
+<a href=#1005 id=1005 data-nosnippet>1005</a>                    psf_image_correction_ns: <span class="number">18</span>,
+<a href=#1006 id=1006 data-nosnippet>1006</a>                    psf_normalize_ns: <span class="number">6</span>,
+<a href=#1007 id=1007 data-nosnippet>1007</a>                    model_fft_ns: <span class="number">7</span>,
+<a href=#1008 id=1008 data-nosnippet>1008</a>                    residual_grid_alloc_ns: <span class="number">19</span>,
+<a href=#1009 id=1009 data-nosnippet>1009</a>                    residual_degrid_grid_ns: <span class="number">8</span>,
+<a href=#1010 id=1010 data-nosnippet>1010</a>                    residual_fft_ns: <span class="number">9</span>,
+<a href=#1011 id=1011 data-nosnippet>1011</a>                    residual_image_correction_ns: <span class="number">20</span>,
+<a href=#1012 id=1012 data-nosnippet>1012</a>                    residual_normalize_ns: <span class="number">10</span>,
+<a href=#1013 id=1013 data-nosnippet>1013</a>                    minor_cycle_ns: <span class="number">11</span>,
+<a href=#1014 id=1014 data-nosnippet>1014</a>                    minor_cycle_solve_ns: <span class="number">12</span>,
+<a href=#1015 id=1015 data-nosnippet>1015</a>                    major_cycle_refresh_ns: <span class="number">13</span>,
+<a href=#1016 id=1016 data-nosnippet>1016</a>                    beam_fit_ns: <span class="number">14</span>,
+<a href=#1017 id=1017 data-nosnippet>1017</a>                    restore_ns: <span class="number">15</span>,
+<a href=#1018 id=1018 data-nosnippet>1018</a>                    total_ns: <span class="number">16</span>,
+<a href=#1019 id=1019 data-nosnippet>1019</a>                },
+<a href=#1020 id=1020 data-nosnippet>1020</a>                frontend_timings: <span class="kw">crate</span>::ImagerFrontendTaskStageTimings {
+<a href=#1021 id=1021 data-nosnippet>1021</a>                    open_measurement_set_ns: <span class="number">16</span>,
+<a href=#1022 id=1022 data-nosnippet>1022</a>                    prepare_plane_input_ns: <span class="number">17</span>,
+<a href=#1023 id=1023 data-nosnippet>1023</a>                    extract_phase_center_ns: <span class="number">18</span>,
+<a href=#1024 id=1024 data-nosnippet>1024</a>                    run_imaging_ns: <span class="number">19</span>,
+<a href=#1025 id=1025 data-nosnippet>1025</a>                    build_coordinate_system_ns: <span class="number">20</span>,
+<a href=#1026 id=1026 data-nosnippet>1026</a>                    write_products_ns: <span class="number">21</span>,
+<a href=#1027 id=1027 data-nosnippet>1027</a>                    total_ns: <span class="number">22</span>,
+<a href=#1028 id=1028 data-nosnippet>1028</a>                },
+<a href=#1029 id=1029 data-nosnippet>1029</a>                channels: <span class="macro">vec!</span>[<span class="kw">crate</span>::ImagerChannelRunResult {
+<a href=#1030 id=1030 data-nosnippet>1030</a>                    channel_index: <span class="number">2</span>,
+<a href=#1031 id=1031 data-nosnippet>1031</a>                    major_cycles: <span class="number">5</span>,
+<a href=#1032 id=1032 data-nosnippet>1032</a>                    minor_iterations: <span class="number">9</span>,
+<a href=#1033 id=1033 data-nosnippet>1033</a>                    clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::NoCleanablePixels),
+<a href=#1034 id=1034 data-nosnippet>1034</a>                    initial_residual_peak_jy_per_beam: <span class="number">4.0</span>,
+<a href=#1035 id=1035 data-nosnippet>1035</a>                    final_residual_peak_jy_per_beam: <span class="number">2.0</span>,
+<a href=#1036 id=1036 data-nosnippet>1036</a>                    final_cycle_threshold_jy_per_beam: <span class="number">0.4</span>,
+<a href=#1037 id=1037 data-nosnippet>1037</a>                    beam_fit_available: <span class="bool-val">true</span>,
+<a href=#1038 id=1038 data-nosnippet>1038</a>                }],
+<a href=#1039 id=1039 data-nosnippet>1039</a>            },
+<a href=#1040 id=1040 data-nosnippet>1040</a>            artifacts: <span class="macro">vec!</span>[ImagerArtifact {
+<a href=#1041 id=1041 data-nosnippet>1041</a>                kind: ImagerArtifactKind::Alpha,
+<a href=#1042 id=1042 data-nosnippet>1042</a>                label: <span class="string">"Spectral Index"</span>.to_string(),
+<a href=#1043 id=1043 data-nosnippet>1043</a>                path: <span class="string">"/tmp/from-task.alpha"</span>.to_string(),
+<a href=#1044 id=1044 data-nosnippet>1044</a>                exists: <span class="bool-val">true</span>,
+<a href=#1045 id=1045 data-nosnippet>1045</a>                preview_png_path: <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>.to_string()),
+<a href=#1046 id=1046 data-nosnippet>1046</a>                preview_png_exists: <span class="bool-val">false</span>,
+<a href=#1047 id=1047 data-nosnippet>1047</a>            }],
+<a href=#1048 id=1048 data-nosnippet>1048</a>        };
+<a href=#1049 id=1049 data-nosnippet>1049</a>
+<a href=#1050 id=1050 data-nosnippet>1050</a>        <span class="kw">let </span>output = ManagedImagingOutput::from_task_result(<span class="kw-2">&amp;</span>result);
+<a href=#1051 id=1051 data-nosnippet>1051</a>
+<a href=#1052 id=1052 data-nosnippet>1052</a>        <span class="macro">assert_eq!</span>(output.request.spectral_mode, <span class="string">"cube"</span>);
+<a href=#1053 id=1053 data-nosnippet>1053</a>        <span class="macro">assert_eq!</span>(output.request.weighting, <span class="string">"briggs:-0.25"</span>);
+<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="macro">assert_eq!</span>(output.request.deconvolver, <span class="string">"clark"</span>);
+<a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="macro">assert_eq!</span>(output.request.w_term_mode, <span class="string">"wproject"</span>);
+<a href=#1056 id=1056 data-nosnippet>1056</a>        <span class="macro">assert_eq!</span>(output.request.save_model, <span class="string">"modelcolumn"</span>);
+<a href=#1057 id=1057 data-nosnippet>1057</a>        <span class="macro">assert_eq!</span>(output.request.restoring_beam_mode, <span class="string">"per_plane"</span>);
+<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="macro">assert_eq!</span>(output.request.output_channels, <span class="number">1</span>);
+<a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="macro">assert_eq!</span>(output.request.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
+<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="macro">assert!</span>(output.request.dirty_only);
+<a href=#1061 id=1061 data-nosnippet>1061</a>        <span class="macro">assert!</span>(!output.request.write_preview_pngs);
+<a href=#1062 id=1062 data-nosnippet>1062</a>
+<a href=#1063 id=1063 data-nosnippet>1063</a>        <span class="macro">assert_eq!</span>(
+<a href=#1064 id=1064 data-nosnippet>1064</a>            output.run.clean_stop_reason.as_deref(),
+<a href=#1065 id=1065 data-nosnippet>1065</a>            <span class="prelude-val">Some</span>(<span class="string">"DivergenceDetected"</span>)
+<a href=#1066 id=1066 data-nosnippet>1066</a>        );
+<a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="macro">assert_eq!</span>(
+<a href=#1068 id=1068 data-nosnippet>1068</a>            output.run.stage_timings.values_ns[<span class="number">0</span>],
+<a href=#1069 id=1069 data-nosnippet>1069</a>            (<span class="string">"controller_total"</span>.to_string(), <span class="number">16</span>)
+<a href=#1070 id=1070 data-nosnippet>1070</a>        );
+<a href=#1071 id=1071 data-nosnippet>1071</a>        <span class="kw">let </span>stage_timings = output
+<a href=#1072 id=1072 data-nosnippet>1072</a>            .run
+<a href=#1073 id=1073 data-nosnippet>1073</a>            .stage_timings
+<a href=#1074 id=1074 data-nosnippet>1074</a>            .values_ns
+<a href=#1075 id=1075 data-nosnippet>1075</a>            .iter()
+<a href=#1076 id=1076 data-nosnippet>1076</a>            .cloned()
+<a href=#1077 id=1077 data-nosnippet>1077</a>            .collect::&lt;std::collections::BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;();
+<a href=#1078 id=1078 data-nosnippet>1078</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"executor_build"</span>], <span class="number">3</span>);
+<a href=#1079 id=1079 data-nosnippet>1079</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"psf_normalize"</span>], <span class="number">6</span>);
+<a href=#1080 id=1080 data-nosnippet>1080</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"model_fft"</span>], <span class="number">7</span>);
+<a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"minor_cycle"</span>], <span class="number">11</span>);
+<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"minor_cycle_solve"</span>], <span class="number">12</span>);
+<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"major_cycle_refresh"</span>], <span class="number">13</span>);
+<a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"beam_fit"</span>], <span class="number">14</span>);
+<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="macro">assert_eq!</span>(stage_timings[<span class="string">"restore"</span>], <span class="number">15</span>);
+<a href=#1086 id=1086 data-nosnippet>1086</a>        <span class="macro">assert_eq!</span>(
+<a href=#1087 id=1087 data-nosnippet>1087</a>            output.run.frontend_timings.values_ns[<span class="number">6</span>],
+<a href=#1088 id=1088 data-nosnippet>1088</a>            (<span class="string">"total"</span>.to_string(), <span class="number">22</span>)
+<a href=#1089 id=1089 data-nosnippet>1089</a>        );
+<a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="macro">assert!</span>(output.run.channels[<span class="number">0</span>].beam_fit_available);
+<a href=#1091 id=1091 data-nosnippet>1091</a>        <span class="macro">assert_eq!</span>(
+<a href=#1092 id=1092 data-nosnippet>1092</a>            output.run.channels[<span class="number">0</span>].clean_stop_reason.as_deref(),
+<a href=#1093 id=1093 data-nosnippet>1093</a>            <span class="prelude-val">Some</span>(<span class="string">"NoCleanablePixels"</span>)
+<a href=#1094 id=1094 data-nosnippet>1094</a>        );
+<a href=#1095 id=1095 data-nosnippet>1095</a>
+<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="macro">assert_eq!</span>(output.artifacts.len(), <span class="number">1</span>);
+<a href=#1097 id=1097 data-nosnippet>1097</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].kind, <span class="string">"alpha"</span>);
+<a href=#1098 id=1098 data-nosnippet>1098</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].label, <span class="string">"Spectral Index"</span>);
+<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].exists);
+<a href=#1100 id=1100 data-nosnippet>1100</a>        <span class="macro">assert_eq!</span>(
+<a href=#1101 id=1101 data-nosnippet>1101</a>            output.artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
+<a href=#1102 id=1102 data-nosnippet>1102</a>            <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>)
+<a href=#1103 id=1103 data-nosnippet>1103</a>        );
+<a href=#1104 id=1104 data-nosnippet>1104</a>        <span class="macro">assert!</span>(!output.artifacts[<span class="number">0</span>].preview_png_exists);
+<a href=#1105 id=1105 data-nosnippet>1105</a>    }
+<a href=#1106 id=1106 data-nosnippet>1106</a>
+<a href=#1107 id=1107 data-nosnippet>1107</a>    <span class="attr">#[test]
+<a href=#1108 id=1108 data-nosnippet>1108</a>    </span><span class="kw">fn </span>artifact_helpers_cover_standard_products_and_preview_flags() {
+<a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
+<a href=#1110 id=1110 data-nosnippet>1110</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"standard-output"</span>);
+<a href=#1111 id=1111 data-nosnippet>1111</a>        fs::write(imagename.with_extension(<span class="string">"image"</span>), <span class="string">b"image"</span>).unwrap();
+<a href=#1112 id=1112 data-nosnippet>1112</a>        fs::write(imagename.with_extension(<span class="string">"image.png"</span>), <span class="string">b"png"</span>).unwrap();
+<a href=#1113 id=1113 data-nosnippet>1113</a>
+<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = sample_cli_config(imagename.clone());
+<a href=#1115 id=1115 data-nosnippet>1115</a>        config.deconvolver = Deconvolver::Clark;
+<a href=#1116 id=1116 data-nosnippet>1116</a>        config.nterms = <span class="number">1</span>;
+<a href=#1117 id=1117 data-nosnippet>1117</a>        config.spectral_mode = SpectralMode::Cube;
+<a href=#1118 id=1118 data-nosnippet>1118</a>        config.write_preview_pngs = <span class="bool-val">true</span>;
+<a href=#1119 id=1119 data-nosnippet>1119</a>
+<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="kw">let </span>artifacts = imaging_artifacts(<span class="kw-2">&amp;</span>config);
+<a href=#1121 id=1121 data-nosnippet>1121</a>        <span class="macro">assert_eq!</span>(artifacts.len(), <span class="number">4</span>);
+<a href=#1122 id=1122 data-nosnippet>1122</a>        <span class="macro">assert_eq!</span>(
+<a href=#1123 id=1123 data-nosnippet>1123</a>            artifacts
+<a href=#1124 id=1124 data-nosnippet>1124</a>                .iter()
+<a href=#1125 id=1125 data-nosnippet>1125</a>                .map(|artifact| artifact.kind.as_str())
+<a href=#1126 id=1126 data-nosnippet>1126</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#1127 id=1127 data-nosnippet>1127</a>            <span class="macro">vec!</span>[<span class="string">"psf"</span>, <span class="string">"residual"</span>, <span class="string">"model"</span>, <span class="string">"image"</span>]
+<a href=#1128 id=1128 data-nosnippet>1128</a>        );
+<a href=#1129 id=1129 data-nosnippet>1129</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">0</span>].label, <span class="string">"PSF"</span>);
+<a href=#1130 id=1130 data-nosnippet>1130</a>        <span class="macro">assert!</span>(!artifacts[<span class="number">0</span>].exists);
+<a href=#1131 id=1131 data-nosnippet>1131</a>        <span class="macro">assert_eq!</span>(
+<a href=#1132 id=1132 data-nosnippet>1132</a>            artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
+<a href=#1133 id=1133 data-nosnippet>1133</a>            <span class="prelude-val">Some</span>(
+<a href=#1134 id=1134 data-nosnippet>1134</a>                imagename
+<a href=#1135 id=1135 data-nosnippet>1135</a>                    .with_extension(<span class="string">"psf.png"</span>)
+<a href=#1136 id=1136 data-nosnippet>1136</a>                    .to_string_lossy()
+<a href=#1137 id=1137 data-nosnippet>1137</a>                    .as_ref()
+<a href=#1138 id=1138 data-nosnippet>1138</a>            )
+<a href=#1139 id=1139 data-nosnippet>1139</a>        );
+<a href=#1140 id=1140 data-nosnippet>1140</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">3</span>].label, <span class="string">"Restored Image"</span>);
+<a href=#1141 id=1141 data-nosnippet>1141</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].exists);
+<a href=#1142 id=1142 data-nosnippet>1142</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].preview_png_exists);
+<a href=#1143 id=1143 data-nosnippet>1143</a>
+<a href=#1144 id=1144 data-nosnippet>1144</a>        <span class="kw">let </span>manual = artifact(
+<a href=#1145 id=1145 data-nosnippet>1145</a>            label_for_term(<span class="string">"Residual"</span>, <span class="number">2</span>),
+<a href=#1146 id=1146 data-nosnippet>1146</a>            <span class="string">"residual"</span>,
+<a href=#1147 id=1147 data-nosnippet>1147</a>            imagename.with_extension(<span class="string">"residual"</span>),
+<a href=#1148 id=1148 data-nosnippet>1148</a>            <span class="prelude-val">None</span>,
+<a href=#1149 id=1149 data-nosnippet>1149</a>        );
+<a href=#1150 id=1150 data-nosnippet>1150</a>        <span class="macro">assert_eq!</span>(manual.label, <span class="string">"Residual TT2"</span>);
+<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="macro">assert_eq!</span>(manual.kind, <span class="string">"residual"</span>);
+<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="macro">assert!</span>(!manual.exists);
+<a href=#1153 id=1153 data-nosnippet>1153</a>        <span class="macro">assert_eq!</span>(manual.preview_png_path, <span class="prelude-val">None</span>);
+<a href=#1154 id=1154 data-nosnippet>1154</a>        <span class="macro">assert!</span>(!manual.preview_png_exists);
+<a href=#1155 id=1155 data-nosnippet>1155</a>    }
+<a href=#1156 id=1156 data-nosnippet>1156</a>}
 </code></pre></div></section></main></body></html>
