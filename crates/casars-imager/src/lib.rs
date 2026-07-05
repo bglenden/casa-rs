@@ -2345,7 +2345,7 @@ fn can_run_standard_mfs_fixed_tile_streaming_clean(
         && config.deconvolver != Deconvolver::Mtmfs
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
         && config.phasecenter.is_none()
-        && config.phasecenter_field.is_none()
+        && phasecenter_field_matches_single_selected_field(config)
         && config.save_model == SaveModelMode::None
         && config.outlier_file.is_none()
         && config.use_mask == CleanMaskMode::User
@@ -2367,7 +2367,7 @@ fn can_run_standard_mfs_dirty_streaming(
         && !config.use_pointing
         && config.field_ids.as_ref().is_none_or(|ids| ids.len() <= 1)
         && config.phasecenter.is_none()
-        && config.phasecenter_field.is_none()
+        && phasecenter_field_matches_single_selected_field(config)
         && config.save_model == SaveModelMode::None
         && config.start_model.is_none()
         && config.outlier_file.is_none()
@@ -2376,6 +2376,16 @@ fn can_run_standard_mfs_dirty_streaming(
         && matches!(config.w_term_mode, WTermMode::None | WTermMode::WProject)
         && !needs_single_field_primary_beam_products(config)
         && (config.dirty_only || config.niter == 0)
+}
+
+fn phasecenter_field_matches_single_selected_field(config: &CliConfig) -> bool {
+    match config.phasecenter_field {
+        None => true,
+        Some(phasecenter_field) => config
+            .field_ids
+            .as_ref()
+            .is_some_and(|field_ids| field_ids.as_slice() == [phasecenter_field]),
+    }
 }
 
 fn can_run_mfs_mosaic_from_single_plane_stream(
