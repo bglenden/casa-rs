@@ -743,9 +743,7 @@ fn acquire_imager_progress_resources_with_threads(
     let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
         return None;
     };
-    let Some(context) = context.as_mut() else {
-        return None;
-    };
+    let context = context.as_mut()?;
     for resource in resources {
         let resource = (*resource).to_string();
         *context
@@ -39676,6 +39674,8 @@ mod tests {
                 ddid: 0,
                 spw_id: 0,
                 polarization_id: 0,
+                antenna1_id: 0,
+                antenna2_id,
                 time_mjd_seconds: Some(time_mjd_seconds),
             },
             phase_center_field_id: Some(field_id),

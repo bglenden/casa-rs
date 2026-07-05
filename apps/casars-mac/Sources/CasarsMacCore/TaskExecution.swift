@@ -34,17 +34,20 @@ public struct GenericTaskResult: Equatable {
     public var arguments: [String]
     public var stdout: String
     public var stderr: String
+    public var requestJSONPath: String?
 
     public init(
         taskID: String,
         arguments: [String],
         stdout: String,
-        stderr: String
+        stderr: String,
+        requestJSONPath: String? = nil
     ) {
         self.taskID = taskID
         self.arguments = arguments
         self.stdout = stdout
         self.stderr = stderr
+        self.requestJSONPath = requestJSONPath
     }
 }
 
@@ -166,20 +169,29 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         request: GenericTaskRequest,
         eventHandler: @escaping (GenericTaskEvent) -> Void
     ) throws -> TaskExecution {
-        let arguments = try Self.arguments(for: request)
+        var executionRequest = request
+        let requestJSONPath = try Self.saveJSONRequestIfNeeded(for: request)
+        if let requestJSONPath {
+            executionRequest.values["request_json"] = requestJSONPath
+        }
+        let arguments = if let requestJSONPath {
+            ["--json-run", requestJSONPath]
+        } else {
+            try Self.arguments(for: executionRequest)
+        }
         let execution = ProcessTaskExecution()
         queue.async {
             do {
-                try Self.createOutputParentDirectories(for: request)
+                try Self.createOutputParentDirectories(for: executionRequest)
                 var progressParser = ImagerProgressStderrParser()
                 var progressDiagnostics: [String] = []
                 let progressParserLock = NSLock()
-                let progressParserQueue = request.task.id == "imager"
+                let progressParserQueue = executionRequest.task.id == "imager"
                     ? DispatchQueue(label: "casars.mac.imager-progress-parser", qos: .userInitiated)
                     : nil
-                let handleProgressChunk: ((String) -> Void)? = request.task.id == "imager" ? { chunk in
+                let handleProgressChunk: ((String) -> Void)? = executionRequest.task.id == "imager" ? { chunk in
                     progressParserLock.lock()
-                    let records = progressParser.append(chunk, runID: request.runID, state: .running)
+                    let records = progressParser.append(chunk, runID: executionRequest.runID, state: .running)
                     let snapshots = records.compactMap { record -> ImagerProgressSnapshot? in
                         if case .progress(let snapshot) = record {
                             return snapshot
@@ -198,19 +210,19 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                     }
                 } : nil
                 let output = try Self.runProcess(
-                    binaryName: request.task.binaryName,
-                    overrideEnv: request.task.overrideEnv,
+                    binaryName: executionRequest.task.binaryName,
+                    overrideEnv: executionRequest.task.overrideEnv,
                     arguments: arguments,
-                    workingDirectoryPath: request.workingDirectoryPath,
+                    workingDirectoryPath: executionRequest.workingDirectoryPath,
                     execution: execution,
                     stderrChunkHandler: handleProgressChunk,
                     stderrChunkHandlerQueue: progressParserQueue,
-                    storesStderr: request.task.id != "imager"
+                    storesStderr: executionRequest.task.id != "imager"
                 )
-                if request.task.id == "imager" {
+                if executionRequest.task.id == "imager" {
                     progressParserQueue?.sync {}
                     progressParserLock.lock()
-                    let finalRecords = progressParser.finish(runID: request.runID, state: .running)
+                    let finalRecords = progressParser.finish(runID: executionRequest.runID, state: .running)
                     let finalSnapshots = finalRecords.compactMap { record -> ImagerProgressSnapshot? in
                         if case .progress(let snapshot) = record {
                             return snapshot
@@ -228,21 +240,22 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                         eventHandler(.progress(snapshot))
                     }
                 }
-                let stderr = request.task.id == "imager"
+                let stderr = executionRequest.task.id == "imager"
                     ? progressDiagnostics.joined(separator: "\n")
                     : output.stderr
                 if execution.isCancelled {
                     eventHandler(.cancelled(GenericTaskFailure(message: "Task was cancelled.", diagnostics: [stderr].filter { !$0.isEmpty })))
                 } else if output.exitCode == 0 {
                     eventHandler(.succeeded(GenericTaskResult(
-                        taskID: request.task.id,
+                        taskID: executionRequest.task.id,
                         arguments: arguments,
                         stdout: output.stdout,
-                        stderr: stderr
+                        stderr: stderr,
+                        requestJSONPath: requestJSONPath
                     )))
                 } else {
                     eventHandler(.failed(GenericTaskFailure(
-                        message: "\(request.task.binaryName) exited with \(output.exitCode).",
+                        message: "\(executionRequest.task.binaryName) exited with \(output.exitCode).",
                         diagnostics: [stderr, output.stdout].filter { !$0.isEmpty }
                     )))
                 }
@@ -251,6 +264,61 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             }
         }
         return execution
+    }
+
+    static func savedJSONRequestData(for request: GenericTaskRequest) throws -> Data {
+        let excludedKeys = Set(["request_kind", "request_json"])
+        var payload: [String: Any] = [:]
+        for argument in request.schema.arguments.sorted(by: { $0.order < $1.order }) {
+            guard !excludedKeys.contains(argument.id) else { continue }
+            let value = (request.values[argument.id] ?? argument.default ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            payload[argument.id] = try jsonValue(from: value)
+        }
+        let envelope: [String: Any] = [
+            "kind": request.values["request_kind"] ?? "family",
+            "request": payload
+        ]
+        return try JSONSerialization.data(withJSONObject: envelope, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    private static func saveJSONRequestIfNeeded(for request: GenericTaskRequest) throws -> String? {
+        let requestKind = request.values["request_kind"] ?? request.schema.arguments
+            .first { $0.id == "request_kind" }?
+            .default
+        guard requestKind == "family",
+              let path = request.values["request_json"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty
+        else {
+            return nil
+        }
+        let url = resolvedTaskPath(path, workingDirectoryPath: request.workingDirectoryPath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try savedJSONRequestData(for: request)
+        try data.write(to: url, options: .atomic)
+        return url.path
+    }
+
+    private static func jsonValue(from value: String) throws -> Any {
+        if let data = value.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data),
+           JSONSerialization.isValidJSONObject(object) {
+            return object
+        }
+        if value == "true" {
+            return true
+        }
+        if value == "false" {
+            return false
+        }
+        if let integer = Int(value) {
+            return integer
+        }
+        if let double = Double(value) {
+            return double
+        }
+        return value
     }
 
     static func createOutputParentDirectories(for request: GenericTaskRequest) throws {

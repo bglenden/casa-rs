@@ -1067,7 +1067,7 @@ pub type StandardMfsProgressCallback =
 ///
 /// These values are deliberately separate from [`ImagingRequest`] so callers
 /// can tune memory residency without changing the imaging contract itself.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct StandardMfsExecutionConfig {
     /// Minor-cycle backend selected by the frontend planner.
     pub minor_cycle_backend: StandardMfsMinorCycleBackend,
@@ -1120,23 +1120,6 @@ pub struct StandardMfsExecutionConfig {
     /// The callback is intentionally outside the per-component hot loop. It is
     /// suitable for user-interface phase state, not detailed profiling.
     pub progress_callback: Option<StandardMfsProgressCallback>,
-}
-
-impl Default for StandardMfsExecutionConfig {
-    fn default() -> Self {
-        Self {
-            minor_cycle_backend: StandardMfsMinorCycleBackend::default(),
-            fixed_tile_resident_bytes: None,
-            fixed_tile_edge: None,
-            fixed_tile_center_boundary: false,
-            fixed_tile_max_live_row_blocks: 0,
-            fixed_tile_use_planned_run_blocks: false,
-            metal_grouped_input_cache: false,
-            materialized_sample_plan_max_samples: None,
-            w_project_max_abs_w_lambda: None,
-            progress_callback: None,
-        }
-    }
 }
 
 impl fmt::Debug for StandardMfsExecutionConfig {
