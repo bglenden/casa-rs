@@ -287,6 +287,9 @@ pub struct ImagerProgressRuntime {
     pub gpu_active: bool,
     /// Human-readable backend label.
     pub backend: String,
+    /// Stable resource row ids that are actively owned or being worked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_resources: Vec<String>,
     /// Optional bounded-memory imaging plan snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<ImagerProgressMemory>,
@@ -3047,6 +3050,7 @@ mod tests {
             "total_threads": 8,
             "gpu_active": false,
             "backend": "auto",
+            "active_resources": ["source-stream", "visibility-grid"],
             "memory": {
               "memory_target_bytes": 17179869184,
               "planned_active_bytes": 17179863154,
@@ -3068,6 +3072,10 @@ mod tests {
             -1.0
         );
         assert_eq!(event.runtime.as_ref().unwrap().total_threads, 8);
+        assert_eq!(
+            event.runtime.as_ref().unwrap().active_resources,
+            vec!["source-stream".to_string(), "visibility-grid".to_string()]
+        );
         assert_eq!(
             event
                 .runtime

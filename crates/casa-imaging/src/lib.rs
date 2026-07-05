@@ -40,7 +40,7 @@ mod weighting;
 mod worker_plan;
 
 use std::{
-    env,
+    env, fmt,
     fs::OpenOptions,
     hash::{BuildHasherDefault, Hasher},
     io::Write,
@@ -1019,11 +1019,51 @@ impl StandardMfsMinorCycleBackend {
     }
 }
 
+/// Coarse standard-MFS phase emitted by the CLEAN controller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandardMfsProgressPhase {
+    /// A minor-cycle deconvolver pass is about to start.
+    MinorCycleStart,
+    /// A minor-cycle deconvolver pass has finished.
+    MinorCycleEnd,
+    /// The controller is about to refresh residuals from the current model.
+    ResidualRefreshStart,
+    /// The controller has refreshed residuals from the current model.
+    ResidualRefreshEnd,
+}
+
+/// Coarse standard-MFS progress event emitted from the imaging controller.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StandardMfsProgressEvent {
+    /// Controller phase represented by this event.
+    pub phase: StandardMfsProgressPhase,
+    /// Deconvolver selected by the request.
+    pub deconvolver: Deconvolver,
+    /// Minor-cycle backend selected by the execution planner.
+    pub minor_cycle_backend: StandardMfsMinorCycleBackend,
+    /// Completed major cycles before this event.
+    pub major_cycle: usize,
+    /// Reported minor iterations before or after this event, depending on phase.
+    pub minor_iterations: usize,
+    /// Requested minor-iteration limit for the run.
+    pub minor_iteration_limit: usize,
+    /// Planned reported iterations for the current minor cycle.
+    pub cycle_iteration_limit: usize,
+    /// Current peak residual for phases where it is known.
+    pub peak_residual_jy_per_beam: Option<f32>,
+    /// Cycle threshold for phases where it is known.
+    pub cycle_threshold_jy_per_beam: Option<f32>,
+}
+
+/// Callback used by frontends to observe standard-MFS controller progress.
+pub type StandardMfsProgressCallback =
+    Arc<dyn Fn(StandardMfsProgressEvent) + Send + Sync + 'static>;
+
 /// Runtime execution knobs for standard-MFS backends.
 ///
 /// These values are deliberately separate from [`ImagingRequest`] so callers
 /// can tune memory residency without changing the imaging contract itself.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone)]
 pub struct StandardMfsExecutionConfig {
     /// Minor-cycle backend selected by the frontend planner.
     pub minor_cycle_backend: StandardMfsMinorCycleBackend,
@@ -1071,6 +1111,61 @@ pub struct StandardMfsExecutionConfig {
     /// instead of replaying and materializing every weighted visibility block
     /// once solely for a metadata scan.
     pub w_project_max_abs_w_lambda: Option<f64>,
+    /// Optional coarse progress callback fired by the standard-MFS controller.
+    ///
+    /// The callback is intentionally outside the per-component hot loop. It is
+    /// suitable for user-interface phase state, not detailed profiling.
+    pub progress_callback: Option<StandardMfsProgressCallback>,
+}
+
+impl Default for StandardMfsExecutionConfig {
+    fn default() -> Self {
+        Self {
+            minor_cycle_backend: StandardMfsMinorCycleBackend::default(),
+            fixed_tile_resident_bytes: None,
+            fixed_tile_edge: None,
+            fixed_tile_center_boundary: false,
+            fixed_tile_max_live_row_blocks: 0,
+            fixed_tile_use_planned_run_blocks: false,
+            metal_grouped_input_cache: false,
+            materialized_sample_plan_max_samples: None,
+            w_project_max_abs_w_lambda: None,
+            progress_callback: None,
+        }
+    }
+}
+
+impl fmt::Debug for StandardMfsExecutionConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StandardMfsExecutionConfig")
+            .field("minor_cycle_backend", &self.minor_cycle_backend)
+            .field("fixed_tile_resident_bytes", &self.fixed_tile_resident_bytes)
+            .field("fixed_tile_edge", &self.fixed_tile_edge)
+            .field(
+                "fixed_tile_center_boundary",
+                &self.fixed_tile_center_boundary,
+            )
+            .field(
+                "fixed_tile_max_live_row_blocks",
+                &self.fixed_tile_max_live_row_blocks,
+            )
+            .field(
+                "fixed_tile_use_planned_run_blocks",
+                &self.fixed_tile_use_planned_run_blocks,
+            )
+            .field("metal_grouped_input_cache", &self.metal_grouped_input_cache)
+            .field(
+                "materialized_sample_plan_max_samples",
+                &self.materialized_sample_plan_max_samples,
+            )
+            .field(
+                "w_project_max_abs_w_lambda",
+                &self.w_project_max_abs_w_lambda,
+            )
+            .field("progress_callback", &self.progress_callback.is_some())
+            .finish()
+    }
 }
 
 type StandardMfsWeightedBatchReplay<'a> = dyn FnMut(
@@ -1888,7 +1983,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     let use_tiled_executor = should_use_standard_mfs_tiled_backend(request);
     let mut standard_executor = None;
     if !(use_metal_executor || use_tiled_executor)
-        && should_use_standard_mfs_executor(request, weighted_batches, execution_config)
+        && should_use_standard_mfs_executor(request, weighted_batches, execution_config.clone())
     {
         let executor_build_started = Instant::now();
         standard_executor = Some(StandardMfsCpuExecutor::new(gridder, weighted_batches)?);
@@ -1915,14 +2010,14 @@ fn run_standard_mfs_imaging_with_weighted_batches(
             compute_dirty_psf_and_residual_standard_metal(
                 weighted_batches,
                 gridder,
-                execution_config,
+                execution_config.clone(),
                 &mut stage_timings,
             )?
         } else if use_tiled_executor {
             compute_dirty_psf_and_residual_standard_tiled(
                 weighted_batches,
                 gridder,
-                execution_config,
+                execution_config.clone(),
                 &mut stage_timings,
             )?
         } else if let Some(executor) = standard_executor.as_mut() {
@@ -1939,14 +2034,14 @@ fn run_standard_mfs_imaging_with_weighted_batches(
             compute_psf_standard_metal(
                 weighted_batches,
                 gridder,
-                execution_config,
+                execution_config.clone(),
                 &mut stage_timings,
             )?
         } else if use_tiled_executor {
             compute_psf_standard_tiled(
                 weighted_batches,
                 gridder,
-                execution_config,
+                execution_config.clone(),
                 &mut stage_timings,
             )?
         } else if let Some(executor) = standard_executor.as_mut() {
@@ -1960,7 +2055,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
                 gridder,
                 &model,
                 &psf_state,
-                execution_config,
+                execution_config.clone(),
                 &mut stage_timings,
             )?
         } else if let Some(executor) = standard_executor.as_mut() {
@@ -2013,7 +2108,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         &mut standard_executor,
         gridder,
         &psf_state,
-        execution_config,
+        execution_config.clone(),
         &mut stage_timings,
         &mut model,
         residual,
@@ -2189,7 +2284,7 @@ where
         } else {
             compute_dirty_psf_and_residual_standard_tiled_replay(
                 &gridder,
-                execution_config,
+                execution_config.clone(),
                 &mut replay_weighted_batches,
                 &mut stage_timings,
             )?
@@ -2217,7 +2312,7 @@ where
         } else {
             let psf_state = compute_psf_standard_tiled_replay(
                 &gridder,
-                execution_config,
+                execution_config.clone(),
                 &mut replay_weighted_batches,
                 &mut stage_timings,
             )?;
@@ -2226,7 +2321,7 @@ where
                 &gridder,
                 &model,
                 &psf_state,
-                execution_config,
+                execution_config.clone(),
                 &mut replay_weighted_batches,
                 &mut stage_timings,
             )?;
@@ -2279,7 +2374,7 @@ where
                 &gridder,
                 model,
                 &psf_state,
-                execution_config,
+                execution_config.clone(),
                 &mut replay_weighted_batches,
                 stage_timings,
             )?
@@ -2290,7 +2385,7 @@ where
         stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
         log_standard_mfs_clean_residual_refresh_summary(
             &request,
-            execution_config,
+            execution_config.clone(),
             before,
             stage_timings,
             refresh_elapsed,
@@ -2304,6 +2399,7 @@ where
         &request,
         &psf_state,
         execution_config.minor_cycle_backend,
+        execution_config.progress_callback.as_ref(),
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -2720,6 +2816,7 @@ where
             &clean_request,
             &psf_state,
             execution_config.minor_cycle_backend,
+            execution_config.progress_callback.as_ref(),
             &mut stage_timings,
             &mut refresh_residual,
             &mut model,
@@ -3999,8 +4096,11 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
     } = prepared;
 
     let gridder = StandardGridder::new(request.geometry)?;
-    let mut replay_plan =
-        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
+    let mut replay_plan = StandardMfsReplayPlan::planned_samples(
+        &gridder,
+        execution_config.clone(),
+        replay_weighted_samples,
+    );
     let mut refresh_residual = |model: &Array2<f32>,
                                 stage_timings: &mut ImagingStageTimings|
      -> Result<Array2<f32>, ImagingError> {
@@ -4014,7 +4114,7 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
         stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
         log_standard_mfs_clean_residual_refresh_summary(
             &request,
-            execution_config,
+            execution_config.clone(),
             before,
             stage_timings,
             refresh_elapsed,
@@ -4028,6 +4128,7 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
         &request,
         &psf_state,
         execution_config.minor_cycle_backend,
+        execution_config.progress_callback.as_ref(),
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -4198,8 +4299,11 @@ fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
     let mut stage_timings = ImagingStageTimings::default();
-    let mut replay_plan =
-        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
+    let mut replay_plan = StandardMfsReplayPlan::planned_samples(
+        &gridder,
+        execution_config.clone(),
+        replay_weighted_samples,
+    );
 
     let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
         replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?
@@ -4239,7 +4343,7 @@ fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
         stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
         log_standard_mfs_clean_residual_refresh_summary(
             &request,
-            execution_config,
+            execution_config.clone(),
             before,
             stage_timings,
             refresh_elapsed,
@@ -4253,6 +4357,7 @@ fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
         &request,
         &psf_state,
         execution_config.minor_cycle_backend,
+        execution_config.progress_callback.as_ref(),
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -4544,7 +4649,7 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
     });
     let mut replay_plan = StandardMfsReplayPlan::routed_visibility_runs(
         &gridder,
-        execution_config,
+        execution_config.clone(),
         weighting_plan,
         replay_routed_runs,
         metal_grouped_input_cache.as_mut(),
@@ -4588,7 +4693,7 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
         stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
         log_standard_mfs_clean_residual_refresh_summary(
             &request,
-            execution_config,
+            execution_config.clone(),
             before,
             stage_timings,
             refresh_elapsed,
@@ -4602,6 +4707,7 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
         &request,
         &psf_state,
         execution_config.minor_cycle_backend,
+        execution_config.progress_callback.as_ref(),
         &mut stage_timings,
         &mut refresh_residual,
         &mut model,
@@ -4786,7 +4892,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
             StandardMfsReplaySource::PlannedSamples(source) => {
                 compute_dirty_psf_and_residual_standard_sample_replay(
                     self.gridder,
-                    self.execution_config,
+                    self.execution_config.clone(),
                     *source,
                     stage_timings,
                 )
@@ -4797,7 +4903,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
                 metal_grouped_input_cache,
             } => compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
                 self.gridder,
-                self.execution_config,
+                self.execution_config.clone(),
                 weighting_plan,
                 *source,
                 stage_timings,
@@ -4813,7 +4919,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
         match &mut self.source {
             StandardMfsReplaySource::PlannedSamples(source) => compute_psf_standard_sample_replay(
                 self.gridder,
-                self.execution_config,
+                self.execution_config.clone(),
                 *source,
                 stage_timings,
             ),
@@ -4823,7 +4929,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
                 metal_grouped_input_cache,
             } => compute_psf_standard_routed_visibility_run_replay(
                 self.gridder,
-                self.execution_config,
+                self.execution_config.clone(),
                 weighting_plan,
                 *source,
                 stage_timings,
@@ -4846,7 +4952,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
                     self.gridder,
                     model,
                     psf_state,
-                    self.execution_config,
+                    self.execution_config.clone(),
                     *source,
                     stage_timings,
                 )
@@ -4860,7 +4966,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
                 self.gridder,
                 model,
                 psf_state,
-                self.execution_config,
+                self.execution_config.clone(),
                 weighting_plan,
                 *source,
                 stage_timings,
@@ -4889,7 +4995,7 @@ where
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     stage_timings.residual_grid_alloc += residual_alloc_started.elapsed();
     let executor =
-        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     let mut accumulation = StandardMfsDirtyAccumulation {
         normalization_sumwt: 0.0,
         reported_sumwt: 0.0,
@@ -4977,8 +5083,10 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
-        let executor =
-            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
+            gridder,
+            execution_config.clone(),
+        )?;
         let grid_started = Instant::now();
         let accumulation = if execution_config.fixed_tile_use_planned_run_blocks {
             let mut replay = |consumer: &mut dyn FnMut(
@@ -5250,7 +5358,7 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
         }
     }
     let executor =
-        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
         gridder,
@@ -5325,7 +5433,7 @@ where
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let executor =
-        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     let mut accumulation = StandardMfsDirtyAccumulation {
         normalization_sumwt: 0.0,
         reported_sumwt: 0.0,
@@ -5361,8 +5469,10 @@ fn compute_psf_standard_sample_replay(
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
-        let executor =
-            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
+            gridder,
+            execution_config.clone(),
+        )?;
         let grid_started = Instant::now();
         let accumulation = if execution_config.fixed_tile_use_planned_run_blocks {
             let mut replay = |consumer: &mut dyn FnMut(
@@ -5452,7 +5562,7 @@ fn compute_psf_standard_routed_visibility_run_replay(
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let executor =
-        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     #[cfg(all(target_os = "macos", not(coverage)))]
     let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
         gridder,
@@ -5526,7 +5636,7 @@ where
     };
 
     let executor =
-        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     let mut counts = StandardMfsTiledResidualAccumulation::default();
     let degrid_grid_started = Instant::now();
     if executor.has_all_resident_tiles() {
@@ -5614,8 +5724,10 @@ fn compute_residual_standard_sample_replay(
     };
 
     if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
-        let executor =
-            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let executor = StandardMfsTiledCpuExecutor::new_with_execution_config(
+            gridder,
+            execution_config.clone(),
+        )?;
         let degrid_grid_started = Instant::now();
         let counts = if execution_config.fixed_tile_use_planned_run_blocks {
             let mut replay = |consumer: &mut dyn FnMut(
@@ -6555,6 +6667,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual_terms[0], request.clean_mask.as_ref());
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
         let refreshed_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
             &residual_terms[0],
             request.clean_mask.as_ref(),
@@ -6587,6 +6700,7 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
             &mut stage_timings,
         )?;
         stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
     }
     let controller_elapsed = controller_started.elapsed();
     let accounted = stage_timings
@@ -8046,6 +8160,7 @@ fn run_mosaic_dirty_imaging(
             max_psf_sidelobe_level,
             initial_peak,
             execution_config.minor_cycle_backend,
+            execution_config.progress_callback.as_ref(),
             &mut warnings,
             mosaic_metal_group_cache.as_deref(),
         )?
@@ -13500,6 +13615,33 @@ struct CottonSchwabState {
 type ResidualRefreshCallback<'a> =
     dyn FnMut(&Array2<f32>, &mut ImagingStageTimings) -> Result<Array2<f32>, ImagingError> + 'a;
 
+#[allow(clippy::too_many_arguments)]
+fn emit_standard_mfs_controller_progress(
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    request: &ImagingRequest,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    phase: StandardMfsProgressPhase,
+    major_cycle: usize,
+    minor_iterations: usize,
+    cycle_iteration_limit: usize,
+    peak_residual_jy_per_beam: Option<f32>,
+    cycle_threshold_jy_per_beam: Option<f32>,
+) {
+    if let Some(callback) = progress_callback {
+        callback(StandardMfsProgressEvent {
+            phase,
+            deconvolver: request.deconvolver,
+            minor_cycle_backend,
+            major_cycle,
+            minor_iterations,
+            minor_iteration_limit: request.clean.niter,
+            cycle_iteration_limit,
+            peak_residual_jy_per_beam,
+            cycle_threshold_jy_per_beam,
+        });
+    }
+}
+
 fn image_center_value(image: &Array2<f32>) -> f32 {
     let center = (image.dim().0 / 2, image.dim().1 / 2);
     image[center]
@@ -13530,6 +13672,20 @@ fn make_minor_cycle_trace(
         initial_candidate_position: probe.initial_candidate_position,
         center_model_value_jy_per_pixel: image_center_value(model),
         center_residual_value_jy_per_beam: image_center_value(residual),
+    }
+}
+
+fn refresh_minor_cycle_trace_residual(trace: &mut MinorCycleTrace, residual: &Array2<f32>) {
+    trace.end_peak_residual_jy_per_beam = peak_abs_value(residual);
+    trace.center_residual_value_jy_per_beam = image_center_value(residual);
+}
+
+fn refresh_latest_minor_cycle_trace_residual(
+    minor_cycle_traces: &mut [MinorCycleTrace],
+    residual: &Array2<f32>,
+) {
+    if let Some(trace) = minor_cycle_traces.last_mut() {
+        refresh_minor_cycle_trace_residual(trace, residual);
     }
 }
 
@@ -13570,14 +13726,16 @@ fn run_cotton_schwab_controller(
             gridder,
             model,
             psf_state,
-            execution_config,
+            execution_config.clone(),
             stage_timings,
         )
     };
+    let progress_callback = execution_config.progress_callback.as_ref();
     run_cotton_schwab_controller_with_refresh(
         request,
         psf_state,
         execution_config.minor_cycle_backend,
+        progress_callback,
         stage_timings,
         &mut refresh_residual,
         model,
@@ -13594,6 +13752,7 @@ fn run_cotton_schwab_controller_with_refresh(
     request: &ImagingRequest,
     psf_state: &PsfState,
     minor_cycle_backend: StandardMfsMinorCycleBackend,
+    progress_callback: Option<&StandardMfsProgressCallback>,
     stage_timings: &mut ImagingStageTimings,
     refresh_residual: &mut ResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
@@ -13612,6 +13771,7 @@ fn run_cotton_schwab_controller_with_refresh(
             model,
             residual,
             minor_cycle_backend,
+            progress_callback,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -13625,6 +13785,7 @@ fn run_cotton_schwab_controller_with_refresh(
             model,
             residual,
             minor_cycle_backend,
+            progress_callback,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -13638,6 +13799,7 @@ fn run_cotton_schwab_controller_with_refresh(
             model,
             residual,
             minor_cycle_backend,
+            progress_callback,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -13665,6 +13827,7 @@ fn run_mosaic_image_domain_controller(
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     minor_cycle_backend: StandardMfsMinorCycleBackend,
+    progress_callback: Option<&StandardMfsProgressCallback>,
     warnings: &mut Vec<String>,
     metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
 ) -> Result<CottonSchwabState, ImagingError> {
@@ -13694,6 +13857,7 @@ fn run_mosaic_image_domain_controller(
         request,
         psf_state,
         minor_cycle_backend,
+        progress_callback,
         stage_timings,
         &mut refresh_residual,
         model,
@@ -13713,6 +13877,7 @@ fn run_multiscale_cotton_schwab_metal(
     refresh_residual: &mut ResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
+    progress_callback: Option<&StandardMfsProgressCallback>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
@@ -13811,6 +13976,17 @@ fn run_multiscale_cotton_schwab_metal(
             );
         }
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            StandardMfsMinorCycleBackend::Metal,
+            StandardMfsProgressPhase::MinorCycleStart,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            Some(cycle_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         let outcome = run_multiscale_minor_cycle_metal(
             request,
             &mut multiscale_state,
@@ -13822,6 +13998,22 @@ fn run_multiscale_cotton_schwab_metal(
             stage_timings,
         )?;
         minor_iterations = minor_iterations.saturating_add(outcome.actual_updates);
+        let reported_after_outcome =
+            reported_minor_iterations.saturating_add(outcome.reported_updates);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            StandardMfsMinorCycleBackend::Metal,
+            StandardMfsProgressPhase::MinorCycleEnd,
+            major_cycles,
+            reported_after_outcome,
+            cycle_reported_niter,
+            Some(peak_abs_value_masked(
+                &multiscale_state.dirty_conv_scales[0],
+                request.clean_mask.as_ref(),
+            )),
+            Some(outcome.final_cycle_threshold_jy_per_beam),
+        );
         if let Some(trace) = &multiscale_trace {
             let stop_reason = outcome
                 .stop_reason
@@ -13851,8 +14043,7 @@ fn run_multiscale_cotton_schwab_metal(
             model,
             probe,
         ));
-        reported_minor_iterations =
-            reported_minor_iterations.saturating_add(outcome.reported_updates);
+        reported_minor_iterations = reported_after_outcome;
         if !outcome.updated_model {
             clean_stop_reason = outcome.stop_reason;
             break;
@@ -13873,6 +14064,17 @@ fn run_multiscale_cotton_schwab_metal(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            StandardMfsMinorCycleBackend::Metal,
+            StandardMfsProgressPhase::ResidualRefreshStart,
+            major_cycles,
+            reported_minor_iterations,
+            cycle_reported_niter,
+            Some(minor_peak),
+            Some(outcome.final_cycle_threshold_jy_per_beam),
+        );
         residual = refresh_residual(model, stage_timings)?;
         let multiscale_refresh_started = Instant::now();
         refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
@@ -13880,6 +14082,18 @@ fn run_multiscale_cotton_schwab_metal(
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            StandardMfsMinorCycleBackend::Metal,
+            StandardMfsProgressPhase::ResidualRefreshEnd,
+            major_cycles,
+            reported_minor_iterations,
+            cycle_reported_niter,
+            Some(refreshed_peak),
+            Some(outcome.final_cycle_threshold_jy_per_beam),
+        );
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
         if let Some(stop_reason) = tolerant_clean_stop_reason(
@@ -13895,8 +14109,37 @@ fn run_multiscale_cotton_schwab_metal(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            StandardMfsMinorCycleBackend::Metal,
+            StandardMfsProgressPhase::ResidualRefreshStart,
+            major_cycles,
+            reported_minor_iterations,
+            request.clean.minor_cycle_length,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         residual = refresh_residual(model, stage_timings)?;
         major_cycles += 1;
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            StandardMfsMinorCycleBackend::Metal,
+            StandardMfsProgressPhase::ResidualRefreshEnd,
+            major_cycles,
+            reported_minor_iterations,
+            request.clean.minor_cycle_length,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
     }
 
     Ok(CottonSchwabState {
@@ -14773,6 +15016,7 @@ fn run_hogbom_cotton_schwab(
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
     minor_cycle_backend: StandardMfsMinorCycleBackend,
+    progress_callback: Option<&StandardMfsProgressCallback>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
@@ -14842,6 +15086,17 @@ fn run_hogbom_cotton_schwab(
             );
         }
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleStart,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            Some(cycle_peak),
+            Some(cycle_threshold_jy_per_beam),
+        );
         let outcome = run_hogbom_minor_cycle(
             request,
             psf_state,
@@ -14853,6 +15108,22 @@ fn run_hogbom_cotton_schwab(
             minor_cycle_backend,
             stage_timings,
         )?;
+        let reported_after_outcome =
+            reported_minor_iterations.saturating_add(outcome.reported_updates);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleEnd,
+            major_cycles,
+            reported_after_outcome,
+            cycle_reported_niter,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(outcome.final_cycle_threshold_jy_per_beam),
+        );
         minor_cycle_traces.push(make_minor_cycle_trace(
             minor_cycle_traces.len(),
             start_reported_iteration,
@@ -14863,7 +15134,7 @@ fn run_hogbom_cotton_schwab(
             MinorCycleProbe::default(),
         ));
         minor_iterations += outcome.actual_updates;
-        reported_minor_iterations += outcome.reported_updates;
+        reported_minor_iterations = reported_after_outcome;
         final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
         let mut stop_after_refresh = None::<CleanStopReason>;
         if let Some(reason) = outcome.stop_reason {
@@ -14896,10 +15167,33 @@ fn run_hogbom_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshStart,
+            major_cycles,
+            reported_minor_iterations,
+            cycle_reported_niter,
+            Some(minor_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         residual = refresh_residual(model, stage_timings)?;
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshEnd,
+            major_cycles,
+            reported_minor_iterations,
+            cycle_reported_niter,
+            Some(refreshed_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
         if stop_after_refresh.is_some() {
@@ -14918,7 +15212,36 @@ fn run_hogbom_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshStart,
+            major_cycles,
+            reported_minor_iterations,
+            request.clean.minor_cycle_length,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         residual = refresh_residual(model, stage_timings)?;
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshEnd,
+            major_cycles,
+            reported_minor_iterations,
+            request.clean.minor_cycle_length,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
     }
 
     Ok(CottonSchwabState {
@@ -18495,6 +18818,7 @@ fn run_clark_cotton_schwab(
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
     minor_cycle_backend: StandardMfsMinorCycleBackend,
+    progress_callback: Option<&StandardMfsProgressCallback>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
@@ -18554,6 +18878,17 @@ fn run_clark_cotton_schwab(
                 clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean)
             });
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleStart,
+            major_cycles,
+            start_reported_iteration,
+            casa_step_reported_niter,
+            Some(cycle_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         let outcome = run_clark_minor_cycle(
             request,
             model,
@@ -18568,11 +18903,46 @@ fn run_clark_cotton_schwab(
         )?;
         let reported_after_outcome =
             reported_minor_iterations.saturating_add(outcome.reported_updates);
+        let post_minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleEnd,
+            major_cycles,
+            reported_after_outcome,
+            casa_step_reported_niter,
+            Some(post_minor_peak),
+            Some(outcome.final_cycle_threshold_jy_per_beam),
+        );
         if outcome.updated_model {
+            emit_standard_mfs_controller_progress(
+                progress_callback,
+                request,
+                minor_cycle_backend,
+                StandardMfsProgressPhase::ResidualRefreshStart,
+                major_cycles,
+                reported_after_outcome,
+                casa_step_reported_niter,
+                Some(post_minor_peak),
+                Some(outcome.final_cycle_threshold_jy_per_beam),
+            );
             residual = refresh_residual(model, stage_timings)?;
+            let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
             if reported_after_outcome < request.clean.niter {
                 major_cycles += 1;
             }
+            emit_standard_mfs_controller_progress(
+                progress_callback,
+                request,
+                minor_cycle_backend,
+                StandardMfsProgressPhase::ResidualRefreshEnd,
+                major_cycles,
+                reported_after_outcome,
+                casa_step_reported_niter,
+                Some(refreshed_peak),
+                Some(outcome.final_cycle_threshold_jy_per_beam),
+            );
         }
         minor_cycle_traces.push(make_minor_cycle_trace(
             minor_cycle_traces.len(),
@@ -18653,6 +19023,7 @@ fn run_multiscale_cotton_schwab(
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
     minor_cycle_backend: StandardMfsMinorCycleBackend,
+    progress_callback: Option<&StandardMfsProgressCallback>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     cycle_threshold_override_jy_per_beam: Option<f32>,
@@ -18666,6 +19037,7 @@ fn run_multiscale_cotton_schwab(
             refresh_residual,
             model,
             residual,
+            progress_callback,
             max_psf_sidelobe_level,
             initial_peak,
             cycle_threshold_override_jy_per_beam,
@@ -18780,6 +19152,17 @@ fn run_multiscale_cotton_schwab(
         let mut cycle_stop_reason = None::<CleanStopReason>;
         stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let mut dirty_window = full_window;
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleStart,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            Some(cycle_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         let minor_started = Instant::now();
         while cycle_component_updates < cycle_reported_niter {
             let candidate_started = Instant::now();
@@ -18880,6 +19263,21 @@ fn run_multiscale_cotton_schwab(
             cycle_stop_reason,
             updated_model,
         );
+        let reported_after_outcome = reported_minor_iterations.saturating_add(reported_updates);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleEnd,
+            major_cycles,
+            reported_after_outcome,
+            cycle_reported_niter,
+            Some(peak_abs_value_masked(
+                &multiscale_state.dirty_conv_scales[0],
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         if let Some(trace) = &multiscale_trace {
             let stop_reason = cycle_stop_reason
                 .map(|reason| format!("{reason:?}"))
@@ -18899,23 +19297,24 @@ fn run_multiscale_cotton_schwab(
                 ),
             );
         }
+        let outcome = HogbomMinorCycleOutcome {
+            updated_model,
+            actual_updates: cycle_component_updates,
+            reported_updates,
+            stop_reason: cycle_stop_reason,
+            final_cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: cycle_nsigma_threshold_jy_per_beam,
+        };
         minor_cycle_traces.push(make_minor_cycle_trace(
             minor_cycle_traces.len(),
             start_reported_iteration,
-            HogbomMinorCycleOutcome {
-                updated_model,
-                actual_updates: cycle_component_updates,
-                reported_updates,
-                stop_reason: cycle_stop_reason,
-                final_cycle_threshold_jy_per_beam,
-                final_nsigma_threshold_jy_per_beam: cycle_nsigma_threshold_jy_per_beam,
-            },
+            outcome,
             cycle_peak,
             &multiscale_state.dirty_conv_scales[0],
             model,
             probe,
         ));
-        reported_minor_iterations += reported_updates;
+        reported_minor_iterations = reported_after_outcome;
         if !updated_model {
             clean_stop_reason = cycle_stop_reason;
             break;
@@ -18936,6 +19335,17 @@ fn run_multiscale_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshStart,
+            major_cycles,
+            reported_minor_iterations,
+            cycle_reported_niter,
+            Some(minor_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         residual = refresh_residual(model, stage_timings)?;
         let multiscale_refresh_started = Instant::now();
         refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
@@ -18943,6 +19353,18 @@ fn run_multiscale_cotton_schwab(
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshEnd,
+            major_cycles,
+            reported_minor_iterations,
+            cycle_reported_niter,
+            Some(refreshed_peak),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         let refreshed_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
         if let Some(stop_reason) = tolerant_clean_stop_reason(
@@ -18958,8 +19380,37 @@ fn run_multiscale_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshStart,
+            major_cycles,
+            reported_minor_iterations,
+            request.clean.minor_cycle_length,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
         residual = refresh_residual(model, stage_timings)?;
         major_cycles += 1;
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::ResidualRefreshEnd,
+            major_cycles,
+            reported_minor_iterations,
+            request.clean.minor_cycle_length,
+            Some(peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            )),
+            Some(final_cycle_threshold_jy_per_beam),
+        );
     }
     stage_timings.deconvolver_peak_search += peak_search_elapsed;
     stage_timings.deconvolver_model_update += model_update_elapsed;
@@ -22093,7 +22544,7 @@ fn refresh_standard_mfs_residual(
             gridder,
             model,
             psf_state,
-            execution_config,
+            execution_config.clone(),
             stage_timings,
         )?
     };
@@ -30087,7 +30538,7 @@ mod tests {
         };
         let batch_streaming = run_standard_mfs_plan(StandardMfsPlan::weighted_batches(
             request.clone(),
-            execution_config,
+            execution_config.clone(),
             |consumer| {
                 for batch in &weighted_batches {
                     consumer(vec![batch.clone()])?;
@@ -30099,7 +30550,7 @@ mod tests {
         let block_streaming =
             run_standard_mfs_weighted_sample_block_streaming_with_execution_config(
                 request.clone(),
-                execution_config,
+                execution_config.clone(),
                 |consumer| {
                     let mut block = Vec::<StandardMfsWeightedSample>::new();
                     for batch in &weighted_batches {
@@ -30125,7 +30576,7 @@ mod tests {
         let planned_streaming =
             run_standard_mfs_planned_sample_block_streaming_with_execution_config(
                 request.clone(),
-                execution_config,
+                execution_config.clone(),
                 |consumer| {
                     let mut block = Vec::<StandardMfsPlannedWeightedSample>::new();
                     for batch in &weighted_batches {
@@ -32035,6 +32486,16 @@ mod tests {
             clean.diagnostics.final_residual_peak_jy_per_beam
                 < dirty.diagnostics.final_residual_peak_jy_per_beam
         );
+        let last_trace = clean
+            .diagnostics
+            .minor_cycle_traces
+            .last()
+            .expect("clean run should record a minor-cycle trace");
+        assert_close_f32(
+            last_trace.end_peak_residual_jy_per_beam,
+            clean.diagnostics.final_residual_peak_jy_per_beam,
+            1.0e-6,
+        );
         assert!(clean.model[(32, 32, 0, 0)] > 0.0);
     }
 
@@ -32584,6 +33045,7 @@ mod tests {
             &mut model,
             residual,
             StandardMfsMinorCycleBackend::Cpu,
+            None,
             0.2,
             1.0,
             Some(0.9),
@@ -33928,6 +34390,7 @@ mod tests {
             &mut cpu_model,
             residual.clone(),
             StandardMfsMinorCycleBackend::Cpu,
+            None,
             0.1,
             peak_abs_value_masked(&residual, None),
             Some(0.0),
@@ -33947,6 +34410,7 @@ mod tests {
             &mut metal_model,
             residual.clone(),
             StandardMfsMinorCycleBackend::Metal,
+            None,
             0.1,
             peak_abs_value_masked(&residual, None),
             Some(0.0),

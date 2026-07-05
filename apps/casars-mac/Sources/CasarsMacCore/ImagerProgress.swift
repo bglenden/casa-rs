@@ -237,7 +237,17 @@ extension ImagerProgressSnapshot {
         }
 
         let activeThreadBudget = state == .running ? runtime.activeThreads : 0
-        let phaseText = "\(phase) \(deconvolution.phase)".lowercased()
+        let currentPhaseText = phase.lowercased()
+        let cyclePhaseText = deconvolution.phase.lowercased()
+        let retainedCyclePhaseIsActive = state == .running
+            && !cyclePhaseText.isEmpty
+            && cyclePhaseText != currentPhaseText
+            && !cyclePhaseText.contains("pending")
+            && !cyclePhaseText.contains("complete")
+            && !cyclePhaseText.contains("dirty imaging")
+        let activityPhaseText = retainedCyclePhaseIsActive
+            ? "\(currentPhaseText) \(cyclePhaseText)"
+            : currentPhaseText
         let planeBytes = max(
             0,
             memory.plannedActiveBytes - memory.sourceStreamBufferBytes - memory.productScratchBytes
@@ -245,9 +255,33 @@ extension ImagerProgressSnapshot {
         let gridBytes = max(memory.sourceStreamBufferBytes, planeBytes / 2)
         let plannedTarget = max(memory.memoryTargetBytes, memory.plannedActiveBytes, 1)
 
-        func busy(_ keywords: [String]) -> Bool {
-            state == .running && keywords.contains { phaseText.contains($0) }
+        func phaseBusy(_ keywords: [String], includeRetainedCycle: Bool = true) -> Bool {
+            let text = includeRetainedCycle ? activityPhaseText : currentPhaseText
+            return state == .running && keywords.contains { text.contains($0) }
         }
+        let explicitActiveResources = Set(runtime.activeResourceIDs)
+        let hasExplicitActiveResources = !explicitActiveResources.isEmpty
+        func resourceBusy(_ id: String, fallback: Bool) -> Bool {
+            guard state == .running else { return false }
+            return hasExplicitActiveResources ? explicitActiveResources.contains(id) : fallback
+        }
+        let sourceBusy = resourceBusy(
+            "source-stream",
+            fallback: phaseBusy(["read", "prepare", "source", "row", "ms"], includeRetainedCycle: false)
+        )
+        let gridFallbackBusy = phaseBusy(["grid", "fft", "major", "residual", "replay", "dirty image"])
+        let deconvolverFallbackBusy = phaseBusy(["minor cycle", "deconvolving", "cleaning", "cycle threshold"])
+        let gridBusy = resourceBusy("visibility-grid", fallback: gridFallbackBusy)
+        let deconvolverBusy = resourceBusy("deconvolver", fallback: deconvolverFallbackBusy)
+        let productBusy = resourceBusy(
+            "product-scratch",
+            fallback: phaseBusy(["write", "product", "restore", "model", "image"])
+                || gridFallbackBusy
+                || deconvolverFallbackBusy
+        )
+        let planeBusy = memory.activePlanes > 0 && state == .running && (
+            gridBusy || deconvolverBusy || productBusy || phaseBusy(["plane", "slab"])
+        )
 
         return [
             ImagingResourceActivity(
@@ -255,12 +289,12 @@ extension ImagerProgressSnapshot {
                 name: "Source stream",
                 detail: "\(memory.rowBlockRows.formatted()) rows",
                 kind: .source,
-                state: busy(["read", "prepare", "source", "row", "ms"]) ? .busy : .idle,
+                state: sourceBusy ? .busy : .idle,
                 residentBytes: memory.sourceStreamBufferBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.rowStartFraction,
                 sectionEndFraction: measurementSetWindow.rowEndFraction,
-                activeThreads: min(activeThreadBudget, max(0, runtime.totalThreads)),
+                activeThreads: sourceBusy ? min(activeThreadBudget, max(0, runtime.totalThreads)) : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: false
             ),
@@ -269,54 +303,54 @@ extension ImagerProgressSnapshot {
                 name: "Grid / FFT",
                 detail: "channel window",
                 kind: .grid,
-                state: busy(["grid", "fft", "major", "residual", "replay"]) ? .busy : .idle,
+                state: gridBusy ? .busy : .idle,
                 residentBytes: gridBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.channelStartFraction,
                 sectionEndFraction: measurementSetWindow.channelEndFraction,
-                activeThreads: busy(["grid", "fft", "major", "residual", "replay"]) ? activeThreadBudget : 0,
+                activeThreads: gridBusy ? activeThreadBudget : 0,
                 totalThreads: runtime.totalThreads,
-                gpuActive: runtime.gpuActive && busy(["grid", "fft", "major", "residual", "replay"])
+                gpuActive: runtime.gpuActive && gridBusy
             ),
             ImagingResourceActivity(
                 id: "plane-state",
                 name: "Plane state",
                 detail: "\(memory.activePlanes.formatted()) active planes",
                 kind: .plane,
-                state: memory.activePlanes > 0 && state == .running ? .busy : .idle,
+                state: planeBusy ? .busy : .idle,
                 residentBytes: planeBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
                 sectionEndFraction: outputCube.activePlaneEndFraction,
-                activeThreads: memory.activePlanes > 0 && state == .running ? activeThreadBudget : 0,
+                activeThreads: planeBusy ? activeThreadBudget : 0,
                 totalThreads: runtime.totalThreads,
-                gpuActive: runtime.gpuActive && busy(["grid", "fft", "major"])
+                gpuActive: runtime.gpuActive && (gridBusy || deconvolverBusy)
             ),
             ImagingResourceActivity(
                 id: "deconvolver",
                 name: "Deconvolver",
                 detail: "minor cycle",
                 kind: .deconvolver,
-                state: busy(["minor", "clean", "deconvol"]) ? .busy : .idle,
+                state: deconvolverBusy ? .busy : .idle,
                 residentBytes: memory.productScratchBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: 0,
                 sectionEndFraction: deconvolution.minorIterationFraction,
-                activeThreads: busy(["minor", "clean", "deconvol"]) ? activeThreadBudget : 0,
+                activeThreads: deconvolverBusy ? activeThreadBudget : 0,
                 totalThreads: runtime.totalThreads,
-                gpuActive: runtime.gpuActive && busy(["minor", "clean", "deconvol"])
+                gpuActive: runtime.gpuActive && deconvolverBusy
             ),
             ImagingResourceActivity(
                 id: "product-scratch",
                 name: "Products",
                 detail: "scratch + writes",
                 kind: .product,
-                state: busy(["write", "product", "restore", "model", "image"]) ? .busy : .idle,
+                state: productBusy ? .busy : .idle,
                 residentBytes: memory.productScratchBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
                 sectionEndFraction: outputCube.activePlaneEndFraction,
-                activeThreads: busy(["write", "product", "restore", "model", "image"]) ? min(activeThreadBudget, 2) : 0,
+                activeThreads: productBusy ? min(activeThreadBudget, 2) : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: false
             )
@@ -733,6 +767,7 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
     public var gpuActive: Bool
     public var backend: String
     public var sampleCadence: String
+    public var activeResourceIDs: [String]
     public var memory: ImagingMemoryProgress?
 
     public init(
@@ -741,6 +776,7 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
         gpuActive: Bool,
         backend: String,
         sampleCadence: String,
+        activeResourceIDs: [String] = [],
         memory: ImagingMemoryProgress? = nil
     ) {
         self.activeThreads = activeThreads
@@ -748,6 +784,7 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
         self.gpuActive = gpuActive
         self.backend = backend
         self.sampleCadence = sampleCadence
+        self.activeResourceIDs = activeResourceIDs
         self.memory = memory
     }
 
@@ -792,6 +829,7 @@ extension ImagingRuntimeProgress {
             gpuActive: payload.gpuActive,
             backend: payload.backend,
             sampleCadence: "event stream",
+            activeResourceIDs: payload.activeResources,
             memory: payload.memory.map(ImagingMemoryProgress.init(payload:))
         )
     }
@@ -964,6 +1002,7 @@ struct ImagerProgressRuntimePayload: Decodable, Equatable {
     var totalThreads: Int
     var gpuActive: Bool
     var backend: String
+    var activeResources: [String]
     var memory: ImagerProgressMemoryPayload?
 
     enum CodingKeys: String, CodingKey {
@@ -971,7 +1010,18 @@ struct ImagerProgressRuntimePayload: Decodable, Equatable {
         case totalThreads = "total_threads"
         case gpuActive = "gpu_active"
         case backend
+        case activeResources = "active_resources"
         case memory
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        activeThreads = try container.decode(Int.self, forKey: .activeThreads)
+        totalThreads = try container.decode(Int.self, forKey: .totalThreads)
+        gpuActive = try container.decode(Bool.self, forKey: .gpuActive)
+        backend = try container.decode(String.self, forKey: .backend)
+        activeResources = try container.decodeIfPresent([String].self, forKey: .activeResources) ?? []
+        memory = try container.decodeIfPresent(ImagerProgressMemoryPayload.self, forKey: .memory)
     }
 }
 
