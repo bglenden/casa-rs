@@ -287,6 +287,29 @@ pub struct ImagerProgressRuntime {
     pub gpu_active: bool,
     /// Human-readable backend label.
     pub backend: String,
+    /// Optional bounded-memory imaging plan snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<ImagerProgressMemory>,
+}
+
+/// Bounded-memory imaging plan fields useful for progress displays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressMemory {
+    /// Planner memory ceiling in bytes.
+    pub memory_target_bytes: usize,
+    /// Planned active resident bytes inside the memory ceiling.
+    pub planned_active_bytes: usize,
+    /// Planned source-stream buffer bytes.
+    pub source_stream_buffer_bytes: usize,
+    /// Planned product/executor scratch bytes.
+    pub product_scratch_bytes: usize,
+    /// Planned active output planes per slab.
+    pub active_planes: usize,
+    /// Planned source row-block size.
+    pub row_block_rows: usize,
+    /// Short source label for the memory target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_target_source: Option<String>,
 }
 
 /// One coarse progress event emitted while an imager task is running.
@@ -3023,7 +3046,16 @@ mod tests {
             "active_threads": 2,
             "total_threads": 8,
             "gpu_active": false,
-            "backend": "auto"
+            "backend": "auto",
+            "memory": {
+              "memory_target_bytes": 17179869184,
+              "planned_active_bytes": 17179863154,
+              "source_stream_buffer_bytes": 3804104045,
+              "product_scratch_bytes": 10945390173,
+              "active_planes": 47,
+              "row_block_rows": 128704,
+              "memory_target_source": "system_half"
+            }
           }
         }"#;
         let event: ImagerProgressEvent =
@@ -3036,6 +3068,17 @@ mod tests {
             -1.0
         );
         assert_eq!(event.runtime.as_ref().unwrap().total_threads, 8);
+        assert_eq!(
+            event
+                .runtime
+                .as_ref()
+                .unwrap()
+                .memory
+                .as_ref()
+                .unwrap()
+                .active_planes,
+            47
+        );
 
         let minimal: ImagerProgressEvent = serde_json::from_str(
             r#"{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"start"}"#,

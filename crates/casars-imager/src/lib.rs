@@ -134,11 +134,11 @@ pub use task_contract::{
     ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
     ImagerPlaneSelection, ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressEvent,
-    ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage,
-    ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo, ImagerRestoringBeamMode,
-    ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel,
-    ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper,
-    ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+    ImagerProgressMemory, ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime,
+    ImagerProgressUvCoverage, ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo,
+    ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
+    ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
+    ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -538,6 +538,7 @@ struct ImagerProgressContext {
     uv_coverage: BoundedUvCoverageAccumulator,
     uv_coverage_output_slab: Option<(usize, usize)>,
     last_active_runtime_backend: Option<String>,
+    memory: Option<ImagerProgressMemory>,
 }
 
 struct ImagerProgressGuard;
@@ -568,6 +569,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         sequence: 0,
         last_active_runtime_backend: None,
         uv_coverage_output_slab: None,
+        memory: None,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
         *slot = Some(context);
@@ -601,8 +603,29 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
         event.schema_version = IMAGER_PROGRESS_EVENT_SCHEMA_VERSION;
         event.sequence = context.sequence;
         event.elapsed_ms = now.duration_since(context.started_at).as_millis() as u64;
+        if event.runtime.is_none() {
+            if let Some(memory) = context.memory.clone() {
+                event.runtime = Some(ImagerProgressRuntime {
+                    active_threads: 0,
+                    total_threads: thread::available_parallelism()
+                        .map(usize::from)
+                        .unwrap_or(1),
+                    gpu_active: false,
+                    backend: context
+                        .last_active_runtime_backend
+                        .clone()
+                        .unwrap_or_else(|| "memory plan".to_string()),
+                    memory: Some(memory),
+                });
+            }
+        }
         if let Some(runtime) = event.runtime.as_mut() {
+            if runtime.memory.is_none() {
+                runtime.memory = context.memory.clone();
+            }
             if runtime.active_threads > 0 {
+                context.last_active_runtime_backend = Some(runtime.backend.clone());
+            } else if context.last_active_runtime_backend.is_none() {
                 context.last_active_runtime_backend = Some(runtime.backend.clone());
             } else if event.phase == "finished" {
                 if let Some(backend) = context.last_active_runtime_backend.as_ref() {
@@ -616,6 +639,27 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
     if let Ok(payload) = serialized {
         eprintln!("{IMAGER_PROGRESS_STDERR_PREFIX}{payload}");
     }
+}
+
+fn set_imager_progress_memory(memory: ImagerProgressMemory) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
+        if let Some(context) = context.as_mut() {
+            context.memory = Some(memory);
+        }
+    }
+}
+
+fn imager_progress_memory() -> Option<ImagerProgressMemory> {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    IMAGER_PROGRESS_CONTEXT
+        .lock()
+        .ok()
+        .and_then(|context| context.as_ref().and_then(|context| context.memory.clone()))
 }
 
 fn observe_imager_progress_uv_batch(batch: &VisibilityBatch) {
@@ -782,6 +826,22 @@ fn progress_runtime_from_config(
         total_threads: total_threads.max(active_threads),
         gpu_active: active_threads > 0 && explicit_gpu_backend,
         backend,
+        memory: imager_progress_memory(),
+    }
+}
+
+fn imager_progress_memory_from_spectral_plan(
+    memory_plan: &spectral_slab::SpectralMemoryPlan,
+    memory_target_source: &'static str,
+) -> ImagerProgressMemory {
+    ImagerProgressMemory {
+        memory_target_bytes: memory_plan.memory_target_bytes,
+        planned_active_bytes: memory_plan.planned_active_bytes,
+        source_stream_buffer_bytes: memory_plan.source_stream_buffer_bytes,
+        product_scratch_bytes: memory_plan.product_scratch_bytes,
+        active_planes: memory_plan.active_planes,
+        row_block_rows: memory_plan.row_block_rows,
+        memory_target_source: Some(memory_target_source.to_string()),
     }
 }
 
@@ -8031,6 +8091,10 @@ fn run_standard_spectral_cube_slab_from_open_ms(
         } else {
             memory_plan
         };
+    set_imager_progress_memory(imager_progress_memory_from_spectral_plan(
+        &memory_plan,
+        memory_target.source,
+    ));
     let _cube_per_plane_runtime_plan =
         apply_cube_per_plane_runtime_plan(config, nplanes, memory_plan.worker_count);
     let mut plane_execution_config = standard_mfs_execution_config(config);

@@ -7487,8 +7487,34 @@ private struct RuntimeProgressView: View {
             Text(runtime.sampleCadence)
                 .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
+            if let memory = runtime.memory {
+                Divider()
+                    .opacity(0.45)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Memory plan")
+                            .workbenchFont(.caption, weight: .semibold)
+                        Spacer()
+                        Text(memory.memoryTargetSource ?? "planner")
+                            .workbenchFont(.caption, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("\(Self.byteLabel(memory.plannedActiveBytes)) active / \(Self.byteLabel(memory.memoryTargetBytes)) target")
+                        .workbenchFont(.caption, design: .monospaced)
+                    Text("source \(Self.byteLabel(memory.sourceStreamBufferBytes)) · scratch \(Self.byteLabel(memory.productScratchBytes))")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                    Text("\(memory.activePlanes) planes · \(memory.rowBlockRows.formatted()) row block")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .frame(minHeight: 150, alignment: .topLeading)
+    }
+
+    private static func byteLabel(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(max(0, bytes)), countStyle: .memory)
     }
 }
 

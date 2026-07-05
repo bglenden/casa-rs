@@ -2974,7 +2974,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
     func testImagerProgressStderrParserBuildsSnapshotAndDiagnostics() throws {
         var parser = ImagerProgressStderrParser()
-        let progressJSON = #"{"schema_version":1,"sequence":2,"elapsed_ms":50,"phase":"reading_ms","summary":"reading rows","work":{"completed_units":3,"total_units":10,"unit_label":"scheduled units","basis":"test","confidence":"coarse"},"ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"uv_coverage":{"u_extent_klambda":2.0,"v_extent_klambda":3.0,"measured":[{"u_klambda":1.0,"v_klambda":-2.0}],"dropped_points":0,"sample_limit":1},"runtime":{"active_threads":2,"total_threads":8,"gpu_active":false,"backend":"auto"}}"#
+        let progressJSON = #"{"schema_version":1,"sequence":2,"elapsed_ms":50,"phase":"reading_ms","summary":"reading rows","work":{"completed_units":3,"total_units":10,"unit_label":"scheduled units","basis":"test","confidence":"coarse"},"ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"uv_coverage":{"u_extent_klambda":2.0,"v_extent_klambda":3.0,"measured":[{"u_klambda":1.0,"v_klambda":-2.0}],"dropped_points":0,"sample_limit":1},"runtime":{"active_threads":2,"total_threads":8,"gpu_active":false,"backend":"auto","memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":47,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#
         let line = imagerProgressStderrPrefix + progressJSON + "\nplain stderr\n"
 
         let records = parser.append(line, runID: "imager-7", state: .running)
@@ -2993,6 +2993,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.uvCoverage.droppedPointCount, 0)
         XCTAssertEqual(progress.uvCoverage.sampleLimit, 1)
         XCTAssertEqual(progress.sampledAtLabel, "0.05 s")
+        XCTAssertEqual(progress.runtime.memory?.activePlanes, 47)
+        XCTAssertEqual(progress.runtime.memory?.rowBlockRows, 128704)
+        XCTAssertEqual(progress.runtime.memory?.memoryTargetSource, "system_half")
         guard case .diagnostic(let diagnostic) = records[1] else {
             return XCTFail("expected diagnostic record")
         }

@@ -566,23 +566,54 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
     public var gpuActive: Bool
     public var backend: String
     public var sampleCadence: String
+    public var memory: ImagingMemoryProgress?
 
     public init(
         activeThreads: Int,
         totalThreads: Int,
         gpuActive: Bool,
         backend: String,
-        sampleCadence: String
+        sampleCadence: String,
+        memory: ImagingMemoryProgress? = nil
     ) {
         self.activeThreads = activeThreads
         self.totalThreads = totalThreads
         self.gpuActive = gpuActive
         self.backend = backend
         self.sampleCadence = sampleCadence
+        self.memory = memory
     }
 
     public var activeThreadFraction: Double {
         fraction(activeThreads, total: totalThreads)
+    }
+}
+
+public struct ImagingMemoryProgress: Codable, Equatable {
+    public var memoryTargetBytes: Int
+    public var plannedActiveBytes: Int
+    public var sourceStreamBufferBytes: Int
+    public var productScratchBytes: Int
+    public var activePlanes: Int
+    public var rowBlockRows: Int
+    public var memoryTargetSource: String?
+
+    public init(
+        memoryTargetBytes: Int,
+        plannedActiveBytes: Int,
+        sourceStreamBufferBytes: Int,
+        productScratchBytes: Int,
+        activePlanes: Int,
+        rowBlockRows: Int,
+        memoryTargetSource: String?
+    ) {
+        self.memoryTargetBytes = memoryTargetBytes
+        self.plannedActiveBytes = plannedActiveBytes
+        self.sourceStreamBufferBytes = sourceStreamBufferBytes
+        self.productScratchBytes = productScratchBytes
+        self.activePlanes = activePlanes
+        self.rowBlockRows = rowBlockRows
+        self.memoryTargetSource = memoryTargetSource
     }
 }
 
@@ -593,7 +624,8 @@ extension ImagingRuntimeProgress {
             totalThreads: payload.totalThreads,
             gpuActive: payload.gpuActive,
             backend: payload.backend,
-            sampleCadence: "event stream"
+            sampleCadence: "event stream",
+            memory: payload.memory.map(ImagingMemoryProgress.init(payload:))
         )
     }
 }
@@ -765,12 +797,48 @@ struct ImagerProgressRuntimePayload: Decodable, Equatable {
     var totalThreads: Int
     var gpuActive: Bool
     var backend: String
+    var memory: ImagerProgressMemoryPayload?
 
     enum CodingKeys: String, CodingKey {
         case activeThreads = "active_threads"
         case totalThreads = "total_threads"
         case gpuActive = "gpu_active"
         case backend
+        case memory
+    }
+}
+
+struct ImagerProgressMemoryPayload: Decodable, Equatable {
+    var memoryTargetBytes: Int
+    var plannedActiveBytes: Int
+    var sourceStreamBufferBytes: Int
+    var productScratchBytes: Int
+    var activePlanes: Int
+    var rowBlockRows: Int
+    var memoryTargetSource: String?
+
+    enum CodingKeys: String, CodingKey {
+        case memoryTargetBytes = "memory_target_bytes"
+        case plannedActiveBytes = "planned_active_bytes"
+        case sourceStreamBufferBytes = "source_stream_buffer_bytes"
+        case productScratchBytes = "product_scratch_bytes"
+        case activePlanes = "active_planes"
+        case rowBlockRows = "row_block_rows"
+        case memoryTargetSource = "memory_target_source"
+    }
+}
+
+extension ImagingMemoryProgress {
+    init(payload: ImagerProgressMemoryPayload) {
+        self.init(
+            memoryTargetBytes: payload.memoryTargetBytes,
+            plannedActiveBytes: payload.plannedActiveBytes,
+            sourceStreamBufferBytes: payload.sourceStreamBufferBytes,
+            productScratchBytes: payload.productScratchBytes,
+            activePlanes: payload.activePlanes,
+            rowBlockRows: payload.rowBlockRows,
+            memoryTargetSource: payload.memoryTargetSource
+        )
     }
 }
 
