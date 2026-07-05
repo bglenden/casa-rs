@@ -663,7 +663,23 @@ struct ImagerProgressContext {
     active_resource_counts: BTreeMap<String, usize>,
     active_resource_thread_counts: BTreeMap<String, Vec<usize>>,
     memory: Option<ImagerProgressMemory>,
+    memory_high_water: ImagerProgressMemoryHighWater,
     telemetry_writer: Option<BufWriter<File>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ImagerProgressMemoryHighWater {
+    source_stream_buffer_bytes: usize,
+    product_scratch_bytes: usize,
+}
+
+impl ImagerProgressMemoryHighWater {
+    fn observe(&mut self, memory: &ImagerProgressMemory) {
+        self.source_stream_buffer_bytes = self
+            .source_stream_buffer_bytes
+            .max(memory.source_stream_buffer_bytes);
+        self.product_scratch_bytes = self.product_scratch_bytes.max(memory.product_scratch_bytes);
+    }
 }
 
 struct ImagerProgressGuard;
@@ -822,6 +838,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         active_resource_counts: BTreeMap::new(),
         active_resource_thread_counts: BTreeMap::new(),
         memory: None,
+        memory_high_water: ImagerProgressMemoryHighWater::default(),
         telemetry_writer,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
@@ -907,6 +924,7 @@ fn imager_memory_ledger_snapshot(
     memory: Option<&ImagerProgressMemory>,
     process_rss_bytes: Option<usize>,
     process_peak_rss_bytes: Option<usize>,
+    memory_high_water: Option<&ImagerProgressMemoryHighWater>,
 ) -> Option<ImagerMemoryLedgerSnapshot> {
     if memory.is_none() && process_rss_bytes.is_none() && process_peak_rss_bytes.is_none() {
         return None;
@@ -914,13 +932,21 @@ fn imager_memory_ledger_snapshot(
 
     let mut entries = Vec::new();
     if let Some(memory) = memory {
+        let source_high_water = memory_high_water
+            .map(|high_water| high_water.source_stream_buffer_bytes)
+            .unwrap_or(memory.source_stream_buffer_bytes)
+            .max(memory.source_stream_buffer_bytes);
+        let product_high_water = memory_high_water
+            .map(|high_water| high_water.product_scratch_bytes)
+            .unwrap_or(memory.product_scratch_bytes)
+            .max(memory.product_scratch_bytes);
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::SourceBuffer,
             "Source stream",
             Some(ImagerObservedResourceId::SourceStream),
             Some(memory.source_stream_buffer_bytes),
             Some(memory.source_stream_buffer_bytes),
-            None,
+            Some(source_high_water),
             None,
             None,
             None,
@@ -995,7 +1021,7 @@ fn imager_memory_ledger_snapshot(
             Some(ImagerObservedResourceId::ProductScratch),
             Some(memory.product_scratch_bytes),
             Some(memory.product_scratch_bytes),
-            None,
+            Some(product_high_water),
             None,
             None,
             None,
@@ -1358,6 +1384,7 @@ fn imager_observability_snapshot(
                 memory,
                 process_memory.current_rss_bytes,
                 process_memory.peak_rss_bytes,
+                Some(&context.memory_high_water),
             )
         },
         workers: imager_observed_worker_snapshots(event, active_resources, active_resource_threads),
@@ -1723,6 +1750,7 @@ fn set_imager_progress_memory(memory: ImagerProgressMemory) {
     }
     if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
         if let Some(context) = context.as_mut() {
+            context.memory_high_water.observe(&memory);
             context.memory = Some(memory);
         }
     }
@@ -41148,10 +41176,12 @@ mod tests {
             row_block_rows: 128,
             memory_target_source: Some("test".to_string()),
         };
-        let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
-            .expect("ledger");
+        let ledger =
+            imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024), None)
+                .expect("ledger");
         assert_eq!(ledger.planned_total_bytes, 8 * 1024);
         assert_eq!(ledger.tracked_live_total_bytes, 8 * 1024);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 8 * 1024);
         assert_eq!(ledger.process_rss_bytes, Some(20 * 1024));
         assert_eq!(ledger.untracked_resident_bytes, Some(12 * 1024));
         let source = ledger
@@ -41164,6 +41194,7 @@ mod tests {
             Some(ImagerObservedResourceId::SourceStream)
         );
         assert_eq!(source.row_block_rows, Some(128));
+        assert_eq!(source.high_water_bytes, Some(3 * 1024));
         assert_eq!(source.confidence, ImagerObservedMemoryConfidence::Planned);
         let plane = ledger
             .entries
@@ -41183,6 +41214,86 @@ mod tests {
             untracked.confidence,
             ImagerObservedMemoryConfidence::Estimated
         );
+    }
+
+    #[test]
+    fn imager_memory_ledger_preserves_high_water_across_smaller_updates() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 12 * 1024,
+            source_stream_buffer_bytes: 4 * 1024,
+            product_scratch_bytes: 6 * 1024,
+            active_planes: 4,
+            row_block_rows: 256,
+            memory_target_source: Some("test".to_string()),
+        });
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 5 * 1024,
+            source_stream_buffer_bytes: 2 * 1024,
+            product_scratch_bytes: 3 * 1024,
+            active_planes: 1,
+            row_block_rows: 128,
+            memory_target_source: Some("test".to_string()),
+        });
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 12,
+            elapsed_ms: 1000,
+            phase: "idle".to_string(),
+            summary: "idle".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 0,
+                total_threads: 4,
+                gpu_active: false,
+                backend: "idle".to_string(),
+                active_resources: Vec::new(),
+                active_resource_threads: BTreeMap::new(),
+                memory: context.memory.clone(),
+            }),
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let ledger = snapshot.memory_ledger.as_ref().expect("memory ledger");
+        assert_eq!(ledger.tracked_live_total_bytes, 5 * 1024);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 10 * 1024);
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
+                .and_then(|entry| entry.high_water_bytes),
+            Some(4 * 1024)
+        );
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .find(|entry| entry.kind == ImagerObservedMemoryKind::Products)
+                .and_then(|entry| entry.high_water_bytes),
+            Some(6 * 1024)
+        );
+        drop(context_guard);
+        drop(progress_guard);
     }
 
     #[test]

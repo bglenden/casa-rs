@@ -698,14 +698,19 @@ public struct ImagingExecutionStateSummary: Codable, Equatable {
         targetBytes: Int?
     ) -> [ImagingExecutionKeyValueSummary] {
         guard let ledger else { return [] }
+        var trackedDetailParts: [String] = []
+        if ledger.plannedTotalBytes > 0 {
+            trackedDetailParts.append("\(compactByteSizeLabel(ledger.plannedTotalBytes)) planned")
+        }
+        if ledger.trackedHighWaterTotalBytes > ledger.trackedLiveTotalBytes {
+            trackedDetailParts.append("\(compactByteSizeLabel(ledger.trackedHighWaterTotalBytes)) peak")
+        }
         var rows: [ImagingExecutionKeyValueSummary] = [
             ImagingExecutionKeyValueSummary(
                 id: "memory-tracked",
                 label: "Tracked",
                 value: compactByteSizeLabel(ledger.trackedLiveTotalBytes),
-                detail: ledger.plannedTotalBytes > 0
-                    ? "\(compactByteSizeLabel(ledger.plannedTotalBytes)) planned"
-                    : "live"
+                detail: trackedDetailParts.isEmpty ? "live" : trackedDetailParts.joined(separator: " / ")
             )
         ]
         if let targetBytes, targetBytes > 0 {
