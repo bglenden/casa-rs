@@ -1595,6 +1595,40 @@ fn imager_progress_resource_is_active(resource: &str) -> bool {
         .unwrap_or(false)
 }
 
+struct ImagerProductWriteObservationGuard {
+    _span: Option<ImagerObservationSpanGuard>,
+    _resources: Option<ImagerProgressResourceGuard>,
+}
+
+fn begin_imager_progress_product_write_observation(
+    output_planes: usize,
+) -> Option<ImagerProductWriteObservationGuard> {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    let span = begin_imager_observation_span(
+        ImagerObservedStageKind::ProductWrite,
+        format!("writing outputs: {} output plane(s)", output_planes.max(1)),
+        &[ImagerObservedResourceId::ProductScratch],
+        Some(ImagerObservabilityExtent {
+            row_start: None,
+            row_end: None,
+            channel_start: None,
+            channel_end: None,
+            plane_start: Some(0),
+            plane_end: Some(output_planes.max(1)),
+        }),
+    );
+    let resources = acquire_imager_progress_resource_ids_with_threads(
+        &[ImagerObservedResourceId::ProductScratch],
+        1,
+    );
+    (span.is_some() || resources.is_some()).then_some(ImagerProductWriteObservationGuard {
+        _span: span,
+        _resources: resources,
+    })
+}
+
 fn set_imager_progress_memory(memory: ImagerProgressMemory) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return;
@@ -6557,7 +6591,9 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     );
 
     let stage_start = Instant::now();
-    let product_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_PRODUCTS]);
+    let product_guard = begin_imager_progress_product_write_observation(
+        run_result.channel_frequencies_hz().len().max(1),
+    );
     emit_imager_progress_product_write(output_config, &run_result, true);
     write_products(
         output_config,
@@ -8059,7 +8095,9 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_PRODUCTS]);
+    let product_guard = begin_imager_progress_product_write_observation(
+        run_result.channel_frequencies_hz().len().max(1),
+    );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
         config,
@@ -9053,7 +9091,9 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_PRODUCTS]);
+    let product_guard = begin_imager_progress_product_write_observation(
+        run_result.channel_frequencies_hz().len().max(1),
+    );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
         config,
@@ -9403,7 +9443,9 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_PRODUCTS]);
+    let product_guard = begin_imager_progress_product_write_observation(
+        run_result.channel_frequencies_hz().len().max(1),
+    );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
         config,
@@ -15858,7 +15900,9 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_PRODUCTS]);
+    let product_guard = begin_imager_progress_product_write_observation(
+        run_result.channel_frequencies_hz().len().max(1),
+    );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(config, &coords, &run_result, None, None)?;
     drop(product_guard);
@@ -16078,7 +16122,9 @@ fn run_joint_outlier_clean_from_configs(
             None
         };
         let field_run_products = RunProducts::Mfs(result.clone());
-        let product_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_PRODUCTS]);
+        let product_guard = begin_imager_progress_product_write_observation(
+            field_run_products.channel_frequencies_hz().len().max(1),
+        );
         emit_imager_progress_product_write(&field.config, &field_run_products, true);
         write_products(
             &field.config,
@@ -41028,15 +41074,21 @@ mod tests {
             serde_json::from_str(text.lines().last().expect("progress event"))
                 .expect("parse progress event");
         let runtime = event.runtime.as_ref().expect("runtime");
-        assert!(!runtime
-            .active_resources
-            .contains(&PROGRESS_RESOURCE_SOURCE_STREAM.to_string()));
-        assert!(runtime
-            .active_resources
-            .contains(&PROGRESS_RESOURCE_GRID.to_string()));
-        assert!(runtime
-            .active_resources
-            .contains(&PROGRESS_RESOURCE_PLANE_STATE.to_string()));
+        assert!(
+            !runtime
+                .active_resources
+                .contains(&PROGRESS_RESOURCE_SOURCE_STREAM.to_string())
+        );
+        assert!(
+            runtime
+                .active_resources
+                .contains(&PROGRESS_RESOURCE_GRID.to_string())
+        );
+        assert!(
+            runtime
+                .active_resources
+                .contains(&PROGRESS_RESOURCE_PLANE_STATE.to_string())
+        );
         let observability = event.observability.as_ref().expect("observability");
         let source = observability
             .resources
@@ -41070,11 +41122,9 @@ mod tests {
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
-        assert!(observability
-            .workers
-            .iter()
-            .any(|worker| worker.state == ImagerObservedWorkerState::RunningCpu
-                && worker.active_count > 0));
+        assert!(observability.workers.iter().any(|worker| worker.state
+            == ImagerObservedWorkerState::RunningCpu
+            && worker.active_count > 0));
         assert_eq!(
             observability
                 .queues
@@ -41084,6 +41134,93 @@ mod tests {
             Some(0)
         );
         drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn product_write_observation_uses_typed_span_without_phase_fallback() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        let product_guard =
+            begin_imager_progress_product_write_observation(3).expect("product write observed");
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let active_resources = context
+            .active_resource_counts
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let active_resource_threads = context
+            .active_resource_thread_counts
+            .iter()
+            .filter_map(|(resource, counts)| {
+                counts
+                    .iter()
+                    .copied()
+                    .max()
+                    .map(|threads| (resource.clone(), threads))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 10,
+            elapsed_ms: 500,
+            phase: "opaque-finalizer".to_string(),
+            summary: "opaque finalizer".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 1,
+                total_threads: 4,
+                gpu_active: false,
+                backend: "product writer".to_string(),
+                active_resources: active_resources.clone(),
+                active_resource_threads: active_resource_threads.clone(),
+                memory: None,
+            }),
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(
+            &event,
+            context,
+            &active_resources,
+            &active_resource_threads,
+        );
+        let product = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::ProductScratch)
+            .expect("product resource");
+        assert_eq!(product.state, ImagerObservedResourceState::Active);
+        assert_eq!(product.lease_count, 1);
+        let span = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::ProductWrite)
+            .expect("product write span");
+        assert_eq!(
+            span.resource_ids,
+            vec![ImagerObservedResourceId::ProductScratch]
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.plane_end),
+            Some(3)
+        );
+        drop(context_guard);
+        drop(product_guard);
         drop(progress_guard);
     }
 
