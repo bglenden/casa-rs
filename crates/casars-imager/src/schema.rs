@@ -641,7 +641,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 flags: &["--minor-cycle-length"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
-                default: Some("8"),
+                default: Some("1000"),
                 choices: &[],
                 help: "Residual refresh cadence in component updates",
                 group: "Stage Parameters",
@@ -1103,6 +1103,7 @@ mod tests {
 
         assert_eq!(default_for("gain"), "0.1");
         assert_eq!(default_for("pblimit"), "0.2");
+        assert_eq!(default_for("minor_cycle_length"), "1000");
         assert_eq!(default_for("minpsffraction"), "0.05");
     }
 }

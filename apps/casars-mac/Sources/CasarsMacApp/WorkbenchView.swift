@@ -320,6 +320,7 @@ struct LeftDockView: View {
         case .none: "No project"
         case .fixture: "Demo project"
         case .probed: "Real project"
+        case .directMeasurementSet: "Direct MeasurementSet"
         case .tutorialPack: "Tutorial pack"
         }
     }
@@ -913,6 +914,7 @@ struct InspectorView: View {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
+        case .directMeasurementSet: "Direct launch metadata"
         case .tutorialPack: "Tutorial pack metadata"
         }
     }

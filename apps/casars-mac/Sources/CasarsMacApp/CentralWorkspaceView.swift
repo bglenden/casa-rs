@@ -6674,7 +6674,7 @@ struct TaskPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Run state")
                 .workbenchFont(.headline)
-            ProgressView(value: store.state.taskRun.progress)
+            RunProgressBar(progress: store.state.taskRun.progress)
             Text(store.state.taskRun.state.rawValue)
                 .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
@@ -6689,436 +6689,1027 @@ struct TaskPanel: View {
     }
 }
 
-struct DirtyImagingTaskPanel: View {
-    @ObservedObject var store: WorkbenchStore
+private struct ImagerProgressDashboard: View {
+    let snapshot: ImagerProgressSnapshot
+    @State private var currentTime = Date()
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 300), spacing: 14, alignment: .top)
+    ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(
-                        tasks: store.state.taskCatalog,
-                        activeTaskID: store.state.activeTaskID,
-                        categoryFilter: .constant(.all),
-                        searchText: .constant(""),
-                        selectTask: { store.selectTask($0) }
-                    )
-                    if let parameters = store.state.dirtyImagingTaskParameters {
-                        selectionBlock(parameters: parameters)
-                        imagingBlock(parameters: parameters)
-                        outputBlock(parameters: parameters)
-                        runBlock
-                        runProductsBlock
-                    } else {
-                        PanelHeader(title: "Dirty Imaging", subtitle: "Select a MeasurementSet before opening this task")
-                    }
-                }
-                .padding(20)
-            }
-        }
-        .accessibilityIdentifier("panel.task.dirtyImaging")
-    }
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Dirty Imaging")
-                    .workbenchFont(.title3, weight: .semibold)
-                Text(selectedDatasetSubtitle)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                store.runTask()
-            } label: {
-                Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
-            }
-            .disabled(store.state.taskRun.state == .running || store.state.dirtyImagingTaskParameters == nil)
-            .accessibilityIdentifier("task.run")
-
-            Button {
-                store.stopTask()
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .disabled(store.state.taskRun.state != .running)
-            .accessibilityIdentifier("task.stop")
-        }
-        .padding()
-        .background(.bar)
-    }
-
-    private var selectedDatasetSubtitle: String {
-        guard let parameters = store.state.dirtyImagingTaskParameters,
-              let dataset = taskDataset(for: parameters)
-        else {
-            return "No MeasurementSet selected"
-        }
-        return "\(dataset.name) - \(dataset.size)"
-    }
-
-    private func selectionBlock(parameters: DirtyImagingTaskParameters) -> some View {
-        let dataset = taskDataset(for: parameters)
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("Selections")
-                .workbenchFont(.headline)
-
-            Picker("MeasurementSet", selection: Binding(
-                get: { parameters.datasetID },
-                set: { store.setDirtyImagingDataset($0) }
-            )) {
-                Text("Select MeasurementSet").tag("")
-                ForEach(measurementSetDatasets) { dataset in
-                    Text(dataset.name).tag(dataset.id)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.measurementSet")
-
-            Picker("Source / field", selection: Binding(
-                get: { parameters.selectedField ?? "all" },
-                set: { store.setDirtyImagingField($0) }
-            )) {
-                Text("all").tag("all")
-                ForEach(dataset?.fields ?? [], id: \.self) { field in
-                    Text(field).tag(field)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.field")
-
-            LabeledContent("Phase center", value: parameters.phaseCenterField ?? "auto")
-
-            Picker("Spectral window", selection: Binding(
-                get: { parameters.selectedSpectralWindow ?? "all" },
-                set: { store.setDirtyImagingSpectralWindow($0) }
-            )) {
-                Text("all").tag("all")
-                ForEach(dataset?.spectralWindows ?? [], id: \.self) { spw in
-                    Text(spw).tag(spw)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.spw")
-
-            HStack {
-                TextField("Channel start", text: Binding(
-                    get: { parameters.channelStart },
-                    set: { store.setDirtyImagingChannelStart($0) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("task.parameter.channelStart")
-
-                TextField("Channel count", text: Binding(
-                    get: { parameters.channelCount },
-                    set: { store.setDirtyImagingChannelCount($0) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("task.parameter.channelCount")
-            }
-
-            Picker("Data column", selection: Binding(
-                get: { parameters.dataColumn },
-                set: { store.setDirtyImagingDataColumn($0) }
-            )) {
-                ForEach(dataset?.dataColumns.isEmpty == false ? dataset?.dataColumns ?? [] : ["DATA"], id: \.self) { column in
-                    Text(column).tag(column)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.dataColumn")
-
-            Picker("Image plane", selection: Binding(
-                get: { parameters.correlation ?? "I" },
-                set: { store.setDirtyImagingCorrelation($0) }
-            )) {
-                Text("Stokes I").tag("I")
-                ForEach(dataset?.correlations ?? [], id: \.self) { correlation in
-                    Text("Raw \(correlation)").tag(correlation)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.correlation")
-
-            Text(selectionHint(for: parameters))
-                .foregroundStyle(.secondary)
-                .workbenchFont(.caption)
-                .accessibilityIdentifier("task.parameter.selectionHint")
-        }
-        .taskCard()
-    }
-
-    private var measurementSetDatasets: [DatasetSummary] {
-        store.state.project.datasets.filter { $0.kind == .measurementSet }
-    }
-
-    private func taskDataset(for parameters: DirtyImagingTaskParameters) -> DatasetSummary? {
-        store.state.project.datasets.first { $0.id == parameters.datasetID }
-    }
-
-    private func selectionHint(for parameters: DirtyImagingTaskParameters) -> String {
-        guard let dataset = taskDataset(for: parameters) else {
-            return "Pick a MeasurementSet before running dirty imaging."
-        }
-        if dataset.name.lowercased().contains("twhya_calibrated.ms") {
-            return "Tutorial defaults pick TW Hya, spw 0, 250 px, and 0.1 arcsec cells from the ALMA First Look imaging guide."
-        }
-        if dataset.name == "mssel_test_small_multifield_spw.ms" {
-            return "Sample defaults pick NGC4826-F3, spw 5, and raw YY: a target field with a 64-channel line window near the NGC4826 rest frequency."
-        }
-        return "Defaults prefer a science-like field, a multi-channel spectral window, and Stokes I when the MeasurementSet supports paired correlations."
-    }
-
-    private func imagingBlock(parameters: DirtyImagingTaskParameters) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Image")
-                .workbenchFont(.headline)
-
-            imageDimensionRow(
-                label: "Image width",
-                value: parameters.imageSize,
-                setValue: store.setDirtyImagingImageSize,
-                adjust: store.adjustDirtyImagingImageWidthToNiceSize,
-                accessibilityID: "task.parameter.imageWidth"
-            )
-
-            imageDimensionRow(
-                label: "Image height",
-                value: parameters.imageHeight,
-                setValue: store.setDirtyImagingImageHeight,
-                adjust: store.adjustDirtyImagingImageHeightToNiceSize,
-                accessibilityID: "task.parameter.imageHeight"
-            )
-
-            HStack(spacing: 8) {
-                TextField("Cell size", text: Binding(
-                    get: { String(format: "%.3f", parameters.cellArcsec) },
-                    set: { value in
-                        if let parsed = Double(value) {
-                            store.setDirtyImagingCellArcsec(parsed)
-                        }
-                    }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("task.parameter.cellArcsec")
-
-                Text("arcsec")
-                    .foregroundStyle(.secondary)
-                    .workbenchFont(.caption)
-                    .accessibilityIdentifier("task.parameter.cellArcsec.unit")
-            }
-
-            if parameters.imageSize != parameters.imageHeight {
-                Label("Rectangular image sizes are not runnable yet.", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
-                    .workbenchFont(.caption)
-                    .accessibilityIdentifier("task.parameter.imageShape.warning")
-            }
-
-            Picker("Weighting", selection: Binding(
-                get: { parameters.weighting },
-                set: { store.setDirtyImagingWeighting($0) }
-            )) {
-                ForEach(DirtyImagingWeighting.allCases) { weighting in
-                    Text(weighting.title).tag(weighting)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Imager Progress")
+                        .workbenchFont(.headline)
+                    Text(snapshot.summary)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
                 }
-            }
-            .accessibilityIdentifier("task.parameter.weighting")
-
-            Toggle("Dirty only", isOn: .constant(parameters.dirtyOnly))
-                .disabled(true)
-                .accessibilityIdentifier("task.parameter.dirtyOnly")
-        }
-        .taskCard()
-    }
-
-    private func imageDimensionRow(
-        label: String,
-        value: Int,
-        setValue: @escaping (Int) -> Void,
-        adjust: @escaping () -> Void,
-        accessibilityID: String
-    ) -> some View {
-        let assessment = DirtyImagingTaskParameters.imageDimensionAssessment(value)
-        return HStack(spacing: 8) {
-            Text(label)
-                .frame(width: 96, alignment: .leading)
-
-            TextField(label, text: Binding(
-                get: { "\(value)" },
-                set: { text in
-                    if let parsed = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                        setValue(parsed)
-                    }
-                }
-            ))
-            .textFieldStyle(.plain)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .frame(width: 82)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(dimensionFill(for: assessment.severity))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(dimensionStroke(for: assessment.severity), lineWidth: assessment.severity == .good ? 1 : 1.5)
-            )
-            .help(assessment.message)
-            .accessibilityIdentifier(accessibilityID)
-
-            Text("px")
-                .foregroundStyle(.secondary)
-                .workbenchFont(.caption)
-
-            Button {
-                adjust()
-            } label: {
-                Label("Adjust", systemImage: "wand.and.stars")
-            }
-            .disabled(!assessment.needsAdjustment)
-            .help("Adjust to \(assessment.adjustedValue) px")
-            .accessibilityIdentifier("\(accessibilityID).adjust")
-        }
-    }
-
-    private func dimensionFill(for severity: DirtyImagingDimensionSeverity) -> Color {
-        switch severity {
-        case .good:
-            Color(nsColor: .textBackgroundColor).opacity(0.25)
-        case .warning:
-            .yellow.opacity(0.40)
-        case .terrible:
-            .red.opacity(0.40)
-        }
-    }
-
-    private func dimensionStroke(for severity: DirtyImagingDimensionSeverity) -> Color {
-        switch severity {
-        case .good:
-            .secondary.opacity(0.35)
-        case .warning:
-            .yellow.opacity(0.85)
-        case .terrible:
-            .red.opacity(0.85)
-        }
-    }
-
-    private func outputBlock(parameters: DirtyImagingTaskParameters) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Output")
-                .workbenchFont(.headline)
-
-            TextField("Image prefix", text: Binding(
-                get: { parameters.outputPrefix },
-                set: { store.setDirtyImagingOutputPrefix($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityIdentifier("task.parameter.outputPrefix")
-
-            TextField("Run reason", text: Binding(
-                get: { parameters.runReason },
-                set: { store.setDirtyImagingRunReason($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityIdentifier("task.parameter.runReason")
-
-            Text(parameters.requestSummary)
-                .workbenchFont(.caption, design: .monospaced)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("task.parameter.requestSummary")
-        }
-        .taskCard()
-    }
-
-    private var runBlock: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run")
-                .workbenchFont(.headline)
-            ProgressView(value: store.state.taskRun.progress)
-            Text(store.state.taskRun.state.rawValue)
-                .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
-
-            valueList("Log", values: store.state.taskRun.logLines)
-            valueList("Warnings", values: store.state.taskRun.warnings)
-            valueList("Diagnostics", values: store.state.taskRun.diagnostics)
-            valueList("Products", values: store.state.taskRun.products)
-            valueList("Artifacts", values: store.state.taskRun.outputPaths)
-        }
-        .taskCard()
-        .accessibilityIdentifier("task.runState")
-    }
-
-    @ViewBuilder
-    private var runProductsBlock: some View {
-        if let group = activeRunProductGroup {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Generated Products")
-                    .workbenchFont(.headline)
-                Text(group.runID)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
-
-                ForEach(group.products) { product in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(product.label)
-                                .workbenchFont(.subheadline, weight: .semibold)
-                            Text(product.path)
-                                .workbenchFont(.caption, design: .monospaced)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                            if product.previewPngExists, let preview = product.previewPngPath {
-                                Text("Preview: \(preview)")
-                                    .workbenchFont(.caption, design: .monospaced)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-
-                        Spacer()
-
-                        Button {
-                            store.openRunProduct(runID: group.runID, productID: product.id)
-                        } label: {
-                            Label("Open", systemImage: "arrow.up.right.square")
-                        }
-                        .disabled(product.datasetID == nil)
-                        .accessibilityIdentifier("task.product.open.\(product.id)")
-                    }
-                    .padding(.vertical, 3)
-                }
-            }
-            .taskCard()
-            .accessibilityIdentifier("task.generatedProducts")
-        }
-    }
-
-    private var activeRunProductGroup: RunProductGroup? {
-        guard let runID = store.state.taskRun.runID else {
-            return nil
-        }
-        return store.state.runProductGroups.first { $0.runID == runID }
-    }
-
-    private func valueList(_ title: String, values: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .workbenchFont(.subheadline, weight: .semibold)
-            if values.isEmpty {
-                Text("None")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(values, id: \.self) { value in
-                    Text(value)
+                Spacer()
+                HStack(spacing: 8) {
+                    ImagerProgressStateBadge(state: snapshot.state)
+                    Text(snapshot.elapsedLabel(now: currentTime))
                         .workbenchFont(.caption, design: .monospaced)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(alignment: .center, spacing: 10) {
+                Text(snapshot.phase)
+                    .workbenchFont(.subheadline, weight: .semibold)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                Spacer()
+                Text(snapshot.source)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+
+            ImagerProgressStatusStrip(snapshot: snapshot)
+
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                ImagerProgressSection(
+                    title: snapshot.sourceStreamIsActive ? "MS Read Window" : "Last MS Read Window",
+                    subtitle: snapshot.measurementSetWindow.rangeLabel
+                ) {
+                    MeasurementSetReadWindowView(window: snapshot.measurementSetWindow)
+                }
+
+                ImagerProgressSection(
+                    title: "Output Cube",
+                    subtitle: snapshot.outputCube.aspectLabel
+                ) {
+                    OutputCubeProgressView(cube: snapshot.outputCube)
+                }
+
+                ImagerProgressSection(
+                    title: "Buffer Activity",
+                    subtitle: "\(snapshot.resourceActivities.filter(\.isBusy).count) busy / \(snapshot.resourceActivities.count) tracked"
+                ) {
+                    ResourceActivityFlowView(snapshot: snapshot)
+                }
+
+                ImagerProgressSection(
+                    title: "UV Coverage",
+                    subtitle: "\(decimalCountLabel(UInt64(snapshot.uvCoverage.retainedMeasuredPointCount))) retained / \(decimalCountLabel(snapshot.uvCoverage.acceptedMeasuredPointCount)) gridable"
+                ) {
+                    UVCoverageProgressView(coverage: snapshot.uvCoverage)
+                }
+
+                ImagerProgressSection(
+                    title: "Cycles",
+                    subtitle: snapshot.deconvolution.phase
+                ) {
+                    DeconvolutionProgressView(progress: snapshot.deconvolution)
+                }
+
+                ImagerProgressSection(
+                    title: "Runtime",
+                    subtitle: snapshot.runtime.backend
+                ) {
+                    RuntimeProgressView(runtime: snapshot.runtime)
                 }
             }
         }
+        .accessibilityIdentifier("task.imagerProgress")
+        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { date in
+            if snapshot.state == .running {
+                currentTime = date
+            }
+        }
+    }
+}
+
+private struct ImagerProgressStateBadge: View {
+    let state: TaskRunState
+
+    private var isActive: Bool {
+        state == .running
+    }
+
+    private var label: String {
+        isActive ? "active" : "inactive: \(state.rawValue)"
+    }
+
+    private var tint: Color {
+        switch state {
+        case .running:
+            return .green
+        case .succeeded, .completed:
+            return .blue
+        case .failed:
+            return .red
+        case .cancelled, .stopped:
+            return .orange
+        case .idle:
+            return .secondary
+        }
+    }
+
+    var body: some View {
+        Text(label)
+            .workbenchFont(.caption2, weight: .semibold)
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(tint.opacity(isActive ? 0.16 : 0.10))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(isActive ? 0.34 : 0.24), lineWidth: 1)
+            )
+            .accessibilityLabel(label)
+    }
+}
+
+private struct ImagerProgressStatusStrip: View {
+    let snapshot: ImagerProgressSnapshot
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 132), spacing: 10, alignment: .top)
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+            ImagerProgressStatusChip(
+                title: "Work",
+                value: percentLabel(snapshot.workEstimate.fraction),
+                detail: snapshot.workEstimate.confidence,
+                systemImage: "chart.bar.fill",
+                accent: .cyan
+            )
+            ImagerProgressStatusChip(
+                title: snapshot.sourceStreamIsActive ? "MS rows" : "Last MS rows",
+                value: snapshot.measurementSetWindow.activeRowPercentLabel,
+                detail: "channels \(snapshot.measurementSetWindow.activeChannelPercentLabel)",
+                systemImage: "tablecells",
+                accent: .blue
+            )
+            ImagerProgressStatusChip(
+                title: "Cube planes",
+                value: snapshot.outputCube.activePlanePercentLabel,
+                detail: "\(snapshot.outputCube.activePlaneCount) active",
+                systemImage: "cube",
+                accent: .indigo
+            )
+            ImagerProgressStatusChip(
+                title: "Clean",
+                value: percentLabel(snapshot.deconvolution.minorIterationFraction),
+                detail: "major \(snapshot.deconvolution.majorCycleLabel)",
+                systemImage: "sparkles",
+                accent: .orange
+            )
+            ImagerProgressStatusChip(
+                title: "Runtime",
+                value: snapshot.runtime.threadPercentLabel,
+                detail: snapshot.runtime.gpuActive ? "GPU active" : "GPU idle",
+                systemImage: snapshot.runtime.gpuActive ? "bolt.fill" : "bolt.slash",
+                accent: snapshot.runtime.gpuActive ? .green : .secondary
+            )
+        }
+        .accessibilityIdentifier("task.imagerProgress.status")
+    }
+}
+
+private struct ImagerProgressStatusChip: View {
+    let title: String
+    let value: String
+    let detail: String
+    let systemImage: String
+    let accent: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: systemImage)
+                .foregroundStyle(accent)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(value)
+                    .workbenchFont(.subheadline, weight: .semibold, design: .monospaced)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(detail)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.30))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
+        )
+    }
+}
+
+private struct ImagerProgressSection<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .workbenchFont(.subheadline, weight: .semibold)
+                Text(subtitle)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            content
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+        )
+    }
+}
+
+private struct MeasurementSetReadWindowView: View {
+    let window: MeasurementSetReadWindowProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Canvas { context, size in
+                let availableWidth = max(20, size.width - 48)
+                let availableHeight = max(20, size.height - 34)
+                let rectHeight = min(availableHeight, availableWidth * 2)
+                let rectWidth = rectHeight / 2
+                let rect = CGRect(
+                    x: 34 + max(0, availableWidth - rectWidth) / 2,
+                    y: 14 + max(0, availableHeight - rectHeight) / 2,
+                    width: rectWidth,
+                    height: rectHeight
+                )
+                let gridColor = Color.secondary.opacity(0.18)
+                let outlineColor = Color.secondary.opacity(0.45)
+                context.stroke(Path(rect), with: .color(outlineColor), lineWidth: 1)
+
+                for index in 1..<8 {
+                    let x = rect.minX + rect.width * CGFloat(index) / 8
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: rect.minY))
+                    path.addLine(to: CGPoint(x: x, y: rect.maxY))
+                    context.stroke(path, with: .color(gridColor), lineWidth: 0.75)
+                }
+                for index in 1..<7 {
+                    let y = rect.minY + rect.height * CGFloat(index) / 7
+                    var path = Path()
+                    path.move(to: CGPoint(x: rect.minX, y: y))
+                    path.addLine(to: CGPoint(x: rect.maxX, y: y))
+                    context.stroke(path, with: .color(gridColor), lineWidth: 0.75)
+                }
+
+                let selected = CGRect(
+                    x: rect.minX + rect.width * CGFloat(window.channelStartFraction),
+                    y: rect.minY + rect.height * CGFloat(window.rowStartFraction),
+                    width: rect.width * CGFloat(max(0, window.channelEndFraction - window.channelStartFraction)),
+                    height: rect.height * CGFloat(max(0, window.rowEndFraction - window.rowStartFraction))
+                )
+                context.fill(Path(selected), with: .color(Color.cyan.opacity(0.18)))
+                context.stroke(Path(selected), with: .color(.cyan), lineWidth: 2)
+            }
+            .frame(height: 220)
+            .overlay(alignment: .leading) {
+                Text("Rows")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 32, height: 72)
+            }
+
+            HStack {
+                Text("Channels")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(window.activeRowCount) rows x \(window.activeChannelCount) channels")
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct OutputCubeProgressView: View {
+    let cube: OutputCubeProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            XYZCubeRangeWidget(cube: cube)
+                .frame(height: 190)
+
+            HStack {
+                Text("Outlined sub-cube: X=all, Y=all, Z=\(cube.activePlaneStart)-\(cube.activePlaneEnd)")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(cube.activeRangeLabel)
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct XYZCubeRangeWidget: View {
+    let cube: OutputCubeProgress
+
+    var body: some View {
+        Canvas { context, size in
+            let projection = XYZCubeProjection(size: size, zScale: CGFloat(cube.zAxisDisplayScale))
+            let fullCube = XYZCubeBox(xMin: 0, xMax: 1, yMin: 0, yMax: 1, zMin: 0, zMax: 1)
+            let selectedSubcube = XYZCubeBox(
+                xMin: 0,
+                xMax: 1,
+                yMin: 0,
+                yMax: 1,
+                zMin: CGFloat(cube.activePlaneStartFraction),
+                zMax: CGFloat(cube.activePlaneEndFraction)
+            )
+
+            draw(box: fullCube, projection: projection, in: &context, color: .secondary.opacity(0.38), lineWidth: 1)
+            fill(box: selectedSubcube, projection: projection, in: &context, color: .cyan.opacity(0.10))
+            draw(box: selectedSubcube, projection: projection, in: &context, color: .cyan, lineWidth: 2.2)
+            drawAxisLabels(projection: projection, in: &context)
+        }
+        .accessibilityLabel("XYZ cube with highlighted sub-cube covering all X and all Y over selected Z range")
+    }
+
+    private func fill(
+        box: XYZCubeBox,
+        projection: XYZCubeProjection,
+        in context: inout GraphicsContext,
+        color: Color
+    ) {
+        for face in box.faces {
+            guard let first = face.first else { continue }
+            var path = Path()
+            path.move(to: projection.project(first))
+            for point in face.dropFirst() {
+                path.addLine(to: projection.project(point))
+            }
+            path.closeSubpath()
+            context.fill(path, with: .color(color))
+        }
+    }
+
+    private func draw(
+        box: XYZCubeBox,
+        projection: XYZCubeProjection,
+        in context: inout GraphicsContext,
+        color: Color,
+        lineWidth: CGFloat
+    ) {
+        for edge in box.edges {
+            var path = Path()
+            path.move(to: projection.project(edge.0))
+            path.addLine(to: projection.project(edge.1))
+            context.stroke(path, with: .color(color), lineWidth: lineWidth)
+        }
+    }
+
+    private func drawAxisLabels(projection: XYZCubeProjection, in context: inout GraphicsContext) {
+        let origin = projection.project(XYZCubePoint(x: 0, y: 0, z: 0))
+        drawAxis(from: origin, to: projection.project(XYZCubePoint(x: 1.08, y: 0, z: 0)), label: "X", in: &context)
+        drawAxis(from: origin, to: projection.project(XYZCubePoint(x: 0, y: 1.08, z: 0)), label: "Y", in: &context)
+        drawAxis(from: origin, to: projection.project(XYZCubePoint(x: 0, y: 0, z: 1.08)), label: "Z", in: &context)
+    }
+
+    private func drawAxis(from start: CGPoint, to end: CGPoint, label: String, in context: inout GraphicsContext) {
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: end)
+        context.stroke(path, with: .color(.secondary.opacity(0.55)), lineWidth: 1)
+        context.draw(
+            Text(label).font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: end.x + 12, y: end.y)
+        )
+    }
+}
+
+private struct XYZCubeProjection {
+    let origin: CGPoint
+    let xAxis: CGVector
+    let yAxis: CGVector
+    let zAxis: CGVector
+
+    init(size: CGSize, zScale: CGFloat) {
+        let margin: CGFloat = 18
+        let zAngle = CGFloat.pi / 6
+        let zCos = cos(zAngle)
+        let zSin = sin(zAngle)
+        let zScale = max(0.05, zScale)
+        let availableWidth = max(40, size.width - margin * 2)
+        let availableHeight = max(40, size.height - margin * 2)
+        let axisLength = min(availableWidth / (1 + zScale * zCos), availableHeight / (1 + zScale * zSin))
+        let zLength = axisLength * zScale
+        let projectedWidth = axisLength + zLength * zCos
+        let projectedHeight = axisLength + zLength * zSin
+        let top = (size.height - projectedHeight) / 2
+        origin = CGPoint(
+            x: (size.width - projectedWidth) / 2,
+            y: top + projectedHeight
+        )
+        xAxis = CGVector(dx: axisLength, dy: 0)
+        yAxis = CGVector(dx: 0, dy: -axisLength)
+        zAxis = CGVector(dx: zLength * zCos, dy: -zLength * zSin)
+    }
+
+    func project(_ point: XYZCubePoint) -> CGPoint {
+        CGPoint(
+            x: origin.x + xAxis.dx * point.x + yAxis.dx * point.y + zAxis.dx * point.z,
+            y: origin.y + xAxis.dy * point.x + yAxis.dy * point.y + zAxis.dy * point.z
+        )
+    }
+}
+
+private struct XYZCubePoint {
+    var x: CGFloat
+    var y: CGFloat
+    var z: CGFloat
+}
+
+private struct XYZCubeBox {
+    var xMin: CGFloat
+    var xMax: CGFloat
+    var yMin: CGFloat
+    var yMax: CGFloat
+    var zMin: CGFloat
+    var zMax: CGFloat
+
+    var corners: (
+        p000: XYZCubePoint,
+        p100: XYZCubePoint,
+        p110: XYZCubePoint,
+        p010: XYZCubePoint,
+        p001: XYZCubePoint,
+        p101: XYZCubePoint,
+        p111: XYZCubePoint,
+        p011: XYZCubePoint
+    ) {
+        (
+            XYZCubePoint(x: xMin, y: yMin, z: zMin),
+            XYZCubePoint(x: xMax, y: yMin, z: zMin),
+            XYZCubePoint(x: xMax, y: yMax, z: zMin),
+            XYZCubePoint(x: xMin, y: yMax, z: zMin),
+            XYZCubePoint(x: xMin, y: yMin, z: zMax),
+            XYZCubePoint(x: xMax, y: yMin, z: zMax),
+            XYZCubePoint(x: xMax, y: yMax, z: zMax),
+            XYZCubePoint(x: xMin, y: yMax, z: zMax)
+        )
+    }
+
+    var faces: [[XYZCubePoint]] {
+        let c = corners
+        return [
+            [c.p000, c.p100, c.p110, c.p010],
+            [c.p001, c.p101, c.p111, c.p011],
+            [c.p000, c.p100, c.p101, c.p001],
+            [c.p100, c.p110, c.p111, c.p101],
+            [c.p110, c.p010, c.p011, c.p111],
+            [c.p010, c.p000, c.p001, c.p011]
+        ]
+    }
+
+    var edges: [(XYZCubePoint, XYZCubePoint)] {
+        let c = corners
+        return [
+            (c.p000, c.p100), (c.p100, c.p110), (c.p110, c.p010), (c.p010, c.p000),
+            (c.p001, c.p101), (c.p101, c.p111), (c.p111, c.p011), (c.p011, c.p001),
+            (c.p000, c.p001), (c.p100, c.p101), (c.p110, c.p111), (c.p010, c.p011)
+        ]
+    }
+}
+
+private struct UVCoverageProgressView: View {
+    let coverage: UVCoverageProgress
+
+    var body: some View {
+        Canvas { context, size in
+            let side = max(20, min(size.width - 36, size.height - 28))
+            let rect = CGRect(
+                x: (size.width - side) / 2,
+                y: 12,
+                width: side,
+                height: side
+            )
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            var uAxis = Path()
+            uAxis.move(to: CGPoint(x: rect.minX, y: center.y))
+            uAxis.addLine(to: CGPoint(x: rect.maxX, y: center.y))
+            context.stroke(uAxis, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
+
+            var vAxis = Path()
+            vAxis.move(to: CGPoint(x: center.x, y: rect.minY))
+            vAxis.addLine(to: CGPoint(x: center.x, y: rect.maxY))
+            context.stroke(vAxis, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
+            context.stroke(Path(ellipseIn: rect), with: .color(.secondary.opacity(0.18)), lineWidth: 1)
+
+            draw(points: coverage.conjugate, color: .indigo, rect: rect, in: &context)
+            draw(points: coverage.measured, color: .cyan, rect: rect, in: &context)
+        }
+        .frame(height: 210)
+        .overlay(alignment: .bottomLeading) {
+            HStack(spacing: 12) {
+                legendDot(color: .cyan, label: "measured sample")
+                legendDot(color: .indigo, label: "conjugate")
+            }
+            .padding(.leading, 6)
+        }
+    }
+
+    private func draw(points: [UVPoint], color: Color, rect: CGRect, in context: inout GraphicsContext) {
+        let uExtent = max(1, coverage.uExtentKilolambda)
+        let vExtent = max(1, coverage.vExtentKilolambda)
+        for point in points {
+            let x = rect.midX + rect.width * 0.5 * CGFloat(point.uKilolambda / uExtent)
+            let y = rect.midY - rect.height * 0.5 * CGFloat(point.vKilolambda / vExtent)
+            let radius = CGFloat(0.5)
+            let pointRect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+            context.fill(Path(ellipseIn: pointRect), with: .color(color.opacity(0.72)))
+        }
+    }
+
+    private func legendDot(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .workbenchFont(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DeconvolutionProgressView: View {
+    let progress: ImagingDeconvolutionProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text("Minor-cycle iteration progress")
+                        .workbenchFont(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(percentLabel(progress.minorIterationFraction))
+                        .workbenchFont(.caption2, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: boundedProgress(progress.minorIterationFraction))
+            }
+            ResidualHistoryChart(progress: progress)
+                .frame(height: 76)
+            HStack(spacing: 12) {
+                metric("Major", progress.majorCycleLabel)
+                metric("Minor updates", "\(progress.minorIterations)")
+                metric("Components", "\(progress.componentsCleaned)")
+            }
+            HStack(spacing: 12) {
+                metric("Latest peak", String(format: "%.2f mJy/beam", progress.peakResidualMilliJyPerBeam))
+                metric("Target", String(format: "%.2f mJy/beam", progress.targetResidualMilliJyPerBeam))
+            }
+        }
+        .frame(minHeight: 150, alignment: .topLeading)
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .workbenchFont(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .workbenchFont(.caption, design: .monospaced)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(minWidth: 72, alignment: .leading)
+    }
+}
+
+private struct RunProgressBar: View {
+    let progress: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Run progress")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(percentLabel(progress))
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView(value: boundedProgress(progress))
+            Text("Task runner progress signal")
+                .workbenchFont(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct WorkEstimateBar: View {
+    let estimate: ImagingWorkEstimate
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Estimated work")
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(percentLabel(estimate.fraction))
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView(value: boundedProgress(estimate.fraction))
+            HStack(alignment: .firstTextBaseline) {
+                Text(estimate.basis)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer()
+                Text(estimate.unitsLabel)
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        }
+    }
+}
+
+private func boundedProgress(_ progress: Double) -> Double {
+    min(1, max(0, progress))
+}
+
+private func percentLabel(_ progress: Double) -> String {
+    "\(Int((boundedProgress(progress) * 100).rounded()))%"
+}
+
+private func percentRangeLabel(start: Double, end: Double) -> String {
+    let startPercent = Int((boundedProgress(start) * 100).rounded())
+    let endPercent = Int((boundedProgress(end) * 100).rounded())
+    return "\(startPercent)-\(endPercent)%"
+}
+
+private func decimalCountLabel(_ value: UInt64) -> String {
+    if value >= 1_000_000_000 {
+        return String(format: "%.1fB", Double(value) / 1_000_000_000)
+    }
+    if value >= 1_000_000 {
+        return String(format: "%.1fM", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.1fk", Double(value) / 1_000)
+    }
+    return "\(value)"
+}
+
+private extension MeasurementSetReadWindowProgress {
+    var activeRowPercentLabel: String {
+        percentRangeLabel(start: rowStartFraction, end: rowEndFraction)
+    }
+
+    var activeChannelPercentLabel: String {
+        percentRangeLabel(start: channelStartFraction, end: channelEndFraction)
+    }
+}
+
+private extension OutputCubeProgress {
+    var activePlanePercentLabel: String {
+        percentRangeLabel(start: activePlaneStartFraction, end: activePlaneEndFraction)
+    }
+}
+
+private extension ImagingRuntimeProgress {
+    var threadPercentLabel: String {
+        percentLabel(activeThreadFraction)
+    }
+}
+
+private extension ImagingDeconvolutionProgress {
+    var majorCycleLabel: String {
+        guard majorCycleLimit > 0 else {
+            return "\(majorCycle) / auto"
+        }
+        return "\(majorCycle) / \(majorCycleLimit)"
+    }
+}
+
+private struct ResourceActivityFlowView: View {
+    let snapshot: ImagerProgressSnapshot
+
+    private var resources: [ImagingResourceActivity] {
+        snapshot.resourceActivities
+    }
+
+    private var canvasHeight: CGFloat {
+        max(190, CGFloat(max(resources.count, 1)) * 44 + 12)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Canvas { context, size in
+                guard !resources.isEmpty else {
+                    Self.drawEmptyState(in: &context, size: size)
+                    return
+                }
+
+                let rowHeight: CGFloat = 34
+                let rowGap: CGFloat = 10
+                let xInset: CGFloat = 6
+                let rowWidth = max(40, size.width - xInset * 2)
+
+                for (index, resource) in resources.enumerated() {
+                    let y = CGFloat(index) * (rowHeight + rowGap) + 6
+                    let rowRect = CGRect(x: xInset, y: y, width: rowWidth, height: rowHeight)
+                    let nextBusy = index + 1 < resources.count && resources[index + 1].isBusy
+                    Self.drawResource(resource, in: rowRect, context: &context)
+                    if index + 1 < resources.count {
+                        Self.drawFlowArrow(
+                            from: CGPoint(x: rowRect.midX, y: rowRect.maxY + 1),
+                            to: CGPoint(x: rowRect.midX, y: rowRect.maxY + rowGap - 1),
+                            active: resource.isBusy || nextBusy,
+                            context: &context
+                        )
+                    }
+                }
+            }
+            .frame(height: canvasHeight)
+
+            HStack(spacing: 12) {
+                Label("busy", systemImage: "circle")
+                    .foregroundStyle(Color.cyan)
+                Label("active section", systemImage: "rectangle.inset.filled")
+                    .foregroundStyle(Color.green)
+                Label("GPU", systemImage: "bolt.fill")
+                    .foregroundStyle(Color.orange)
+            }
+            .workbenchFont(.caption2)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private static func drawEmptyState(in context: inout GraphicsContext, size: CGSize) {
+        let rect = CGRect(x: 6, y: 8, width: max(20, size.width - 12), height: max(44, size.height - 16))
+        context.fill(
+            Path(roundedRect: rect, cornerRadius: 6),
+            with: .color(.secondary.opacity(0.06))
+        )
+        context.stroke(
+            Path(roundedRect: rect, cornerRadius: 6),
+            with: .color(.secondary.opacity(0.20)),
+            style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+        )
+        context.draw(
+            Text("waiting for buffer plan").font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: rect.midX, y: rect.midY)
+        )
+    }
+
+    private static func drawResource(
+        _ resource: ImagingResourceActivity,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
+        let tint = color(for: resource)
+        let outline = resource.isBusy ? tint : Color.secondary.opacity(0.35)
+        let strokeStyle = StrokeStyle(lineWidth: resource.isBusy ? 2 : 1, dash: resource.isBusy ? [] : [4, 4])
+        let rowPath = Path(roundedRect: rect, cornerRadius: 6)
+        context.fill(rowPath, with: .color(tint.opacity(resource.isBusy ? 0.12 : 0.045)))
+        context.stroke(rowPath, with: .color(outline), style: strokeStyle)
+
+        let metricWidth: CGFloat = 78
+        let maxTextWidth = max(112, rect.width - metricWidth - 36)
+        let textWidth = min(max(150, rect.width * 0.55), min(176, maxTextWidth))
+        let barRect = CGRect(
+            x: rect.minX + textWidth,
+            y: rect.minY + 7,
+            width: max(24, rect.width - textWidth - metricWidth),
+            height: rect.height - 14
+        )
+        context.fill(
+            Path(roundedRect: barRect, cornerRadius: 4),
+            with: .color(.secondary.opacity(0.09))
+        )
+
+        let sectionWidth = barRect.width * CGFloat(max(0, resource.sectionEndFraction - resource.sectionStartFraction))
+        if sectionWidth > 0 {
+            let sectionRect = CGRect(
+                x: barRect.minX + barRect.width * CGFloat(resource.sectionStartFraction),
+                y: barRect.minY,
+                width: max(3, min(sectionWidth, barRect.maxX - barRect.minX)),
+                height: barRect.height
+            )
+            context.fill(
+                Path(roundedRect: sectionRect, cornerRadius: 4),
+                with: .color(tint.opacity(resource.isBusy ? 0.42 : 0.20))
+            )
+        }
+
+        let byteWidth = barRect.width * CGFloat(resource.byteFraction)
+        if byteWidth > 0 {
+            let byteRect = CGRect(
+                x: barRect.minX,
+                y: barRect.maxY - 3,
+                width: max(2, byteWidth),
+                height: 3
+            )
+            context.fill(Path(byteRect), with: .color(tint.opacity(0.75)))
+        }
+
+        context.draw(
+            Text(resource.name).font(.caption2.weight(.semibold)).foregroundColor(.primary),
+            at: CGPoint(x: rect.minX + 8, y: rect.midY - 6),
+            anchor: .leading
+        )
+        context.draw(
+            Text(resource.detail).font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: rect.minX + 8, y: rect.midY + 8),
+            anchor: .leading
+        )
+
+        drawThreadDots(resource, in: rect, context: &context)
+
+        if resource.gpuActive {
+            let gpuRect = CGRect(x: rect.maxX - 18, y: rect.midY - 7, width: 14, height: 14)
+            context.fill(Path(ellipseIn: gpuRect), with: .color(.orange.opacity(0.25)))
+            context.draw(
+                Text("G").font(.caption2.weight(.bold)).foregroundColor(.orange),
+                at: CGPoint(x: gpuRect.midX, y: gpuRect.midY)
+            )
+        }
+    }
+
+    private static func drawThreadDots(
+        _ resource: ImagingResourceActivity,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
+        let dotCount = min(max(resource.totalThreads, 0), 8)
+        guard dotCount > 0 else { return }
+
+        let activeDots = min(
+            dotCount,
+            Int(ceil(Double(dotCount) * Double(resource.activeThreads) / Double(max(resource.totalThreads, 1))))
+        )
+        let startX = rect.maxX - 70
+        for index in 0..<dotCount {
+            let x = startX + CGFloat(index % 4) * 7
+            let y = rect.midY - 7 + CGFloat(index / 4) * 8
+            let dot = CGRect(x: x, y: y, width: 5, height: 5)
+            let color = index < activeDots ? Color.cyan.opacity(0.9) : Color.secondary.opacity(0.22)
+            context.fill(Path(ellipseIn: dot), with: .color(color))
+        }
+        context.draw(
+            Text("\(resource.activeThreads)/\(resource.totalThreads)").font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: rect.maxX - 29, y: rect.midY),
+            anchor: .trailing
+        )
+    }
+
+    private static func drawFlowArrow(
+        from start: CGPoint,
+        to end: CGPoint,
+        active: Bool,
+        context: inout GraphicsContext
+    ) {
+        let color = active ? Color.cyan.opacity(0.65) : Color.secondary.opacity(0.22)
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: end)
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: active ? 1.4 : 1, lineCap: .round))
+
+        var head = Path()
+        head.move(to: end)
+        head.addLine(to: CGPoint(x: end.x - 4, y: end.y - 4))
+        head.move(to: end)
+        head.addLine(to: CGPoint(x: end.x + 4, y: end.y - 4))
+        context.stroke(head, with: .color(color), style: StrokeStyle(lineWidth: active ? 1.4 : 1, lineCap: .round))
+    }
+
+    private static func color(for resource: ImagingResourceActivity) -> Color {
+        switch resource.kind {
+        case .source:
+            return .cyan
+        case .grid:
+            return .blue
+        case .plane:
+            return .indigo
+        case .deconvolver:
+            return .green
+        case .product:
+            return .orange
+        }
+    }
+}
+
+private struct ResidualHistoryChart: View {
+    let progress: ImagingDeconvolutionProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(progress.residualHistoryMilliJyPerBeam.count > 1 ? "Recent residual peaks" : "Current residual peak")
+                .workbenchFont(.caption2)
+                .foregroundStyle(.secondary)
+            Canvas { context, size in
+                let rect = CGRect(x: 4, y: 4, width: max(20, size.width - 8), height: max(20, size.height - 8))
+                context.stroke(Path(rect), with: .color(.secondary.opacity(0.18)), lineWidth: 1)
+
+                let values = progress.residualHistoryMilliJyPerBeam.isEmpty
+                    ? [progress.peakResidualMilliJyPerBeam]
+                    : progress.residualHistoryMilliJyPerBeam
+                let maxValue = max(values.max() ?? progress.peakResidualMilliJyPerBeam, progress.targetResidualMilliJyPerBeam, 0.001)
+                let minValue = 0.0
+                let targetY = yPosition(progress.targetResidualMilliJyPerBeam, minValue: minValue, maxValue: maxValue, rect: rect)
+                var target = Path()
+                target.move(to: CGPoint(x: rect.minX, y: targetY))
+                target.addLine(to: CGPoint(x: rect.maxX, y: targetY))
+                context.stroke(target, with: .color(.green.opacity(0.65)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+                var line = Path()
+                for (index, value) in values.enumerated() {
+                    let x = values.count == 1
+                        ? rect.midX
+                        : rect.minX + rect.width * CGFloat(index) / CGFloat(values.count - 1)
+                    let y = yPosition(value, minValue: minValue, maxValue: maxValue, rect: rect)
+                    if index == 0 {
+                        line.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        line.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+                if values.count == 1 {
+                    let y = yPosition(values[0], minValue: minValue, maxValue: maxValue, rect: rect)
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: rect.midX - 2, y: y - 2, width: 4, height: 4)),
+                        with: .color(.cyan)
+                    )
+                } else {
+                    context.stroke(line, with: .color(.cyan), lineWidth: 1.5)
+                }
+            }
+        }
+    }
+
+    private func yPosition(_ value: Double, minValue: Double, maxValue: Double, rect: CGRect) -> CGFloat {
+        guard maxValue > minValue else { return rect.midY }
+        let fraction = min(1, max(0, (value - minValue) / (maxValue - minValue)))
+        return rect.maxY - rect.height * CGFloat(fraction)
+    }
+}
+
+private struct RuntimeProgressView: View {
+    let runtime: ImagingRuntimeProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(runtime.activeThreads) / \(runtime.totalThreads) threads")
+                    .workbenchFont(.subheadline, weight: .semibold)
+                Spacer()
+                Label(runtime.gpuActive ? "GPU active" : "GPU idle", systemImage: runtime.gpuActive ? "bolt.fill" : "bolt.slash")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(runtime.gpuActive ? Color.green : Color.secondary)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(18), spacing: 4), count: 8), alignment: .leading, spacing: 5) {
+                ForEach(0..<max(0, runtime.totalThreads), id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(index < runtime.activeThreads ? Color.cyan.opacity(0.85) : Color.secondary.opacity(0.22))
+                        .frame(width: 18, height: 18)
+                        .accessibilityLabel("Thread \(index + 1)")
+                }
+            }
+            Text(runtime.sampleCadence)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(minHeight: 150, alignment: .topLeading)
     }
 }
 
@@ -7198,6 +7789,9 @@ struct GenericTaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if prioritizesRunStatus {
+                        runStatusBlock
+                    }
                     if showingTaskList {
                         TaskCatalogBlock(
                             tasks: filteredTasks,
@@ -7217,7 +7811,7 @@ struct GenericTaskPanel: View {
                             .foregroundStyle(.secondary)
                             .taskCard()
                     }
-                    if !showingTaskList {
+                    if !showingTaskList && !prioritizesRunStatus {
                         runStatusBlock
                     }
                 }
@@ -7282,6 +7876,10 @@ struct GenericTaskPanel: View {
     }
 
     private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+
+    private var prioritizesRunStatus: Bool {
+        !showingTaskList && activeTaskID == "imager" && store.state.taskRun.imagerProgress != nil
+    }
 
     private func genericParameterBlock(schema: TaskUISchema) -> some View {
         let groups = parameterGroups(for: schema)
@@ -8063,9 +8661,16 @@ struct GenericTaskPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Run")
                 .workbenchFont(.headline)
-            ProgressView(value: store.state.taskRun.progress)
+            if activeTaskID == "imager", let progress = store.state.taskRun.imagerProgress {
+                WorkEstimateBar(estimate: progress.workEstimate)
+            } else {
+                RunProgressBar(progress: store.state.taskRun.progress)
+            }
             Text(store.state.taskRun.state.rawValue)
                 .foregroundStyle(.secondary)
+            if activeTaskID == "imager", let progress = store.state.taskRun.imagerProgress {
+                ImagerProgressDashboard(snapshot: progress)
+            }
             valueList("Log", values: store.state.taskRun.logLines)
             valueList("Diagnostics", values: store.state.taskRun.diagnostics)
             valueList("Products", values: store.state.taskRun.products.map(displayPath))

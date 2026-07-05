@@ -4,9 +4,13 @@ set -euo pipefail
 
 MODE="run"
 OPEN_PROJECT=""
+OPEN_IMAGER_MS=""
 OPEN_TUTORIAL_PACK=""
 OPEN_TUTORIAL_SECTION=""
+SHOW_IMAGER_PROGRESS_MOCKUP="0"
+RUN_ACTIVE_TASK="0"
 USE_TEMP_REAL_PROJECT="1"
+EXTRA_APP_ARGS=()
 APP_NAME="casars-mac"
 BUNDLE_ID="org.casa-rs.casars-mac"
 MIN_SYSTEM_VERSION="14.0"
@@ -45,6 +49,18 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       OPEN_PROJECT="$2"
+      OPEN_IMAGER_MS=""
+      OPEN_TUTORIAL_PACK=""
+      USE_TEMP_REAL_PROJECT="0"
+      shift 2
+      ;;
+    --imager-ms|--open-imager-ms)
+      if [[ $# -lt 2 ]]; then
+        echo "missing MeasurementSet path after $1" >&2
+        exit 2
+      fi
+      OPEN_IMAGER_MS="$2"
+      OPEN_PROJECT=""
       OPEN_TUTORIAL_PACK=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
@@ -55,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       OPEN_TUTORIAL_PACK="$2"
+      OPEN_IMAGER_MS=""
       OPEN_PROJECT=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
@@ -69,11 +86,29 @@ while [[ $# -gt 0 ]]; do
       ;;
     --empty)
       OPEN_PROJECT=""
+      OPEN_IMAGER_MS=""
+      OPEN_TUTORIAL_PACK=""
       USE_TEMP_REAL_PROJECT="0"
       shift
       ;;
+    --show-imager-progress-mockup)
+      SHOW_IMAGER_PROGRESS_MOCKUP="1"
+      shift
+      ;;
+    --run-active-task)
+      RUN_ACTIVE_TASK="1"
+      shift
+      ;;
+    --imagename|--output-prefix|--image-size|--imsize|--image-width|--image-height|--cell-arcsec|--spectral-mode|--specmode|--channel-start|--channel-count|--niter|--threshold-jy|--dirty-only)
+      if [[ $# -lt 2 ]]; then
+        echo "missing value after $1" >&2
+        exit 2
+      fi
+      EXTRA_APP_ARGS+=("$1" "$2")
+      shift 2
+      ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH [--tutorial-section ID]|--empty]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
       exit 2
       ;;
   esac
@@ -156,10 +191,11 @@ stage_temp_real_project
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
 cargo build --release -p casars-frontend-services --lib
 TASK_HELPER_SPECS=()
-while IFS= read -r spec; do
-  TASK_HELPER_SPECS+=("$spec")
-done < <(
-  python3 - "$REPO_ROOT/resources/task-catalog.json" <<'PY'
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+  while IFS= read -r spec; do
+    TASK_HELPER_SPECS+=("$spec")
+  done < <(
+    python3 - "$REPO_ROOT/resources/task-catalog.json" <<'PY'
 import json
 import sys
 
@@ -176,12 +212,15 @@ for task in catalog["tasks"]:
     seen.add(key)
     print(f"{package}:{binary}")
 PY
-)
-for spec in "${TASK_HELPER_SPECS[@]}"; do
-  package="${spec%%:*}"
-  binary="${spec#*:}"
-  cargo build --release -p "$package" --bin "$binary"
-done
+  )
+fi
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+  for spec in "${TASK_HELPER_SPECS[@]}"; do
+    package="${spec%%:*}"
+    binary="${spec#*:}"
+    cargo build --release -p "$package" --bin "$binary"
+  done
+fi
 
 cd "$ROOT_DIR"
 
@@ -194,16 +233,20 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$FRONTEND_DYLIB" "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME"
-for spec in "${TASK_HELPER_SPECS[@]}"; do
-  binary="${spec#*:}"
-  cp "$RUST_PROFILE_DIR/$binary" "$APP_MACOS/$binary"
-done
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+  for spec in "${TASK_HELPER_SPECS[@]}"; do
+    binary="${spec#*:}"
+    cp "$RUST_PROFILE_DIR/$binary" "$APP_MACOS/$binary"
+  done
+fi
 cp "$APP_ICON_SOURCE" "$APP_RESOURCES/$APP_ICON_NAME"
 chmod +x "$APP_BINARY"
-for spec in "${TASK_HELPER_SPECS[@]}"; do
-  binary="${spec#*:}"
-  chmod +x "$APP_MACOS/$binary"
-done
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+  for spec in "${TASK_HELPER_SPECS[@]}"; do
+    binary="${spec#*:}"
+    chmod +x "$APP_MACOS/$binary"
+  done
+fi
 
 frontend_dependency="$(
   otool -L "$APP_BINARY" \
@@ -239,10 +282,12 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 codesign --force --sign - "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME" >/dev/null
-for spec in "${TASK_HELPER_SPECS[@]}"; do
-  binary="${spec#*:}"
-  codesign --force --sign - "$APP_MACOS/$binary" >/dev/null
-done
+if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" != "1" ]]; then
+  for spec in "${TASK_HELPER_SPECS[@]}"; do
+    binary="${spec#*:}"
+    codesign --force --sign - "$APP_MACOS/$binary" >/dev/null
+  done
+fi
 codesign --force --sign - "$APP_BINARY" >/dev/null
 codesign --force --sign - "$APP_BUNDLE" >/dev/null
 
@@ -253,17 +298,26 @@ open_app() {
     open_flags=(-W -n)
   fi
 
+  local app_args=(-ApplePersistenceIgnoreState YES)
   if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
-    local app_args=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
+    app_args+=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
     if [[ -n "$OPEN_TUTORIAL_SECTION" ]]; then
       app_args+=(--open-tutorial-section "$OPEN_TUTORIAL_SECTION")
     fi
-    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args "${app_args[@]}"
+  elif [[ -n "$OPEN_IMAGER_MS" ]]; then
+    app_args+=(--open-imager-ms "$OPEN_IMAGER_MS")
   elif [[ -n "$OPEN_PROJECT" ]]; then
-    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args --open-project "$OPEN_PROJECT"
-  else
-    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE"
+    app_args+=(--open-project "$OPEN_PROJECT")
   fi
+  if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
+    app_args+=(--show-imager-progress-mockup)
+  fi
+  if [[ "$RUN_ACTIVE_TASK" == "1" ]]; then
+    app_args+=(--run-active-task)
+  fi
+  app_args+=("${EXTRA_APP_ARGS[@]}")
+
+  /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args "${app_args[@]}"
 }
 
 launched_app_pid() {
@@ -271,23 +325,40 @@ launched_app_pid() {
 }
 
 debug_app() {
+  local app_args=(-ApplePersistenceIgnoreState YES)
   if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
-    local app_args=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
+    app_args+=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
     if [[ -n "$OPEN_TUTORIAL_SECTION" ]]; then
       app_args+=(--open-tutorial-section "$OPEN_TUTORIAL_SECTION")
     fi
-    lldb -- "$APP_BINARY" "${app_args[@]}"
+  elif [[ -n "$OPEN_IMAGER_MS" ]]; then
+    app_args+=(--open-imager-ms "$OPEN_IMAGER_MS")
   elif [[ -n "$OPEN_PROJECT" ]]; then
-    lldb -- "$APP_BINARY" --open-project "$OPEN_PROJECT"
-  else
-    lldb -- "$APP_BINARY"
+    app_args+=(--open-project "$OPEN_PROJECT")
   fi
+  if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
+    app_args+=(--show-imager-progress-mockup)
+  fi
+  if [[ "$RUN_ACTIVE_TASK" == "1" ]]; then
+    app_args+=(--run-active-task)
+  fi
+  app_args+=("${EXTRA_APP_ARGS[@]}")
+
+  lldb -- "$APP_BINARY" "${app_args[@]}"
 }
 
 case "$MODE" in
   run)
-    open_app 1
-    cleanup_temp_real_project_now
+    if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
+      open_app
+      sleep 1
+      if app_pid="$(launched_app_pid)"; then
+        schedule_temp_real_project_cleanup "$app_pid"
+      fi
+    else
+      open_app 1
+      cleanup_temp_real_project_now
+    fi
     ;;
   --debug|debug)
     debug_app
@@ -318,7 +389,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH|--empty]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
     exit 2
     ;;
 esac

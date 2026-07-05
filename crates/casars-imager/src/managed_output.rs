@@ -981,6 +981,7 @@ mod tests {
                 imaging_row_block_rows: None,
                 imaging_prepare_workers: None,
                 write_preview_pngs: false,
+                progress: None,
             },
             run: ImagerRunReport {
                 warnings: vec!["watch residuals".to_string()],

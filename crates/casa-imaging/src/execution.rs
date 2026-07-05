@@ -4908,7 +4908,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         execution_config: StandardMfsExecutionConfig,
     ) -> Result<Self, ImagingError> {
         let partition =
-            standard_mfs_tile_partition_for_gridder_with_config(gridder, execution_config)?;
+            standard_mfs_tile_partition_for_gridder_with_config(gridder, execution_config.clone())?;
         let resident_tile_limit = standard_mfs_tile_resident_limit(
             &partition,
             execution_config.fixed_tile_resident_bytes,
@@ -19630,6 +19630,7 @@ mod tests {
                 metal_grouped_input_cache: false,
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
+                progress_callback: None,
             },
         )
         .unwrap();
@@ -19645,6 +19646,7 @@ mod tests {
                 metal_grouped_input_cache: false,
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
+                progress_callback: None,
             },
         )
         .unwrap();
@@ -19793,6 +19795,7 @@ mod tests {
                 metal_grouped_input_cache: false,
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
+                progress_callback: None,
             },
         )
         .unwrap();
@@ -19941,6 +19944,7 @@ mod tests {
                 metal_grouped_input_cache: false,
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
+                progress_callback: None,
             },
         )
         .unwrap();
@@ -20058,6 +20062,7 @@ mod tests {
                 metal_grouped_input_cache: false,
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
+                progress_callback: None,
             },
         )
         .unwrap();
@@ -20252,6 +20257,7 @@ mod tests {
                 metal_grouped_input_cache: false,
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
+                progress_callback: None,
             },
         )
         .unwrap();

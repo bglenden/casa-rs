@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical imager task request/result contracts shared by CLI, shell, and Python.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -33,7 +34,15 @@ use crate::{
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 1;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 2;
+/// Version of the newline-delimited imager progress-event payload.
+pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
+/// Prefix used before each stderr progress-event JSON line.
+pub const IMAGER_PROGRESS_STDERR_PREFIX: &str = "CASARS_IMAGER_PROGRESS ";
+
+fn default_imager_progress_uv_point_weight() -> f32 {
+    1.0
+}
 
 /// Version/compatibility information for the JSON task protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -77,6 +86,8 @@ pub struct ImagerTaskSchemaBundle {
     pub request_schema: RootSchema,
     /// JSON schema for [`ImagerTaskResult`].
     pub result_schema: RootSchema,
+    /// JSON schema for [`ImagerProgressEvent`].
+    pub progress_event_schema: RootSchema,
 }
 
 impl ImagerTaskSchemaBundle {
@@ -84,6 +95,7 @@ impl ImagerTaskSchemaBundle {
     pub fn current() -> Self {
         let request_schema = schema_for!(ImagerTaskRequest);
         let result_schema = schema_for!(ImagerTaskResult);
+        let progress_event_schema = schema_for!(ImagerProgressEvent);
         let ui_schema = serde_json::to_value(command_schema("casars-imager"))
             .expect("serialize imager ui schema projection");
         Self {
@@ -97,7 +109,11 @@ impl ImagerTaskSchemaBundle {
                     result_kind: Some("run".to_string()),
                 }],
             },
-            components: merged_components([&request_schema, &result_schema]),
+            components: merged_components([
+                &request_schema,
+                &result_schema,
+                &progress_event_schema,
+            ]),
             annotations: derived_ui_schema_annotations(),
             projections: ProviderProjectionMetadata {
                 cli: Some(ProviderCliProjection {
@@ -114,6 +130,7 @@ impl ImagerTaskSchemaBundle {
             },
             request_schema,
             result_schema,
+            progress_event_schema,
         }
     }
 
@@ -126,6 +143,213 @@ impl ImagerTaskSchemaBundle {
             .ok_or_else(|| "missing ui_schema projection".to_string())?;
         serde_json::from_value(value).map_err(|error| format!("parse imager ui schema: {error}"))
     }
+}
+
+/// Opt-in controls for low-rate running imager progress telemetry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressOptions {
+    /// Emit progress events while the task runs.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum measured UV points retained for a progress snapshot.
+    #[serde(default = "default_progress_max_uv_points")]
+    pub max_uv_points: usize,
+    /// Minimum interval between non-forced progress events.
+    #[serde(default = "default_progress_min_interval_ms")]
+    pub min_interval_ms: u64,
+}
+
+impl Default for ImagerProgressOptions {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_uv_points: default_progress_max_uv_points(),
+            min_interval_ms: default_progress_min_interval_ms(),
+        }
+    }
+}
+
+/// Work-estimate fields for an imager progress event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressWork {
+    /// Completed units in the chosen coarse estimate.
+    pub completed_units: u64,
+    /// Total units in the chosen coarse estimate.
+    pub total_units: u64,
+    /// Human-readable unit label.
+    pub unit_label: String,
+    /// Short description of how the estimate is calculated.
+    pub basis: String,
+    /// Qualitative precision label for UI display.
+    pub confidence: String,
+}
+
+/// MeasurementSet row/channel window currently being read or prepared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressMsWindow {
+    /// Total MAIN-table rows known for the selected MeasurementSet.
+    pub total_rows: usize,
+    /// Total channels in the selected source spectral window.
+    pub total_channels: usize,
+    /// First MAIN row represented by the current block.
+    pub row_start: usize,
+    /// Exclusive MAIN-row end represented by the current block.
+    pub row_end: usize,
+    /// First source channel represented by the current block.
+    pub channel_start: usize,
+    /// Exclusive source-channel end represented by the current block.
+    pub channel_end: usize,
+}
+
+/// Output cube geometry and active whole-plane range.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressCube {
+    /// Output image width in pixels.
+    pub x_pixels: usize,
+    /// Output image height in pixels.
+    pub y_pixels: usize,
+    /// Number of output spectral/frequency planes.
+    pub z_planes: usize,
+    /// First active output Z/frequency plane.
+    pub active_plane_start: usize,
+    /// Exclusive active output Z/frequency plane end.
+    pub active_plane_end: usize,
+}
+
+/// One approximate UV coverage sample point.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressUvPoint {
+    /// U coordinate in kilolambda.
+    pub u_klambda: f64,
+    /// V coordinate in kilolambda.
+    pub v_klambda: f64,
+    /// Natural or effective sample weight. Live progress displays use fixed
+    /// one-pixel points, so this remains an in-memory/back-compat field only.
+    #[serde(default = "default_imager_progress_uv_point_weight", skip_serializing)]
+    pub weight: f32,
+}
+
+/// Bounded approximate UV coverage payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressUvCoverage {
+    /// Maximum absolute U extent in kilolambda.
+    pub u_extent_klambda: f64,
+    /// Maximum absolute V extent in kilolambda.
+    pub v_extent_klambda: f64,
+    /// Measured UV points retained in the bounded sample.
+    pub measured: Vec<ImagerProgressUvPoint>,
+    /// Hermitian/conjugate points derived from the measured sample.
+    ///
+    /// Progress consumers may derive this client-side; live progress events omit
+    /// it to avoid sending the same point cloud twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conjugate: Vec<ImagerProgressUvPoint>,
+    /// Accepted points not retained because the bounded sample was full.
+    pub dropped_points: u64,
+    /// Configured measured-point retention limit.
+    pub sample_limit: usize,
+}
+
+/// Deconvolution progress summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressDeconvolution {
+    /// Current deconvolution subphase label.
+    pub phase: String,
+    /// Current or completed major-cycle count.
+    pub major_cycle: usize,
+    /// Planned or configured major-cycle limit when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub major_cycle_limit: Option<usize>,
+    /// Current or completed minor iterations.
+    pub minor_iterations: usize,
+    /// Configured minor-iteration limit.
+    pub minor_iteration_limit: usize,
+    /// Current or completed cleaned component count.
+    pub components_cleaned: usize,
+    /// Peak remaining residual in mJy/beam when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_residual_mjy_per_beam: Option<f32>,
+    /// Target residual in mJy/beam when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_residual_mjy_per_beam: Option<f32>,
+    /// Recent residual history in mJy/beam, oldest to newest.
+    #[serde(default)]
+    pub residual_history_mjy_per_beam: Vec<f32>,
+}
+
+/// Runtime resource state for an imager progress event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressRuntime {
+    /// Active worker threads when known.
+    pub active_threads: usize,
+    /// Planned or available worker threads.
+    pub total_threads: usize,
+    /// Whether a GPU backend is currently being used.
+    pub gpu_active: bool,
+    /// Human-readable backend label.
+    pub backend: String,
+    /// Stable resource row ids that are actively owned or being worked.
+    #[serde(default)]
+    pub active_resources: Vec<String>,
+    /// Per-resource active worker counts keyed by `active_resources` id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub active_resource_threads: BTreeMap<String, usize>,
+    /// Optional bounded-memory imaging plan snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<ImagerProgressMemory>,
+}
+
+/// Bounded-memory imaging plan fields useful for progress displays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressMemory {
+    /// Planner memory ceiling in bytes.
+    pub memory_target_bytes: usize,
+    /// Planned active resident bytes inside the memory ceiling.
+    pub planned_active_bytes: usize,
+    /// Planned source-stream buffer bytes.
+    pub source_stream_buffer_bytes: usize,
+    /// Planned product/executor scratch bytes.
+    pub product_scratch_bytes: usize,
+    /// Planned active output planes per slab.
+    pub active_planes: usize,
+    /// Planned source row-block size.
+    pub row_block_rows: usize,
+    /// Short source label for the memory target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_target_source: Option<String>,
+}
+
+/// One coarse progress event emitted while an imager task is running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressEvent {
+    /// Progress-event schema version.
+    pub schema_version: u32,
+    /// Monotonic sequence number within this process run.
+    pub sequence: u64,
+    /// Elapsed time since the task run started, in milliseconds.
+    pub elapsed_ms: u64,
+    /// Stable phase label for the event.
+    pub phase: String,
+    /// Human-readable summary suitable for logs.
+    pub summary: String,
+    /// Coarse work estimate for progress bars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<ImagerProgressWork>,
+    /// Active MeasurementSet read/preparation window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms_read: Option<ImagerProgressMsWindow>,
+    /// Active output cube whole-plane range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_cube: Option<ImagerProgressCube>,
+    /// Bounded approximate UV coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv_coverage: Option<ImagerProgressUvCoverage>,
+    /// Deconvolution progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deconvolution: Option<ImagerProgressDeconvolution>,
+    /// Runtime resource state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<ImagerProgressRuntime>,
 }
 
 /// Supported scalar imaging planes and explicit raw correlations.
@@ -1001,6 +1225,9 @@ pub struct ImagerRunTaskRequest {
     /// Write PNG preview sidecars for the CASA image products.
     #[serde(default = "default_write_preview_pngs")]
     pub write_preview_pngs: bool,
+    /// Optional low-rate running progress telemetry settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ImagerProgressOptions>,
 }
 
 impl ImagerRunTaskRequest {
@@ -1082,6 +1309,7 @@ impl ImagerRunTaskRequest {
             imaging_row_block_rows: config.imaging_row_block_rows,
             imaging_prepare_workers: config.imaging_prepare_workers,
             write_preview_pngs: config.write_preview_pngs,
+            progress: None,
         }
     }
 
@@ -1638,6 +1866,14 @@ fn default_write_preview_pngs() -> bool {
     true
 }
 
+fn default_progress_max_uv_points() -> usize {
+    64
+}
+
+fn default_progress_min_interval_ms() -> u64 {
+    250
+}
+
 fn default_request_per_channel_weight_density(spectral_mode: ImagerSpectralMode) -> bool {
     matches!(spectral_mode, ImagerSpectralMode::Cube)
 }
@@ -1865,6 +2101,7 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1883,9 +2120,10 @@ mod tests {
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
         ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
         ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerRestoringBeamMode,
-        ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest,
-        ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerProgressEvent,
+        ImagerProgressRuntime, ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel,
+        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
+        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy};
 
@@ -1904,8 +2142,14 @@ mod tests {
         assert!(bundle.projections.ui_schema.is_some());
         let request_schema = serde_json::to_value(&bundle.request_schema).unwrap();
         let result_schema = serde_json::to_value(&bundle.result_schema).unwrap();
+        let progress_event_schema = serde_json::to_value(&bundle.progress_event_schema).unwrap();
         assert!(request_schema.to_string().contains("ImagerTaskRequest"));
         assert!(result_schema.to_string().contains("ImagerTaskResult"));
+        assert!(
+            progress_event_schema
+                .to_string()
+                .contains("ImagerProgressEvent")
+        );
         let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
         assert_eq!(ui_schema.command_id, "imager");
     }
@@ -2121,6 +2365,7 @@ mod tests {
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
             write_preview_pngs: true,
+            progress: None,
         };
         let config = request.to_cli_config().unwrap();
         assert_eq!(config.weighting, WeightingMode::Natural);
@@ -2204,6 +2449,7 @@ mod tests {
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
             write_preview_pngs: true,
+            progress: None,
         };
         let config = request.to_cli_config().unwrap();
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
@@ -2463,6 +2709,7 @@ mod tests {
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
             write_preview_pngs: true,
+            progress: None,
         };
 
         assert!(
@@ -2639,6 +2886,7 @@ mod tests {
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
             write_preview_pngs: true,
+            progress: None,
         };
         let standard_config = standard.to_cli_config().unwrap();
         assert_eq!(standard_config.spw, Some(7));
@@ -2733,6 +2981,161 @@ mod tests {
     }
 
     #[test]
+    fn dirty_imaging_json_request_accepts_progress_options_without_requiring_them() {
+        let payload = r#"{
+          "kind": "run",
+          "request": {
+            "measurement_set": "/data/probed.ms",
+            "image_name": "/data/casa-rs-runs/probed-dirty",
+            "image_size": 256,
+            "cell_arcsec": 0.25,
+            "progress": {
+              "enabled": true,
+              "max_uv_points": 128,
+              "min_interval_ms": 400
+            }
+          }
+        }"#;
+        let request: ImagerTaskRequest =
+            serde_json::from_str(payload).expect("parse progress-enabled request");
+        let ImagerTaskRequest::Run(request) = request;
+        let progress = request.progress.expect("progress options");
+        assert!(progress.enabled);
+        assert_eq!(progress.max_uv_points, 128);
+        assert_eq!(progress.min_interval_ms, 400);
+
+        let payload_without_progress = r#"{
+          "kind": "run",
+          "request": {
+            "measurement_set": "/data/probed.ms",
+            "image_name": "/data/casa-rs-runs/probed-dirty",
+            "image_size": 256,
+            "cell_arcsec": 0.25
+          }
+        }"#;
+        let request: ImagerTaskRequest =
+            serde_json::from_str(payload_without_progress).expect("parse request");
+        let ImagerTaskRequest::Run(request) = request;
+        assert!(request.progress.is_none());
+    }
+
+    #[test]
+    fn progress_event_contract_round_trips_optional_sections() {
+        let payload = r#"{
+          "schema_version": 1,
+          "sequence": 7,
+          "elapsed_ms": 1250,
+          "phase": "reading_ms",
+          "summary": "reading rows",
+          "ms_read": {
+            "total_rows": 1000,
+            "total_channels": 64,
+            "row_start": 128,
+            "row_end": 256,
+            "channel_start": 8,
+            "channel_end": 16
+          },
+          "output_cube": {
+            "x_pixels": 2048,
+            "y_pixels": 2048,
+            "z_planes": 512,
+            "active_plane_start": 32,
+            "active_plane_end": 64
+          },
+          "uv_coverage": {
+            "u_extent_klambda": 12.0,
+            "v_extent_klambda": 10.0,
+            "measured": [{"u_klambda": 1.0, "v_klambda": -2.0, "weight": 0.5}],
+            "conjugate": [{"u_klambda": -1.0, "v_klambda": 2.0, "weight": 0.5}],
+            "dropped_points": 4,
+            "sample_limit": 1
+          },
+          "runtime": {
+            "active_threads": 2,
+            "total_threads": 8,
+            "gpu_active": false,
+            "backend": "auto",
+            "active_resources": ["source-stream", "visibility-grid"],
+            "active_resource_threads": {"source-stream": 1, "visibility-grid": 4},
+            "memory": {
+              "memory_target_bytes": 17179869184,
+              "planned_active_bytes": 17179863154,
+              "source_stream_buffer_bytes": 3804104045,
+              "product_scratch_bytes": 10945390173,
+              "active_planes": 47,
+              "row_block_rows": 128704,
+              "memory_target_source": "system_half"
+            }
+          }
+        }"#;
+        let event: ImagerProgressEvent =
+            serde_json::from_str(payload).expect("parse progress event");
+        assert_eq!(event.sequence, 7);
+        assert_eq!(event.ms_read.as_ref().unwrap().row_start, 128);
+        assert_eq!(event.output_cube.as_ref().unwrap().active_plane_start, 32);
+        assert_eq!(
+            event.uv_coverage.as_ref().unwrap().conjugate[0].u_klambda,
+            -1.0
+        );
+        assert_eq!(event.runtime.as_ref().unwrap().total_threads, 8);
+        assert_eq!(
+            event.runtime.as_ref().unwrap().active_resources,
+            vec!["source-stream".to_string(), "visibility-grid".to_string()]
+        );
+        assert_eq!(
+            event
+                .runtime
+                .as_ref()
+                .unwrap()
+                .active_resource_threads
+                .get("visibility-grid"),
+            Some(&4)
+        );
+        assert_eq!(
+            event
+                .runtime
+                .as_ref()
+                .unwrap()
+                .memory
+                .as_ref()
+                .unwrap()
+                .active_planes,
+            47
+        );
+
+        let minimal: ImagerProgressEvent = serde_json::from_str(
+            r#"{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"start"}"#,
+        )
+        .expect("parse minimal progress event");
+        assert!(minimal.ms_read.is_none());
+        assert!(minimal.uv_coverage.is_none());
+
+        let idle_runtime = ImagerProgressEvent {
+            schema_version: 1,
+            sequence: 8,
+            elapsed_ms: 1300,
+            phase: "idle".to_string(),
+            summary: "idle".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 0,
+                total_threads: 8,
+                gpu_active: false,
+                backend: "idle".to_string(),
+                active_resources: Vec::new(),
+                active_resource_threads: BTreeMap::new(),
+                memory: None,
+            }),
+        };
+        let serialized = serde_json::to_string(&idle_runtime).expect("serialize idle runtime");
+        assert!(serialized.contains(r#""active_resources":[]"#));
+    }
+
+    #[test]
     fn task_request_roundtrips_start_model_path() {
         let request = ImagerRunTaskRequest {
             measurement_set: PathBuf::from("demo.ms"),
@@ -2800,6 +3203,7 @@ mod tests {
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
             write_preview_pngs: true,
+            progress: None,
         };
 
         let config = request.to_cli_config().expect("restore CLI config");

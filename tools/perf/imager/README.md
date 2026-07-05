@@ -18,6 +18,10 @@ imager.
   - compares native `simobserve` with CASA on selected datasets, records native
     timing reports, and can enforce native throughput floors for internal-disk
     storage-manager regression checks
+- `tools/perf/imager/measure_progress_overhead.py`
+  - runs the same `casars-imager --json-run` request with progress disabled and
+    enabled, then reports median wall time, event count, and payload bytes for
+    the live-progress `<1%` overhead check
 - `tools/perf/imager/wave1_dataset_registry.json`
   - records the VLA/ALMA, single-field/mosaic, small/medium, and one large
     ALMA mosaic/cube simulated-dataset plan for #248

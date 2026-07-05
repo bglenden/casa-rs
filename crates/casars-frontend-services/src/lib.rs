@@ -4477,9 +4477,9 @@ fn probe_measurement_set(
         Ok(antennas) => antennas,
         Err(_) => return Ok(None),
     };
-    let scans = ms_main_id_labels(&ms, "SCAN_NUMBER", "scan").unwrap_or_default();
-    let arrays = ms_main_id_labels(&ms, "ARRAY_ID", "array").unwrap_or_default();
-    let observations = ms_main_id_labels(&ms, "OBSERVATION_ID", "observation").unwrap_or_default();
+    let scans = Vec::new();
+    let arrays = Vec::new();
+    let observations = ms_observation_labels(&ms).unwrap_or_default();
     let intents = ms_intent_labels(&ms).unwrap_or_default();
     let feeds = ms_feed_labels(&ms).unwrap_or_default();
     let correlations = match ms_correlation_labels(&ms) {
@@ -4520,7 +4520,7 @@ fn probe_measurement_set(
         data_columns,
         subtables,
         shape: vec![row_count as u64],
-        notes: "Recognized by opening the path as a MeasurementSet and reading lightweight MS metadata."
+        notes: "Recognized by opening the path as a MeasurementSet and reading subtable/schema overview metadata; MAIN-derived scan and array labels are deferred to explicit plot/range probes."
             .to_string(),
         diagnostics,
     }))
@@ -4570,24 +4570,6 @@ fn ms_antenna_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
         .collect()
 }
 
-fn ms_main_id_labels(
-    ms: &MeasurementSet,
-    column: &'static str,
-    prefix: &str,
-) -> Result<Vec<String>, String> {
-    let table = ms.main_table();
-    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
-    let mut ids = BTreeSet::new();
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
-        for id in selected_i32_values(table, column, row_chunk)? {
-            if id >= 0 {
-                ids.insert(id);
-            }
-        }
-    }
-    Ok(ids.into_iter().map(|id| format!("{prefix} {id}")).collect())
-}
-
 fn ms_intent_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
     let state = ms.state().map_err(|error| error.to_string())?;
     let mut intents = BTreeSet::new();
@@ -4606,22 +4588,43 @@ fn ms_intent_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
     Ok(intents.into_iter().collect())
 }
 
-fn ms_feed_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
-    let table = ms.main_table();
-    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
-    let mut ids = BTreeSet::new();
-    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
-        for id in selected_i32_values(table, "FEED1", row_chunk)? {
-            if id >= 0 {
-                ids.insert(id);
-            }
+fn ms_observation_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let observations = ms.observation().map_err(|error| error.to_string())?;
+    let mut labels = Vec::new();
+    for row in 0..observations.row_count() {
+        let project = observations
+            .string(row, "PROJECT")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let telescope = observations
+            .string(row, "TELESCOPE_NAME")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let detail = [project, telescope]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if detail.is_empty() {
+            labels.push(format!("observation {row}"));
+        } else {
+            labels.push(format!("observation {row}: {detail}"));
         }
-        if table.column_accessor("FEED2").is_ok() {
-            for id in selected_i32_values(table, "FEED2", row_chunk)? {
-                if id >= 0 {
-                    ids.insert(id);
-                }
-            }
+    }
+    Ok(labels)
+}
+
+fn ms_feed_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let feed = ms.feed().map_err(|error| error.to_string())?;
+    let mut ids = BTreeSet::new();
+    for row in 0..feed.row_count() {
+        let id = feed
+            .i32(row, "FEED_ID")
+            .map_err(|error| error.to_string())?;
+        if id >= 0 {
+            ids.insert(id);
         }
     }
     Ok(ids.into_iter().map(|id| format!("feed {id}")).collect())
@@ -5380,8 +5383,21 @@ mod tests {
         assert!(!probe.fields.is_empty());
         assert!(!probe.spectral_windows.is_empty());
         assert!(!probe.antennas.is_empty());
+        assert!(
+            !probe.observations.is_empty(),
+            "overview probe should use OBSERVATION subtable labels"
+        );
+        assert!(
+            probe.scans.is_empty(),
+            "overview probe should not scan MAIN.SCAN_NUMBER"
+        );
+        assert!(
+            probe.arrays.is_empty(),
+            "overview probe should not scan MAIN.ARRAY_ID"
+        );
         assert!(probe.columns.iter().any(|column| column == "DATA"));
         assert_eq!(probe.data_columns, vec!["DATA"]);
+        assert!(probe.notes.contains("subtable/schema overview"));
         assert!(
             probe
                 .subtables
