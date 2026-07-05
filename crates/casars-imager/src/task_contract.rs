@@ -708,6 +708,9 @@ pub struct ImagerObservabilitySnapshot {
     /// Active high-level spans.
     #[serde(default)]
     pub active_spans: Vec<ImagerObservabilitySpan>,
+    /// Recently completed or otherwise inactive spans retained for UI history.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_spans: Vec<ImagerObservabilitySpan>,
     /// Total memory target in bytes when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_target_bytes: Option<usize>,

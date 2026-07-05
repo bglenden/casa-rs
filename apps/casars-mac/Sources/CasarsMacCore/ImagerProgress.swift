@@ -604,6 +604,7 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
     public var schemaVersion: UInt64
     public var resources: [ImagingObservedResource]
     public var activeSpans: [ImagingObservabilitySpan]
+    public var recentSpans: [ImagingObservabilitySpan]
     public var memoryTargetBytes: Int?
     public var memoryTargetSource: String?
     public var memoryLedger: ImagingMemoryLedgerSnapshot?
@@ -614,6 +615,7 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
         schemaVersion: UInt64,
         resources: [ImagingObservedResource],
         activeSpans: [ImagingObservabilitySpan],
+        recentSpans: [ImagingObservabilitySpan] = [],
         memoryTargetBytes: Int?,
         memoryTargetSource: String?,
         memoryLedger: ImagingMemoryLedgerSnapshot? = nil,
@@ -623,6 +625,7 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
         self.schemaVersion = schemaVersion
         self.resources = resources
         self.activeSpans = activeSpans
+        self.recentSpans = recentSpans
         self.memoryTargetBytes = memoryTargetBytes
         self.memoryTargetSource = memoryTargetSource
         self.memoryLedger = memoryLedger
@@ -717,6 +720,15 @@ extension ImagingObservabilitySnapshot {
                     elapsedMilliseconds: 0
                 )
             ] : [],
+            recentSpans: running ? [] : [
+                ImagingObservabilitySpan(
+                    id: "stub-previous-source",
+                    name: "source stream complete",
+                    state: "complete",
+                    resourceIDs: ["source-stream"],
+                    elapsedMilliseconds: 0
+                )
+            ],
             memoryTargetBytes: memory.memoryTargetBytes,
             memoryTargetSource: memory.memoryTargetSource,
             memoryLedger: ImagingMemoryLedgerSnapshot(
@@ -1654,6 +1666,7 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
     var schemaVersion: UInt64
     var resources: [ImagerObservedResourcePayload]
     var activeSpans: [ImagerObservabilitySpanPayload]
+    var recentSpans: [ImagerObservabilitySpanPayload]
     var memoryTargetBytes: Int?
     var memoryTargetSource: String?
     var memoryLedger: ImagerMemoryLedgerPayload?
@@ -1664,6 +1677,7 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
         case schemaVersion = "schema_version"
         case resources
         case activeSpans = "active_spans"
+        case recentSpans = "recent_spans"
         case memoryTargetBytes = "memory_target_bytes"
         case memoryTargetSource = "memory_target_source"
         case memoryLedger = "memory_ledger"
@@ -1676,6 +1690,7 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
         schemaVersion = try container.decode(UInt64.self, forKey: .schemaVersion)
         resources = try container.decodeIfPresent([ImagerObservedResourcePayload].self, forKey: .resources) ?? []
         activeSpans = try container.decodeIfPresent([ImagerObservabilitySpanPayload].self, forKey: .activeSpans) ?? []
+        recentSpans = try container.decodeIfPresent([ImagerObservabilitySpanPayload].self, forKey: .recentSpans) ?? []
         memoryTargetBytes = try container.decodeIfPresent(Int.self, forKey: .memoryTargetBytes)
         memoryTargetSource = try container.decodeIfPresent(String.self, forKey: .memoryTargetSource)
         memoryLedger = try container.decodeIfPresent(ImagerMemoryLedgerPayload.self, forKey: .memoryLedger)
@@ -1856,6 +1871,7 @@ extension ImagingObservabilitySnapshot {
             schemaVersion: payload.schemaVersion,
             resources: payload.resources.map(ImagingObservedResource.init(payload:)),
             activeSpans: payload.activeSpans.map(ImagingObservabilitySpan.init(payload:)),
+            recentSpans: payload.recentSpans.map(ImagingObservabilitySpan.init(payload:)),
             memoryTargetBytes: payload.memoryTargetBytes,
             memoryTargetSource: payload.memoryTargetSource,
             memoryLedger: payload.memoryLedger.map(ImagingMemoryLedgerSnapshot.init(payload:)),

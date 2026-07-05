@@ -9,7 +9,7 @@ mod single_plane_plan;
 mod spectral_slab;
 mod task_contract;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::ffi::OsString;
 #[cfg(target_os = "macos")]
@@ -166,6 +166,7 @@ const PROGRESS_RESOURCE_PRODUCTS: &str = "product-scratch";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
 const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 1;
+const IMAGER_RECENT_SPAN_LIMIT: usize = 16;
 const SPECTRAL_SOURCE_RESOURCES: &[ImagerObservedResourceId] =
     &[ImagerObservedResourceId::SourceStream];
 const SPECTRAL_GRID_PLANE_RESOURCES: &[ImagerObservedResourceId] = &[
@@ -647,6 +648,7 @@ struct ImagerProgressContext {
     uv_coverage_output_slab: Option<(usize, usize)>,
     last_active_runtime_backend: Option<String>,
     active_spans: BTreeMap<String, ImagerObservabilitySpan>,
+    recent_spans: VecDeque<ImagerObservabilitySpan>,
     active_span_stack: Vec<String>,
     active_span_resource_counts: BTreeMap<String, BTreeMap<String, usize>>,
     active_resource_counts: BTreeMap<String, usize>,
@@ -680,7 +682,22 @@ impl Drop for ImagerObservationSpanGuard {
         let Some(context) = context.as_mut() else {
             return;
         };
-        context.active_spans.remove(&self.span_id);
+        if let Some(mut span) = context.active_spans.remove(&self.span_id) {
+            if let Some(resources) = context.active_span_resource_counts.get(&self.span_id) {
+                span.resource_ids = resources
+                    .keys()
+                    .map(|resource| imager_observed_resource_id(resource))
+                    .collect();
+            }
+            span.state = ImagerObservabilitySpanState::Complete;
+            span.elapsed_ms = Instant::now()
+                .duration_since(context.started_at)
+                .as_millis() as u64;
+            context.recent_spans.push_front(span);
+            while context.recent_spans.len() > IMAGER_RECENT_SPAN_LIMIT {
+                context.recent_spans.pop_back();
+            }
+        }
         context.active_span_resource_counts.remove(&self.span_id);
         context
             .active_span_stack
@@ -747,6 +764,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         last_active_runtime_backend: None,
         uv_coverage_output_slab: None,
         active_spans: BTreeMap::new(),
+        recent_spans: VecDeque::new(),
         active_span_stack: Vec::new(),
         active_span_resource_counts: BTreeMap::new(),
         active_resource_counts: BTreeMap::new(),
@@ -788,6 +806,15 @@ fn imager_observed_memory_for_resource(
         }),
         _ => None,
     }
+}
+
+fn imager_observed_resource_is_retained(memory: Option<&ImagerObservedResourceMemory>) -> bool {
+    memory.is_some_and(|memory| {
+        memory.resident_bytes.is_some_and(|bytes| bytes > 0)
+            || memory.planned_bytes.is_some_and(|bytes| bytes > 0)
+            || memory.active_planes.is_some_and(|planes| planes > 0)
+            || memory.row_block_rows.is_some_and(|rows| rows > 0)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1192,11 +1219,14 @@ fn imager_observability_snapshot(
                 .copied()
                 .unwrap_or(0);
             let is_busy = lease_count > 0 || active_threads > 0;
+            let resource_memory = imager_observed_memory_for_resource(*id, memory);
             ImagerObservedResource {
                 id: *id,
                 label: (*label).to_string(),
                 state: if is_busy {
                     ImagerObservedResourceState::Active
+                } else if imager_observed_resource_is_retained(resource_memory.as_ref()) {
+                    ImagerObservedResourceState::Retained
                 } else {
                     ImagerObservedResourceState::Idle
                 },
@@ -1207,7 +1237,7 @@ fn imager_observability_snapshot(
                     .as_ref()
                     .is_some_and(|runtime| runtime.gpu_active && is_busy),
                 owner: is_busy.then(|| event.phase.clone()),
-                memory: imager_observed_memory_for_resource(*id, memory),
+                memory: resource_memory,
             }
         })
         .collect::<Vec<_>>();
@@ -1266,6 +1296,7 @@ fn imager_observability_snapshot(
         schema_version: IMAGER_OBSERVABILITY_SCHEMA_VERSION,
         resources,
         active_spans,
+        recent_spans: context.recent_spans.iter().cloned().collect(),
         memory_target_bytes: memory.map(|memory| memory.memory_target_bytes),
         memory_target_source: memory.and_then(|memory| memory.memory_target_source.clone()),
         memory_ledger: {
@@ -1495,6 +1526,12 @@ fn acquire_imager_progress_resources_with_threads(
                 .or_default()
                 .entry(resource.clone())
                 .or_insert(0) += 1;
+            if let Some(span) = context.active_spans.get_mut(owner_span_id) {
+                let resource_id = imager_observed_resource_id(&resource);
+                if !span.resource_ids.contains(&resource_id) {
+                    span.resource_ids.push(resource_id);
+                }
+            }
         }
         acquired.push((resource, active_threads, owner_span_id.clone()));
     }
@@ -40692,7 +40729,7 @@ mod tests {
             .iter()
             .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
             .expect("source stream row");
-        assert_eq!(source.state, ImagerObservedResourceState::Idle);
+        assert_eq!(source.state, ImagerObservedResourceState::Retained);
         assert_eq!(
             source
                 .memory
@@ -40933,6 +40970,20 @@ mod tests {
                 Some(&1)
             );
             assert_eq!(context.active_spans.len(), 1);
+            assert_eq!(context.recent_spans.len(), 1);
+            let completed_child = context.recent_spans.front().expect("recent child span");
+            assert_eq!(
+                completed_child.stage_kind,
+                ImagerObservedStageKind::ClarkMinorCycle
+            );
+            assert_eq!(
+                completed_child.state,
+                ImagerObservabilitySpanState::Complete
+            );
+            assert_eq!(
+                completed_child.resource_ids,
+                vec![ImagerObservedResourceId::Deconvolver]
+            );
         }
         drop(parent_lease);
         drop(parent_span);
@@ -40944,6 +40995,7 @@ mod tests {
             assert!(context.active_resource_counts.is_empty());
             assert!(context.active_span_resource_counts.is_empty());
             assert!(context.active_spans.is_empty());
+            assert_eq!(context.recent_spans.len(), 2);
         }
         drop(progress_guard);
     }
