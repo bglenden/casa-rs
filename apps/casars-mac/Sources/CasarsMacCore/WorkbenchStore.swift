@@ -3382,7 +3382,7 @@ public final class WorkbenchStore: ObservableObject {
         let defaultSpectralWindow = defaultImagerSpectralWindow(for: dataset)
         let defaultCorrelation = defaultImagerCorrelation(for: dataset)
         setValue("field", selectorToken(defaultField) ?? defaultField)
-        setValue("phasecenter_field", selectorToken(defaultField) ?? defaultField)
+        values["phasecenter_field"] = ""
         setValue("spw", selectorToken(defaultSpectralWindow) ?? defaultSpectralWindow)
         setValue("datacolumn", dataset.dataColumns.first ?? "DATA")
         setValue("polarization", selectorToken(defaultCorrelation) ?? defaultCorrelation)
@@ -3405,12 +3405,13 @@ public final class WorkbenchStore: ObservableObject {
         seedImagerTaskDefaults(for: dataset, preserveExistingEdits: false)
         var values = state.genericTaskValues["imager"] ?? [:]
         var toggles = state.genericTaskToggles["imager"] ?? [:]
-        let phaseCenterField = dataset.fields.first.flatMap(selectorToken)
+        let phaseCenterField = dataset.fields.count > 1 ? dataset.fields.first.flatMap(selectorToken) : nil
 
         values["field"] = ""
         values["phasecenter_field"] = phaseCenterField ?? ""
         values["specmode"] = "cube"
         values["gridder"] = "mosaic"
+        values["interpolation"] = "nearest"
         values["channel_start"] = "0"
         values["channel_count"] = "512"
         values["imsize"] = "1024"

@@ -2885,7 +2885,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.activeTaskID, "imager")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["ms"], "probed.ms")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["field"], "0")
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["phasecenter_field"], "0")
+        XCTAssertEqual(store.state.genericTaskValues["imager"]?["phasecenter_field"], "")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["spw"], "0")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["imagename"], "casa-rs-runs/imager-1/probed.ms-imager")
         XCTAssertEqual(store.state.genericTaskToggles["imager"]?["dirty_only"], true)
@@ -3126,6 +3126,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["phasecenter_field"], "0")
         XCTAssertEqual(values["specmode"], "cube")
         XCTAssertEqual(values["gridder"], "mosaic")
+        XCTAssertEqual(values["interpolation"], "nearest")
         XCTAssertEqual(values["channel_start"], "0")
         XCTAssertEqual(values["channel_count"], "512")
         XCTAssertEqual(values["imsize"], "1024")
@@ -3363,7 +3364,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         let values = try XCTUnwrap(store.state.genericTaskValues["imager"])
         XCTAssertEqual(values["field"], "5")
-        XCTAssertEqual(values["phasecenter_field"], "5")
+        XCTAssertEqual(values["phasecenter_field"], "")
         XCTAssertEqual(values["spw"], "5")
         XCTAssertEqual(values["polarization"], "YY")
     }
@@ -3413,7 +3414,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         let values = try XCTUnwrap(store.state.genericTaskValues["imager"])
         XCTAssertEqual(values["field"], "5")
-        XCTAssertEqual(values["phasecenter_field"], "5")
+        XCTAssertEqual(values["phasecenter_field"], "")
         XCTAssertEqual(values["spw"], "0")
         XCTAssertEqual(values["polarization"], "I")
         XCTAssertEqual(values["imsize"], "250")
@@ -4704,6 +4705,7 @@ private func makeImagerTaskUISchema() throws -> TaskUISchema {
         {"id":"channel_count","label":"Channel Count","order":12,"parser":{"kind":"option","flags":["--channel-count"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":true,"hidden_in_tui":false},
         {"id":"polarization","label":"Corr / Stokes","order":13,"parser":{"kind":"option","flags":["--corr"],"metavar":"PLANE","choices":["I","Q","U","V","XX","YY","RR","LL"]},"value_kind":"choice","required":false,"default":"I","help":"","group":"Context","advanced":true,"hidden_in_tui":false},
         {"id":"specmode","label":"Spectral Mode","order":20,"parser":{"kind":"option","flags":["--specmode"],"metavar":"MODE","choices":["mfs","cube","cubedata"]},"value_kind":"choice","required":true,"default":"mfs","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
+        {"id":"interpolation","label":"Cube Interp","order":21,"parser":{"kind":"option","flags":["--interpolation"],"metavar":"MODE","choices":["nearest","linear","cubic"]},"value_kind":"choice","required":false,"default":null,"help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
         {"id":"dirty_only","label":"Dirty Only","order":30,"parser":{"kind":"toggle","true_flags":["--dirty-only"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"niter","label":"Iterations","order":31,"parser":{"kind":"option","flags":["--niter"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":"0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"threshold_jy","label":"Threshold","order":32,"parser":{"kind":"option","flags":["--threshold-jy"],"metavar":"JY","choices":[]},"value_kind":"float","required":false,"default":"0.0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
