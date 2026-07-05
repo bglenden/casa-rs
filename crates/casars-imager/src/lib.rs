@@ -171,6 +171,7 @@ const OBS_COUNTER_MINOR_ITERATIONS: &str = "minor_iterations";
 const OBS_COUNTER_MINOR_ITERATION_LIMIT: &str = "minor_iteration_limit";
 const OBS_COUNTER_CYCLE_ITERATION_LIMIT: &str = "cycle_iteration_limit";
 const OBS_COUNTER_SLAB_ID: &str = "slab_id";
+const OBS_COUNTER_ROW_BLOCK_ROWS: &str = "row_block_rows";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
 const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 1;
@@ -1544,10 +1545,6 @@ impl Drop for ImagerProgressResourceGuard {
     }
 }
 
-fn acquire_imager_progress_resources(resources: &[&str]) -> Option<ImagerProgressResourceGuard> {
-    acquire_imager_progress_resources_with_threads(resources, 0)
-}
-
 fn acquire_imager_progress_resource_ids_with_threads(
     resources: &[ImagerObservedResourceId],
     active_threads: usize,
@@ -1627,6 +1624,64 @@ fn imager_progress_resource_is_active(resource: &str) -> bool {
 struct ImagerProductWriteObservationGuard {
     _span: Option<ImagerObservationSpanGuard>,
     _resources: Option<ImagerProgressResourceGuard>,
+}
+
+struct ImagerSourceStreamObservationGuard {
+    _span: Option<ImagerObservationSpanGuard>,
+    _resources: Option<ImagerProgressResourceGuard>,
+}
+
+fn begin_imager_progress_source_stream_observation(
+    row_chunk: &[SelectedMainRow],
+    channel_read_range: Option<SelectedChannelReadRange>,
+    active_threads: usize,
+) -> Option<ImagerSourceStreamObservationGuard> {
+    if row_chunk.is_empty() || !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    let row_start = row_chunk.iter().map(|row| row.row_index).min();
+    let row_end = row_chunk
+        .iter()
+        .map(|row| row.row_index.saturating_add(1))
+        .max();
+    let (channel_start, channel_end) = channel_read_range
+        .map(|range| {
+            (
+                Some(range.start),
+                Some(range.start.saturating_add(range.count)),
+            )
+        })
+        .unwrap_or((None, None));
+    let extent = ImagerObservabilityExtent {
+        row_start,
+        row_end,
+        channel_start,
+        channel_end,
+        plane_start: None,
+        plane_end: None,
+    };
+    let span = begin_imager_observation_span(
+        ImagerObservedStageKind::SourceStream,
+        format!(
+            "source rows {}..{}",
+            row_start.unwrap_or(0),
+            row_end.unwrap_or(0)
+        ),
+        &[ImagerObservedResourceId::SourceStream],
+        Some(extent),
+    );
+    let resources = acquire_imager_progress_resource_ids_with_threads(
+        &[ImagerObservedResourceId::SourceStream],
+        active_threads,
+    );
+    observe_current_imager_span_counters([
+        (OBS_COUNTER_ROW_BLOCK_ROWS, row_chunk.len() as u64),
+        (OBS_COUNTER_ACTIVE_THREADS, active_threads as u64),
+    ]);
+    (span.is_some() || resources.is_some()).then_some(ImagerSourceStreamObservationGuard {
+        _span: span,
+        _resources: resources,
+    })
 }
 
 fn begin_imager_progress_product_write_observation(
@@ -21130,7 +21185,8 @@ fn read_columnar_prepared_source_with_progress_cube(
     request.include_field_ids = false;
     request.include_flag_row = false;
 
-    let _source_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_SOURCE_STREAM]);
+    let _source_guard =
+        begin_imager_progress_source_stream_observation(row_chunk, channel_read_range, 1);
     emit_imager_progress_ms_window(
         ms,
         table_values,
@@ -25412,7 +25468,8 @@ where
         Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
     let mut next_input_seq = 0u64;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let source_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_SOURCE_STREAM]);
+        let source_guard =
+            begin_imager_progress_source_stream_observation(row_chunk, channel_read_range, 1);
         emit_imager_progress_ms_window(ms, table_values, row_chunk, channel_read_range, None, None);
         let stage_started_at = Instant::now();
         let (block, read_timings) = read_ms_imaging_essentials_block(
@@ -25432,6 +25489,7 @@ where
             weight_spectrum: read_timings.weight_spectrum,
             geometry_rows: read_timings.uvw_column,
         });
+        drop(source_guard);
 
         let stage_started_at = Instant::now();
         let mut block_density_samples = 0usize;
@@ -25498,7 +25556,6 @@ where
             get_ms_values_elapsed,
             prepare_processing_elapsed,
         );
-        drop(source_guard);
         accepted_density_samples = accepted_density_samples.saturating_add(block_density_samples);
         if frontend_progress_enabled() {
             eprintln!(
@@ -25545,7 +25602,8 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
         Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
     let mut next_input_seq = 0u64;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let source_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_SOURCE_STREAM]);
+        let source_guard =
+            begin_imager_progress_source_stream_observation(row_chunk, channel_read_range, 1);
         emit_imager_progress_ms_window(ms, table_values, row_chunk, channel_read_range, None, None);
         let stage_started_at = Instant::now();
         let (block, read_timings) = read_ms_imaging_essentials_block(
@@ -25565,6 +25623,7 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
             weight_spectrum: read_timings.weight_spectrum,
             geometry_rows: read_timings.uvw_column,
         });
+        drop(source_guard);
 
         let stage_started_at = Instant::now();
         let mut block_density_samples = 0usize;
@@ -25628,7 +25687,6 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
             get_ms_values_elapsed,
             prepare_processing_elapsed,
         );
-        drop(source_guard);
         accepted_density_samples = accepted_density_samples.saturating_add(block_density_samples);
         if frontend_progress_enabled() {
             eprintln!(
@@ -26390,7 +26448,8 @@ where
     )?;
     let mut planned_runs = StandardMfsPlannedSampleBlock::default();
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let source_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_SOURCE_STREAM]);
+        let source_guard =
+            begin_imager_progress_source_stream_observation(row_chunk, channel_read_range, 1);
         emit_imager_progress_ms_window(ms, table_values, row_chunk, channel_read_range, None, None);
         let stage_started_at = Instant::now();
         let (block, read_timings) = read_ms_imaging_essentials_block(
@@ -26410,6 +26469,7 @@ where
             weight_spectrum: read_timings.weight_spectrum,
             geometry_rows: read_timings.uvw_column,
         });
+        drop(source_guard);
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
@@ -26456,7 +26516,6 @@ where
             get_ms_values_elapsed,
             prepare_processing_elapsed,
         );
-        drop(source_guard);
         streamed_samples += planned_runs.len();
         if frontend_progress_enabled() {
             eprintln!(
@@ -26506,7 +26565,8 @@ where
         Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
     let mut next_input_seq = 0u64;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let source_guard = acquire_imager_progress_resources(&[PROGRESS_RESOURCE_SOURCE_STREAM]);
+        let source_guard =
+            begin_imager_progress_source_stream_observation(row_chunk, channel_read_range, 1);
         emit_imager_progress_ms_window(
             ms,
             table_values,
@@ -26534,6 +26594,7 @@ where
             progress_output_cube.clone(),
             None,
         );
+        drop(source_guard);
         pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
             data_column: read_timings.data_column,
             flag_column: read_timings.flag_column,
@@ -26587,7 +26648,6 @@ where
             get_ms_values_elapsed,
             prepare_processing_elapsed,
         );
-        drop(source_guard);
         streamed_samples += block_planned_samples;
         if frontend_progress_enabled() {
             eprintln!(
@@ -41435,6 +41495,137 @@ mod tests {
         assert_eq!(span.counters.get(OBS_COUNTER_OUTPUT_PLANES), Some(&3));
         drop(context_guard);
         drop(product_guard);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn source_stream_observation_uses_typed_span_with_row_block_extent() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        let rows = vec![
+            SelectedMainRow {
+                row_index: 10,
+                field_id: 0,
+                ddid: 0,
+                spw_id: 0,
+                polarization_id: 0,
+                antenna1_id: 0,
+                antenna2_id: 1,
+                time_mjd_seconds: Some(1.0),
+            },
+            SelectedMainRow {
+                row_index: 18,
+                field_id: 0,
+                ddid: 0,
+                spw_id: 0,
+                polarization_id: 0,
+                antenna1_id: 0,
+                antenna2_id: 2,
+                time_mjd_seconds: Some(2.0),
+            },
+        ];
+        let source_guard = begin_imager_progress_source_stream_observation(
+            &rows,
+            Some(SelectedChannelReadRange { start: 3, count: 5 }),
+            1,
+        )
+        .expect("source stream observed");
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let active_resources = context
+            .active_resource_counts
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let active_resource_threads = context
+            .active_resource_thread_counts
+            .iter()
+            .filter_map(|(resource, counts)| {
+                counts
+                    .iter()
+                    .copied()
+                    .max()
+                    .map(|threads| (resource.clone(), threads))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 11,
+            elapsed_ms: 750,
+            phase: "opaque-source-read".to_string(),
+            summary: "opaque source read".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 1,
+                total_threads: 4,
+                gpu_active: false,
+                backend: "source stream".to_string(),
+                active_resources: active_resources.clone(),
+                active_resource_threads: active_resource_threads.clone(),
+                memory: None,
+            }),
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(
+            &event,
+            context,
+            &active_resources,
+            &active_resource_threads,
+        );
+        let source = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+            .expect("source stream resource");
+        assert_eq!(source.state, ImagerObservedResourceState::Active);
+        assert_eq!(source.lease_count, 1);
+        assert_eq!(source.active_threads, 1);
+        assert!(snapshot.workers.iter().any(|worker| worker.state
+            == ImagerObservedWorkerState::RunningIo
+            && worker.active_count == 1));
+        let span = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::SourceStream)
+            .expect("source stream span");
+        assert_eq!(
+            span.resource_ids,
+            vec![ImagerObservedResourceId::SourceStream]
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.row_start),
+            Some(10)
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.row_end),
+            Some(19)
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.channel_start),
+            Some(3)
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.channel_end),
+            Some(8)
+        );
+        assert_eq!(span.counters.get(OBS_COUNTER_ROW_BLOCK_ROWS), Some(&2));
+        assert_eq!(span.counters.get(OBS_COUNTER_ACTIVE_THREADS), Some(&1));
+        drop(context_guard);
+        drop(source_guard);
         drop(progress_guard);
     }
 
