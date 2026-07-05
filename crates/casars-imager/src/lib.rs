@@ -654,6 +654,7 @@ struct ImagerProgressContext {
     active_resource_counts: BTreeMap<String, usize>,
     active_resource_thread_counts: BTreeMap<String, Vec<usize>>,
     memory: Option<ImagerProgressMemory>,
+    telemetry_writer: Option<BufWriter<File>>,
 }
 
 struct ImagerProgressGuard;
@@ -749,8 +750,29 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
     if !options.enabled {
         return None;
     }
+    let telemetry_writer = options.telemetry_jsonl_path.as_ref().and_then(|path| {
+        if let Some(parent) = path.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                eprintln!("failed to create imager progress telemetry directory: {error}");
+                return None;
+            }
+        }
+        match OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+        {
+            Ok(file) => Some(BufWriter::new(file)),
+            Err(error) => {
+                eprintln!("failed to open imager progress telemetry JSONL: {error}");
+                None
+            }
+        }
+    });
     let normalized = ImagerProgressOptions {
         enabled: true,
+        telemetry_jsonl_path: options.telemetry_jsonl_path.clone(),
         max_uv_points: options.max_uv_points.min(casa_ms::DEFAULT_MAX_PLOT_POINTS),
         min_interval_ms: options.min_interval_ms.max(50),
     };
@@ -770,6 +792,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         active_resource_counts: BTreeMap::new(),
         active_resource_thread_counts: BTreeMap::new(),
         memory: None,
+        telemetry_writer,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
         *slot = Some(context);
@@ -1416,7 +1439,24 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
         serde_json::to_string(&event)
     };
     if let Ok(payload) = serialized {
-        eprintln!("{IMAGER_PROGRESS_STDERR_PREFIX}{payload}");
+        let wrote_telemetry = {
+            let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+                return;
+            };
+            let Some(context) = context.as_mut() else {
+                return;
+            };
+            if let Some(writer) = context.telemetry_writer.as_mut() {
+                writeln!(writer, "{payload}")
+                    .and_then(|_| writer.flush())
+                    .is_ok()
+            } else {
+                false
+            }
+        };
+        if !wrote_telemetry {
+            eprintln!("{IMAGER_PROGRESS_STDERR_PREFIX}{payload}");
+        }
     }
 }
 
@@ -3298,13 +3338,25 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         return Ok(());
     }
 
-    let (json_run, filtered_args) = extract_string_option(&args, "--json-run")?;
+    let (progress_jsonl_path, filtered_args) = extract_string_option(&args, "--progress-jsonl")?;
+    let (json_run, filtered_args) = extract_string_option(&filtered_args, "--json-run")?;
     if let Some(source) = json_run {
         let request = ImagerTaskRequest::read_from_source(&source)?;
         let progress_options = match &request {
-            ImagerTaskRequest::Run(request) => request.progress.as_ref(),
+            ImagerTaskRequest::Run(request) => request.progress.clone(),
         };
-        let _progress_guard = progress_options.and_then(begin_imager_progress);
+        let progress_options = if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
+            let mut options = progress_options.unwrap_or_else(|| ImagerProgressOptions {
+                enabled: true,
+                ..Default::default()
+            });
+            options.enabled = true;
+            options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
+            Some(options)
+        } else {
+            progress_options
+        };
+        let _progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
         let result = execute_json_task_request_with_progress(&request)?;
         println!(
             "{}",
@@ -3335,9 +3387,21 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
                 .map_err(|error| format!("parse --progress-min-interval-ms: {error}"))?;
         }
         Some(options)
+    } else if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
+        Some(ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(PathBuf::from(progress_jsonl_path)),
+            ..Default::default()
+        })
     } else {
         None
     };
+    let progress_options = progress_options.map(|mut options| {
+        if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
+            options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
+        }
+        options
+    });
     let (read_essentials_probe, filtered_args) =
         extract_option_value(&filtered_args, "--ms-imaging-read-probe")?;
     let (spectral_plan_probe, filtered_args) =
@@ -40481,9 +40545,12 @@ mod tests {
     use casa_types::measures::position::MPosition;
     use casa_types::{RecordField, RecordValue};
     use ndarray::{Array2, ArrayD, IxDyn};
+    use std::sync::{LazyLock, Mutex};
     use tempfile::tempdir;
 
     use super::*;
+
+    static IMAGER_PROGRESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     struct EnvGuard {
         name: &'static str,
@@ -40538,10 +40605,14 @@ mod tests {
 
     #[test]
     fn standard_mfs_replay_progress_guard_tracks_grid_and_plane() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
         let progress_guard = begin_imager_progress(&ImagerProgressOptions {
             enabled: true,
             max_uv_points: 1024,
             min_interval_ms: 50,
+            ..Default::default()
         })
         .expect("progress context starts");
 
@@ -40591,11 +40662,77 @@ mod tests {
     }
 
     #[test]
+    fn imager_progress_jsonl_transport_writes_raw_events() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("imager.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: 0,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: "transport_test".to_string(),
+                summary: "structured side-channel progress".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: None,
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: Some(ImagerProgressRuntime {
+                    active_threads: 1,
+                    total_threads: 2,
+                    gpu_active: false,
+                    backend: "test".to_string(),
+                    active_resources: vec![PROGRESS_RESOURCE_GRID.to_string()],
+                    active_resource_threads: BTreeMap::from([(
+                        PROGRESS_RESOURCE_GRID.to_string(),
+                        1,
+                    )]),
+                    memory: None,
+                }),
+                observability: None,
+            },
+            true,
+        );
+        drop(progress_guard);
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        assert!(!text.contains(IMAGER_PROGRESS_STDERR_PREFIX));
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        let event: ImagerProgressEvent =
+            serde_json::from_str(lines[0]).expect("parse progress jsonl event");
+        assert_eq!(event.phase, "transport_test");
+        assert_eq!(
+            event
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.active_resource_threads.get(PROGRESS_RESOURCE_GRID)),
+            Some(&1)
+        );
+        assert!(event.observability.is_some());
+    }
+
+    #[test]
     fn imager_observability_snapshot_reports_leases_workers_and_known_memory() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
         let progress_guard = begin_imager_progress(&ImagerProgressOptions {
             enabled: true,
             max_uv_points: 1024,
             min_interval_ms: 50,
+            ..Default::default()
         })
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
@@ -40838,10 +40975,14 @@ mod tests {
 
     #[test]
     fn imager_observer_spans_own_typed_resource_leases() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
         let progress_guard = begin_imager_progress(&ImagerProgressOptions {
             enabled: true,
             max_uv_points: 1024,
             min_interval_ms: 50,
+            ..Default::default()
         })
         .expect("progress context starts");
         let parent_span = begin_imager_observation_span(

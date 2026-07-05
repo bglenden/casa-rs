@@ -4184,6 +4184,100 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(output.artifacts.first?.path, "\(outputPrefix).image")
     }
 
+    func testGenericImagerProcessClientReadsProgressFromJSONLSideChannel() throws {
+        let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("casars-mac-progress-jsonl-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let resultURL = tempRoot.appendingPathComponent("result.json")
+        let outputPrefix = tempRoot
+            .appendingPathComponent("outputs", isDirectory: true)
+            .appendingPathComponent("jsonl-progress")
+            .path
+        let resultJSON = try makeManagedImagerStdout(
+            measurementSet: "/data/probed.ms",
+            imagename: outputPrefix
+        )
+        try resultJSON.write(to: resultURL, atomically: true, encoding: .utf8)
+
+        let helperURL = tempRoot.appendingPathComponent("fake-casars-imager-jsonl")
+        let helperScript = """
+        #!/bin/sh
+        set -eu
+        progress_file=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--progress-jsonl" ]; then
+            shift
+            progress_file="$1"
+          fi
+          shift || true
+        done
+        if [ -n "$progress_file" ]; then
+          mkdir -p "$(dirname "$progress_file")"
+          printf '%s\\n' '{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"jsonl_transport","summary":"side-channel progress","work":{"completed_units":1,"total_units":2,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":2,"gpu_active":false,"backend":"jsonl","active_resources":["visibility-grid"]}}' > "$progress_file"
+        fi
+        printf '%s\\n' 'ordinary stderr diagnostic' >&2
+        cat "\(resultURL.path)"
+        """
+        try helperScript.write(to: helperURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helperURL.path)
+
+        var task = makeImagerTaskCatalogEntry()
+        task.binaryName = helperURL.path
+        let request = GenericTaskRequest(
+            runID: "jsonl-progress",
+            task: task,
+            schema: try makeImagerTaskUISchema(),
+            values: [
+                "ms": "/data/probed.ms",
+                "imagename": outputPrefix,
+                "imsize": "256",
+                "cell_arcsec": "1.0",
+                "specmode": "mfs",
+                "weighting": "natural",
+                "deconvolver": "hogbom"
+            ],
+            toggles: ["dirty_only": true],
+            workingDirectoryPath: tempRoot.path
+        )
+        let client = ProcessGenericTaskClient(
+            queue: DispatchQueue(label: "casars.mac.test.jsonl-progress")
+        )
+        let lock = NSLock()
+        var succeededResult: GenericTaskResult?
+        var progressSnapshot: ImagerProgressSnapshot?
+
+        _ = try client.startTask(request: request) { event in
+            lock.lock()
+            switch event {
+            case .progress(let progress):
+                progressSnapshot = progress
+            case .succeeded(let result):
+                succeededResult = result
+            default:
+                break
+            }
+            lock.unlock()
+        }
+
+        waitFor("jsonl progress imager process completion", timeout: 5) {
+            lock.lock()
+            defer { lock.unlock() }
+            return succeededResult != nil
+        }
+
+        lock.lock()
+        let result = succeededResult
+        let progress = progressSnapshot
+        lock.unlock()
+        let arguments = try XCTUnwrap(result?.arguments)
+        XCTAssertTrue(arguments.contains("--progress-jsonl"))
+        XCTAssertEqual(progress?.phase, "jsonl_transport")
+        XCTAssertEqual(progress?.runtime.activeResourceIDs, ["visibility-grid"])
+        XCTAssertEqual(result?.stderr, "ordinary stderr diagnostic")
+    }
+
     func testGenericTaskClientFindsBundledAndReleaseHelpers() {
         let bundleExecutable = URL(fileURLWithPath: "/Applications/casars-mac.app/Contents/MacOS/casars-mac")
 

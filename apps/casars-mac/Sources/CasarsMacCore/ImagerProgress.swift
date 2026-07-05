@@ -2005,11 +2005,29 @@ struct ImagerProgressStderrParser {
         return records
     }
 
+    mutating func appendJSONLines(_ text: String, runID: String?, state: TaskRunState) -> [ImagerProgressStderrRecord] {
+        pending.append(text)
+        var records: [ImagerProgressStderrRecord] = []
+        while let newline = pending.firstIndex(of: "\n") {
+            let line = String(pending[..<newline])
+            pending.removeSubrange(...newline)
+            records.append(progressRecord(for: line, runID: runID, state: state))
+        }
+        return records
+    }
+
     mutating func finish(runID: String?, state: TaskRunState) -> [ImagerProgressStderrRecord] {
         guard !pending.isEmpty else { return [] }
         let line = pending
         pending = ""
         return [record(for: line, runID: runID, state: state)]
+    }
+
+    mutating func finishJSONLines(runID: String?, state: TaskRunState) -> [ImagerProgressStderrRecord] {
+        guard !pending.isEmpty else { return [] }
+        let line = pending
+        pending = ""
+        return [progressRecord(for: line, runID: runID, state: state)]
     }
 
     private mutating func record(for rawLine: String, runID: String?, state: TaskRunState) -> ImagerProgressStderrRecord {
@@ -2018,6 +2036,12 @@ struct ImagerProgressStderrParser {
             return line.isEmpty ? .diagnostic("") : .diagnostic(line)
         }
         let json = String(line.dropFirst(imagerProgressStderrPrefix.count))
+        return progressRecord(for: json, runID: runID, state: state)
+    }
+
+    private mutating func progressRecord(for rawJSON: String, runID: String?, state: TaskRunState) -> ImagerProgressStderrRecord {
+        let json = rawJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !json.isEmpty else { return .diagnostic("") }
         do {
             let payload = try JSONDecoder().decode(ImagerProgressEventPayload.self, from: Data(json.utf8))
             let snapshot = ImagerProgressSnapshot.live(

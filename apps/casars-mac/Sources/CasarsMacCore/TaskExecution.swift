@@ -70,6 +70,70 @@ public protocol GenericTaskClient {
     ) throws -> TaskExecution
 }
 
+private final class ImagerProgressJSONLTailer {
+    private let url: URL
+    private let runID: String
+    private let queue: DispatchQueue
+    private let eventHandler: (GenericTaskEvent) -> Void
+    private var parser = ImagerProgressStderrParser()
+    private var offset = 0
+    private var timer: DispatchSourceTimer?
+
+    init(
+        path: String,
+        runID: String,
+        queue: DispatchQueue,
+        eventHandler: @escaping (GenericTaskEvent) -> Void
+    ) {
+        self.url = URL(fileURLWithPath: path)
+        self.runID = runID
+        self.queue = queue
+        self.eventHandler = eventHandler
+    }
+
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+            self?.drainAvailable(state: .running, finish: false)
+        }
+        self.timer = timer
+        timer.resume()
+    }
+
+    func stopAndDrain(state: TaskRunState) {
+        queue.sync {
+            timer?.cancel()
+            timer = nil
+            drainAvailable(state: state, finish: true)
+        }
+    }
+
+    private func drainAvailable(state: TaskRunState, finish: Bool) {
+        guard let data = try? Data(contentsOf: url) else {
+            return
+        }
+        if offset > data.count {
+            offset = 0
+        }
+        let chunk = data.dropFirst(offset)
+        offset = data.count
+        guard !chunk.isEmpty || finish else { return }
+        var records: [ImagerProgressStderrRecord] = []
+        if let text = String(data: chunk, encoding: .utf8), !text.isEmpty {
+            records.append(contentsOf: parser.appendJSONLines(text, runID: runID, state: state))
+        }
+        if finish {
+            records.append(contentsOf: parser.finishJSONLines(runID: runID, state: state))
+        }
+        for record in records {
+            if case .progress(let snapshot) = record {
+                eventHandler(.progress(snapshot))
+            }
+        }
+    }
+}
+
 public struct ManagedImagingArtifact: Codable, Equatable, Identifiable {
     public var kind: String
     public var label: String
@@ -170,14 +234,15 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         eventHandler: @escaping (GenericTaskEvent) -> Void
     ) throws -> TaskExecution {
         var executionRequest = request
+        let progressTelemetryPath = try Self.progressTelemetryPathIfNeeded(for: request)
         let requestJSONPath = try Self.saveJSONRequestIfNeeded(for: request)
         if let requestJSONPath {
             executionRequest.values["request_json"] = requestJSONPath
         }
         let arguments = if let requestJSONPath {
-            ["--json-run", requestJSONPath]
+            ["--json-run", requestJSONPath] + Self.progressTelemetryArguments(progressTelemetryPath)
         } else {
-            try Self.arguments(for: executionRequest)
+            try Self.arguments(for: executionRequest, progressTelemetryPath: progressTelemetryPath)
         }
         let execution = ProcessTaskExecution()
         queue.async {
@@ -209,6 +274,15 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                         eventHandler(.progress(snapshot))
                     }
                 } : nil
+                let progressTailer = progressTelemetryPath.map { path in
+                    ImagerProgressJSONLTailer(
+                        path: path,
+                        runID: executionRequest.runID,
+                        queue: progressParserQueue ?? DispatchQueue(label: "casars.mac.imager-progress-jsonl"),
+                        eventHandler: eventHandler
+                    )
+                }
+                progressTailer?.start()
                 let output = try Self.runProcess(
                     binaryName: executionRequest.task.binaryName,
                     overrideEnv: executionRequest.task.overrideEnv,
@@ -219,6 +293,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                     stderrChunkHandlerQueue: progressParserQueue,
                     storesStderr: executionRequest.task.id != "imager"
                 )
+                progressTailer?.stopAndDrain(state: .running)
                 if executionRequest.task.id == "imager" {
                     progressParserQueue?.sync {}
                     progressParserLock.lock()
@@ -367,6 +442,10 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
     }
 
     static func arguments(for request: GenericTaskRequest) throws -> [String] {
+        try arguments(for: request, progressTelemetryPath: nil)
+    }
+
+    static func arguments(for request: GenericTaskRequest, progressTelemetryPath: String?) throws -> [String] {
         var arguments: [String] = []
         for argument in request.schema.arguments.sorted(by: { $0.order < $1.order }) {
             let isHiddenAction = argument.hiddenInTUI && argument.parser.kind == "action"
@@ -424,8 +503,32 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 "--progress-min-interval-ms",
                 "250"
             ])
+            arguments.append(contentsOf: progressTelemetryArguments(progressTelemetryPath))
         }
         return arguments
+    }
+
+    private static func progressTelemetryArguments(_ path: String?) -> [String] {
+        guard let path, !path.isEmpty else { return [] }
+        return ["--progress-jsonl", path]
+    }
+
+    private static func progressTelemetryPathIfNeeded(for request: GenericTaskRequest) throws -> String? {
+        guard request.task.id == "imager" else { return nil }
+        let rootURL: URL
+        if let workingDirectoryPath = request.workingDirectoryPath, !workingDirectoryPath.isEmpty {
+            rootURL = URL(fileURLWithPath: workingDirectoryPath, isDirectory: true)
+                .appendingPathComponent(".casa-rs", isDirectory: true)
+                .appendingPathComponent("progress", isDirectory: true)
+        } else {
+            rootURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("casars-mac-progress", isDirectory: true)
+        }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        return rootURL
+            .appendingPathComponent("\(request.runID)-imager-progress.jsonl")
+            .standardizedFileURL
+            .path
     }
 
     private static func runProcess(

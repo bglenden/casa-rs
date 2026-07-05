@@ -151,6 +151,9 @@ pub struct ImagerProgressOptions {
     /// Emit progress events while the task runs.
     #[serde(default)]
     pub enabled: bool,
+    /// Optional newline-delimited JSON telemetry path for structured progress events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_jsonl_path: Option<PathBuf>,
     /// Maximum measured UV points retained for a progress snapshot.
     #[serde(default = "default_progress_max_uv_points")]
     pub max_uv_points: usize,
@@ -163,6 +166,7 @@ impl Default for ImagerProgressOptions {
     fn default() -> Self {
         Self {
             enabled: false,
+            telemetry_jsonl_path: None,
             max_uv_points: default_progress_max_uv_points(),
             min_interval_ms: default_progress_min_interval_ms(),
         }
@@ -3404,6 +3408,7 @@ mod tests {
             "cell_arcsec": 0.25,
             "progress": {
               "enabled": true,
+              "telemetry_jsonl_path": "/tmp/imager-progress.jsonl",
               "max_uv_points": 128,
               "min_interval_ms": 400
             }
@@ -3414,6 +3419,10 @@ mod tests {
         let ImagerTaskRequest::Run(request) = request;
         let progress = request.progress.expect("progress options");
         assert!(progress.enabled);
+        assert_eq!(
+            progress.telemetry_jsonl_path.as_deref(),
+            Some(Path::new("/tmp/imager-progress.jsonl"))
+        );
         assert_eq!(progress.max_uv_points, 128);
         assert_eq!(progress.min_interval_ms, 400);
 
