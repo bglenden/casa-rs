@@ -6744,6 +6744,13 @@ private struct ImagerProgressDashboard: View {
                 }
 
                 ImagerProgressSection(
+                    title: "Buffer Activity",
+                    subtitle: "\(snapshot.resourceActivities.filter(\.isBusy).count) busy / \(snapshot.resourceActivities.count) tracked"
+                ) {
+                    ResourceActivityFlowView(snapshot: snapshot)
+                }
+
+                ImagerProgressSection(
                     title: "UV Coverage",
                     subtitle: "\(decimalCountLabel(UInt64(snapshot.uvCoverage.retainedMeasuredPointCount))) retained / \(decimalCountLabel(snapshot.uvCoverage.acceptedMeasuredPointCount)) gridable"
                 ) {
@@ -7408,6 +7415,213 @@ private extension ImagingDeconvolutionProgress {
     }
 }
 
+private struct ResourceActivityFlowView: View {
+    let snapshot: ImagerProgressSnapshot
+
+    private var resources: [ImagingResourceActivity] {
+        snapshot.resourceActivities
+    }
+
+    private var canvasHeight: CGFloat {
+        max(190, CGFloat(max(resources.count, 1)) * 44 + 12)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Canvas { context, size in
+                guard !resources.isEmpty else {
+                    Self.drawEmptyState(in: &context, size: size)
+                    return
+                }
+
+                let rowHeight: CGFloat = 34
+                let rowGap: CGFloat = 10
+                let xInset: CGFloat = 6
+                let rowWidth = max(40, size.width - xInset * 2)
+
+                for (index, resource) in resources.enumerated() {
+                    let y = CGFloat(index) * (rowHeight + rowGap) + 6
+                    let rowRect = CGRect(x: xInset, y: y, width: rowWidth, height: rowHeight)
+                    let nextBusy = index + 1 < resources.count && resources[index + 1].isBusy
+                    Self.drawResource(resource, in: rowRect, context: &context)
+                    if index + 1 < resources.count {
+                        Self.drawFlowArrow(
+                            from: CGPoint(x: rowRect.midX, y: rowRect.maxY + 1),
+                            to: CGPoint(x: rowRect.midX, y: rowRect.maxY + rowGap - 1),
+                            active: resource.isBusy || nextBusy,
+                            context: &context
+                        )
+                    }
+                }
+            }
+            .frame(height: canvasHeight)
+
+            HStack(spacing: 12) {
+                Label("busy", systemImage: "circle")
+                    .foregroundStyle(Color.cyan)
+                Label("active section", systemImage: "rectangle.inset.filled")
+                    .foregroundStyle(Color.green)
+                Label("GPU", systemImage: "bolt.fill")
+                    .foregroundStyle(Color.orange)
+            }
+            .workbenchFont(.caption2)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private static func drawEmptyState(in context: inout GraphicsContext, size: CGSize) {
+        let rect = CGRect(x: 6, y: 8, width: max(20, size.width - 12), height: max(44, size.height - 16))
+        context.fill(
+            Path(roundedRect: rect, cornerRadius: 6),
+            with: .color(.secondary.opacity(0.06))
+        )
+        context.stroke(
+            Path(roundedRect: rect, cornerRadius: 6),
+            with: .color(.secondary.opacity(0.20)),
+            style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+        )
+        context.draw(
+            Text("waiting for buffer plan").font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: rect.midX, y: rect.midY)
+        )
+    }
+
+    private static func drawResource(
+        _ resource: ImagingResourceActivity,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
+        let tint = color(for: resource)
+        let outline = resource.isBusy ? tint : Color.secondary.opacity(0.35)
+        let strokeStyle = StrokeStyle(lineWidth: resource.isBusy ? 2 : 1, dash: resource.isBusy ? [] : [4, 4])
+        let rowPath = Path(roundedRect: rect, cornerRadius: 6)
+        context.fill(rowPath, with: .color(tint.opacity(resource.isBusy ? 0.12 : 0.045)))
+        context.stroke(rowPath, with: .color(outline), style: strokeStyle)
+
+        let textWidth = min(max(92, rect.width * 0.34), 126)
+        let metricWidth: CGFloat = 78
+        let barRect = CGRect(
+            x: rect.minX + textWidth,
+            y: rect.minY + 7,
+            width: max(24, rect.width - textWidth - metricWidth),
+            height: rect.height - 14
+        )
+        context.fill(
+            Path(roundedRect: barRect, cornerRadius: 4),
+            with: .color(.secondary.opacity(0.09))
+        )
+
+        let sectionWidth = barRect.width * CGFloat(max(0, resource.sectionEndFraction - resource.sectionStartFraction))
+        if sectionWidth > 0 {
+            let sectionRect = CGRect(
+                x: barRect.minX + barRect.width * CGFloat(resource.sectionStartFraction),
+                y: barRect.minY,
+                width: max(3, min(sectionWidth, barRect.maxX - barRect.minX)),
+                height: barRect.height
+            )
+            context.fill(
+                Path(roundedRect: sectionRect, cornerRadius: 4),
+                with: .color(tint.opacity(resource.isBusy ? 0.42 : 0.20))
+            )
+        }
+
+        let byteWidth = barRect.width * CGFloat(resource.byteFraction)
+        if byteWidth > 0 {
+            let byteRect = CGRect(
+                x: barRect.minX,
+                y: barRect.maxY - 3,
+                width: max(2, byteWidth),
+                height: 3
+            )
+            context.fill(Path(byteRect), with: .color(tint.opacity(0.75)))
+        }
+
+        context.draw(
+            Text(resource.name).font(.caption2.weight(.semibold)).foregroundColor(.primary),
+            at: CGPoint(x: rect.minX + 8, y: rect.midY - 6),
+            anchor: .leading
+        )
+        context.draw(
+            Text(resource.detail).font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: rect.minX + 8, y: rect.midY + 8),
+            anchor: .leading
+        )
+
+        drawThreadDots(resource, in: rect, context: &context)
+
+        if resource.gpuActive {
+            let gpuRect = CGRect(x: rect.maxX - 18, y: rect.midY - 7, width: 14, height: 14)
+            context.fill(Path(ellipseIn: gpuRect), with: .color(.orange.opacity(0.25)))
+            context.draw(
+                Text("G").font(.caption2.weight(.bold)).foregroundColor(.orange),
+                at: CGPoint(x: gpuRect.midX, y: gpuRect.midY)
+            )
+        }
+    }
+
+    private static func drawThreadDots(
+        _ resource: ImagingResourceActivity,
+        in rect: CGRect,
+        context: inout GraphicsContext
+    ) {
+        let dotCount = min(max(resource.totalThreads, 0), 8)
+        guard dotCount > 0 else { return }
+
+        let activeDots = min(
+            dotCount,
+            Int(ceil(Double(dotCount) * Double(resource.activeThreads) / Double(max(resource.totalThreads, 1))))
+        )
+        let startX = rect.maxX - 70
+        for index in 0..<dotCount {
+            let x = startX + CGFloat(index % 4) * 7
+            let y = rect.midY - 7 + CGFloat(index / 4) * 8
+            let dot = CGRect(x: x, y: y, width: 5, height: 5)
+            let color = index < activeDots ? Color.cyan.opacity(0.9) : Color.secondary.opacity(0.22)
+            context.fill(Path(ellipseIn: dot), with: .color(color))
+        }
+        context.draw(
+            Text("\(resource.activeThreads)/\(resource.totalThreads)").font(.caption2).foregroundColor(.secondary),
+            at: CGPoint(x: rect.maxX - 29, y: rect.midY),
+            anchor: .trailing
+        )
+    }
+
+    private static func drawFlowArrow(
+        from start: CGPoint,
+        to end: CGPoint,
+        active: Bool,
+        context: inout GraphicsContext
+    ) {
+        let color = active ? Color.cyan.opacity(0.65) : Color.secondary.opacity(0.22)
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: end)
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: active ? 1.4 : 1, lineCap: .round))
+
+        var head = Path()
+        head.move(to: end)
+        head.addLine(to: CGPoint(x: end.x - 4, y: end.y - 4))
+        head.move(to: end)
+        head.addLine(to: CGPoint(x: end.x + 4, y: end.y - 4))
+        context.stroke(head, with: .color(color), style: StrokeStyle(lineWidth: active ? 1.4 : 1, lineCap: .round))
+    }
+
+    private static func color(for resource: ImagingResourceActivity) -> Color {
+        switch resource.kind {
+        case .source:
+            return .cyan
+        case .grid:
+            return .blue
+        case .plane:
+            return .indigo
+        case .deconvolver:
+            return .green
+        case .product:
+            return .orange
+        }
+    }
+}
+
 private struct ResidualHistoryChart: View {
     let progress: ImagingDeconvolutionProgress
 
@@ -7487,34 +7701,8 @@ private struct RuntimeProgressView: View {
             Text(runtime.sampleCadence)
                 .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
-            if let memory = runtime.memory {
-                Divider()
-                    .opacity(0.45)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Memory plan")
-                            .workbenchFont(.caption, weight: .semibold)
-                        Spacer()
-                        Text(memory.memoryTargetSource ?? "planner")
-                            .workbenchFont(.caption, design: .monospaced)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("\(Self.byteLabel(memory.plannedActiveBytes)) active / \(Self.byteLabel(memory.memoryTargetBytes)) target")
-                        .workbenchFont(.caption, design: .monospaced)
-                    Text("source \(Self.byteLabel(memory.sourceStreamBufferBytes)) · scratch \(Self.byteLabel(memory.productScratchBytes))")
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.secondary)
-                    Text("\(memory.activePlanes) planes · \(memory.rowBlockRows.formatted()) row block")
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .frame(minHeight: 150, alignment: .topLeading)
-    }
-
-    private static func byteLabel(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(max(0, bytes)), countStyle: .memory)
     }
 }
 

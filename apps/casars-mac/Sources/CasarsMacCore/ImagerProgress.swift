@@ -142,7 +142,16 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 totalThreads: 16,
                 gpuActive: running,
                 backend: running ? "CPU + Metal gridding" : "CPU + Metal available",
-                sampleCadence: "1 Hz max UI sample"
+                sampleCadence: "1 Hz max UI sample",
+                memory: ImagingMemoryProgress(
+                    memoryTargetBytes: 17_179_869_184,
+                    plannedActiveBytes: running ? 15_438_480_384 : 0,
+                    sourceStreamBufferBytes: running ? 3_804_104_045 : 0,
+                    productScratchBytes: running ? 5_436_915_712 : 0,
+                    activePlanes: running ? outputCube.activePlaneCount : 0,
+                    rowBlockRows: running ? measurementSetWindow.activeRowCount : 0,
+                    memoryTargetSource: "system_half"
+                )
             ),
             sampledAtLabel: running ? "live stub" : "idle stub"
         )
@@ -218,6 +227,164 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
             return String(format: "%.1f s", seconds)
         }
         return String(format: "%.0f s", seconds)
+    }
+}
+
+extension ImagerProgressSnapshot {
+    public var resourceActivities: [ImagingResourceActivity] {
+        guard let memory = runtime.memory else {
+            return []
+        }
+
+        let activeThreadBudget = state == .running ? runtime.activeThreads : 0
+        let phaseText = "\(phase) \(deconvolution.phase)".lowercased()
+        let planeBytes = max(
+            0,
+            memory.plannedActiveBytes - memory.sourceStreamBufferBytes - memory.productScratchBytes
+        )
+        let gridBytes = max(memory.sourceStreamBufferBytes, planeBytes / 2)
+        let plannedTarget = max(memory.memoryTargetBytes, memory.plannedActiveBytes, 1)
+
+        func busy(_ keywords: [String]) -> Bool {
+            state == .running && keywords.contains { phaseText.contains($0) }
+        }
+
+        return [
+            ImagingResourceActivity(
+                id: "source-stream",
+                name: "Source stream",
+                detail: "\(memory.rowBlockRows.formatted()) rows",
+                kind: .source,
+                state: busy(["read", "prepare", "source", "row", "ms"]) ? .busy : .idle,
+                residentBytes: memory.sourceStreamBufferBytes,
+                targetBytes: plannedTarget,
+                sectionStartFraction: measurementSetWindow.rowStartFraction,
+                sectionEndFraction: measurementSetWindow.rowEndFraction,
+                activeThreads: min(activeThreadBudget, max(0, runtime.totalThreads)),
+                totalThreads: runtime.totalThreads,
+                gpuActive: false
+            ),
+            ImagingResourceActivity(
+                id: "visibility-grid",
+                name: "Grid / FFT",
+                detail: "channel window",
+                kind: .grid,
+                state: busy(["grid", "fft", "major", "residual", "replay"]) ? .busy : .idle,
+                residentBytes: gridBytes,
+                targetBytes: plannedTarget,
+                sectionStartFraction: measurementSetWindow.channelStartFraction,
+                sectionEndFraction: measurementSetWindow.channelEndFraction,
+                activeThreads: busy(["grid", "fft", "major", "residual", "replay"]) ? activeThreadBudget : 0,
+                totalThreads: runtime.totalThreads,
+                gpuActive: runtime.gpuActive && busy(["grid", "fft", "major", "residual", "replay"])
+            ),
+            ImagingResourceActivity(
+                id: "plane-state",
+                name: "Plane state",
+                detail: "\(memory.activePlanes.formatted()) active planes",
+                kind: .plane,
+                state: memory.activePlanes > 0 && state == .running ? .busy : .idle,
+                residentBytes: planeBytes,
+                targetBytes: plannedTarget,
+                sectionStartFraction: outputCube.activePlaneStartFraction,
+                sectionEndFraction: outputCube.activePlaneEndFraction,
+                activeThreads: memory.activePlanes > 0 && state == .running ? activeThreadBudget : 0,
+                totalThreads: runtime.totalThreads,
+                gpuActive: runtime.gpuActive && busy(["grid", "fft", "major"])
+            ),
+            ImagingResourceActivity(
+                id: "deconvolver",
+                name: "Deconvolver",
+                detail: "minor cycle",
+                kind: .deconvolver,
+                state: busy(["minor", "clean", "deconvol"]) ? .busy : .idle,
+                residentBytes: memory.productScratchBytes,
+                targetBytes: plannedTarget,
+                sectionStartFraction: 0,
+                sectionEndFraction: deconvolution.minorIterationFraction,
+                activeThreads: busy(["minor", "clean", "deconvol"]) ? activeThreadBudget : 0,
+                totalThreads: runtime.totalThreads,
+                gpuActive: runtime.gpuActive && busy(["minor", "clean", "deconvol"])
+            ),
+            ImagingResourceActivity(
+                id: "product-scratch",
+                name: "Products",
+                detail: "scratch + writes",
+                kind: .product,
+                state: busy(["write", "product", "restore", "model", "image"]) ? .busy : .idle,
+                residentBytes: memory.productScratchBytes,
+                targetBytes: plannedTarget,
+                sectionStartFraction: outputCube.activePlaneStartFraction,
+                sectionEndFraction: outputCube.activePlaneEndFraction,
+                activeThreads: busy(["write", "product", "restore", "model", "image"]) ? min(activeThreadBudget, 2) : 0,
+                totalThreads: runtime.totalThreads,
+                gpuActive: false
+            )
+        ]
+    }
+}
+
+public enum ImagingResourceActivityState: String, Codable, Equatable {
+    case busy
+    case idle
+}
+
+public enum ImagingResourceActivityKind: String, Codable, Equatable {
+    case source
+    case grid
+    case plane
+    case deconvolver
+    case product
+}
+
+public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
+    public var id: String
+    public var name: String
+    public var detail: String
+    public var kind: ImagingResourceActivityKind
+    public var state: ImagingResourceActivityState
+    public var residentBytes: Int
+    public var targetBytes: Int
+    public var sectionStartFraction: Double
+    public var sectionEndFraction: Double
+    public var activeThreads: Int
+    public var totalThreads: Int
+    public var gpuActive: Bool
+
+    public init(
+        id: String,
+        name: String,
+        detail: String,
+        kind: ImagingResourceActivityKind,
+        state: ImagingResourceActivityState,
+        residentBytes: Int,
+        targetBytes: Int,
+        sectionStartFraction: Double,
+        sectionEndFraction: Double,
+        activeThreads: Int,
+        totalThreads: Int,
+        gpuActive: Bool
+    ) {
+        self.id = id
+        self.name = name
+        self.detail = detail
+        self.kind = kind
+        self.state = state
+        self.residentBytes = residentBytes
+        self.targetBytes = max(1, targetBytes)
+        self.sectionStartFraction = min(1, max(0, sectionStartFraction))
+        self.sectionEndFraction = min(1, max(self.sectionStartFraction, sectionEndFraction))
+        self.activeThreads = max(0, activeThreads)
+        self.totalThreads = max(0, totalThreads)
+        self.gpuActive = gpuActive
+    }
+
+    public var isBusy: Bool {
+        state == .busy
+    }
+
+    public var byteFraction: Double {
+        fraction(residentBytes, total: targetBytes)
     }
 }
 

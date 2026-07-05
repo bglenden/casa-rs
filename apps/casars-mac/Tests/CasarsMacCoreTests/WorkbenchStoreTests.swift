@@ -2996,6 +2996,13 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.runtime.memory?.activePlanes, 47)
         XCTAssertEqual(progress.runtime.memory?.rowBlockRows, 128704)
         XCTAssertEqual(progress.runtime.memory?.memoryTargetSource, "system_half")
+        XCTAssertEqual(progress.resourceActivities.count, 5)
+        let sourceResource = try XCTUnwrap(progress.resourceActivities.first)
+        XCTAssertEqual(sourceResource.id, "source-stream")
+        XCTAssertEqual(sourceResource.state, .busy)
+        XCTAssertEqual(sourceResource.sectionStartFraction, 0.2, accuracy: 0.001)
+        XCTAssertEqual(sourceResource.sectionEndFraction, 0.4, accuracy: 0.001)
+        XCTAssertTrue(progress.resourceActivities.contains { $0.id == "plane-state" && $0.activeThreads == 2 })
         guard case .diagnostic(let diagnostic) = records[1] else {
             return XCTFail("expected diagnostic record")
         }
