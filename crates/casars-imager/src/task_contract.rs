@@ -554,6 +554,94 @@ pub struct ImagerMemoryLedgerSnapshot {
     pub untracked_resident_bytes: Option<usize>,
 }
 
+/// Aggregate worker state for imager observability snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedWorkerState {
+    /// CPU work is currently running.
+    RunningCpu,
+    /// I/O or source-stream work is currently running.
+    RunningIo,
+    /// GPU work has been submitted or is being driven by host workers.
+    GpuSubmit,
+    /// Work is blocked on a queue, resource, or downstream capacity.
+    Blocked,
+    /// Worker capacity is idle.
+    Idle,
+    /// Worker state is retained only as history and should not look current.
+    Stale,
+    /// Worker state cannot currently be determined.
+    Unknown,
+}
+
+/// Aggregate worker snapshot for an imager observability event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservedWorkerSnapshot {
+    /// Stable worker-row id.
+    pub id: String,
+    /// Short display label.
+    pub label: String,
+    /// Current aggregate state.
+    pub state: ImagerObservedWorkerState,
+    /// Resource most closely associated with this worker row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<ImagerObservedResourceId>,
+    /// Active span associated with this worker row when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span_id: Option<String>,
+    /// Active workers in this row.
+    pub active_count: usize,
+    /// Planned or available workers in this row when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<usize>,
+}
+
+/// Confidence class for queue telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedQueueConfidence {
+    /// Measured directly from the queue.
+    Measured,
+    /// Planned by an executor or memory planner.
+    Planned,
+    /// Derived from related runtime state.
+    Estimated,
+    /// Queue exists conceptually, but current depth or bytes are unknown.
+    Unknown,
+}
+
+/// Queue or producer/consumer snapshot for an imager observability event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservedQueueSnapshot {
+    /// Stable queue id.
+    pub id: String,
+    /// Short display label.
+    pub label: String,
+    /// Resource most closely associated with this queue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<ImagerObservedResourceId>,
+    /// Current queue length when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub len: Option<usize>,
+    /// Queue capacity when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<usize>,
+    /// Current queued or reserved bytes when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<usize>,
+    /// Whether producers are active.
+    pub producers_active: bool,
+    /// Whether consumers are active.
+    pub consumers_active: bool,
+    /// Count of producers or consumers known to be blocked.
+    pub blocked_count: usize,
+    /// Confidence class for this queue observation.
+    pub confidence: ImagerObservedQueueConfidence,
+    /// Short note explaining unknown or estimated rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// Authoritative resource row in an imager observability snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservedResource {
@@ -629,6 +717,12 @@ pub struct ImagerObservabilitySnapshot {
     /// Authoritative memory ledger for tracked and untracked runtime memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_ledger: Option<ImagerMemoryLedgerSnapshot>,
+    /// Aggregate worker-state rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workers: Vec<ImagerObservedWorkerSnapshot>,
+    /// Queue and producer/consumer rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queues: Vec<ImagerObservedQueueSnapshot>,
 }
 
 /// One coarse progress event emitted while an imager task is running.

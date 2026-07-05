@@ -628,6 +628,8 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
     public var memoryTargetBytes: Int?
     public var memoryTargetSource: String?
     public var memoryLedger: ImagingMemoryLedgerSnapshot?
+    public var workers: [ImagingObservedWorkerSnapshot]
+    public var queues: [ImagingObservedQueueSnapshot]
 
     public init(
         schemaVersion: UInt64,
@@ -635,7 +637,9 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
         activeSpans: [ImagingObservabilitySpan],
         memoryTargetBytes: Int?,
         memoryTargetSource: String?,
-        memoryLedger: ImagingMemoryLedgerSnapshot? = nil
+        memoryLedger: ImagingMemoryLedgerSnapshot? = nil,
+        workers: [ImagingObservedWorkerSnapshot] = [],
+        queues: [ImagingObservedQueueSnapshot] = []
     ) {
         self.schemaVersion = schemaVersion
         self.resources = resources
@@ -643,6 +647,8 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
         self.memoryTargetBytes = memoryTargetBytes
         self.memoryTargetSource = memoryTargetSource
         self.memoryLedger = memoryLedger
+        self.workers = workers
+        self.queues = queues
     }
 }
 
@@ -720,6 +726,74 @@ public struct ImagingMemoryLedgerEntry: Codable, Equatable, Identifiable {
         self.untrackedBytes = untrackedBytes
         self.rowBlockRows = rowBlockRows
         self.activePlanes = activePlanes
+        self.confidence = confidence
+        self.note = note
+    }
+}
+
+public struct ImagingObservedWorkerSnapshot: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var state: String
+    public var resourceID: String?
+    public var spanID: String?
+    public var activeCount: Int
+    public var capacity: Int?
+
+    public init(
+        id: String,
+        label: String,
+        state: String,
+        resourceID: String?,
+        spanID: String?,
+        activeCount: Int,
+        capacity: Int?
+    ) {
+        self.id = id
+        self.label = label
+        self.state = state
+        self.resourceID = resourceID
+        self.spanID = spanID
+        self.activeCount = activeCount
+        self.capacity = capacity
+    }
+}
+
+public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var resourceID: String?
+    public var len: Int?
+    public var capacity: Int?
+    public var bytes: Int?
+    public var producersActive: Bool
+    public var consumersActive: Bool
+    public var blockedCount: Int
+    public var confidence: String
+    public var note: String?
+
+    public init(
+        id: String,
+        label: String,
+        resourceID: String?,
+        len: Int?,
+        capacity: Int?,
+        bytes: Int?,
+        producersActive: Bool,
+        consumersActive: Bool,
+        blockedCount: Int,
+        confidence: String,
+        note: String?
+    ) {
+        self.id = id
+        self.label = label
+        self.resourceID = resourceID
+        self.len = len
+        self.capacity = capacity
+        self.bytes = bytes
+        self.producersActive = producersActive
+        self.consumersActive = consumersActive
+        self.blockedCount = blockedCount
         self.confidence = confidence
         self.note = note
     }
@@ -1442,6 +1516,8 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
     var memoryTargetBytes: Int?
     var memoryTargetSource: String?
     var memoryLedger: ImagerMemoryLedgerPayload?
+    var workers: [ImagerObservedWorkerPayload]
+    var queues: [ImagerObservedQueuePayload]
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -1450,6 +1526,8 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
         case memoryTargetBytes = "memory_target_bytes"
         case memoryTargetSource = "memory_target_source"
         case memoryLedger = "memory_ledger"
+        case workers
+        case queues
     }
 
     init(from decoder: Decoder) throws {
@@ -1460,6 +1538,8 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
         memoryTargetBytes = try container.decodeIfPresent(Int.self, forKey: .memoryTargetBytes)
         memoryTargetSource = try container.decodeIfPresent(String.self, forKey: .memoryTargetSource)
         memoryLedger = try container.decodeIfPresent(ImagerMemoryLedgerPayload.self, forKey: .memoryLedger)
+        workers = try container.decodeIfPresent([ImagerObservedWorkerPayload].self, forKey: .workers) ?? []
+        queues = try container.decodeIfPresent([ImagerObservedQueuePayload].self, forKey: .queues) ?? []
     }
 }
 
@@ -1510,6 +1590,54 @@ struct ImagerMemoryLedgerEntryPayload: Decodable, Equatable {
         case untrackedBytes = "untracked_bytes"
         case rowBlockRows = "row_block_rows"
         case activePlanes = "active_planes"
+        case confidence
+        case note
+    }
+}
+
+struct ImagerObservedWorkerPayload: Decodable, Equatable {
+    var id: String
+    var label: String
+    var state: String
+    var resourceID: String?
+    var spanID: String?
+    var activeCount: Int
+    var capacity: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case state
+        case resourceID = "resource_id"
+        case spanID = "span_id"
+        case activeCount = "active_count"
+        case capacity
+    }
+}
+
+struct ImagerObservedQueuePayload: Decodable, Equatable {
+    var id: String
+    var label: String
+    var resourceID: String?
+    var len: Int?
+    var capacity: Int?
+    var bytes: Int?
+    var producersActive: Bool
+    var consumersActive: Bool
+    var blockedCount: Int
+    var confidence: String
+    var note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case resourceID = "resource_id"
+        case len
+        case capacity
+        case bytes
+        case producersActive = "producers_active"
+        case consumersActive = "consumers_active"
+        case blockedCount = "blocked_count"
         case confidence
         case note
     }
@@ -1589,7 +1717,9 @@ extension ImagingObservabilitySnapshot {
             activeSpans: payload.activeSpans.map(ImagingObservabilitySpan.init(payload:)),
             memoryTargetBytes: payload.memoryTargetBytes,
             memoryTargetSource: payload.memoryTargetSource,
-            memoryLedger: payload.memoryLedger.map(ImagingMemoryLedgerSnapshot.init(payload:))
+            memoryLedger: payload.memoryLedger.map(ImagingMemoryLedgerSnapshot.init(payload:)),
+            workers: payload.workers.map(ImagingObservedWorkerSnapshot.init(payload:)),
+            queues: payload.queues.map(ImagingObservedQueueSnapshot.init(payload:))
         )
     }
 }
@@ -1622,6 +1752,38 @@ extension ImagingMemoryLedgerEntry {
             untrackedBytes: payload.untrackedBytes,
             rowBlockRows: payload.rowBlockRows,
             activePlanes: payload.activePlanes,
+            confidence: payload.confidence,
+            note: payload.note
+        )
+    }
+}
+
+extension ImagingObservedWorkerSnapshot {
+    init(payload: ImagerObservedWorkerPayload) {
+        self.init(
+            id: payload.id,
+            label: payload.label,
+            state: payload.state,
+            resourceID: payload.resourceID,
+            spanID: payload.spanID,
+            activeCount: payload.activeCount,
+            capacity: payload.capacity
+        )
+    }
+}
+
+extension ImagingObservedQueueSnapshot {
+    init(payload: ImagerObservedQueuePayload) {
+        self.init(
+            id: payload.id,
+            label: payload.label,
+            resourceID: payload.resourceID,
+            len: payload.len,
+            capacity: payload.capacity,
+            bytes: payload.bytes,
+            producersActive: payload.producersActive,
+            consumersActive: payload.consumersActive,
+            blockedCount: payload.blockedCount,
             confidence: payload.confidence,
             note: payload.note
         )
