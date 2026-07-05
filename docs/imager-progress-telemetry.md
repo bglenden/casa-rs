@@ -1,8 +1,16 @@
 # Imager Progress Telemetry
 
-`casars-imager --json-run` can emit coarse running progress for GUI clients
-without changing the final stdout task-result JSON. Progress is opt-in through
-the run request:
+`casars-imager` can emit coarse running progress for GUI clients without
+changing the final stdout result JSON. The normal CLI path enables it with
+hidden launcher flags:
+
+```sh
+casars-imager --ms example.ms --imagename out/example --imsize 512 \
+  --cell-arcsec 0.25 --managed-output true \
+  --progress true --progress-max-uv-points 64 --progress-min-interval-ms 250
+```
+
+The legacy JSON task protocol can still opt in through the run request:
 
 ```json
 {
@@ -29,7 +37,8 @@ CASARS_IMAGER_PROGRESS
 
 The rest of the line is a JSON `ImagerProgressEvent`. Consumers must ignore
 ordinary stderr lines and must treat malformed prefixed lines as diagnostics,
-not as task failure. Stdout remains reserved for the final `ImagerTaskResult`.
+not as task failure. Stdout remains reserved for the final managed-output JSON
+or JSON task result.
 
 ## Payload
 

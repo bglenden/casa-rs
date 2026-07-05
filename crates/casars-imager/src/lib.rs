@@ -212,8 +212,22 @@ impl BoundedUvCoverageAccumulator {
             self.measured.push(point);
             return;
         }
-        let index = (self.accepted_points as usize - 1) % self.sample_limit;
-        self.measured[index] = point;
+        if let Some(index) = self.reservoir_replacement_index() {
+            self.measured[index] = point;
+        }
+    }
+
+    fn reservoir_replacement_index(&self) -> Option<usize> {
+        let seen = self.accepted_points;
+        if seen == 0 {
+            return None;
+        }
+        let candidate = splitmix64(seen) % seen;
+        if candidate < self.sample_limit as u64 {
+            Some(candidate as usize)
+        } else {
+            None
+        }
     }
 
     fn observe_batch(&mut self, batch: &VisibilityBatch) {
@@ -258,6 +272,13 @@ impl BoundedUvCoverageAccumulator {
             sample_limit: self.sample_limit,
         }
     }
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
 }
 
 struct ImagerProgressContext {
@@ -345,6 +366,37 @@ fn observe_imager_progress_uv_batch(batch: &VisibilityBatch) {
     if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
         if let Some(context) = context.as_mut() {
             context.uv_coverage.observe_batch(batch);
+        }
+    }
+}
+
+fn observe_imager_progress_shared_slab_uv_once(
+    source: &SharedColumnarCubeSlabSource,
+    frequency_hz: f64,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed)
+        || !(frequency_hz.is_finite() && frequency_hz > 0.0)
+    {
+        return;
+    }
+    if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        if context.uv_coverage.accepted_points > 0 {
+            return;
+        }
+        let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        for block in &source.blocks {
+            for row in block.geometry_rows.iter() {
+                if row.is_cross {
+                    context.uv_coverage.observe_point(
+                        row.transform.uvw_m[0] * lambda_scale,
+                        row.transform.uvw_m[1] * lambda_scale,
+                        1.0,
+                    );
+                }
+            }
         }
     }
 }
@@ -493,15 +545,19 @@ fn emit_imager_progress_ms_window(
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) || row_chunk.is_empty() {
         return;
     }
+    let Some(ms_read) =
+        imager_progress_ms_window_from_selection(ms, table_values, row_chunk, channel_read_range)
+    else {
+        return;
+    };
+    let channel_start = ms_read.channel_start;
+    let channel_end = ms_read.channel_end;
     let row_start = row_chunk.iter().map(|row| row.row_index).min().unwrap_or(0);
     let row_end = row_chunk
         .iter()
         .map(|row| row.row_index.saturating_add(1))
         .max()
         .unwrap_or(row_start);
-    let (channel_start, channel_count) = channel_read_range
-        .map(|range| (range.start, range.count))
-        .unwrap_or((0, table_values.spw_freqs_hz.len()));
     emit_imager_progress_event(
         ImagerProgressEvent {
             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -510,18 +566,10 @@ fn emit_imager_progress_ms_window(
             phase: "reading_ms".to_string(),
             summary: format!(
                 "reading rows {row_start}..{row_end}, channels {}..{}",
-                channel_start,
-                channel_start.saturating_add(channel_count)
+                channel_start, channel_end
             ),
             work: None,
-            ms_read: Some(ImagerProgressMsWindow {
-                total_rows: ms.row_count(),
-                total_channels: table_values.spw_freqs_hz.len(),
-                row_start,
-                row_end,
-                channel_start,
-                channel_end: channel_start.saturating_add(channel_count),
-            }),
+            ms_read: Some(ms_read),
             output_cube: None,
             uv_coverage: None,
             deconvolution: None,
@@ -531,11 +579,40 @@ fn emit_imager_progress_ms_window(
     );
 }
 
+fn imager_progress_ms_window_from_selection(
+    ms: &MeasurementSet,
+    table_values: &PreparedSelectionTableValues,
+    row_chunk: &[SelectedMainRow],
+    channel_read_range: Option<SelectedChannelReadRange>,
+) -> Option<ImagerProgressMsWindow> {
+    if row_chunk.is_empty() {
+        return None;
+    }
+    let row_start = row_chunk.iter().map(|row| row.row_index).min().unwrap_or(0);
+    let row_end = row_chunk
+        .iter()
+        .map(|row| row.row_index.saturating_add(1))
+        .max()
+        .unwrap_or(row_start);
+    let (channel_start, channel_count) = channel_read_range
+        .map(|range| (range.start, range.count))
+        .unwrap_or((0, table_values.spw_freqs_hz.len()));
+    Some(ImagerProgressMsWindow {
+        total_rows: ms.row_count(),
+        total_channels: table_values.spw_freqs_hz.len(),
+        row_start,
+        row_end,
+        channel_start,
+        channel_end: channel_start.saturating_add(channel_count),
+    })
+}
+
 fn emit_imager_progress_cube_slab(
     config: &CliConfig,
     active_plane_start: usize,
     active_plane_end: usize,
     active_threads: usize,
+    ms_read: Option<ImagerProgressMsWindow>,
     phase: &str,
 ) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
@@ -549,7 +626,7 @@ fn emit_imager_progress_cube_slab(
             phase: phase.to_string(),
             summary: format!("working output planes {active_plane_start}..{active_plane_end}"),
             work: Some(progress_work_from_config(config, active_plane_start, 0)),
-            ms_read: None,
+            ms_read,
             output_cube: Some(progress_output_cube_from_config(
                 config,
                 active_plane_start,
@@ -557,6 +634,70 @@ fn emit_imager_progress_cube_slab(
             )),
             uv_coverage: None,
             deconvolution: None,
+            runtime: Some(progress_runtime_from_config(config, active_threads)),
+        },
+        false,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_imager_progress_deconvolution(
+    config: &CliConfig,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    completed_planes: usize,
+    minor_iterations: usize,
+    major_cycles: usize,
+    peak_residual_jy_per_beam: Option<f32>,
+    residual_history_jy_per_beam: Vec<f32>,
+    active_threads: usize,
+    phase: &str,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let peak_residual_mjy_per_beam = peak_residual_jy_per_beam.map(|value| value * 1000.0);
+    let residual_history_mjy_per_beam = residual_history_jy_per_beam
+        .into_iter()
+        .map(|value| value * 1000.0)
+        .rev()
+        .take(64)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: "deconvolving".to_string(),
+            summary: format!(
+                "{phase}: planes {active_plane_start}..{active_plane_end}, {minor_iterations} minor iterations"
+            ),
+            work: Some(progress_work_from_config(
+                config,
+                completed_planes,
+                minor_iterations,
+            )),
+            ms_read: None,
+            output_cube: Some(progress_output_cube_from_config(
+                config,
+                active_plane_start,
+                active_plane_end,
+            )),
+            uv_coverage: None,
+            deconvolution: Some(ImagerProgressDeconvolution {
+                phase: phase.to_string(),
+                major_cycle: major_cycles,
+                major_cycle_limit: config.nmajor,
+                minor_iterations,
+                minor_iteration_limit: config.niter,
+                components_cleaned: minor_iterations,
+                peak_residual_mjy_per_beam,
+                target_residual_mjy_per_beam: Some(config.threshold_jy * 1000.0),
+                residual_history_mjy_per_beam,
+            }),
             runtime: Some(progress_runtime_from_config(config, active_threads)),
         },
         false,
@@ -575,6 +716,14 @@ fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &R
     } else {
         1
     };
+    let channel_peak_residual = summary
+        .channel_summaries
+        .iter()
+        .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
+        .filter(|value| value.is_finite())
+        .fold(None::<f32>, |peak, value| {
+            Some(peak.map_or(value, |current| current.max(value)))
+        });
     let residual_history = if summary.channel_summaries.is_empty() {
         summary
             .minor_cycle_traces
@@ -582,18 +731,16 @@ fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &R
             .map(|trace| trace.end_peak_residual_jy_per_beam * 1000.0)
             .collect::<Vec<_>>()
     } else {
-        summary
-            .channel_summaries
-            .iter()
-            .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
-            .collect::<Vec<_>>()
+        Vec::new()
     };
-    let peak_residual = residual_history.last().copied().or_else(|| {
-        summary
-            .channel_summaries
-            .last()
-            .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
-    });
+    let peak_residual = channel_peak_residual
+        .or_else(|| residual_history.last().copied())
+        .or_else(|| {
+            summary
+                .channel_summaries
+                .last()
+                .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
+        });
     emit_imager_progress_event(
         ImagerProgressEvent {
             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -1399,6 +1546,30 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         return Ok(());
     }
 
+    let (progress_enabled, filtered_args) = extract_option_value(&filtered_args, "--progress")?;
+    let (progress_max_uv_points, filtered_args) =
+        extract_string_option(&filtered_args, "--progress-max-uv-points")?;
+    let (progress_min_interval_ms, filtered_args) =
+        extract_string_option(&filtered_args, "--progress-min-interval-ms")?;
+    let progress_options = if progress_enabled {
+        let mut options = ImagerProgressOptions {
+            enabled: true,
+            ..Default::default()
+        };
+        if let Some(value) = progress_max_uv_points {
+            options.max_uv_points = value
+                .parse()
+                .map_err(|error| format!("parse --progress-max-uv-points: {error}"))?;
+        }
+        if let Some(value) = progress_min_interval_ms {
+            options.min_interval_ms = value
+                .parse()
+                .map_err(|error| format!("parse --progress-min-interval-ms: {error}"))?;
+        }
+        Some(options)
+    } else {
+        None
+    };
     let (read_essentials_probe, filtered_args) =
         extract_option_value(&filtered_args, "--ms-imaging-read-probe")?;
     let (spectral_plan_probe, filtered_args) =
@@ -1429,7 +1600,40 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     }
     let request = ImagerRunTaskRequest::from_cli_config(&config);
     let cli_started_at = Instant::now();
-    let summary = run_from_request(&request)?;
+    let progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
+    let progress_active = progress_guard.is_some();
+    if progress_active {
+        emit_imager_progress_run_started(&request);
+    }
+    let summary = match run_from_request(&request) {
+        Ok(summary) => {
+            if progress_active {
+                emit_imager_progress_run_finished(&request, &summary);
+            }
+            summary
+        }
+        Err(error) => {
+            if progress_active {
+                emit_imager_progress_event(
+                    ImagerProgressEvent {
+                        schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                        sequence: 0,
+                        elapsed_ms: 0,
+                        phase: "failed".to_string(),
+                        summary: error.clone(),
+                        work: None,
+                        ms_read: None,
+                        output_cube: None,
+                        uv_coverage: None,
+                        deconvolution: None,
+                        runtime: None,
+                    },
+                    true,
+                );
+            }
+            return Err(error);
+        }
+    };
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
             "frontend stage=cli/run_from_request_return stage_elapsed_s={:.3}",
@@ -1545,7 +1749,7 @@ fn extract_string_option(
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n",
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n",
         schema.render_help()
     )
 }
@@ -4826,13 +5030,6 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             "mosaic_cube_slab_start slab_id={} plane_start={} plane_end={} worker_count={}",
             slab.slab_id, slab.plane_start, slab.plane_end, worker_count
         );
-        emit_imager_progress_cube_slab(
-            config,
-            slab.plane_start,
-            slab.plane_end,
-            worker_count,
-            "working_cube_slab",
-        );
         let slab_source_config =
             slab_config_for_cube_planes(config, channel_start, slab.plane_start, slab.plane_end)?;
         let channel_read_range = selected_channel_read_range_for_cube_source_row_blocks(
@@ -4841,6 +5038,19 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             &selection,
             Some(&derived_engine),
         )?;
+        emit_imager_progress_cube_slab(
+            config,
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            imager_progress_ms_window_from_selection(
+                ms,
+                &table_values,
+                &active_selected_rows,
+                channel_read_range,
+            ),
+            "working_cube_slab",
+        );
         let selected_channel_count =
             source_stream_selected_channel_count(&table_values, channel_read_range);
         let source_strategy = standard_mfs_memory_plan_for_ms(
@@ -4886,6 +5096,29 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         get_ms_values_into_processing_buffer += shared_visibility_source
             .stage_timings
             .get_ms_values_into_processing_buffer;
+        if let Some(slab_center_frequency_hz) = metadata.channel_frequencies_hz
+            [slab.plane_start..slab.plane_end]
+            .get((slab.plane_end - slab.plane_start) / 2)
+            .copied()
+        {
+            observe_imager_progress_shared_slab_uv_once(
+                shared_visibility_source.as_ref(),
+                slab_center_frequency_hz,
+            );
+            emit_imager_progress_cube_slab(
+                config,
+                slab.plane_start,
+                slab.plane_end,
+                worker_count,
+                imager_progress_ms_window_from_selection(
+                    ms,
+                    &table_values,
+                    &active_selected_rows,
+                    channel_read_range,
+                ),
+                "sampling_uv_coverage",
+            );
+        }
         let shared_density_source =
             if matches!(slab_source_config.weighting, WeightingMode::Natural) {
                 None
@@ -7795,6 +8028,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 max_pending_candidate_planes.max(pending_candidate_planes.len());
             clean_control_elapsed += clean_control_started_at.elapsed();
             let slab_execution_stats = process_resident_clean_plane_states(
+                config,
                 ready_to_skip,
                 memory_plan.worker_count,
                 plane_execution_config,
@@ -7819,6 +8053,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             ));
         }
         let final_execution_stats = process_resident_clean_plane_states(
+            config,
             pending_candidate_planes,
             memory_plan.worker_count,
             plane_execution_config,
@@ -7976,13 +8211,6 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             }
             .log_line()
         );
-        emit_imager_progress_cube_slab(
-            config,
-            slab.plane_start,
-            slab.plane_end,
-            memory_plan.worker_count,
-            "working_cube_slab",
-        );
         memory_logger.log(
             config,
             &memory_plan,
@@ -8017,6 +8245,19 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 &selection,
                 Some(&derived_engine),
             )?;
+            emit_imager_progress_cube_slab(
+                config,
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                imager_progress_ms_window_from_selection(
+                    ms,
+                    &table_values,
+                    &active_selected_rows,
+                    channel_read_range,
+                ),
+                "working_cube_slab",
+            );
             let slab_channel_frequencies_hz =
                 &metadata.channel_frequencies_hz[slab.plane_start..slab.plane_end];
             let direct_contiguous_channel_map = channel_read_range.is_some_and(|range| {
@@ -10753,6 +10994,7 @@ fn add_independent_streaming_executor_stats(
 
 #[allow(clippy::too_many_arguments)]
 fn process_resident_clean_plane_states(
+    config: &CliConfig,
     states: Vec<ResidentCleanCubePlaneState>,
     worker_count: usize,
     execution_config: StandardMfsExecutionConfig,
@@ -10768,6 +11010,7 @@ fn process_resident_clean_plane_states(
     if states.is_empty() {
         return Ok(IndependentStreamingExecutorStats::default());
     }
+    let mut completed_minor_iterations = 0usize;
     let tasks = states
         .into_iter()
         .map(|state| PlaneTask {
@@ -10886,6 +11129,47 @@ fn process_resident_clean_plane_states(
             } else {
                 *cleaned_planes = cleaned_planes.saturating_add(1);
             }
+            let plane_diagnostics = plane_result
+                .result
+                .cube_result
+                .diagnostics
+                .channel_diagnostics
+                .first()
+                .ok_or_else(|| {
+                    format!(
+                        "resident cube clean plane {} returned no progress diagnostics",
+                        plane_result.plane_index
+                    )
+                })?;
+            completed_minor_iterations =
+                completed_minor_iterations.saturating_add(plane_diagnostics.minor_iterations);
+            let residual_history = if plane_diagnostics.minor_cycle_traces.is_empty() {
+                vec![plane_diagnostics.final_residual_peak_jy_per_beam]
+            } else {
+                plane_diagnostics
+                    .minor_cycle_traces
+                    .iter()
+                    .map(|trace| trace.end_peak_residual_jy_per_beam)
+                    .collect::<Vec<_>>()
+            };
+            let completed_planes = (*skipped_minor_cycle_planes).saturating_add(*cleaned_planes);
+            let phase = if plane_result.result.skipped_minor_cycle {
+                "skipping clean below cycle threshold"
+            } else {
+                "cleaning cube plane"
+            };
+            emit_imager_progress_deconvolution(
+                config,
+                plane_result.plane_index,
+                plane_result.plane_index.saturating_add(1),
+                completed_planes,
+                completed_minor_iterations,
+                plane_diagnostics.major_cycles,
+                Some(plane_diagnostics.final_residual_peak_jy_per_beam),
+                residual_history,
+                worker_count,
+                phase,
+            );
             product_publisher.accept(
                 plane_result.plane_index,
                 plane_result.result.cube_result,
@@ -43936,6 +44220,15 @@ mod tests {
             .unwrap_err()
             .contains("--managed-output expects true or false")
         );
+        assert!(
+            run_with_cli_args([
+                OsString::from("casars-imager"),
+                OsString::from("--progress"),
+                OsString::from("maybe"),
+            ])
+            .unwrap_err()
+            .contains("--progress expects true or false")
+        );
     }
 
     #[test]
@@ -43945,6 +44238,7 @@ mod tests {
         assert!(help.contains("--json-schema"));
         assert!(help.contains("--protocol-info"));
         assert!(help.contains("--json-run <SOURCE>"));
+        assert!(help.contains("--progress true|false"));
     }
 
     #[test]

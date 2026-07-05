@@ -31,6 +31,14 @@ public protocol ImagerProgressSource {
     func snapshot(for request: ImagerProgressRequest) -> ImagerProgressSnapshot?
 }
 
+public struct EmptyImagerProgressSource: ImagerProgressSource {
+    public init() {}
+
+    public func snapshot(for request: ImagerProgressRequest) -> ImagerProgressSnapshot? {
+        nil
+    }
+}
+
 public struct StubImagerProgressSource: ImagerProgressSource {
     public init() {}
 
@@ -385,21 +393,36 @@ public struct UVCoverageProgress: Codable, Equatable {
     public var vExtentKilolambda: Double
     public var measured: [UVPoint]
     public var conjugate: [UVPoint]
+    public var droppedPointCount: UInt64
+    public var sampleLimit: Int
 
     public init(
         uExtentKilolambda: Double,
         vExtentKilolambda: Double,
         measured: [UVPoint],
-        conjugate: [UVPoint]
+        conjugate: [UVPoint],
+        droppedPointCount: UInt64 = 0,
+        sampleLimit: Int? = nil
     ) {
         self.uExtentKilolambda = uExtentKilolambda
         self.vExtentKilolambda = vExtentKilolambda
         self.measured = measured
         self.conjugate = conjugate
+        self.droppedPointCount = droppedPointCount
+        self.sampleLimit = sampleLimit ?? measured.count
+    }
+
+    public var retainedMeasuredPointCount: Int {
+        measured.count
+    }
+
+    public var acceptedMeasuredPointCount: UInt64 {
+        UInt64(measured.count) + droppedPointCount
     }
 
     public var accumulatedPointCount: Int {
-        measured.count + conjugate.count
+        let accepted = acceptedMeasuredPointCount
+        return accepted > UInt64(Int.max) ? Int.max : Int(accepted)
     }
 
     public static func stub() -> UVCoverageProgress {
@@ -425,7 +448,9 @@ public struct UVCoverageProgress: Codable, Equatable {
             uExtentKilolambda: 80,
             vExtentKilolambda: 70,
             measured: measured,
-            conjugate: conjugate
+            conjugate: conjugate,
+            droppedPointCount: 0,
+            sampleLimit: measured.count
         )
     }
 }
@@ -436,7 +461,9 @@ extension UVCoverageProgress {
             uExtentKilolambda: payload.uExtentKilolambda,
             vExtentKilolambda: payload.vExtentKilolambda,
             measured: payload.measured.map(UVPoint.init(payload:)),
-            conjugate: payload.conjugate.map(UVPoint.init(payload:))
+            conjugate: payload.conjugate.map(UVPoint.init(payload:)),
+            droppedPointCount: payload.droppedPointCount,
+            sampleLimit: payload.sampleLimit
         )
     }
 }
@@ -639,12 +666,26 @@ struct ImagerProgressUvCoveragePayload: Decodable, Equatable {
     var vExtentKilolambda: Double
     var measured: [ImagerProgressUvPointPayload]
     var conjugate: [ImagerProgressUvPointPayload]
+    var droppedPointCount: UInt64
+    var sampleLimit: Int
 
     enum CodingKeys: String, CodingKey {
         case uExtentKilolambda = "u_extent_klambda"
         case vExtentKilolambda = "v_extent_klambda"
         case measured
         case conjugate
+        case droppedPointCount = "dropped_points"
+        case sampleLimit = "sample_limit"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        uExtentKilolambda = try container.decode(Double.self, forKey: .uExtentKilolambda)
+        vExtentKilolambda = try container.decode(Double.self, forKey: .vExtentKilolambda)
+        measured = try container.decodeIfPresent([ImagerProgressUvPointPayload].self, forKey: .measured) ?? []
+        conjugate = try container.decodeIfPresent([ImagerProgressUvPointPayload].self, forKey: .conjugate) ?? []
+        droppedPointCount = try container.decodeIfPresent(UInt64.self, forKey: .droppedPointCount) ?? 0
+        sampleLimit = try container.decodeIfPresent(Int.self, forKey: .sampleLimit) ?? measured.count
     }
 }
 

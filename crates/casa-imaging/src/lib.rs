@@ -7125,11 +7125,15 @@ struct MosaicResidualParallelContribution {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct MosaicMetalSample {
-    loc: u32,
+    loc_x: i32,
+    loc_y: i32,
     support: u32,
-    offset: [i32; 2],
-    range_x: [i32; 2],
-    range_y: [i32; 2],
+    offset_x: i32,
+    offset_y: i32,
+    range_x_min: i32,
+    range_x_max: i32,
+    range_y_min: i32,
+    range_y_max: i32,
     weight: f32,
     visibility_re: f32,
     visibility_im: f32,
@@ -7138,11 +7142,15 @@ struct MosaicMetalSample {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct MosaicMetalSampleKey {
-    loc: u32,
+    loc_x: i32,
+    loc_y: i32,
     support: u32,
-    offset: [i32; 2],
-    range_x: [i32; 2],
-    range_y: [i32; 2],
+    offset_x: i32,
+    offset_y: i32,
+    range_x_min: i32,
+    range_x_max: i32,
+    range_y_min: i32,
+    range_y_max: i32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -7232,11 +7240,15 @@ impl MosaicMetalPreparedGroup {}
 impl MosaicMetalSample {
     fn key(self) -> MosaicMetalSampleKey {
         MosaicMetalSampleKey {
-            loc: self.loc,
+            loc_x: self.loc_x,
+            loc_y: self.loc_y,
             support: self.support,
-            offset: self.offset,
-            range_x: self.range_x,
-            range_y: self.range_y,
+            offset_x: self.offset_x,
+            offset_y: self.offset_y,
+            range_x_min: self.range_x_min,
+            range_x_max: self.range_x_max,
+            range_y_min: self.range_y_min,
+            range_y_max: self.range_y_max,
         }
     }
 }
@@ -7247,11 +7259,15 @@ impl MosaicMetalSampleKey {
             return None;
         }
         Some(MosaicMetalSample {
-            loc: self.loc,
+            loc_x: self.loc_x,
+            loc_y: self.loc_y,
             support: self.support,
-            offset: self.offset,
-            range_x: self.range_x,
-            range_y: self.range_y,
+            offset_x: self.offset_x,
+            offset_y: self.offset_y,
+            range_x_min: self.range_x_min,
+            range_x_max: self.range_x_max,
+            range_y_min: self.range_y_min,
+            range_y_max: self.range_y_max,
             weight: accumulator.weight as f32,
             visibility_re: (accumulator.weighted_visibility_re / accumulator.weight) as f32,
             visibility_im: (accumulator.weighted_visibility_im / accumulator.weight) as f32,
@@ -8963,17 +8979,15 @@ fn compute_mosaic_dirty_group_contribution_scalar(
 }
 
 fn mosaic_grouped_sample_plan(sample: MosaicMetalSample) -> ScreenProjectSamplePlan {
-    let loc_x = isize::try_from(sample.loc & 0xffff).expect("u16 x fits in isize");
-    let loc_y = isize::try_from(sample.loc >> 16).expect("u16 y fits in isize");
     ScreenProjectSamplePlan {
-        loc_x,
-        loc_y,
-        off_x: sample.offset[0] as isize,
-        off_y: sample.offset[1] as isize,
-        min_ix: sample.range_x[0] as isize,
-        max_ix: sample.range_x[1] as isize,
-        min_iy: sample.range_y[0] as isize,
-        max_iy: sample.range_y[1] as isize,
+        loc_x: sample.loc_x as isize,
+        loc_y: sample.loc_y as isize,
+        off_x: sample.offset_x as isize,
+        off_y: sample.offset_y as isize,
+        min_ix: sample.range_x_min as isize,
+        max_ix: sample.range_x_max as isize,
+        min_iy: sample.range_y_min as isize,
+        max_iy: sample.range_y_max as isize,
         center_in_bounds: true,
         normalization: 0.0,
     }
@@ -9025,45 +9039,36 @@ fn mosaic_metal_sample_from_plan(
     weight: f32,
     visibility: Complex32,
 ) -> Result<MosaicMetalSample, ImagingError> {
-    let loc_x = u16::try_from(plan.loc_x).map_err(|_| {
-        ImagingError::InvalidRequest("mosaic Metal sample x coordinate exceeds u16".to_string())
+    let loc_x = i32::try_from(plan.loc_x).map_err(|_| {
+        ImagingError::InvalidRequest("mosaic sample x coordinate exceeds i32".to_string())
     })?;
-    let loc_y = u16::try_from(plan.loc_y).map_err(|_| {
-        ImagingError::InvalidRequest("mosaic Metal sample y coordinate exceeds u16".to_string())
+    let loc_y = i32::try_from(plan.loc_y).map_err(|_| {
+        ImagingError::InvalidRequest("mosaic sample y coordinate exceeds i32".to_string())
     })?;
     Ok(MosaicMetalSample {
-        loc: u32::from(loc_x) | (u32::from(loc_y) << 16),
+        loc_x,
+        loc_y,
         support: u32::try_from(support).map_err(|_| {
             ImagingError::InvalidRequest("mosaic Metal support exceeds u32".to_string())
         })?,
-        offset: [
-            i32::try_from(plan.off_x).map_err(|_| {
-                ImagingError::InvalidRequest(
-                    "mosaic Metal x subpixel offset exceeds i32".to_string(),
-                )
-            })?,
-            i32::try_from(plan.off_y).map_err(|_| {
-                ImagingError::InvalidRequest(
-                    "mosaic Metal y subpixel offset exceeds i32".to_string(),
-                )
-            })?,
-        ],
-        range_x: [
-            i32::try_from(plan.min_ix).map_err(|_| {
-                ImagingError::InvalidRequest("mosaic Metal min x tap exceeds i32".to_string())
-            })?,
-            i32::try_from(plan.max_ix).map_err(|_| {
-                ImagingError::InvalidRequest("mosaic Metal max x tap exceeds i32".to_string())
-            })?,
-        ],
-        range_y: [
-            i32::try_from(plan.min_iy).map_err(|_| {
-                ImagingError::InvalidRequest("mosaic Metal min y tap exceeds i32".to_string())
-            })?,
-            i32::try_from(plan.max_iy).map_err(|_| {
-                ImagingError::InvalidRequest("mosaic Metal max y tap exceeds i32".to_string())
-            })?,
-        ],
+        offset_x: i32::try_from(plan.off_x).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal x subpixel offset exceeds i32".to_string())
+        })?,
+        offset_y: i32::try_from(plan.off_y).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal y subpixel offset exceeds i32".to_string())
+        })?,
+        range_x_min: i32::try_from(plan.min_ix).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal min x tap exceeds i32".to_string())
+        })?,
+        range_x_max: i32::try_from(plan.max_ix).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal max x tap exceeds i32".to_string())
+        })?,
+        range_y_min: i32::try_from(plan.min_iy).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal min y tap exceeds i32".to_string())
+        })?,
+        range_y_max: i32::try_from(plan.max_iy).map_err(|_| {
+            ImagingError::InvalidRequest("mosaic Metal max y tap exceeds i32".to_string())
+        })?,
         weight,
         visibility_re: visibility.re,
         visibility_im: visibility.im,
@@ -12051,11 +12056,15 @@ const MOSAIC_METAL_SHADER: &str = r#"
 using namespace metal;
 
 struct MosaicSample {
-    uint loc;
+    int loc_x;
+    int loc_y;
     uint support;
-    int2 offset;
-    int2 range_x;
-    int2 range_y;
+    int offset_x;
+    int offset_y;
+    int range_x_min;
+    int range_x_max;
+    int range_y_min;
+    int range_y_max;
     float weight;
     float visibility_re;
     float visibility_im;
@@ -12080,17 +12089,9 @@ static inline void mosaic_atomic_add_float(device atomic_float *address, float v
     atomic_fetch_add_explicit(address, value, memory_order_relaxed);
 }
 
-static inline uint mosaic_sample_loc_x(MosaicSample sample) {
-    return sample.loc & 0xffffu;
-}
-
-static inline uint mosaic_sample_loc_y(MosaicSample sample) {
-    return sample.loc >> 16;
-}
-
 static inline uint mosaic_kernel_index(MosaicSample sample, constant MosaicParams &params, int ix, int iy) {
-    const uint offset_x = uint(sample.offset.x + int(params.kernel_center));
-    const uint offset_y = uint(sample.offset.y + int(params.kernel_center));
+    const uint offset_x = uint(sample.offset_x + int(params.kernel_center));
+    const uint offset_y = uint(sample.offset_y + int(params.kernel_center));
     const uint tap_x = uint(ix + int(sample.support));
     const uint tap_y = uint(iy + int(sample.support));
     const uint offset_base =
@@ -12117,10 +12118,10 @@ kernel void mosaic_grid_samples(
     float predicted_im = 0.0f;
     const bool needs_model = params.mode == 2u && params.model_present != 0u;
     if (needs_model) {
-        for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
-            const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
-            for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
-                const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+        for (int iy = sample.range_y_min; iy <= sample.range_y_max; ++iy) {
+            const uint grid_y = uint(sample.loc_y + iy);
+            for (int ix = sample.range_x_min; ix <= sample.range_x_max; ++ix) {
+                const uint grid_x = uint(sample.loc_x + ix);
                 const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
                 const float2 cell = model[grid_x * params.grid_height + grid_y];
                 predicted_re += cwt.x * cell.x + cwt.y * cell.y;
@@ -12133,10 +12134,10 @@ kernel void mosaic_grid_samples(
     const bool write_residual = params.mode == 1u || params.mode == 2u;
     const float residual_value_re = sample.visibility_re - predicted_re;
     const float residual_value_im = sample.visibility_im - predicted_im;
-    for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
-        const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
-        for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
-            const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+    for (int iy = sample.range_y_min; iy <= sample.range_y_max; ++iy) {
+        const uint grid_y = uint(sample.loc_y + iy);
+        for (int ix = sample.range_x_min; ix <= sample.range_x_max; ++ix) {
+            const uint grid_x = uint(sample.loc_x + ix);
             const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
             const uint cell = grid_x * params.grid_height + grid_y;
             if (write_psf) {
@@ -12179,10 +12180,10 @@ kernel void mosaic_grid_chunked_samples(
     float predicted_im = 0.0f;
     const bool needs_model = params.mode == 2u && params.model_present != 0u;
     if (needs_model) {
-        for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
-            const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
-            for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
-                const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+        for (int iy = sample.range_y_min; iy <= sample.range_y_max; ++iy) {
+            const uint grid_y = uint(sample.loc_y + iy);
+            for (int ix = sample.range_x_min; ix <= sample.range_x_max; ++ix) {
+                const uint grid_x = uint(sample.loc_x + ix);
                 const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
                 const float2 cell = model[grid_x * params.grid_height + grid_y];
                 predicted_re += cwt.x * cell.x + cwt.y * cell.y;
@@ -12195,10 +12196,10 @@ kernel void mosaic_grid_chunked_samples(
     const bool write_residual = params.mode == 1u || params.mode == 2u;
     const float residual_value_re = sample.visibility_re - predicted_re;
     const float residual_value_im = sample.visibility_im - predicted_im;
-    for (int iy = sample.range_y.x; iy <= sample.range_y.y; ++iy) {
-        const uint grid_y = uint(int(mosaic_sample_loc_y(sample)) + iy);
-        for (int ix = sample.range_x.x; ix <= sample.range_x.y; ++ix) {
-            const uint grid_x = uint(int(mosaic_sample_loc_x(sample)) + ix);
+    for (int iy = sample.range_y_min; iy <= sample.range_y_max; ++iy) {
+        const uint grid_y = uint(sample.loc_y + iy);
+        for (int ix = sample.range_x_min; ix <= sample.range_x_max; ++ix) {
+            const uint grid_x = uint(sample.loc_x + ix);
             const float2 cwt = kernels[mosaic_kernel_index(sample, params, ix, iy)];
             const uint cell = partial_grid_offset + grid_x * params.grid_height + grid_y;
             if (write_psf) {
@@ -28375,7 +28376,7 @@ mod tests {
 
     #[test]
     fn mosaic_metal_sample_contract_matches_shader_stride() {
-        assert_eq!(std::mem::size_of::<super::MosaicMetalSample>(), 48);
+        assert_eq!(std::mem::size_of::<super::MosaicMetalSample>(), 52);
         assert_eq!(std::mem::size_of::<super::MosaicMetalParams>(), 44);
     }
 
@@ -28386,6 +28387,7 @@ mod tests {
             super::MOSAIC_METAL_SHADER
                 .contains("sample.kernel_base + offset_base + tap_y * params.kernel_width + tap_x")
         );
+        assert!(super::MOSAIC_METAL_SHADER.contains("int loc_x;"));
     }
 
     #[test]
@@ -28411,11 +28413,15 @@ mod tests {
     #[test]
     fn mosaic_metal_sample_grouping_merges_matching_plans() {
         let first = super::MosaicMetalSample {
-            loc: 42,
+            loc_x: 42,
+            loc_y: -7,
             support: 6,
-            offset: [2, -3],
-            range_x: [-6, 6],
-            range_y: [-5, 6],
+            offset_x: 2,
+            offset_y: -3,
+            range_x_min: -6,
+            range_x_max: 6,
+            range_y_min: -5,
+            range_y_max: 6,
             weight: 2.0,
             visibility_re: 1.0,
             visibility_im: 3.0,
@@ -28428,7 +28434,7 @@ mod tests {
             ..first
         };
         let different_plan = super::MosaicMetalSample {
-            offset: [3, -3],
+            offset_x: 3,
             weight: 11.0,
             visibility_re: 13.0,
             visibility_im: 17.0,
@@ -28443,11 +28449,39 @@ mod tests {
         assert_eq!(samples.len(), 2);
         let grouped = samples
             .iter()
-            .find(|sample| sample.offset == first.offset)
+            .find(|sample| sample.offset_x == first.offset_x && sample.offset_y == first.offset_y)
             .expect("matching mosaic Metal samples should be merged");
+        assert_eq!(grouped.loc_y, -7);
         assert_eq!(grouped.weight, 8.0);
         assert_eq!(grouped.visibility_re, 4.0);
         assert_eq!(grouped.visibility_im, 6.0);
+    }
+
+    #[test]
+    fn mosaic_metal_sample_preserves_signed_off_grid_center() {
+        let plan = super::ScreenProjectSamplePlan {
+            loc_x: -3,
+            loc_y: 260,
+            off_x: 1,
+            off_y: -2,
+            min_ix: 3,
+            max_ix: 6,
+            min_iy: -6,
+            max_iy: 6,
+            center_in_bounds: false,
+            normalization: 1.0,
+        };
+
+        let sample = super::mosaic_metal_sample_from_plan(&plan, 6, 2.0, Complex32::new(3.0, -4.0))
+            .expect("off-grid clipped mosaic center should be representable");
+        let roundtrip = super::mosaic_grouped_sample_plan(sample);
+
+        assert_eq!(sample.loc_x, -3);
+        assert_eq!(sample.loc_y, 260);
+        assert_eq!(roundtrip.loc_x, -3);
+        assert_eq!(roundtrip.loc_y, 260);
+        assert_eq!(roundtrip.min_ix, 3);
+        assert_eq!(roundtrip.max_ix, 6);
     }
 
     #[test]

@@ -23,13 +23,23 @@ private struct GUIEvidenceCaptureRequest {
         case splitRun = "split-run"
         case imagerParameters = "imager-parameters"
         case imagerRun = "imager-run"
+        case imagerProgressMockup = "imager-progress-mockup"
         case impbcorParameters = "impbcor-parameters"
         case impbcorRun = "impbcor-run"
         case imageExplorer = "image-explorer"
+
+        var requiresTutorialPack: Bool {
+            switch self {
+            case .imagerProgressMockup:
+                false
+            default:
+                true
+            }
+        }
     }
 
     var captureKind: CaptureKind
-    var tutorialPackPath: String
+    var tutorialPackPath: String?
     var datasetName: String
     var imagePath: String?
     var pbImagePath: String?
@@ -50,13 +60,15 @@ private struct GUIEvidenceCaptureRequest {
     var height: CGFloat
 
     init(arguments: [String]) throws {
-        guard let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments) else {
+        let captureKind = CaptureKind(rawValue: Self.argumentValue(after: "--capture-kind", in: arguments) ?? CaptureKind.measurementSetPlot.rawValue) ?? .measurementSetPlot
+        let tutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments)
+        if captureKind.requiresTutorialPack && tutorialPackPath == nil {
             throw GUIEvidenceCaptureError.missingArgument("--open-tutorial-pack")
         }
         guard let outputPath = Self.argumentValue(after: "--output", in: arguments) else {
             throw GUIEvidenceCaptureError.missingArgument("--output")
         }
-        self.captureKind = CaptureKind(rawValue: Self.argumentValue(after: "--capture-kind", in: arguments) ?? CaptureKind.measurementSetPlot.rawValue) ?? .measurementSetPlot
+        self.captureKind = captureKind
         self.tutorialPackPath = tutorialPackPath
         self.datasetName = Self.argumentValue(after: "--dataset", in: arguments) ?? "twhya_calibrated.ms"
         self.imagePath = Self.argumentValue(after: "--image", in: arguments)
@@ -156,7 +168,9 @@ private enum GUIEvidenceCaptureRenderer {
 
         let store = WorkbenchStore.empty()
         store.setInterfaceFontSize(WorkbenchState.defaultInterfaceFontSize)
-        store.openTutorialPack(path: request.tutorialPackPath)
+        if let tutorialPackPath = request.tutorialPackPath {
+            store.openTutorialPack(path: tutorialPackPath)
+        }
 
         switch request.captureKind {
         case .measurementSetPlot:
@@ -169,6 +183,8 @@ private enum GUIEvidenceCaptureRenderer {
             try renderImagerParameters(request: request, store: store)
         case .imagerRun:
             try renderImagerRun(request: request, store: store)
+        case .imagerProgressMockup:
+            try renderImagerProgressMockup(request: request, store: store)
         case .impbcorParameters:
             try renderImpbcorParameters(request: request, store: store)
         case .impbcorRun:
@@ -330,7 +346,7 @@ private enum GUIEvidenceCaptureRenderer {
         }
 
         store.selectDataset(dataset.id)
-        store.openDirtyImagingTaskForSelectedDataset()
+        store.openImagerTaskForSelectedDataset()
         store.selectTask("imager")
         store.setGenericTaskValue(taskID: "imager", argumentID: "ms", value: dataset.path)
         store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: request.outputPrefix ?? "phase_cal")
@@ -348,16 +364,6 @@ private enum GUIEvidenceCaptureRenderer {
         store.setGenericTaskToggle(taskID: "imager", argumentID: "write_pb", value: request.writePB)
         if let maskBox = request.maskBox {
             store.setGenericTaskValue(taskID: "imager", argumentID: "mask_box", value: maskBox)
-        }
-        store.setDirtyImagingField(request.field)
-        store.setDirtyImagingSpectralWindow("all")
-        store.setDirtyImagingDataColumn("DATA")
-        store.setDirtyImagingImageSize(250)
-        store.setDirtyImagingImageHeight(250)
-        store.setDirtyImagingCellArcsec(0.1)
-        store.setDirtyImagingWeighting(.briggs)
-        if let outputPrefix = request.outputPrefix {
-            store.setDirtyImagingOutputPrefix(outputPrefix)
         }
 
         let view = WorkbenchView(store: store)
@@ -394,6 +400,30 @@ private enum GUIEvidenceCaptureRenderer {
                     ? store.state.taskRun.logLines.joined(separator: "\n")
                     : store.state.taskRun.diagnostics.joined(separator: "\n")
             )
+        }
+
+        let view = WorkbenchView(store: store)
+            .environment(\.workbenchFontSize, WorkbenchState.defaultInterfaceFontSize)
+            .preferredColorScheme(.dark)
+            .frame(width: request.width, height: request.height)
+        let png = try renderPNGWithHostingView(
+            view: view,
+            width: request.width,
+            height: request.height,
+            scale: 2.0
+        )
+        try writePNG(png, outputPath: request.outputPath)
+    }
+
+    @MainActor
+    private static func renderImagerProgressMockup(
+        request: GUIEvidenceCaptureRequest,
+        store: WorkbenchStore
+    ) throws {
+        store.openImagerProgressMockup()
+
+        guard store.state.taskRun.imagerProgress != nil else {
+            throw GUIEvidenceCaptureError.taskFailed("imager progress mockup did not populate progress telemetry")
         }
 
         let view = WorkbenchView(store: store)
@@ -511,7 +541,7 @@ private enum GUIEvidenceCaptureRenderer {
         }
 
         store.selectDataset(dataset.id)
-        store.openDirtyImagingTaskForSelectedDataset()
+        store.openImagerTaskForSelectedDataset()
         store.selectTask("imager")
         store.setGenericTaskValue(taskID: "imager", argumentID: "ms", value: dataset.path)
         store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: request.outputPrefix ?? "phase_cal")
@@ -529,16 +559,6 @@ private enum GUIEvidenceCaptureRenderer {
         store.setGenericTaskToggle(taskID: "imager", argumentID: "write_pb", value: request.writePB)
         if let maskBox = request.maskBox {
             store.setGenericTaskValue(taskID: "imager", argumentID: "mask_box", value: maskBox)
-        }
-        store.setDirtyImagingField(request.field)
-        store.setDirtyImagingSpectralWindow("all")
-        store.setDirtyImagingDataColumn("DATA")
-        store.setDirtyImagingImageSize(250)
-        store.setDirtyImagingImageHeight(250)
-        store.setDirtyImagingCellArcsec(0.1)
-        store.setDirtyImagingWeighting(.briggs)
-        if let outputPrefix = request.outputPrefix {
-            store.setDirtyImagingOutputPrefix(outputPrefix)
         }
     }
 

@@ -193,7 +193,7 @@ def _write_stub_binary(
     path: Path,
     *,
     version: str,
-    protocol_version: int = 1,
+    protocol_version: int = 2,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     script = textwrap.dedent(

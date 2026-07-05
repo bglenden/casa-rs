@@ -211,6 +211,7 @@ public enum ProjectSource: String, Codable, Equatable {
     case none
     case fixture
     case probed
+    case directMeasurementSet
     case tutorialPack
 }
 
@@ -249,7 +250,6 @@ public struct WorkbenchTab: Identifiable, Codable, Equatable {
 
 public enum WorkbenchJobKind: String, Codable, Equatable {
     case measurementSetPlot
-    case dirtyImagingTask
     case genericTask
 }
 
@@ -2499,7 +2499,6 @@ public struct WorkbenchState: Codable, Equatable {
     public var tabs: [WorkbenchTab]
     public var activeTabID: String
     public var taskParameters: TaskParameters
-    public var dirtyImagingTaskParameters: DirtyImagingTaskParameters?
     public var taskRun: TaskRun
     public var aiMessages: [AIChatMessage]
     public var aiProposals: [AIProposal]
@@ -2535,7 +2534,6 @@ public struct WorkbenchState: Codable, Equatable {
         tabs: [WorkbenchTab],
         activeTabID: String,
         taskParameters: TaskParameters,
-        dirtyImagingTaskParameters: DirtyImagingTaskParameters? = nil,
         taskRun: TaskRun,
         aiMessages: [AIChatMessage],
         aiProposals: [AIProposal],
@@ -2570,7 +2568,6 @@ public struct WorkbenchState: Codable, Equatable {
         self.tabs = tabs
         self.activeTabID = activeTabID
         self.taskParameters = taskParameters
-        self.dirtyImagingTaskParameters = dirtyImagingTaskParameters
         self.taskRun = taskRun
         self.aiMessages = aiMessages
         self.aiProposals = aiProposals
@@ -2672,7 +2669,6 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeTaskValues: [String: String]
     public var activeTaskToggles: [String: Bool]
     public var taskState: TaskRunState
-    public var taskRequest: DirtyImagingTaskParameters?
     public var taskLogLines: [String]
     public var taskDiagnostics: [String]
     public var taskOutputPaths: [String]
@@ -2714,7 +2710,6 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeTaskValues = state.genericTaskValues[state.activeTaskID] ?? [:]
         activeTaskToggles = state.genericTaskToggles[state.activeTaskID] ?? [:]
         taskState = state.taskRun.state
-        taskRequest = state.dirtyImagingTaskParameters
         taskLogLines = state.taskRun.logLines
         taskDiagnostics = state.taskRun.diagnostics
         taskOutputPaths = state.taskRun.outputPaths

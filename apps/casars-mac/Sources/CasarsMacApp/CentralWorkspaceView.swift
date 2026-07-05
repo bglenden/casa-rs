@@ -6689,447 +6689,6 @@ struct TaskPanel: View {
     }
 }
 
-struct DirtyImagingTaskPanel: View {
-    @ObservedObject var store: WorkbenchStore
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(
-                        tasks: store.state.taskCatalog,
-                        activeTaskID: store.state.activeTaskID,
-                        categoryFilter: .constant(.all),
-                        searchText: .constant(""),
-                        selectTask: { store.selectTask($0) }
-                    )
-                    if let parameters = store.state.dirtyImagingTaskParameters {
-                        selectionBlock(parameters: parameters)
-                        imagingBlock(parameters: parameters)
-                        outputBlock(parameters: parameters)
-                        runBlock
-                        runProductsBlock
-                    } else {
-                        PanelHeader(title: "Dirty Imaging", subtitle: "Select a MeasurementSet before opening this task")
-                    }
-                }
-                .padding(20)
-            }
-        }
-        .accessibilityIdentifier("panel.task.dirtyImaging")
-    }
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Dirty Imaging")
-                    .workbenchFont(.title3, weight: .semibold)
-                Text(selectedDatasetSubtitle)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                store.runTask()
-            } label: {
-                Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
-            }
-            .disabled(store.state.taskRun.state == .running || store.state.dirtyImagingTaskParameters == nil)
-            .accessibilityIdentifier("task.run")
-
-            Button {
-                store.stopTask()
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .disabled(store.state.taskRun.state != .running)
-            .accessibilityIdentifier("task.stop")
-        }
-        .padding()
-        .background(.bar)
-    }
-
-    private var selectedDatasetSubtitle: String {
-        guard let parameters = store.state.dirtyImagingTaskParameters,
-              let dataset = taskDataset(for: parameters)
-        else {
-            return "No MeasurementSet selected"
-        }
-        return "\(dataset.name) - \(dataset.size)"
-    }
-
-    private func selectionBlock(parameters: DirtyImagingTaskParameters) -> some View {
-        let dataset = taskDataset(for: parameters)
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("Selections")
-                .workbenchFont(.headline)
-
-            Picker("MeasurementSet", selection: Binding(
-                get: { parameters.datasetID },
-                set: { store.setDirtyImagingDataset($0) }
-            )) {
-                Text("Select MeasurementSet").tag("")
-                ForEach(measurementSetDatasets) { dataset in
-                    Text(dataset.name).tag(dataset.id)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.measurementSet")
-
-            Picker("Source / field", selection: Binding(
-                get: { parameters.selectedField ?? "all" },
-                set: { store.setDirtyImagingField($0) }
-            )) {
-                Text("all").tag("all")
-                ForEach(dataset?.fields ?? [], id: \.self) { field in
-                    Text(field).tag(field)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.field")
-
-            LabeledContent("Phase center", value: parameters.phaseCenterField ?? "auto")
-
-            Picker("Spectral window", selection: Binding(
-                get: { parameters.selectedSpectralWindow ?? "all" },
-                set: { store.setDirtyImagingSpectralWindow($0) }
-            )) {
-                Text("all").tag("all")
-                ForEach(dataset?.spectralWindows ?? [], id: \.self) { spw in
-                    Text(spw).tag(spw)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.spw")
-
-            HStack {
-                TextField("Channel start", text: Binding(
-                    get: { parameters.channelStart },
-                    set: { store.setDirtyImagingChannelStart($0) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("task.parameter.channelStart")
-
-                TextField("Channel count", text: Binding(
-                    get: { parameters.channelCount },
-                    set: { store.setDirtyImagingChannelCount($0) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("task.parameter.channelCount")
-            }
-
-            Picker("Data column", selection: Binding(
-                get: { parameters.dataColumn },
-                set: { store.setDirtyImagingDataColumn($0) }
-            )) {
-                ForEach(dataset?.dataColumns.isEmpty == false ? dataset?.dataColumns ?? [] : ["DATA"], id: \.self) { column in
-                    Text(column).tag(column)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.dataColumn")
-
-            Picker("Image plane", selection: Binding(
-                get: { parameters.correlation ?? "I" },
-                set: { store.setDirtyImagingCorrelation($0) }
-            )) {
-                Text("Stokes I").tag("I")
-                ForEach(dataset?.correlations ?? [], id: \.self) { correlation in
-                    Text("Raw \(correlation)").tag(correlation)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.correlation")
-
-            Text(selectionHint(for: parameters))
-                .foregroundStyle(.secondary)
-                .workbenchFont(.caption)
-                .accessibilityIdentifier("task.parameter.selectionHint")
-        }
-        .taskCard()
-    }
-
-    private var measurementSetDatasets: [DatasetSummary] {
-        store.state.project.datasets.filter { $0.kind == .measurementSet }
-    }
-
-    private func taskDataset(for parameters: DirtyImagingTaskParameters) -> DatasetSummary? {
-        store.state.project.datasets.first { $0.id == parameters.datasetID }
-    }
-
-    private func selectionHint(for parameters: DirtyImagingTaskParameters) -> String {
-        guard let dataset = taskDataset(for: parameters) else {
-            return "Pick a MeasurementSet before running dirty imaging."
-        }
-        if dataset.name.lowercased().contains("twhya_calibrated.ms") {
-            return "Tutorial defaults pick TW Hya, spw 0, 250 px, and 0.1 arcsec cells from the ALMA First Look imaging guide."
-        }
-        if dataset.name == "mssel_test_small_multifield_spw.ms" {
-            return "Sample defaults pick NGC4826-F3, spw 5, and raw YY: a target field with a 64-channel line window near the NGC4826 rest frequency."
-        }
-        return "Defaults prefer a science-like field, a multi-channel spectral window, and Stokes I when the MeasurementSet supports paired correlations."
-    }
-
-    private func imagingBlock(parameters: DirtyImagingTaskParameters) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Image")
-                .workbenchFont(.headline)
-
-            imageDimensionRow(
-                label: "Image width",
-                value: parameters.imageSize,
-                setValue: store.setDirtyImagingImageSize,
-                adjust: store.adjustDirtyImagingImageWidthToNiceSize,
-                accessibilityID: "task.parameter.imageWidth"
-            )
-
-            imageDimensionRow(
-                label: "Image height",
-                value: parameters.imageHeight,
-                setValue: store.setDirtyImagingImageHeight,
-                adjust: store.adjustDirtyImagingImageHeightToNiceSize,
-                accessibilityID: "task.parameter.imageHeight"
-            )
-
-            HStack(spacing: 8) {
-                TextField("Cell size", text: Binding(
-                    get: { String(format: "%.3f", parameters.cellArcsec) },
-                    set: { value in
-                        if let parsed = Double(value) {
-                            store.setDirtyImagingCellArcsec(parsed)
-                        }
-                    }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("task.parameter.cellArcsec")
-
-                Text("arcsec")
-                    .foregroundStyle(.secondary)
-                    .workbenchFont(.caption)
-                    .accessibilityIdentifier("task.parameter.cellArcsec.unit")
-            }
-
-            if parameters.imageSize != parameters.imageHeight {
-                Label("Rectangular image sizes are not runnable yet.", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
-                    .workbenchFont(.caption)
-                    .accessibilityIdentifier("task.parameter.imageShape.warning")
-            }
-
-            Picker("Weighting", selection: Binding(
-                get: { parameters.weighting },
-                set: { store.setDirtyImagingWeighting($0) }
-            )) {
-                ForEach(DirtyImagingWeighting.allCases) { weighting in
-                    Text(weighting.title).tag(weighting)
-                }
-            }
-            .accessibilityIdentifier("task.parameter.weighting")
-
-            Toggle("Dirty only", isOn: .constant(parameters.dirtyOnly))
-                .disabled(true)
-                .accessibilityIdentifier("task.parameter.dirtyOnly")
-        }
-        .taskCard()
-    }
-
-    private func imageDimensionRow(
-        label: String,
-        value: Int,
-        setValue: @escaping (Int) -> Void,
-        adjust: @escaping () -> Void,
-        accessibilityID: String
-    ) -> some View {
-        let assessment = DirtyImagingTaskParameters.imageDimensionAssessment(value)
-        return HStack(spacing: 8) {
-            Text(label)
-                .frame(width: 96, alignment: .leading)
-
-            TextField(label, text: Binding(
-                get: { "\(value)" },
-                set: { text in
-                    if let parsed = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                        setValue(parsed)
-                    }
-                }
-            ))
-            .textFieldStyle(.plain)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .frame(width: 82)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(dimensionFill(for: assessment.severity))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(dimensionStroke(for: assessment.severity), lineWidth: assessment.severity == .good ? 1 : 1.5)
-            )
-            .help(assessment.message)
-            .accessibilityIdentifier(accessibilityID)
-
-            Text("px")
-                .foregroundStyle(.secondary)
-                .workbenchFont(.caption)
-
-            Button {
-                adjust()
-            } label: {
-                Label("Adjust", systemImage: "wand.and.stars")
-            }
-            .disabled(!assessment.needsAdjustment)
-            .help("Adjust to \(assessment.adjustedValue) px")
-            .accessibilityIdentifier("\(accessibilityID).adjust")
-        }
-    }
-
-    private func dimensionFill(for severity: DirtyImagingDimensionSeverity) -> Color {
-        switch severity {
-        case .good:
-            Color(nsColor: .textBackgroundColor).opacity(0.25)
-        case .warning:
-            .yellow.opacity(0.40)
-        case .terrible:
-            .red.opacity(0.40)
-        }
-    }
-
-    private func dimensionStroke(for severity: DirtyImagingDimensionSeverity) -> Color {
-        switch severity {
-        case .good:
-            .secondary.opacity(0.35)
-        case .warning:
-            .yellow.opacity(0.85)
-        case .terrible:
-            .red.opacity(0.85)
-        }
-    }
-
-    private func outputBlock(parameters: DirtyImagingTaskParameters) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Output")
-                .workbenchFont(.headline)
-
-            TextField("Image prefix", text: Binding(
-                get: { parameters.outputPrefix },
-                set: { store.setDirtyImagingOutputPrefix($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityIdentifier("task.parameter.outputPrefix")
-
-            TextField("Run reason", text: Binding(
-                get: { parameters.runReason },
-                set: { store.setDirtyImagingRunReason($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityIdentifier("task.parameter.runReason")
-
-            Text(parameters.requestSummary)
-                .workbenchFont(.caption, design: .monospaced)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("task.parameter.requestSummary")
-        }
-        .taskCard()
-    }
-
-    private var runBlock: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run")
-                .workbenchFont(.headline)
-            if let progress = store.state.taskRun.imagerProgress {
-                WorkEstimateBar(estimate: progress.workEstimate)
-            } else {
-                RunProgressBar(progress: store.state.taskRun.progress)
-            }
-            Text(store.state.taskRun.state.rawValue)
-                .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
-
-            if let progress = store.state.taskRun.imagerProgress {
-                ImagerProgressDashboard(snapshot: progress)
-            }
-
-            valueList("Log", values: store.state.taskRun.logLines)
-            valueList("Warnings", values: store.state.taskRun.warnings)
-            valueList("Diagnostics", values: store.state.taskRun.diagnostics)
-            valueList("Products", values: store.state.taskRun.products)
-            valueList("Artifacts", values: store.state.taskRun.outputPaths)
-        }
-        .taskCard()
-        .accessibilityIdentifier("task.runState")
-    }
-
-    @ViewBuilder
-    private var runProductsBlock: some View {
-        if let group = activeRunProductGroup {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Generated Products")
-                    .workbenchFont(.headline)
-                Text(group.runID)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
-
-                ForEach(group.products) { product in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(product.label)
-                                .workbenchFont(.subheadline, weight: .semibold)
-                            Text(product.path)
-                                .workbenchFont(.caption, design: .monospaced)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                            if product.previewPngExists, let preview = product.previewPngPath {
-                                Text("Preview: \(preview)")
-                                    .workbenchFont(.caption, design: .monospaced)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-
-                        Spacer()
-
-                        Button {
-                            store.openRunProduct(runID: group.runID, productID: product.id)
-                        } label: {
-                            Label("Open", systemImage: "arrow.up.right.square")
-                        }
-                        .disabled(product.datasetID == nil)
-                        .accessibilityIdentifier("task.product.open.\(product.id)")
-                    }
-                    .padding(.vertical, 3)
-                }
-            }
-            .taskCard()
-            .accessibilityIdentifier("task.generatedProducts")
-        }
-    }
-
-    private var activeRunProductGroup: RunProductGroup? {
-        guard let runID = store.state.taskRun.runID else {
-            return nil
-        }
-        return store.state.runProductGroups.first { $0.runID == runID }
-    }
-
-    private func valueList(_ title: String, values: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .workbenchFont(.subheadline, weight: .semibold)
-            if values.isEmpty {
-                Text("None")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(values, id: \.self) { value in
-                    Text(value)
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-}
-
 private struct ImagerProgressDashboard: View {
     let snapshot: ImagerProgressSnapshot
 
@@ -7148,19 +6707,26 @@ private struct ImagerProgressDashboard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(snapshot.sampledAtLabel)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    ImagerProgressStateBadge(state: snapshot.state)
+                    Text(snapshot.sampledAtLabel)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             HStack(alignment: .center, spacing: 10) {
                 Text(snapshot.phase)
                     .workbenchFont(.subheadline, weight: .semibold)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
                 Spacer()
                 Text(snapshot.source)
                     .workbenchFont(.caption, design: .monospaced)
                     .foregroundStyle(.secondary)
             }
+
+            ImagerProgressStatusStrip(snapshot: snapshot)
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                 ImagerProgressSection(
@@ -7179,7 +6745,7 @@ private struct ImagerProgressDashboard: View {
 
                 ImagerProgressSection(
                     title: "UV Coverage",
-                    subtitle: "\(snapshot.uvCoverage.accumulatedPointCount) sampled uv points"
+                    subtitle: "\(decimalCountLabel(UInt64(snapshot.uvCoverage.retainedMeasuredPointCount))) retained / \(decimalCountLabel(snapshot.uvCoverage.acceptedMeasuredPointCount)) gridable"
                 ) {
                     UVCoverageProgressView(coverage: snapshot.uvCoverage)
                 }
@@ -7200,6 +6766,139 @@ private struct ImagerProgressDashboard: View {
             }
         }
         .accessibilityIdentifier("task.imagerProgress")
+    }
+}
+
+private struct ImagerProgressStateBadge: View {
+    let state: TaskRunState
+
+    private var isActive: Bool {
+        state == .running
+    }
+
+    private var label: String {
+        isActive ? "active" : "inactive: \(state.rawValue)"
+    }
+
+    private var tint: Color {
+        switch state {
+        case .running:
+            return .green
+        case .succeeded, .completed:
+            return .blue
+        case .failed:
+            return .red
+        case .cancelled, .stopped:
+            return .orange
+        case .idle:
+            return .secondary
+        }
+    }
+
+    var body: some View {
+        Text(label)
+            .workbenchFont(.caption2, weight: .semibold)
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(tint.opacity(isActive ? 0.16 : 0.10))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(isActive ? 0.34 : 0.24), lineWidth: 1)
+            )
+            .accessibilityLabel(label)
+    }
+}
+
+private struct ImagerProgressStatusStrip: View {
+    let snapshot: ImagerProgressSnapshot
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 132), spacing: 10, alignment: .top)
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+            ImagerProgressStatusChip(
+                title: "Work",
+                value: percentLabel(snapshot.workEstimate.fraction),
+                detail: snapshot.workEstimate.confidence,
+                systemImage: "chart.bar.fill",
+                accent: .cyan
+            )
+            ImagerProgressStatusChip(
+                title: "MS rows",
+                value: snapshot.measurementSetWindow.activeRowPercentLabel,
+                detail: "channels \(snapshot.measurementSetWindow.activeChannelPercentLabel)",
+                systemImage: "tablecells",
+                accent: .blue
+            )
+            ImagerProgressStatusChip(
+                title: "Cube planes",
+                value: snapshot.outputCube.activePlanePercentLabel,
+                detail: "\(snapshot.outputCube.activePlaneCount) active",
+                systemImage: "cube",
+                accent: .indigo
+            )
+            ImagerProgressStatusChip(
+                title: "Clean",
+                value: percentLabel(snapshot.deconvolution.minorIterationFraction),
+                detail: "major \(snapshot.deconvolution.majorCycleLabel)",
+                systemImage: "sparkles",
+                accent: .orange
+            )
+            ImagerProgressStatusChip(
+                title: "Runtime",
+                value: snapshot.runtime.threadPercentLabel,
+                detail: snapshot.runtime.gpuActive ? "GPU active" : "GPU idle",
+                systemImage: snapshot.runtime.gpuActive ? "bolt.fill" : "bolt.slash",
+                accent: snapshot.runtime.gpuActive ? .green : .secondary
+            )
+        }
+        .accessibilityIdentifier("task.imagerProgress.status")
+    }
+}
+
+private struct ImagerProgressStatusChip: View {
+    let title: String
+    let value: String
+    let detail: String
+    let systemImage: String
+    let accent: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: systemImage)
+                .foregroundStyle(accent)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(value)
+                    .workbenchFont(.subheadline, weight: .semibold, design: .monospaced)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(detail)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.30))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
+        )
     }
 }
 
@@ -7468,14 +7167,12 @@ private struct UVCoverageProgressView: View {
             context.stroke(vAxis, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
             context.stroke(Path(ellipseIn: rect), with: .color(.secondary.opacity(0.18)), lineWidth: 1)
 
-            draw(points: coverage.conjugate, color: .orange, rect: rect, in: &context)
             draw(points: coverage.measured, color: .cyan, rect: rect, in: &context)
         }
         .frame(height: 210)
         .overlay(alignment: .bottomLeading) {
             HStack(spacing: 12) {
-                legendDot(color: .cyan, label: "measured")
-                legendDot(color: .orange, label: "Hermitian")
+                legendDot(color: .cyan, label: "measured sample")
             }
             .padding(.leading, 6)
         }
@@ -7525,8 +7222,8 @@ private struct DeconvolutionProgressView: View {
             ResidualHistoryChart(progress: progress)
                 .frame(height: 76)
             HStack(spacing: 12) {
-                metric("Major", "\(progress.majorCycle) / \(progress.majorCycleLimit)")
-                metric("Minor", "\(progress.minorIterations) / \(progress.minorIterationLimit)")
+                metric("Major", progress.majorCycleLabel)
+                metric("Minor updates", "\(progress.minorIterations)")
                 metric("Components", "\(progress.componentsCleaned)")
             }
             HStack(spacing: 12) {
@@ -7613,12 +7310,62 @@ private func percentLabel(_ progress: Double) -> String {
     "\(Int((boundedProgress(progress) * 100).rounded()))%"
 }
 
+private func percentRangeLabel(start: Double, end: Double) -> String {
+    let startPercent = Int((boundedProgress(start) * 100).rounded())
+    let endPercent = Int((boundedProgress(end) * 100).rounded())
+    return "\(startPercent)-\(endPercent)%"
+}
+
+private func decimalCountLabel(_ value: UInt64) -> String {
+    if value >= 1_000_000_000 {
+        return String(format: "%.1fB", Double(value) / 1_000_000_000)
+    }
+    if value >= 1_000_000 {
+        return String(format: "%.1fM", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.1fk", Double(value) / 1_000)
+    }
+    return "\(value)"
+}
+
+private extension MeasurementSetReadWindowProgress {
+    var activeRowPercentLabel: String {
+        percentRangeLabel(start: rowStartFraction, end: rowEndFraction)
+    }
+
+    var activeChannelPercentLabel: String {
+        percentRangeLabel(start: channelStartFraction, end: channelEndFraction)
+    }
+}
+
+private extension OutputCubeProgress {
+    var activePlanePercentLabel: String {
+        percentRangeLabel(start: activePlaneStartFraction, end: activePlaneEndFraction)
+    }
+}
+
+private extension ImagingRuntimeProgress {
+    var threadPercentLabel: String {
+        percentLabel(activeThreadFraction)
+    }
+}
+
+private extension ImagingDeconvolutionProgress {
+    var majorCycleLabel: String {
+        guard majorCycleLimit > 0 else {
+            return "\(majorCycle) / auto"
+        }
+        return "\(majorCycle) / \(majorCycleLimit)"
+    }
+}
+
 private struct ResidualHistoryChart: View {
     let progress: ImagingDeconvolutionProgress
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("Max remaining residual")
+            Text(progress.residualHistoryMilliJyPerBeam.count > 1 ? "Peak residual samples" : "Current peak residual")
                 .workbenchFont(.caption2)
                 .foregroundStyle(.secondary)
             Canvas { context, size in
@@ -7648,7 +7395,15 @@ private struct ResidualHistoryChart: View {
                         line.addLine(to: CGPoint(x: x, y: y))
                     }
                 }
-                context.stroke(line, with: .color(.cyan), lineWidth: 1.5)
+                if values.count == 1 {
+                    let y = yPosition(values[0], minValue: minValue, maxValue: maxValue, rect: rect)
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: rect.midX - 2, y: y - 2, width: 4, height: 4)),
+                        with: .color(.cyan)
+                    )
+                } else {
+                    context.stroke(line, with: .color(.cyan), lineWidth: 1.5)
+                }
             }
         }
     }

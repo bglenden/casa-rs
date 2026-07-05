@@ -4,10 +4,13 @@ set -euo pipefail
 
 MODE="run"
 OPEN_PROJECT=""
+OPEN_IMAGER_MS=""
 OPEN_TUTORIAL_PACK=""
 OPEN_TUTORIAL_SECTION=""
 SHOW_IMAGER_PROGRESS_MOCKUP="0"
+RUN_ACTIVE_TASK="0"
 USE_TEMP_REAL_PROJECT="1"
+EXTRA_APP_ARGS=()
 APP_NAME="casars-mac"
 BUNDLE_ID="org.casa-rs.casars-mac"
 MIN_SYSTEM_VERSION="14.0"
@@ -46,6 +49,18 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       OPEN_PROJECT="$2"
+      OPEN_IMAGER_MS=""
+      OPEN_TUTORIAL_PACK=""
+      USE_TEMP_REAL_PROJECT="0"
+      shift 2
+      ;;
+    --imager-ms|--open-imager-ms)
+      if [[ $# -lt 2 ]]; then
+        echo "missing MeasurementSet path after $1" >&2
+        exit 2
+      fi
+      OPEN_IMAGER_MS="$2"
+      OPEN_PROJECT=""
       OPEN_TUTORIAL_PACK=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
@@ -56,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       OPEN_TUTORIAL_PACK="$2"
+      OPEN_IMAGER_MS=""
       OPEN_PROJECT=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
@@ -70,6 +86,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --empty)
       OPEN_PROJECT=""
+      OPEN_IMAGER_MS=""
+      OPEN_TUTORIAL_PACK=""
       USE_TEMP_REAL_PROJECT="0"
       shift
       ;;
@@ -77,8 +95,20 @@ while [[ $# -gt 0 ]]; do
       SHOW_IMAGER_PROGRESS_MOCKUP="1"
       shift
       ;;
+    --run-active-task)
+      RUN_ACTIVE_TASK="1"
+      shift
+      ;;
+    --imagename|--output-prefix|--image-size|--imsize|--image-width|--image-height|--cell-arcsec|--spectral-mode|--specmode|--channel-start|--channel-count|--niter|--threshold-jy|--dirty-only)
+      if [[ $# -lt 2 ]]; then
+        echo "missing value after $1" >&2
+        exit 2
+      fi
+      EXTRA_APP_ARGS+=("$1" "$2")
+      shift 2
+      ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH [--tutorial-section ID]|--empty] [--show-imager-progress-mockup]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH [--tutorial-section ID]|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
       exit 2
       ;;
   esac
@@ -268,24 +298,26 @@ open_app() {
     open_flags=(-W -n)
   fi
 
-  local app_args=()
+  local app_args=(-ApplePersistenceIgnoreState YES)
   if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
-    app_args=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
+    app_args+=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
     if [[ -n "$OPEN_TUTORIAL_SECTION" ]]; then
       app_args+=(--open-tutorial-section "$OPEN_TUTORIAL_SECTION")
     fi
+  elif [[ -n "$OPEN_IMAGER_MS" ]]; then
+    app_args+=(--open-imager-ms "$OPEN_IMAGER_MS")
   elif [[ -n "$OPEN_PROJECT" ]]; then
-    app_args=(--open-project "$OPEN_PROJECT")
+    app_args+=(--open-project "$OPEN_PROJECT")
   fi
   if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
     app_args+=(--show-imager-progress-mockup)
   fi
-
-  if [[ "${#app_args[@]}" -gt 0 ]]; then
-    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args "${app_args[@]}"
-  else
-    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE"
+  if [[ "$RUN_ACTIVE_TASK" == "1" ]]; then
+    app_args+=(--run-active-task)
   fi
+  app_args+=("${EXTRA_APP_ARGS[@]}")
+
+  /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args "${app_args[@]}"
 }
 
 launched_app_pid() {
@@ -293,24 +325,26 @@ launched_app_pid() {
 }
 
 debug_app() {
-  local app_args=()
+  local app_args=(-ApplePersistenceIgnoreState YES)
   if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
-    app_args=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
+    app_args+=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
     if [[ -n "$OPEN_TUTORIAL_SECTION" ]]; then
       app_args+=(--open-tutorial-section "$OPEN_TUTORIAL_SECTION")
     fi
+  elif [[ -n "$OPEN_IMAGER_MS" ]]; then
+    app_args+=(--open-imager-ms "$OPEN_IMAGER_MS")
   elif [[ -n "$OPEN_PROJECT" ]]; then
-    app_args=(--open-project "$OPEN_PROJECT")
+    app_args+=(--open-project "$OPEN_PROJECT")
   fi
   if [[ "$SHOW_IMAGER_PROGRESS_MOCKUP" == "1" ]]; then
     app_args+=(--show-imager-progress-mockup)
   fi
-
-  if [[ "${#app_args[@]}" -gt 0 ]]; then
-    lldb -- "$APP_BINARY" "${app_args[@]}"
-  else
-    lldb -- "$APP_BINARY"
+  if [[ "$RUN_ACTIVE_TASK" == "1" ]]; then
+    app_args+=(--run-active-task)
   fi
+  app_args+=("${EXTRA_APP_ARGS[@]}")
+
+  lldb -- "$APP_BINARY" "${app_args[@]}"
 }
 
 case "$MODE" in
@@ -355,7 +389,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH|--empty] [--show-imager-progress-mockup]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--imager-ms PATH|--tutorial-pack PATH|--empty] [--show-imager-progress-mockup] [--run-active-task] [imager launch overrides]" >&2
     exit 2
     ;;
 esac
