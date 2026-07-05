@@ -287,6 +287,7 @@ struct ImagerProgressContext {
     last_emit_at: Option<Instant>,
     sequence: u64,
     uv_coverage: BoundedUvCoverageAccumulator,
+    last_active_runtime_backend: Option<String>,
 }
 
 struct ImagerProgressGuard;
@@ -315,6 +316,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         started_at: Instant::now(),
         last_emit_at: None,
         sequence: 0,
+        last_active_runtime_backend: None,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
         *slot = Some(context);
@@ -348,6 +350,15 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
         event.schema_version = IMAGER_PROGRESS_EVENT_SCHEMA_VERSION;
         event.sequence = context.sequence;
         event.elapsed_ms = now.duration_since(context.started_at).as_millis() as u64;
+        if let Some(runtime) = event.runtime.as_mut() {
+            if runtime.active_threads > 0 {
+                context.last_active_runtime_backend = Some(runtime.backend.clone());
+            } else if event.phase == "finished" {
+                if let Some(backend) = context.last_active_runtime_backend.as_ref() {
+                    runtime.backend = backend.clone();
+                }
+            }
+        }
         if event.uv_coverage.is_none() && !context.uv_coverage.measured.is_empty() {
             event.uv_coverage = Some(context.uv_coverage.snapshot());
         }
@@ -445,23 +456,50 @@ fn progress_output_cube_from_config(
 fn progress_runtime_from_config(
     config: &CliConfig,
     active_threads: usize,
+    selected_backend: Option<PerPlaneExecutionBackend>,
 ) -> ImagerProgressRuntime {
     let total_threads = thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1);
-    let backend = standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration);
-    let gpu_active = matches!(
-        config.standard_mfs_acceleration,
-        StandardMfsAccelerationPolicy::Metal
-    ) || config
-        .standard_mfs_backend
-        .as_deref()
-        .is_some_and(|value| value.to_ascii_lowercase().contains("metal"));
+    let acceleration = standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration);
+    let minor_cycle_backend = if matches!(
+        selected_backend,
+        Some(PerPlaneExecutionBackend::Wave3MetalGrouped)
+    ) && !config.dirty_only
+        && config.niter > 0
+    {
+        StandardMfsMinorCycleBackend::Metal
+    } else {
+        standard_mfs_minor_cycle_backend_for_config(config)
+    };
+    let explicit_gpu_backend =
+        matches!(
+            selected_backend,
+            Some(PerPlaneExecutionBackend::Wave3MetalGrouped)
+        ) || matches!(minor_cycle_backend, StandardMfsMinorCycleBackend::Metal)
+            || config
+                .standard_mfs_backend
+                .as_deref()
+                .is_some_and(|value| value.to_ascii_lowercase().contains("metal"));
+    let backend = if let Some(selected_backend) = selected_backend {
+        format!(
+            "{acceleration} / {} / {} minor cycle",
+            selected_backend.label(),
+            minor_cycle_backend.label()
+        )
+    } else if config.dirty_only || config.niter == 0 {
+        acceleration.to_string()
+    } else {
+        format!(
+            "{acceleration} / {} minor cycle",
+            minor_cycle_backend.label()
+        )
+    };
     ImagerProgressRuntime {
         active_threads: active_threads.min(total_threads.max(active_threads)),
         total_threads: total_threads.max(active_threads),
-        gpu_active,
-        backend: backend.to_string(),
+        gpu_active: active_threads > 0 && explicit_gpu_backend,
+        backend,
     }
 }
 
@@ -530,7 +568,7 @@ fn emit_imager_progress_run_started(request: &ImagerRunTaskRequest) {
                 target_residual_mjy_per_beam: Some(config.threshold_jy * 1000.0),
                 residual_history_mjy_per_beam: Vec::new(),
             }),
-            runtime: Some(progress_runtime_from_config(&config, 0)),
+            runtime: Some(progress_runtime_from_config(&config, 0, None)),
         },
         true,
     );
@@ -612,6 +650,7 @@ fn emit_imager_progress_cube_slab(
     active_plane_start: usize,
     active_plane_end: usize,
     active_threads: usize,
+    selected_backend: Option<PerPlaneExecutionBackend>,
     ms_read: Option<ImagerProgressMsWindow>,
     phase: &str,
 ) {
@@ -634,7 +673,11 @@ fn emit_imager_progress_cube_slab(
             )),
             uv_coverage: None,
             deconvolution: None,
-            runtime: Some(progress_runtime_from_config(config, active_threads)),
+            runtime: Some(progress_runtime_from_config(
+                config,
+                active_threads,
+                selected_backend,
+            )),
         },
         false,
     );
@@ -651,6 +694,7 @@ fn emit_imager_progress_deconvolution(
     peak_residual_jy_per_beam: Option<f32>,
     residual_history_jy_per_beam: Vec<f32>,
     active_threads: usize,
+    selected_backend: Option<PerPlaneExecutionBackend>,
     phase: &str,
 ) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
@@ -671,7 +715,7 @@ fn emit_imager_progress_deconvolution(
             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
             sequence: 0,
             elapsed_ms: 0,
-            phase: "deconvolving".to_string(),
+            phase: phase.to_string(),
             summary: format!(
                 "{phase}: planes {active_plane_start}..{active_plane_end}, {minor_iterations} minor iterations"
             ),
@@ -698,7 +742,11 @@ fn emit_imager_progress_deconvolution(
                 target_residual_mjy_per_beam: Some(config.threshold_jy * 1000.0),
                 residual_history_mjy_per_beam,
             }),
-            runtime: Some(progress_runtime_from_config(config, active_threads)),
+            runtime: Some(progress_runtime_from_config(
+                config,
+                active_threads,
+                selected_backend,
+            )),
         },
         false,
     );
@@ -781,7 +829,7 @@ fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &R
                     .rev()
                     .collect(),
             }),
-            runtime: Some(progress_runtime_from_config(&config, 0)),
+            runtime: Some(progress_runtime_from_config(&config, 0, None)),
         },
         true,
     );
@@ -5043,6 +5091,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             slab.plane_start,
             slab.plane_end,
             worker_count,
+            None,
             imager_progress_ms_window_from_selection(
                 ms,
                 &table_values,
@@ -5110,6 +5159,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 worker_count,
+                None,
                 imager_progress_ms_window_from_selection(
                     ms,
                     &table_values,
@@ -7538,6 +7588,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
     let channel_start = effective_cube_channel_start(config)?;
     let worker_capacity = cube_slab_plane_worker_capacity(config, nplanes);
     let per_plane_backend_plan = plan_cube_per_plane_execution(config, nplanes, worker_capacity);
+    let progress_selected_backend = Some(per_plane_backend_plan.selected_backend);
     let data_description = ms
         .data_description()
         .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
@@ -7985,6 +8036,29 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             );
             let slab_channel_frequencies_hz =
                 &metadata.channel_frequencies_hz[slab.plane_start..slab.plane_end];
+            if let Some(slab_center_frequency_hz) = slab_channel_frequencies_hz
+                .get((slab.plane_end - slab.plane_start) / 2)
+                .copied()
+            {
+                observe_imager_progress_shared_slab_uv_once(
+                    shared_source.as_ref(),
+                    slab_center_frequency_hz,
+                );
+                emit_imager_progress_cube_slab(
+                    config,
+                    slab.plane_start,
+                    slab.plane_end,
+                    memory_plan.worker_count,
+                    progress_selected_backend,
+                    imager_progress_ms_window_from_selection(
+                        ms,
+                        &table_values,
+                        &active_selected_rows,
+                        channel_read_range,
+                    ),
+                    "sampling_uv_coverage",
+                );
+            }
             let (slab_planes, _, slab_prepare_elapsed) =
                 prepare_independent_shared_cube_slab_resident_clean_planes(
                     config,
@@ -7999,6 +8073,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     &table_values.corr_types,
                     plane_execution_config,
                     memory_plan.worker_count,
+                    progress_selected_backend,
                     Arc::clone(&shared_source),
                 )?;
             prepare_elapsed += slab_prepare_elapsed;
@@ -8033,6 +8108,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 memory_plan.worker_count,
                 plane_execution_config,
                 cube_cycle_threshold,
+                progress_selected_backend,
                 true,
                 &mut product_publisher,
                 &mut product_writers,
@@ -8058,6 +8134,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             memory_plan.worker_count,
             plane_execution_config,
             cube_cycle_threshold,
+            progress_selected_backend,
             false,
             &mut product_publisher,
             &mut product_writers,
@@ -8250,6 +8327,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
+                progress_selected_backend,
                 imager_progress_ms_window_from_selection(
                     ms,
                     &table_values,
@@ -8328,6 +8406,29 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 usize::try_from(shared_source.modeled_physical_read_bytes).unwrap_or(usize::MAX);
             let slab_visibility_staging_bytes =
                 usize::try_from(shared_source.logical_output_bytes).unwrap_or(usize::MAX);
+            if let Some(slab_center_frequency_hz) = slab_channel_frequencies_hz
+                .get((slab.plane_end - slab.plane_start) / 2)
+                .copied()
+            {
+                observe_imager_progress_shared_slab_uv_once(
+                    &shared_source,
+                    slab_center_frequency_hz,
+                );
+                emit_imager_progress_cube_slab(
+                    config,
+                    slab.plane_start,
+                    slab.plane_end,
+                    memory_plan.worker_count,
+                    progress_selected_backend,
+                    imager_progress_ms_window_from_selection(
+                        ms,
+                        &table_values,
+                        &active_selected_rows,
+                        channel_read_range,
+                    ),
+                    "sampling_uv_coverage",
+                );
+            }
             memory_logger.log(
                 config,
                 &memory_plan,
@@ -10999,6 +11100,7 @@ fn process_resident_clean_plane_states(
     worker_count: usize,
     execution_config: StandardMfsExecutionConfig,
     cube_cycle_threshold_jy_per_beam: f32,
+    selected_backend: Option<PerPlaneExecutionBackend>,
     force_skip: bool,
     product_publisher: &mut OrderedCubeProductPublisher<CubeImagingResult>,
     product_writers: &mut CubeSlabProductWriters,
@@ -11011,6 +11113,16 @@ fn process_resident_clean_plane_states(
         return Ok(IndependentStreamingExecutorStats::default());
     }
     let mut completed_minor_iterations = 0usize;
+    let active_plane_start = states
+        .iter()
+        .map(|state| state.plane_index)
+        .min()
+        .unwrap_or(0);
+    let active_plane_end = states
+        .iter()
+        .map(|state| state.plane_index.saturating_add(1))
+        .max()
+        .unwrap_or(active_plane_start);
     let tasks = states
         .into_iter()
         .map(|state| PlaneTask {
@@ -11160,14 +11272,15 @@ fn process_resident_clean_plane_states(
             };
             emit_imager_progress_deconvolution(
                 config,
-                plane_result.plane_index,
-                plane_result.plane_index.saturating_add(1),
+                active_plane_start,
+                active_plane_end,
                 completed_planes,
                 completed_minor_iterations,
                 plane_diagnostics.major_cycles,
                 Some(plane_diagnostics.final_residual_peak_jy_per_beam),
                 residual_history,
                 worker_count,
+                selected_backend,
                 phase,
             );
             product_publisher.accept(
@@ -11203,6 +11316,7 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
     corr_types: &[i32],
     base_plane_execution_config: StandardMfsExecutionConfig,
     worker_count: usize,
+    selected_backend: Option<PerPlaneExecutionBackend>,
     shared_source: Arc<SharedColumnarCubeSlabSource>,
 ) -> Result<
     (
@@ -11321,6 +11435,31 @@ fn prepare_independent_shared_cube_slab_resident_clean_planes(
         },
     )?;
     prepared.sort_by_key(|state| state.plane_index);
+    let prepared_peak = prepared
+        .iter()
+        .map(|state| {
+            state
+                .prepared
+                .clean_control_stats()
+                .initial_residual_peak_jy_per_beam
+        })
+        .filter(|value| value.is_finite())
+        .fold(None::<f32>, |peak, value| {
+            Some(peak.map_or(value, |current| current.max(value)))
+        });
+    emit_imager_progress_deconvolution(
+        config,
+        slab_plane_start,
+        slab_plane_end,
+        slab_plane_start,
+        0,
+        0,
+        prepared_peak,
+        prepared_peak.into_iter().collect(),
+        worker_count,
+        selected_backend,
+        "prepared cube clean candidates",
+    );
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
             "cube_resident_clean_prepare_slab_done slab_plane_start={} slab_plane_end={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3}",

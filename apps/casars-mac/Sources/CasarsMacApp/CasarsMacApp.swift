@@ -533,8 +533,52 @@ struct CasarsMacApp: App {
             store.setGenericTaskValue(taskID: "imager", argumentID: "threshold_jy", value: "\(thresholdJy)")
         }
         if let dirtyOnly = argumentValue(after: "--dirty-only", in: arguments) {
-            store.setGenericTaskToggle(taskID: "imager", argumentID: "dirty_only", value: ["1", "true", "yes", "on"].contains(dirtyOnly.lowercased()))
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "dirty_only", value: commandLineBool(dirtyOnly))
         }
+        if let deconvolver = argumentValue(after: "--deconvolver", in: arguments) {
+            store.setGenericTaskValue(taskID: "imager", argumentID: "deconvolver", value: deconvolver)
+        }
+        if let weighting = argumentValue(after: "--weighting", in: arguments) {
+            store.setGenericTaskValue(taskID: "imager", argumentID: "weighting", value: weighting)
+        }
+        if let gridder = argumentValue(after: "--gridder", in: arguments) {
+            store.setGenericTaskValue(taskID: "imager", argumentID: "gridder", value: gridder)
+        }
+        if let interpolation = argumentValue(after: "--interpolation", in: arguments)
+            ?? argumentValue(after: "--cube-interp", in: arguments) {
+            store.setGenericTaskValue(taskID: "imager", argumentID: "interpolation", value: interpolation)
+        }
+        if let perChannelDensity = argumentValue(after: "--perchanweightdensity", in: arguments)
+            ?? argumentValue(after: "--per-channel-density", in: arguments) {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "perchanweightdensity", value: commandLineBool(perChannelDensity))
+        } else if arguments.contains("--perchanweightdensity") {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "perchanweightdensity", value: true)
+        } else if arguments.contains("--no-perchanweightdensity") {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "perchanweightdensity", value: false)
+        }
+        if let writePB = argumentValue(after: "--write-pb", in: arguments) {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "write_pb", value: commandLineBool(writePB))
+        } else if arguments.contains("--write-pb") {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "write_pb", value: true)
+        }
+        if let pbcor = argumentValue(after: "--pbcor", in: arguments) {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "pbcor", value: commandLineBool(pbcor))
+        } else if arguments.contains("--pbcor") {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "pbcor", value: true)
+        }
+        if arguments.contains("--no-preview-pngs") {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
+        }
+        for (argumentID, value) in argumentPairs(after: "--set-task-value", in: arguments) {
+            store.setGenericTaskValue(taskID: "imager", argumentID: argumentID, value: value)
+        }
+        for (argumentID, value) in argumentPairs(after: "--set-task-toggle", in: arguments) {
+            store.setGenericTaskToggle(taskID: "imager", argumentID: argumentID, value: commandLineBool(value))
+        }
+    }
+
+    private static func commandLineBool(_ value: String) -> Bool {
+        ["1", "true", "yes", "on"].contains(value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 
     private static func argumentPairs(after flag: String, in arguments: [String]) -> [(String, String)] {

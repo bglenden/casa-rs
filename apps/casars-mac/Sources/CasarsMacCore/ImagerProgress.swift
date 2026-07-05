@@ -364,7 +364,7 @@ public struct OutputCubeProgress: Codable, Equatable {
     public var zAxisDisplayScale: Double {
         let imageAxis = max(xPixels, yPixels)
         guard imageAxis > 0 else { return 1 }
-        return max(0.05, Double(zPlanes) / Double(imageAxis))
+        return min(0.65, max(0.32, Double(zPlanes) / Double(imageAxis)))
     }
 
     public var aspectLabel: String {

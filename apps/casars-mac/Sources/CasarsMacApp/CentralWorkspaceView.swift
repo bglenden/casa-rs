@@ -7036,10 +7036,29 @@ private struct XYZCubeRangeWidget: View {
             )
 
             draw(box: fullCube, projection: projection, in: &context, color: .secondary.opacity(0.38), lineWidth: 1)
-            drawAxisLabels(projection: projection, in: &context)
+            fill(box: selectedSubcube, projection: projection, in: &context, color: .cyan.opacity(0.10))
             draw(box: selectedSubcube, projection: projection, in: &context, color: .cyan, lineWidth: 2.2)
+            drawAxisLabels(projection: projection, in: &context)
         }
         .accessibilityLabel("XYZ cube with highlighted sub-cube covering all X and all Y over selected Z range")
+    }
+
+    private func fill(
+        box: XYZCubeBox,
+        projection: XYZCubeProjection,
+        in context: inout GraphicsContext,
+        color: Color
+    ) {
+        for face in box.faces {
+            guard let first = face.first else { continue }
+            var path = Path()
+            path.move(to: projection.project(first))
+            for point in face.dropFirst() {
+                path.addLine(to: projection.project(point))
+            }
+            path.closeSubpath()
+            context.fill(path, with: .color(color))
+        }
     }
 
     private func draw(
@@ -7126,19 +7145,46 @@ private struct XYZCubeBox {
     var zMin: CGFloat
     var zMax: CGFloat
 
-    var edges: [(XYZCubePoint, XYZCubePoint)] {
-        let p000 = XYZCubePoint(x: xMin, y: yMin, z: zMin)
-        let p100 = XYZCubePoint(x: xMax, y: yMin, z: zMin)
-        let p110 = XYZCubePoint(x: xMax, y: yMax, z: zMin)
-        let p010 = XYZCubePoint(x: xMin, y: yMax, z: zMin)
-        let p001 = XYZCubePoint(x: xMin, y: yMin, z: zMax)
-        let p101 = XYZCubePoint(x: xMax, y: yMin, z: zMax)
-        let p111 = XYZCubePoint(x: xMax, y: yMax, z: zMax)
-        let p011 = XYZCubePoint(x: xMin, y: yMax, z: zMax)
+    var corners: (
+        p000: XYZCubePoint,
+        p100: XYZCubePoint,
+        p110: XYZCubePoint,
+        p010: XYZCubePoint,
+        p001: XYZCubePoint,
+        p101: XYZCubePoint,
+        p111: XYZCubePoint,
+        p011: XYZCubePoint
+    ) {
+        (
+            XYZCubePoint(x: xMin, y: yMin, z: zMin),
+            XYZCubePoint(x: xMax, y: yMin, z: zMin),
+            XYZCubePoint(x: xMax, y: yMax, z: zMin),
+            XYZCubePoint(x: xMin, y: yMax, z: zMin),
+            XYZCubePoint(x: xMin, y: yMin, z: zMax),
+            XYZCubePoint(x: xMax, y: yMin, z: zMax),
+            XYZCubePoint(x: xMax, y: yMax, z: zMax),
+            XYZCubePoint(x: xMin, y: yMax, z: zMax)
+        )
+    }
+
+    var faces: [[XYZCubePoint]] {
+        let c = corners
         return [
-            (p000, p100), (p100, p110), (p110, p010), (p010, p000),
-            (p001, p101), (p101, p111), (p111, p011), (p011, p001),
-            (p000, p001), (p100, p101), (p110, p111), (p010, p011)
+            [c.p000, c.p100, c.p110, c.p010],
+            [c.p001, c.p101, c.p111, c.p011],
+            [c.p000, c.p100, c.p101, c.p001],
+            [c.p100, c.p110, c.p111, c.p101],
+            [c.p110, c.p010, c.p011, c.p111],
+            [c.p010, c.p000, c.p001, c.p011]
+        ]
+    }
+
+    var edges: [(XYZCubePoint, XYZCubePoint)] {
+        let c = corners
+        return [
+            (c.p000, c.p100), (c.p100, c.p110), (c.p110, c.p010), (c.p010, c.p000),
+            (c.p001, c.p101), (c.p101, c.p111), (c.p111, c.p011), (c.p011, c.p001),
+            (c.p000, c.p001), (c.p100, c.p101), (c.p110, c.p111), (c.p010, c.p011)
         ]
     }
 }
@@ -7167,12 +7213,14 @@ private struct UVCoverageProgressView: View {
             context.stroke(vAxis, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
             context.stroke(Path(ellipseIn: rect), with: .color(.secondary.opacity(0.18)), lineWidth: 1)
 
+            draw(points: coverage.conjugate, color: .indigo, rect: rect, in: &context)
             draw(points: coverage.measured, color: .cyan, rect: rect, in: &context)
         }
         .frame(height: 210)
         .overlay(alignment: .bottomLeading) {
             HStack(spacing: 12) {
                 legendDot(color: .cyan, label: "measured sample")
+                legendDot(color: .indigo, label: "conjugate")
             }
             .padding(.leading, 6)
         }
@@ -7227,7 +7275,7 @@ private struct DeconvolutionProgressView: View {
                 metric("Components", "\(progress.componentsCleaned)")
             }
             HStack(spacing: 12) {
-                metric("Peak", String(format: "%.2f mJy/beam", progress.peakResidualMilliJyPerBeam))
+                metric("Latest peak", String(format: "%.2f mJy/beam", progress.peakResidualMilliJyPerBeam))
                 metric("Target", String(format: "%.2f mJy/beam", progress.targetResidualMilliJyPerBeam))
             }
         }
@@ -7365,7 +7413,7 @@ private struct ResidualHistoryChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(progress.residualHistoryMilliJyPerBeam.count > 1 ? "Peak residual samples" : "Current peak residual")
+            Text(progress.residualHistoryMilliJyPerBeam.count > 1 ? "Recent residual peaks" : "Current residual peak")
                 .workbenchFont(.caption2)
                 .foregroundStyle(.secondary)
             Canvas { context, size in

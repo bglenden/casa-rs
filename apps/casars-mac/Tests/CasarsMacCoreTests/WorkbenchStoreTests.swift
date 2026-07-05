@@ -2932,6 +2932,21 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(snapshot.runtime.gpuActive)
     }
 
+    func testOutputCubeDisplayKeepsShallowSpectralSlabsVisible() throws {
+        let cube = OutputCubeProgress(
+            xPixels: 1_024,
+            yPixels: 1_024,
+            zPlanes: 64,
+            activePlaneStart: 0,
+            activePlaneEnd: 32
+        )
+
+        XCTAssertEqual(cube.activePlaneCount, 32)
+        XCTAssertEqual(cube.activePlaneStartFraction, 0.0, accuracy: 0.001)
+        XCTAssertEqual(cube.activePlaneEndFraction, 0.5, accuracy: 0.001)
+        XCTAssertEqual(cube.zAxisDisplayScale, 0.32, accuracy: 0.001)
+    }
+
     func testOpenImagerProgressMockupSeedsRunningReviewState() throws {
         let store = WorkbenchStore(
             state: FixtureWorkbench.makeState(),
@@ -3309,6 +3324,82 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(retainedProgress.state, .cancelled)
         XCTAssertLessThan(store.state.taskRun.progress, 1.0)
         XCTAssertLessThan(cancelledSnapshot.jobs.first?.progress ?? 1.0, 1.0)
+    }
+
+    func testSucceededImagerRunKeepsFinalLiveProgressSnapshot() throws {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            correlations: ["XX", "YY"],
+            dataColumns: ["DATA"],
+            notes: "Recognized by Rust probe."
+        )
+        let client = HoldingGenericTaskClient()
+        client.stdout = try makeManagedImagerStdout(
+            measurementSet: "probed.ms",
+            imagename: "casa-rs-runs/output"
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [probedDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            ),
+            genericTaskClient: client,
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImagerTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openProject(path: "/data")
+        store.openImagerTaskForSelectedDataset()
+        store.selectTask("imager")
+        store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.runTask()
+
+        let runID = try XCTUnwrap(store.state.taskRun.runID)
+        var progress = ImagerProgressSnapshot.stub(request: ImagerProgressRequest(
+            taskID: "imager",
+            runID: runID,
+            taskState: .running,
+            progress: 0.25,
+            datasetName: "probed.ms",
+            requestSummary: "test"
+        ))
+        progress.phase = "cleaning cube plane"
+        progress.summary = "live progress should remain visible"
+        progress.runtime.gpuActive = true
+        client.emitProgress(progress)
+
+        waitFor("imager progress before success") {
+            store.debugSnapshot().taskImagerProgress?.phase == progress.phase
+        }
+
+        try client.emitSucceeded()
+        waitFor("imager success") {
+            store.debugSnapshot().taskState == .succeeded
+        }
+
+        let snapshot = store.debugSnapshot()
+        let retainedProgress = try XCTUnwrap(snapshot.taskImagerProgress)
+        XCTAssertEqual(snapshot.taskState, .succeeded)
+        XCTAssertEqual(retainedProgress.runID, runID)
+        XCTAssertEqual(retainedProgress.phase, progress.phase)
+        XCTAssertEqual(retainedProgress.summary, progress.summary)
+        XCTAssertEqual(retainedProgress.state, .succeeded)
+        XCTAssertTrue(retainedProgress.runtime.gpuActive)
     }
 
     func testBundledSampleImagerDefaultsChooseLineTarget() throws {

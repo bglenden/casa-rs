@@ -4152,6 +4152,12 @@ public final class WorkbenchStore: ObservableObject {
                 state.jobs[runID] = job
                 let managedImagerResult = decodeManagedImagerResult(result)
                 if state.taskRun.runID == runID {
+                    let progressSnapshot = terminalImagerProgressSnapshot(
+                        taskID: result.taskID,
+                        runID: runID,
+                        taskState: .succeeded,
+                        progress: 1.0
+                    )
                     if let managedImagerResult {
                         state.taskRun = TaskRun(
                             runID: runID,
@@ -4167,7 +4173,7 @@ public final class WorkbenchStore: ObservableObject {
                             diagnostics: managedImagerResult.run.warnings,
                             outputPaths: managedImagerResult.outputPaths,
                             requestSummary: state.taskRun.requestSummary,
-                            imagerProgress: imagerProgressSnapshot(taskID: result.taskID, runID: runID, taskState: .succeeded, progress: 1.0)
+                            imagerProgress: progressSnapshot
                         )
                     } else {
                         let genericProducts = genericTaskProducts(from: result)
@@ -4182,7 +4188,7 @@ public final class WorkbenchStore: ObservableObject {
                             diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
                             outputPaths: outputPaths,
                             requestSummary: state.taskRun.requestSummary,
-                            imagerProgress: imagerProgressSnapshot(taskID: result.taskID, runID: runID, taskState: .succeeded, progress: 1.0)
+                            imagerProgress: progressSnapshot
                         )
                     }
                 }
