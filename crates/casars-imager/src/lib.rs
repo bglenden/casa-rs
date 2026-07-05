@@ -1096,6 +1096,35 @@ fn emit_imager_progress_deconvolution(
     );
 }
 
+fn standard_mfs_replay_progress_minor_iterations(
+    config: &CliConfig,
+    replay_ordinal: usize,
+) -> usize {
+    if replay_ordinal == 0 {
+        0
+    } else {
+        replay_ordinal
+            .saturating_mul(config.minor_cycle_length.max(1))
+            .min(config.niter)
+    }
+}
+
+fn emit_standard_mfs_replay_progress(config: &CliConfig, replay_ordinal: usize, phase: &str) {
+    emit_imager_progress_deconvolution(
+        config,
+        0,
+        1,
+        0,
+        standard_mfs_replay_progress_minor_iterations(config, replay_ordinal),
+        replay_ordinal,
+        None,
+        Vec::new(),
+        env_standard_mfs_grid_threads().unwrap_or(1),
+        None,
+        phase,
+    );
+}
+
 fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &RunSummary) {
     let Ok(config) = request.to_cli_config() else {
         return;
@@ -2676,6 +2705,7 @@ pub fn export_standard_mfs_metal_fixture_from_config(
         &mut accumulate_timings,
         &mut stream_stats,
         &planned_sample_builder,
+        None,
         |block| {
             routed_runs = routed_runs.saturating_add(block.run_count());
             routed_lanes = routed_lanes.saturating_add(block.logical_lanes());
@@ -7185,6 +7215,12 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 };
                 let replay_ordinal = replay_invocation;
                 replay_invocation += 1;
+                let replay_progress_phase = if replay_ordinal == 0 {
+                    "building dirty image"
+                } else {
+                    "refreshing residual"
+                };
+                emit_standard_mfs_replay_progress(config, replay_ordinal, replay_progress_phase);
                 let mut replay_stats =
                     StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
                 let drain_prefilled_cache = replay_ordinal == 0
@@ -7224,6 +7260,15 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         if let Some(error) = stream_error {
                             return Err(error);
                         }
+                        emit_standard_mfs_replay_progress(
+                            config,
+                            replay_ordinal,
+                            if replay_ordinal == 0 {
+                                "dirty image replay complete"
+                            } else {
+                                "residual replay complete"
+                            },
+                        );
                         return Ok(());
                     }
                 }
@@ -7258,6 +7303,15 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     if let Some(error) = stream_error {
                         return Err(error);
                     }
+                    emit_standard_mfs_replay_progress(
+                        config,
+                        replay_ordinal,
+                        if replay_ordinal == 0 {
+                            "dirty image replay complete"
+                        } else {
+                            "residual replay complete"
+                        },
+                    );
                     return Ok(());
                 }
 
@@ -7287,6 +7341,15 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     )
                     .map_err(ImagingError::InvalidRequest)?;
                     replay_stats.log();
+                    emit_standard_mfs_replay_progress(
+                        config,
+                        replay_ordinal,
+                        if replay_ordinal == 0 {
+                            "dirty image replay complete"
+                        } else {
+                            "residual replay complete"
+                        },
+                    );
                     return Ok(());
                 }
 
@@ -7310,6 +7373,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     &mut accumulate_timings,
                     &mut replay_stats,
                     &planned_sample_builder,
+                    Some(progress_output_cube_from_config(config, 0, 1)),
                     |block| {
                         if let Some(cache) = new_cache.as_mut() {
                             cache.extend_from_block(block);
@@ -7329,6 +7393,15 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     return Err(error);
                 }
                 stream_result.map_err(ImagingError::InvalidRequest)?;
+                emit_standard_mfs_replay_progress(
+                    config,
+                    replay_ordinal,
+                    if replay_ordinal == 0 {
+                        "dirty image replay complete"
+                    } else {
+                        "residual replay complete"
+                    },
+                );
                 if let Some(cache) = new_cache {
                     if standard_mfs_profile_detail_enabled() {
                         eprintln!(
@@ -7364,6 +7437,16 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     };
                     let replay_ordinal = replay_invocation;
                     replay_invocation += 1;
+                    let replay_progress_phase = if replay_ordinal == 0 {
+                        "building dirty image"
+                    } else {
+                        "refreshing residual"
+                    };
+                    emit_standard_mfs_replay_progress(
+                        config,
+                        replay_ordinal,
+                        replay_progress_phase,
+                    );
                     let mut replay_stats =
                         StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
                     let mut stream_error = None::<ImagingError>;
@@ -7400,9 +7483,17 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     if let Some(error) = stream_error {
                         return Err(error);
                     }
-                    stream_result
-                        .map(|_| ())
-                        .map_err(ImagingError::InvalidRequest)
+                    stream_result.map_err(ImagingError::InvalidRequest)?;
+                    emit_standard_mfs_replay_progress(
+                        config,
+                        replay_ordinal,
+                        if replay_ordinal == 0 {
+                            "dirty image replay complete"
+                        } else {
+                            "residual replay complete"
+                        },
+                    );
+                    Ok(())
                 };
             run_standard_mfs_plan(StandardMfsPlan::planned_sample_run_blocks(
                 request,
@@ -7424,6 +7515,12 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             };
             let replay_ordinal = replay_invocation;
             replay_invocation += 1;
+            let replay_progress_phase = if replay_ordinal == 0 {
+                "building dirty image"
+            } else {
+                "refreshing residual"
+            };
+            emit_standard_mfs_replay_progress(config, replay_ordinal, replay_progress_phase);
             let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
             let mut stream_error = None::<ImagingError>;
             let mut pass =
@@ -7483,9 +7580,17 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             if let Some(error) = stream_error {
                 return Err(error);
             }
-            stream_result
-                .map(|_| ())
-                .map_err(ImagingError::InvalidRequest)
+            stream_result.map_err(ImagingError::InvalidRequest)?;
+            emit_standard_mfs_replay_progress(
+                config,
+                replay_ordinal,
+                if replay_ordinal == 0 {
+                    "dirty image replay complete"
+                } else {
+                    "residual replay complete"
+                },
+            );
+            Ok(())
         };
         run_standard_mfs_plan(StandardMfsPlan::weighted_batches(
             request,
@@ -24628,6 +24733,7 @@ fn stream_standard_mfs_routed_visibility_essentials_run_blocks<F>(
     accumulate_timings: &mut AccumulateRowTimings,
     pass_stats: &mut StandardMfsStreamingPassStats,
     planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    progress_output_cube: Option<ImagerProgressCube>,
     mut consume: F,
 ) -> Result<usize, String>
 where
@@ -24655,6 +24761,14 @@ where
         )?;
         let get_ms_values_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        emit_imager_progress_ms_window(
+            ms,
+            table_values,
+            row_chunk,
+            channel_read_range,
+            progress_output_cube.clone(),
+            None,
+        );
         pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
             data_column: read_timings.data_column,
             flag_column: read_timings.flag_column,
