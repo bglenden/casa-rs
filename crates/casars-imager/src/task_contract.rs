@@ -319,6 +319,119 @@ pub struct ImagerProgressMemory {
     pub memory_target_source: Option<String>,
 }
 
+/// Stable resource rows reported by imager observability snapshots.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedResourceId {
+    /// MeasurementSet/source visibility stream.
+    SourceStream,
+    /// Visibility gridding, FFT, and related image-domain transforms.
+    VisibilityGrid,
+    /// Resident output-plane/model/residual state.
+    PlaneState,
+    /// Minor-cycle deconvolution state and scratch.
+    Deconvolver,
+    /// Product write and product scratch state.
+    ProductScratch,
+    /// Worker or producer/consumer queue storage.
+    WorkerQueue,
+    /// GPU staging or device-resident state.
+    GpuStaging,
+    /// Process/runtime memory outside explicit domain resources.
+    ProcessRuntime,
+}
+
+/// Stable resource state labels for imager observability snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedResourceState {
+    /// The resource is actively being read, written, or computed on.
+    Active,
+    /// The resource is resident and intentionally retained, but not active.
+    Retained,
+    /// Work is blocked waiting for this resource or for downstream capacity.
+    Blocked,
+    /// The resource is known idle.
+    Idle,
+    /// The backend cannot currently determine this resource state.
+    Unknown,
+    /// Last known state is retained only as history and should not look current.
+    Stale,
+}
+
+/// Stable high-level stage kinds for imager observability spans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerObservedStageKind {
+    /// Whole imager run lifecycle.
+    Run,
+    /// Source MeasurementSet stream or row/channel preparation.
+    SourceStream,
+    /// Visibility gridding work.
+    Gridding,
+    /// FFT/image-domain transform work.
+    Fft,
+    /// Residual refresh, including model prediction and regridding.
+    ResidualRefresh,
+    /// Clark/Cotton-Schwab minor-cycle work.
+    ClarkMinorCycle,
+    /// Generic deconvolution work.
+    Deconvolution,
+    /// Mosaic residual or mosaic image-domain combination.
+    MosaicResidual,
+    /// Weighted mosaic grouping or accumulation.
+    WeightedMosaic,
+    /// Product materialization or writes.
+    ProductWrite,
+    /// Memory planning or memory-ledger update.
+    MemoryPlanning,
+    /// Stage not yet classified.
+    Unknown,
+}
+
+/// Stable span state labels for imager observability snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservabilitySpanState {
+    /// Span is currently executing.
+    Running,
+    /// Span completed successfully.
+    Complete,
+    /// Span failed.
+    Failed,
+    /// Span is blocked waiting for another resource or queue.
+    Blocked,
+    /// Span is retained as history and should not look current.
+    Stale,
+    /// Span state is unknown.
+    Unknown,
+}
+
+/// Active extent covered by a span when known.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservabilityExtent {
+    /// Inclusive start MAIN row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_start: Option<usize>,
+    /// Exclusive end MAIN row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_end: Option<usize>,
+    /// Inclusive start source channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_start: Option<usize>,
+    /// Exclusive end source channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_end: Option<usize>,
+    /// Inclusive start output plane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_start: Option<usize>,
+    /// Exclusive end output plane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_end: Option<usize>,
+}
+
 /// Per-resource memory facts for an imager observability snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservedResourceMemory {
@@ -340,11 +453,11 @@ pub struct ImagerObservedResourceMemory {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservedResource {
     /// Stable row id.
-    pub id: String,
+    pub id: ImagerObservedResourceId,
     /// Short display label.
     pub label: String,
-    /// Stable state label such as `busy` or `idle`.
-    pub state: String,
+    /// Stable state label.
+    pub state: ImagerObservedResourceState,
     /// Number of outstanding backend leases on this resource.
     pub lease_count: usize,
     /// Worker threads currently attributed to this resource.
@@ -366,11 +479,28 @@ pub struct ImagerObservabilitySpan {
     pub id: String,
     /// Human-readable span name.
     pub name: String,
-    /// Stable state label such as `running` or `complete`.
-    pub state: String,
+    /// Stable stage kind.
+    pub stage_kind: ImagerObservedStageKind,
+    /// Stable state label.
+    pub state: ImagerObservabilitySpanState,
+    /// Parent span id when this is a nested span.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Worker id or lane label when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_id: Option<String>,
     /// Resource ids currently owned by this span.
     #[serde(default)]
-    pub resource_ids: Vec<String>,
+    pub resource_ids: Vec<ImagerObservedResourceId>,
+    /// Resource ids this span expects to touch while active.
+    #[serde(default)]
+    pub expected_resource_ids: Vec<ImagerObservedResourceId>,
+    /// Active extent covered by this span when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extent: Option<ImagerObservabilityExtent>,
+    /// Aggregated span counters.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub counters: BTreeMap<String, u64>,
     /// Elapsed milliseconds since the task started when the snapshot was built.
     pub elapsed_ms: u64,
 }
@@ -2197,10 +2327,11 @@ mod tests {
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
         ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
         ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerProgressEvent,
-        ImagerProgressRuntime, ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel,
-        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
-        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        ImagerHogbomIterationMode, ImagerObservedResourceId, ImagerObservedResourceState,
+        ImagerObservedStageKind, ImagerPlaneSelection, ImagerProgressEvent, ImagerProgressRuntime,
+        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
+        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
+        ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy};
 
@@ -3150,7 +3281,7 @@ mod tests {
               {
                 "id": "source-stream",
                 "label": "Source Stream",
-                "state": "busy",
+                "state": "active",
                 "lease_count": 1,
                 "active_threads": 1,
                 "gpu_active": false,
@@ -3163,7 +3294,7 @@ mod tests {
               {
                 "id": "visibility-grid",
                 "label": "Grid/FFT",
-                "state": "busy",
+                "state": "active",
                 "lease_count": 1,
                 "active_threads": 4,
                 "gpu_active": true
@@ -3173,6 +3304,7 @@ mod tests {
               {
                 "id": "reading_ms",
                 "name": "reading rows",
+                "stage_kind": "source_stream",
                 "state": "running",
                 "resource_ids": ["source-stream", "visibility-grid"],
                 "elapsed_ms": 1250
@@ -3219,8 +3351,14 @@ mod tests {
         let observability = event.observability.as_ref().unwrap();
         assert_eq!(observability.schema_version, 1);
         assert_eq!(observability.resources.len(), 2);
-        assert_eq!(observability.resources[0].id, "source-stream");
-        assert_eq!(observability.resources[0].state, "busy");
+        assert_eq!(
+            observability.resources[0].id,
+            ImagerObservedResourceId::SourceStream
+        );
+        assert_eq!(
+            observability.resources[0].state,
+            ImagerObservedResourceState::Active
+        );
         assert_eq!(
             observability.resources[0]
                 .memory
@@ -3230,6 +3368,10 @@ mod tests {
             Some(3_804_104_045)
         );
         assert!(observability.resources[1].gpu_active);
+        assert_eq!(
+            observability.active_spans[0].stage_kind,
+            ImagerObservedStageKind::SourceStream
+        );
         assert_eq!(observability.active_spans[0].resource_ids.len(), 2);
 
         let minimal: ImagerProgressEvent = serde_json::from_str(

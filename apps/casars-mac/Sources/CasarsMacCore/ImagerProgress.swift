@@ -404,7 +404,7 @@ extension ImagerProgressSnapshot {
             ?? runtime.memory?.memoryTargetBytes
             ?? max(resource.memory?.plannedBytes ?? 0, resource.memory?.residentBytes ?? 0, 1)
         let bytes = resource.memory?.residentBytes ?? resource.memory?.plannedBytes ?? 0
-        let busy = state == .running && resource.state == "busy"
+        let busy = state == .running && (resource.state == "active" || resource.state == "busy")
         return ImagingResourceActivity(
             id: resource.id,
             name: resource.label,
