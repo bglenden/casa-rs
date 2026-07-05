@@ -1178,6 +1178,7 @@ fn imager_observed_worker_snapshots(
                 .first()
                 .map(|id| imager_observed_resource_id(id))
         });
+    let resource_blocked = active_threads == 0 && !active_resources.is_empty();
     let mut workers = Vec::new();
     if source_threads > 0 {
         workers.push(ImagerObservedWorkerSnapshot {
@@ -1199,6 +1200,17 @@ fn imager_observed_worker_snapshots(
             span_id: None,
             active_count: non_io_threads,
             capacity: Some(total_threads.max(non_io_threads)),
+        });
+    }
+    if resource_blocked {
+        workers.push(ImagerObservedWorkerSnapshot {
+            id: "blocked".to_string(),
+            label: "Blocked".to_string(),
+            state: ImagerObservedWorkerState::Blocked,
+            resource_id: primary_compute_resource,
+            span_id: None,
+            active_count: active_resources.len(),
+            capacity: Some(total_threads),
         });
     }
     if runtime.gpu_active {
@@ -1240,6 +1252,12 @@ fn imager_observed_queue_snapshots(
         .iter()
         .any(|id| id == PROGRESS_RESOURCE_SOURCE_STREAM);
     let compute_active = runtime.is_some_and(|runtime| runtime.active_threads > 0);
+    let dispatch_blocked = runtime.is_some_and(|runtime| {
+        runtime.active_threads == 0
+            && active_resources
+                .iter()
+                .any(|id| id != PROGRESS_RESOURCE_SOURCE_STREAM)
+    });
     let mut queues = Vec::new();
     if let Some(memory) = memory {
         queues.push(ImagerObservedQueueSnapshot {
@@ -1266,13 +1284,20 @@ fn imager_observed_queue_snapshots(
         len: None,
         capacity: runtime.map(|runtime| runtime.total_threads),
         bytes: None,
-        producers_active: compute_active,
+        producers_active: compute_active || dispatch_blocked,
         consumers_active: compute_active,
-        blocked_count: 0,
-        confidence: ImagerObservedQueueConfidence::Unknown,
-        note: Some(
-            "worker queue depth and blocked counts are not yet directly sampled".to_string(),
-        ),
+        blocked_count: usize::from(dispatch_blocked),
+        confidence: if dispatch_blocked {
+            ImagerObservedQueueConfidence::Estimated
+        } else {
+            ImagerObservedQueueConfidence::Unknown
+        },
+        note: Some(if dispatch_blocked {
+            "blocked count derived from compute resource ownership with no active workers"
+                .to_string()
+        } else {
+            "worker queue depth and blocked counts are not yet directly sampled".to_string()
+        }),
     });
     queues
 }
@@ -41293,6 +41318,93 @@ mod tests {
             Some(6 * 1024)
         );
         drop(context_guard);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn imager_observability_reports_blocked_worker_when_resource_has_no_threads() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        let resource_guard = acquire_imager_progress_resource_ids_with_threads(
+            &[ImagerObservedResourceId::VisibilityGrid],
+            0,
+        )
+        .expect("resource acquired");
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let active_resources = context
+            .active_resource_counts
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 13,
+            elapsed_ms: 1500,
+            phase: "resource_wait".to_string(),
+            summary: "resource wait".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 0,
+                total_threads: 4,
+                gpu_active: false,
+                backend: "cpu".to_string(),
+                active_resources: active_resources.clone(),
+                active_resource_threads: BTreeMap::new(),
+                memory: None,
+            }),
+            observability: None,
+        };
+        let snapshot =
+            imager_observability_snapshot(&event, context, &active_resources, &BTreeMap::new());
+        assert_eq!(
+            snapshot
+                .workers
+                .iter()
+                .find(|worker| worker.id == "blocked")
+                .map(|worker| (worker.state, worker.resource_id, worker.active_count)),
+            Some((
+                ImagerObservedWorkerState::Blocked,
+                Some(ImagerObservedResourceId::VisibilityGrid),
+                1,
+            ))
+        );
+        assert_eq!(
+            snapshot
+                .workers
+                .iter()
+                .find(|worker| worker.id == "idle")
+                .map(|worker| worker.active_count),
+            Some(4)
+        );
+        let dispatch = snapshot
+            .queues
+            .iter()
+            .find(|queue| queue.id == "worker-dispatch")
+            .expect("worker dispatch queue");
+        assert_eq!(dispatch.blocked_count, 1);
+        assert!(dispatch.producers_active);
+        assert!(!dispatch.consumers_active);
+        assert_eq!(
+            dispatch.confidence,
+            ImagerObservedQueueConfidence::Estimated
+        );
+        drop(context_guard);
+        drop(resource_guard);
         drop(progress_guard);
     }
 
