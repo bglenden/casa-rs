@@ -131,6 +131,28 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 ? [18.2, 13.6, 10.1, 7.5, 5.2, 3.6, 2.7]
                 : [22.0, 17.4, 13.2, 10.4, 8.8]
         )
+        let memory = ImagingMemoryProgress(
+            memoryTargetBytes: 17_179_869_184,
+            plannedActiveBytes: running ? 15_438_480_384 : 0,
+            sourceStreamBufferBytes: running ? 3_804_104_045 : 0,
+            productScratchBytes: running ? 5_436_915_712 : 0,
+            activePlanes: running ? outputCube.activePlaneCount : 0,
+            rowBlockRows: running ? measurementSetWindow.activeRowCount : 0,
+            memoryTargetSource: "system_half"
+        )
+        let runtime = ImagingRuntimeProgress(
+            activeThreads: running ? 14 : 0,
+            totalThreads: 16,
+            gpuActive: running,
+            backend: running ? "CPU + Metal gridding" : "CPU + Metal available",
+            sampleCadence: "1 Hz max UI sample",
+            memory: memory
+        )
+        let observability = ImagingObservabilitySnapshot.stub(
+            running: running,
+            memory: memory,
+            activePlaneCount: outputCube.activePlaneCount
+        )
         return ImagerProgressSnapshot(
             source: "deterministic-stub",
             runID: request.runID,
@@ -146,22 +168,8 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
             outputCube: outputCube,
             uvCoverage: UVCoverageProgress.stub(),
             deconvolution: deconvolution,
-            runtime: ImagingRuntimeProgress(
-                activeThreads: running ? 14 : 0,
-                totalThreads: 16,
-                gpuActive: running,
-                backend: running ? "CPU + Metal gridding" : "CPU + Metal available",
-                sampleCadence: "1 Hz max UI sample",
-                memory: ImagingMemoryProgress(
-                    memoryTargetBytes: 17_179_869_184,
-                    plannedActiveBytes: running ? 15_438_480_384 : 0,
-                    sourceStreamBufferBytes: running ? 3_804_104_045 : 0,
-                    productScratchBytes: running ? 5_436_915_712 : 0,
-                    activePlanes: running ? outputCube.activePlaneCount : 0,
-                    rowBlockRows: running ? measurementSetWindow.activeRowCount : 0,
-                    memoryTargetSource: "system_half"
-                )
-            ),
+            runtime: runtime,
+            observability: observability,
             sampledAtLabel: running ? "live stub" : "idle stub"
         )
     }
@@ -261,138 +269,109 @@ extension ImagerProgressSnapshot {
         if let observability {
             return observability.resources.map(observedResourceActivity)
         }
-        guard let memory = runtime.memory else {
+        return runtimeDeclaredResourceActivities()
+    }
+
+    private func runtimeDeclaredResourceActivities() -> [ImagingResourceActivity] {
+        guard runtime.activeResourceIDsAreAuthoritative else {
             return []
         }
 
-        let activeThreadBudget = state == .running ? runtime.activeThreads : 0
-        let currentPhaseText = phase.lowercased()
-        let cyclePhaseText = deconvolution.phase.lowercased()
-        let retainedCyclePhaseIsActive = state == .running
-            && !cyclePhaseText.isEmpty
-            && cyclePhaseText != currentPhaseText
-            && !cyclePhaseText.contains("pending")
-            && !cyclePhaseText.contains("complete")
-            && !cyclePhaseText.contains("dirty imaging")
-        let activityPhaseText = retainedCyclePhaseIsActive
-            ? "\(currentPhaseText) \(cyclePhaseText)"
-            : currentPhaseText
-        let sharedPlaneBytes = max(
-            0,
-            memory.plannedActiveBytes - memory.sourceStreamBufferBytes - memory.productScratchBytes
+        let memory = runtime.memory
+        let plannedTarget = max(
+            memory?.memoryTargetBytes ?? 0,
+            memory?.plannedActiveBytes ?? 0,
+            1
         )
-        let gridBytes = sharedPlaneBytes
-        let planeBytes = sharedPlaneBytes
-        let deconvolverBytes = sharedPlaneBytes
-        let plannedTarget = max(memory.memoryTargetBytes, memory.plannedActiveBytes, 1)
-
-        func phaseBusy(_ keywords: [String], includeRetainedCycle: Bool = true) -> Bool {
-            let text = includeRetainedCycle ? activityPhaseText : currentPhaseText
-            return state == .running && keywords.contains { text.contains($0) }
-        }
         let explicitActiveResources = Set(runtime.activeResourceIDs)
-        let ownershipIsAuthoritative = runtime.activeResourceIDsAreAuthoritative
-        func resourceBusy(_ id: String, fallback: Bool) -> Bool {
+        func resourceBusy(_ id: String) -> Bool {
             guard state == .running else { return false }
-            return ownershipIsAuthoritative ? explicitActiveResources.contains(id) : fallback
+            return explicitActiveResources.contains(id)
         }
-        func resourceThreadCount(_ id: String, fallback: Int) -> Int {
+        func resourceThreadCount(_ id: String) -> Int {
             guard state == .running else { return 0 }
-            return max(0, runtime.activeResourceThreadCounts[id] ?? fallback)
+            if let threads = runtime.activeResourceThreadCounts[id] {
+                return max(0, threads)
+            }
+            return resourceBusy(id) ? max(0, runtime.activeThreads) : 0
         }
-        let sourceBusy = resourceBusy(
-            "source-stream",
-            fallback: phaseBusy(["read", "prepare", "source", "row", "ms"], includeRetainedCycle: false)
-        )
-        let gridFallbackBusy = phaseBusy(["grid", "fft", "major", "residual", "replay", "dirty image"])
-        let deconvolverFallbackBusy = phaseBusy(["minor cycle", "deconvolving", "cleaning", "cycle threshold"])
-        let gridBusy = resourceBusy("visibility-grid", fallback: gridFallbackBusy)
-        let deconvolverBusy = resourceBusy("deconvolver", fallback: deconvolverFallbackBusy)
-        let productBusy = resourceBusy(
-            "product-scratch",
-            fallback: phaseBusy(["write", "product", "restore", "output", "flush"], includeRetainedCycle: false)
-        )
-        let planeFallbackBusy = memory.activePlanes > 0 && state == .running && (
-            gridBusy || deconvolverBusy || productBusy || phaseBusy(["plane", "slab"])
-        )
-        let planeBusy = resourceBusy("plane-state", fallback: planeFallbackBusy)
+        let sourceBusy = resourceBusy("source-stream")
+        let gridBusy = resourceBusy("visibility-grid")
+        let planeBusy = resourceBusy("plane-state")
+        let deconvolverBusy = resourceBusy("deconvolver")
+        let productBusy = resourceBusy("product-scratch")
 
         return [
             ImagingResourceActivity(
                 id: "source-stream",
                 name: "Source stream",
-                detail: Self.resourceDetail(
-                    context: "\(Self.compactQuantityLabel(memory.rowBlockRows)) rows",
-                    plannedBytes: memory.sourceStreamBufferBytes
-                ),
+                detail: memory.map { Self.resourceDetail(
+                    context: "\(Self.compactQuantityLabel($0.rowBlockRows)) rows",
+                    plannedBytes: $0.sourceStreamBufferBytes
+                ) } ?? "backend declared",
                 kind: .source,
                 state: sourceBusy ? .busy : .idle,
-                residentBytes: memory.sourceStreamBufferBytes,
+                residentBytes: memory?.sourceStreamBufferBytes ?? 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.rowStartFraction,
                 sectionEndFraction: measurementSetWindow.rowEndFraction,
-                activeThreads: sourceBusy
-                    ? resourceThreadCount("source-stream", fallback: min(activeThreadBudget, max(0, runtime.totalThreads)))
-                    : 0,
+                activeThreads: sourceBusy ? resourceThreadCount("source-stream") : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: false
             ),
             ImagingResourceActivity(
                 id: "visibility-grid",
                 name: "Grid / FFT",
-                detail: Self.resourceDetail(context: "shared", plannedBytes: gridBytes),
+                detail: "backend declared",
                 kind: .grid,
                 state: gridBusy ? .busy : .idle,
-                residentBytes: gridBytes,
+                residentBytes: 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.channelStartFraction,
                 sectionEndFraction: measurementSetWindow.channelEndFraction,
-                activeThreads: gridBusy ? resourceThreadCount("visibility-grid", fallback: activeThreadBudget) : 0,
+                activeThreads: gridBusy ? resourceThreadCount("visibility-grid") : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: runtime.gpuActive && gridBusy
             ),
             ImagingResourceActivity(
                 id: "plane-state",
                 name: "Plane state",
-                detail: Self.resourceDetail(
-                    context: Self.planeCountLabel(memory.activePlanes),
-                    plannedBytes: planeBytes
-                ),
+                detail: memory.map { Self.planeCountLabel($0.activePlanes) } ?? "backend declared",
                 kind: .plane,
                 state: planeBusy ? .busy : .idle,
-                residentBytes: planeBytes,
+                residentBytes: 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
                 sectionEndFraction: outputCube.activePlaneEndFraction,
-                activeThreads: planeBusy ? resourceThreadCount("plane-state", fallback: activeThreadBudget) : 0,
+                activeThreads: planeBusy ? resourceThreadCount("plane-state") : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: runtime.gpuActive && (gridBusy || deconvolverBusy)
             ),
             ImagingResourceActivity(
                 id: "deconvolver",
                 name: "Deconvolver",
-                detail: Self.resourceDetail(context: "minor", plannedBytes: deconvolverBytes),
+                detail: "backend declared",
                 kind: .deconvolver,
                 state: deconvolverBusy ? .busy : .idle,
-                residentBytes: deconvolverBytes,
+                residentBytes: 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: 0,
                 sectionEndFraction: deconvolution.minorIterationFraction,
-                activeThreads: deconvolverBusy ? resourceThreadCount("deconvolver", fallback: activeThreadBudget) : 0,
+                activeThreads: deconvolverBusy ? resourceThreadCount("deconvolver") : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: runtime.gpuActive && deconvolverBusy
             ),
             ImagingResourceActivity(
                 id: "product-scratch",
                 name: "Products",
-                detail: Self.resourceSizeDetail(plannedBytes: memory.productScratchBytes),
+                detail: memory.map { Self.resourceSizeDetail(plannedBytes: $0.productScratchBytes) } ?? "backend declared",
                 kind: .product,
                 state: productBusy ? .busy : .idle,
-                residentBytes: memory.productScratchBytes,
+                residentBytes: memory?.productScratchBytes ?? 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
                 sectionEndFraction: outputCube.activePlaneEndFraction,
-                activeThreads: productBusy ? resourceThreadCount("product-scratch", fallback: min(activeThreadBudget, 2)) : 0,
+                activeThreads: productBusy ? resourceThreadCount("product-scratch") : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: false
             )
@@ -649,6 +628,168 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
         self.memoryLedger = memoryLedger
         self.workers = workers
         self.queues = queues
+    }
+}
+
+extension ImagingObservabilitySnapshot {
+    static func stub(
+        running: Bool,
+        memory: ImagingMemoryProgress,
+        activePlaneCount: Int
+    ) -> ImagingObservabilitySnapshot {
+        let gridState = running ? "active" : "idle"
+        let activeThreads = running ? 12 : 0
+        return ImagingObservabilitySnapshot(
+            schemaVersion: 1,
+            resources: [
+                ImagingObservedResource(
+                    id: "source-stream",
+                    label: "Source Stream",
+                    state: "idle",
+                    leaseCount: 0,
+                    activeThreads: 0,
+                    gpuActive: false,
+                    owner: nil,
+                    memory: ImagingObservedResourceMemory(
+                        residentBytes: nil,
+                        plannedBytes: memory.sourceStreamBufferBytes,
+                        rowBlockRows: memory.rowBlockRows,
+                        activePlanes: nil
+                    )
+                ),
+                ImagingObservedResource(
+                    id: "visibility-grid",
+                    label: "Grid/FFT",
+                    state: gridState,
+                    leaseCount: running ? 1 : 0,
+                    activeThreads: activeThreads,
+                    gpuActive: running,
+                    owner: running ? "gridding spectral slab" : nil,
+                    memory: nil
+                ),
+                ImagingObservedResource(
+                    id: "plane-state",
+                    label: "Plane State",
+                    state: gridState,
+                    leaseCount: running ? 1 : 0,
+                    activeThreads: activeThreads,
+                    gpuActive: running,
+                    owner: running ? "gridding spectral slab" : nil,
+                    memory: ImagingObservedResourceMemory(
+                        residentBytes: nil,
+                        plannedBytes: nil,
+                        rowBlockRows: nil,
+                        activePlanes: activePlaneCount
+                    )
+                ),
+                ImagingObservedResource(
+                    id: "deconvolver",
+                    label: "Deconvolver",
+                    state: "idle",
+                    leaseCount: 0,
+                    activeThreads: 0,
+                    gpuActive: false,
+                    owner: nil,
+                    memory: nil
+                ),
+                ImagingObservedResource(
+                    id: "product-scratch",
+                    label: "Products",
+                    state: "idle",
+                    leaseCount: 0,
+                    activeThreads: 0,
+                    gpuActive: false,
+                    owner: nil,
+                    memory: ImagingObservedResourceMemory(
+                        residentBytes: nil,
+                        plannedBytes: memory.productScratchBytes,
+                        rowBlockRows: nil,
+                        activePlanes: nil
+                    )
+                )
+            ],
+            activeSpans: running ? [
+                ImagingObservabilitySpan(
+                    id: "stub-gridding",
+                    name: "gridding spectral slab",
+                    state: "running",
+                    resourceIDs: ["visibility-grid", "plane-state"],
+                    elapsedMilliseconds: 0
+                )
+            ] : [],
+            memoryTargetBytes: memory.memoryTargetBytes,
+            memoryTargetSource: memory.memoryTargetSource,
+            memoryLedger: ImagingMemoryLedgerSnapshot(
+                entries: [
+                    ImagingMemoryLedgerEntry(
+                        kind: "source-buffer",
+                        label: "Source stream",
+                        resourceID: "source-stream",
+                        plannedBytes: memory.sourceStreamBufferBytes,
+                        trackedLiveBytes: memory.sourceStreamBufferBytes,
+                        highWaterBytes: nil,
+                        processRSSBytes: nil,
+                        processPeakRSSBytes: nil,
+                        untrackedBytes: nil,
+                        rowBlockRows: memory.rowBlockRows,
+                        activePlanes: nil,
+                        confidence: "planned",
+                        note: "stub memory plan"
+                    ),
+                    ImagingMemoryLedgerEntry(
+                        kind: "grid-fft-scratch",
+                        label: "Grid / FFT scratch",
+                        resourceID: "visibility-grid",
+                        plannedBytes: nil,
+                        trackedLiveBytes: nil,
+                        highWaterBytes: nil,
+                        processRSSBytes: nil,
+                        processPeakRSSBytes: nil,
+                        untrackedBytes: nil,
+                        rowBlockRows: nil,
+                        activePlanes: nil,
+                        confidence: "unknown",
+                        note: "stub does not duplicate shared bytes"
+                    ),
+                    ImagingMemoryLedgerEntry(
+                        kind: "plane-state",
+                        label: "Plane state",
+                        resourceID: "plane-state",
+                        plannedBytes: nil,
+                        trackedLiveBytes: nil,
+                        highWaterBytes: nil,
+                        processRSSBytes: nil,
+                        processPeakRSSBytes: nil,
+                        untrackedBytes: nil,
+                        rowBlockRows: nil,
+                        activePlanes: activePlaneCount,
+                        confidence: "unknown",
+                        note: "stub active planes"
+                    ),
+                    ImagingMemoryLedgerEntry(
+                        kind: "products",
+                        label: "Products",
+                        resourceID: "product-scratch",
+                        plannedBytes: memory.productScratchBytes,
+                        trackedLiveBytes: memory.productScratchBytes,
+                        highWaterBytes: nil,
+                        processRSSBytes: nil,
+                        processPeakRSSBytes: nil,
+                        untrackedBytes: nil,
+                        rowBlockRows: nil,
+                        activePlanes: nil,
+                        confidence: "planned",
+                        note: "stub product scratch"
+                    )
+                ],
+                plannedTotalBytes: memory.sourceStreamBufferBytes + memory.productScratchBytes,
+                trackedLiveTotalBytes: memory.sourceStreamBufferBytes + memory.productScratchBytes,
+                trackedHighWaterTotalBytes: 0,
+                processRSSBytes: nil,
+                processPeakRSSBytes: nil,
+                untrackedResidentBytes: nil
+            )
+        )
     }
 }
 
