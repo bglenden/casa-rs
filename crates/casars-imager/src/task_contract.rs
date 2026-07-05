@@ -319,6 +319,80 @@ pub struct ImagerProgressMemory {
     pub memory_target_source: Option<String>,
 }
 
+/// Per-resource memory facts for an imager observability snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservedResourceMemory {
+    /// Current resident bytes attributed to this resource, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resident_bytes: Option<usize>,
+    /// Planned or target bytes attributed to this resource, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_bytes: Option<usize>,
+    /// Rolling source row-block size when this resource is a stream buffer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_block_rows: Option<usize>,
+    /// Active output planes represented by this resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_planes: Option<usize>,
+}
+
+/// Authoritative resource row in an imager observability snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservedResource {
+    /// Stable row id.
+    pub id: String,
+    /// Short display label.
+    pub label: String,
+    /// Stable state label such as `busy` or `idle`.
+    pub state: String,
+    /// Number of outstanding backend leases on this resource.
+    pub lease_count: usize,
+    /// Worker threads currently attributed to this resource.
+    pub active_threads: usize,
+    /// Whether the resource is currently backed by GPU work.
+    pub gpu_active: bool,
+    /// Current owner or stage label when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Memory facts for this resource when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<ImagerObservedResourceMemory>,
+}
+
+/// Active execution span in an imager observability snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservabilitySpan {
+    /// Stable span id for this coarse activity.
+    pub id: String,
+    /// Human-readable span name.
+    pub name: String,
+    /// Stable state label such as `running` or `complete`.
+    pub state: String,
+    /// Resource ids currently owned by this span.
+    #[serde(default)]
+    pub resource_ids: Vec<String>,
+    /// Elapsed milliseconds since the task started when the snapshot was built.
+    pub elapsed_ms: u64,
+}
+
+/// Authoritative execution-state snapshot emitted with imager progress events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservabilitySnapshot {
+    /// Monotonic observability schema version.
+    pub schema_version: u32,
+    /// Fixed tracked resource rows.
+    pub resources: Vec<ImagerObservedResource>,
+    /// Active high-level spans.
+    #[serde(default)]
+    pub active_spans: Vec<ImagerObservabilitySpan>,
+    /// Total memory target in bytes when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_target_bytes: Option<usize>,
+    /// Source label for the memory target when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_target_source: Option<String>,
+}
+
 /// One coarse progress event emitted while an imager task is running.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerProgressEvent {
@@ -350,6 +424,9 @@ pub struct ImagerProgressEvent {
     /// Runtime resource state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<ImagerProgressRuntime>,
+    /// Authoritative execution-state snapshot for progress/diagnostic UIs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observability: Option<ImagerObservabilitySnapshot>,
 }
 
 /// Supported scalar imaging planes and explicit raw correlations.
@@ -3066,6 +3143,43 @@ mod tests {
               "row_block_rows": 128704,
               "memory_target_source": "system_half"
             }
+          },
+          "observability": {
+            "schema_version": 1,
+            "resources": [
+              {
+                "id": "source-stream",
+                "label": "Source Stream",
+                "state": "busy",
+                "lease_count": 1,
+                "active_threads": 1,
+                "gpu_active": false,
+                "owner": "reading_ms",
+                "memory": {
+                  "planned_bytes": 3804104045,
+                  "row_block_rows": 128704
+                }
+              },
+              {
+                "id": "visibility-grid",
+                "label": "Grid/FFT",
+                "state": "busy",
+                "lease_count": 1,
+                "active_threads": 4,
+                "gpu_active": true
+              }
+            ],
+            "active_spans": [
+              {
+                "id": "reading_ms",
+                "name": "reading rows",
+                "state": "running",
+                "resource_ids": ["source-stream", "visibility-grid"],
+                "elapsed_ms": 1250
+              }
+            ],
+            "memory_target_bytes": 17179869184,
+            "memory_target_source": "system_half"
           }
         }"#;
         let event: ImagerProgressEvent =
@@ -3102,6 +3216,21 @@ mod tests {
                 .active_planes,
             47
         );
+        let observability = event.observability.as_ref().unwrap();
+        assert_eq!(observability.schema_version, 1);
+        assert_eq!(observability.resources.len(), 2);
+        assert_eq!(observability.resources[0].id, "source-stream");
+        assert_eq!(observability.resources[0].state, "busy");
+        assert_eq!(
+            observability.resources[0]
+                .memory
+                .as_ref()
+                .unwrap()
+                .planned_bytes,
+            Some(3_804_104_045)
+        );
+        assert!(observability.resources[1].gpu_active);
+        assert_eq!(observability.active_spans[0].resource_ids.len(), 2);
 
         let minimal: ImagerProgressEvent = serde_json::from_str(
             r#"{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"start"}"#,
@@ -3130,6 +3259,7 @@ mod tests {
                 active_resource_threads: BTreeMap::new(),
                 memory: None,
             }),
+            observability: None,
         };
         let serialized = serde_json::to_string(&idle_runtime).expect("serialize idle runtime");
         assert!(serialized.contains(r#""active_resources":[]"#));

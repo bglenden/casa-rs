@@ -60,6 +60,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
     public var uvCoverage: UVCoverageProgress
     public var deconvolution: ImagingDeconvolutionProgress
     public var runtime: ImagingRuntimeProgress
+    public var observability: ImagingObservabilitySnapshot?
     public var sampledAtLabel: String
     public var sampledAtMilliseconds: UInt64?
     public var receivedAt: Date?
@@ -76,6 +77,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
         uvCoverage: UVCoverageProgress,
         deconvolution: ImagingDeconvolutionProgress,
         runtime: ImagingRuntimeProgress,
+        observability: ImagingObservabilitySnapshot? = nil,
         sampledAtLabel: String,
         sampledAtMilliseconds: UInt64? = nil,
         receivedAt: Date? = nil
@@ -91,6 +93,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
         self.uvCoverage = uvCoverage
         self.deconvolution = deconvolution
         self.runtime = runtime
+        self.observability = observability
         self.sampledAtLabel = sampledAtLabel
         self.sampledAtMilliseconds = sampledAtMilliseconds
         self.receivedAt = receivedAt
@@ -220,6 +223,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 backend: "unknown",
                 sampleCadence: "event stream"
             ),
+            observability: event.observability.map(ImagingObservabilitySnapshot.init(payload:)) ?? previous?.observability,
             sampledAtLabel: Self.elapsedSecondsLabel(milliseconds: event.elapsedMs),
             sampledAtMilliseconds: event.elapsedMs,
             receivedAt: Date()
@@ -254,6 +258,9 @@ extension ImagerProgressSnapshot {
     }
 
     public var resourceActivities: [ImagingResourceActivity] {
+        if let observability {
+            return observability.resources.map(observedResourceActivity)
+        }
         guard let memory = runtime.memory else {
             return []
         }
@@ -392,6 +399,95 @@ extension ImagerProgressSnapshot {
         ]
     }
 
+    private func observedResourceActivity(_ resource: ImagingObservedResource) -> ImagingResourceActivity {
+        let memoryTarget = observability?.memoryTargetBytes
+            ?? runtime.memory?.memoryTargetBytes
+            ?? max(resource.memory?.plannedBytes ?? 0, resource.memory?.residentBytes ?? 0, 1)
+        let bytes = resource.memory?.residentBytes ?? resource.memory?.plannedBytes ?? 0
+        let busy = state == .running && resource.state == "busy"
+        return ImagingResourceActivity(
+            id: resource.id,
+            name: resource.label,
+            detail: Self.observedResourceDetail(resource),
+            kind: Self.resourceKind(for: resource.id),
+            state: busy ? .busy : .idle,
+            residentBytes: bytes,
+            targetBytes: memoryTarget,
+            sectionStartFraction: Self.resourceSection(for: resource.id, snapshot: self).0,
+            sectionEndFraction: Self.resourceSection(for: resource.id, snapshot: self).1,
+            activeThreads: busy ? resource.activeThreads : 0,
+            totalThreads: runtime.totalThreads,
+            gpuActive: busy && resource.gpuActive
+        )
+    }
+
+    private static func observedResourceDetail(_ resource: ImagingObservedResource) -> String {
+        var parts: [String] = []
+        if let rows = resource.memory?.rowBlockRows {
+            parts.append("\(compactQuantityLabel(rows)) rows")
+        }
+        if let planes = resource.memory?.activePlanes {
+            parts.append(planeCountLabel(planes))
+        }
+        let residentBytes = resource.memory?.residentBytes ?? 0
+        let plannedBytes = resource.memory?.plannedBytes ?? 0
+        if residentBytes > 0, plannedBytes > 0 {
+            parts.append("\(compactByteSizeLabel(residentBytes)) now / \(compactByteSizeLabel(plannedBytes)) planned")
+        } else if residentBytes > 0 {
+            parts.append("\(compactByteSizeLabel(residentBytes)) now")
+        } else if plannedBytes > 0 {
+            parts.append("\(compactByteSizeLabel(plannedBytes)) planned")
+        }
+        if parts.isEmpty, let owner = resource.owner, !owner.isEmpty {
+            parts.append(owner)
+        }
+        return parts.isEmpty ? "observed" : parts.joined(separator: " / ")
+    }
+
+    private static func resourceKind(for id: String) -> ImagingResourceActivityKind {
+        switch id {
+        case "source-stream":
+            return .source
+        case "visibility-grid":
+            return .grid
+        case "plane-state":
+            return .plane
+        case "deconvolver":
+            return .deconvolver
+        case "product-scratch":
+            return .product
+        default:
+            return .grid
+        }
+    }
+
+    private static func resourceSection(
+        for id: String,
+        snapshot: ImagerProgressSnapshot
+    ) -> (Double, Double) {
+        switch id {
+        case "source-stream":
+            return (
+                snapshot.measurementSetWindow.rowStartFraction,
+                snapshot.measurementSetWindow.rowEndFraction
+            )
+        case "visibility-grid":
+            return (
+                snapshot.measurementSetWindow.channelStartFraction,
+                snapshot.measurementSetWindow.channelEndFraction
+            )
+        case "plane-state", "product-scratch":
+            return (
+                snapshot.outputCube.activePlaneStartFraction,
+                snapshot.outputCube.activePlaneEndFraction
+            )
+        case "deconvolver":
+            return (0, snapshot.deconvolution.minorIterationFraction)
+        default:
+            return (0, 0)
+        }
+    }
+
     private static func resourceDetail(context: String, plannedBytes: Int) -> String {
         guard plannedBytes > 0 else {
             return context
@@ -497,6 +593,100 @@ public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
 
     public var byteFraction: Double {
         fraction(residentBytes, total: targetBytes)
+    }
+}
+
+public struct ImagingObservabilitySnapshot: Codable, Equatable {
+    public var schemaVersion: UInt64
+    public var resources: [ImagingObservedResource]
+    public var activeSpans: [ImagingObservabilitySpan]
+    public var memoryTargetBytes: Int?
+    public var memoryTargetSource: String?
+
+    public init(
+        schemaVersion: UInt64,
+        resources: [ImagingObservedResource],
+        activeSpans: [ImagingObservabilitySpan],
+        memoryTargetBytes: Int?,
+        memoryTargetSource: String?
+    ) {
+        self.schemaVersion = schemaVersion
+        self.resources = resources
+        self.activeSpans = activeSpans
+        self.memoryTargetBytes = memoryTargetBytes
+        self.memoryTargetSource = memoryTargetSource
+    }
+}
+
+public struct ImagingObservedResource: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var state: String
+    public var leaseCount: Int
+    public var activeThreads: Int
+    public var gpuActive: Bool
+    public var owner: String?
+    public var memory: ImagingObservedResourceMemory?
+
+    public init(
+        id: String,
+        label: String,
+        state: String,
+        leaseCount: Int,
+        activeThreads: Int,
+        gpuActive: Bool,
+        owner: String?,
+        memory: ImagingObservedResourceMemory?
+    ) {
+        self.id = id
+        self.label = label
+        self.state = state
+        self.leaseCount = leaseCount
+        self.activeThreads = activeThreads
+        self.gpuActive = gpuActive
+        self.owner = owner
+        self.memory = memory
+    }
+}
+
+public struct ImagingObservedResourceMemory: Codable, Equatable {
+    public var residentBytes: Int?
+    public var plannedBytes: Int?
+    public var rowBlockRows: Int?
+    public var activePlanes: Int?
+
+    public init(
+        residentBytes: Int?,
+        plannedBytes: Int?,
+        rowBlockRows: Int?,
+        activePlanes: Int?
+    ) {
+        self.residentBytes = residentBytes
+        self.plannedBytes = plannedBytes
+        self.rowBlockRows = rowBlockRows
+        self.activePlanes = activePlanes
+    }
+}
+
+public struct ImagingObservabilitySpan: Codable, Equatable, Identifiable {
+    public var id: String
+    public var name: String
+    public var state: String
+    public var resourceIDs: [String]
+    public var elapsedMilliseconds: UInt64
+
+    public init(
+        id: String,
+        name: String,
+        state: String,
+        resourceIDs: [String],
+        elapsedMilliseconds: UInt64
+    ) {
+        self.id = id
+        self.name = name
+        self.state = state
+        self.resourceIDs = resourceIDs
+        self.elapsedMilliseconds = elapsedMilliseconds
     }
 }
 
@@ -933,6 +1123,7 @@ struct ImagerProgressEventPayload: Decodable, Equatable {
     var uvCoverage: ImagerProgressUvCoveragePayload?
     var deconvolution: ImagerProgressDeconvolutionPayload?
     var runtime: ImagerProgressRuntimePayload?
+    var observability: ImagerObservabilityPayload?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -946,6 +1137,7 @@ struct ImagerProgressEventPayload: Decodable, Equatable {
         case uvCoverage = "uv_coverage"
         case deconvolution
         case runtime
+        case observability
     }
 }
 
@@ -1136,6 +1328,83 @@ struct ImagerProgressMemoryPayload: Decodable, Equatable {
     }
 }
 
+struct ImagerObservabilityPayload: Decodable, Equatable {
+    var schemaVersion: UInt64
+    var resources: [ImagerObservedResourcePayload]
+    var activeSpans: [ImagerObservabilitySpanPayload]
+    var memoryTargetBytes: Int?
+    var memoryTargetSource: String?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case resources
+        case activeSpans = "active_spans"
+        case memoryTargetBytes = "memory_target_bytes"
+        case memoryTargetSource = "memory_target_source"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(UInt64.self, forKey: .schemaVersion)
+        resources = try container.decodeIfPresent([ImagerObservedResourcePayload].self, forKey: .resources) ?? []
+        activeSpans = try container.decodeIfPresent([ImagerObservabilitySpanPayload].self, forKey: .activeSpans) ?? []
+        memoryTargetBytes = try container.decodeIfPresent(Int.self, forKey: .memoryTargetBytes)
+        memoryTargetSource = try container.decodeIfPresent(String.self, forKey: .memoryTargetSource)
+    }
+}
+
+struct ImagerObservedResourcePayload: Decodable, Equatable {
+    var id: String
+    var label: String
+    var state: String
+    var leaseCount: Int
+    var activeThreads: Int
+    var gpuActive: Bool
+    var owner: String?
+    var memory: ImagerObservedResourceMemoryPayload?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case state
+        case leaseCount = "lease_count"
+        case activeThreads = "active_threads"
+        case gpuActive = "gpu_active"
+        case owner
+        case memory
+    }
+}
+
+struct ImagerObservedResourceMemoryPayload: Decodable, Equatable {
+    var residentBytes: Int?
+    var plannedBytes: Int?
+    var rowBlockRows: Int?
+    var activePlanes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case residentBytes = "resident_bytes"
+        case plannedBytes = "planned_bytes"
+        case rowBlockRows = "row_block_rows"
+        case activePlanes = "active_planes"
+    }
+}
+
+struct ImagerObservabilitySpanPayload: Decodable, Equatable {
+    var id: String
+    var name: String
+    var state: String
+    var resourceIDs: [String]
+    var elapsedMilliseconds: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case state
+        case resourceIDs = "resource_ids"
+        case elapsedMilliseconds = "elapsed_ms"
+    }
+}
+
 extension ImagingMemoryProgress {
     init(payload: ImagerProgressMemoryPayload) {
         self.init(
@@ -1146,6 +1415,56 @@ extension ImagingMemoryProgress {
             activePlanes: payload.activePlanes,
             rowBlockRows: payload.rowBlockRows,
             memoryTargetSource: payload.memoryTargetSource
+        )
+    }
+}
+
+extension ImagingObservabilitySnapshot {
+    init(payload: ImagerObservabilityPayload) {
+        self.init(
+            schemaVersion: payload.schemaVersion,
+            resources: payload.resources.map(ImagingObservedResource.init(payload:)),
+            activeSpans: payload.activeSpans.map(ImagingObservabilitySpan.init(payload:)),
+            memoryTargetBytes: payload.memoryTargetBytes,
+            memoryTargetSource: payload.memoryTargetSource
+        )
+    }
+}
+
+extension ImagingObservedResource {
+    init(payload: ImagerObservedResourcePayload) {
+        self.init(
+            id: payload.id,
+            label: payload.label,
+            state: payload.state,
+            leaseCount: payload.leaseCount,
+            activeThreads: payload.activeThreads,
+            gpuActive: payload.gpuActive,
+            owner: payload.owner,
+            memory: payload.memory.map(ImagingObservedResourceMemory.init(payload:))
+        )
+    }
+}
+
+extension ImagingObservedResourceMemory {
+    init(payload: ImagerObservedResourceMemoryPayload) {
+        self.init(
+            residentBytes: payload.residentBytes,
+            plannedBytes: payload.plannedBytes,
+            rowBlockRows: payload.rowBlockRows,
+            activePlanes: payload.activePlanes
+        )
+    }
+}
+
+extension ImagingObservabilitySpan {
+    init(payload: ImagerObservabilitySpanPayload) {
+        self.init(
+            id: payload.id,
+            name: payload.name,
+            state: payload.state,
+            resourceIDs: payload.resourceIDs,
+            elapsedMilliseconds: payload.elapsedMilliseconds
         )
     }
 }

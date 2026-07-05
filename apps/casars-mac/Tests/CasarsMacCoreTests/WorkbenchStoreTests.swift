@@ -3027,6 +3027,36 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(diagnostic, "plain stderr")
     }
 
+    func testImagerProgressUsesObservabilityResourcesWhenPresent() throws {
+        var parser = ImagerProgressStderrParser()
+        let progressJSON = #"{"schema_version":1,"sequence":5,"elapsed_ms":1250,"phase":"residual_refresh","summary":"refreshing residual","ms_read":{"total_rows":1000,"total_channels":32,"row_start":100,"row_end":300,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"metal","active_resources":["visibility-grid","plane-state"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":12884901888,"source_stream_buffer_bytes":3221225472,"product_scratch_bytes":5368709120,"active_planes":4,"row_block_rows":292000,"memory_target_source":"test"}},"observability":{"schema_version":1,"resources":[{"id":"source-stream","label":"Source Stream","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false,"memory":{"planned_bytes":3221225472,"row_block_rows":292000}},{"id":"visibility-grid","label":"Grid/FFT","state":"busy","lease_count":1,"active_threads":4,"gpu_active":true,"owner":"residual_refresh"},{"id":"plane-state","label":"Plane State","state":"busy","lease_count":1,"active_threads":4,"gpu_active":true,"owner":"residual_refresh","memory":{"active_planes":4}},{"id":"deconvolver","label":"Deconvolver","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"product-scratch","label":"Products","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false,"memory":{"planned_bytes":5368709120}}],"active_spans":[{"id":"residual_refresh","name":"refreshing residual","state":"running","resource_ids":["visibility-grid","plane-state"],"elapsed_ms":1250}],"memory_target_bytes":17179869184,"memory_target_source":"test"}}"#
+
+        let records = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-obs", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        let observability = try XCTUnwrap(progress.observability)
+        XCTAssertEqual(observability.resources.count, 5)
+        XCTAssertEqual(observability.activeSpans.first?.resourceIDs, ["visibility-grid", "plane-state"])
+        let sourceResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "source-stream" })
+        XCTAssertEqual(sourceResource.detail, "292.0k rows / 3.2 GB planned")
+        XCTAssertEqual(sourceResource.state, .idle)
+        let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
+        XCTAssertEqual(gridResource.name, "Grid/FFT")
+        XCTAssertEqual(gridResource.detail, "residual_refresh")
+        XCTAssertEqual(gridResource.state, .busy)
+        XCTAssertEqual(gridResource.activeThreads, 4)
+        XCTAssertTrue(gridResource.gpuActive)
+        let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
+        XCTAssertEqual(planeResource.detail, "4 planes")
+        XCTAssertEqual(planeResource.sectionStartFraction, 0.25, accuracy: 0.001)
+        XCTAssertEqual(planeResource.sectionEndFraction, 0.5, accuracy: 0.001)
+        let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
+        XCTAssertEqual(productResource.detail, "5.4 GB planned")
+        XCTAssertEqual(productResource.byteFraction, Double(5_368_709_120) / Double(17_179_869_184), accuracy: 0.001)
+    }
+
     func testImagerProgressExplicitResourceOwnershipOverridesPhaseFallback() throws {
         var parser = ImagerProgressStderrParser()
         let progressJSON = #"{"schema_version":1,"sequence":3,"elapsed_ms":1500,"phase":"reading_ms","summary":"resource ownership","ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"explicit test","active_resources":["visibility-grid","plane-state","product-scratch"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":4,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#

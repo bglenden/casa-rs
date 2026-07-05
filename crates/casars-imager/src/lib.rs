@@ -134,12 +134,14 @@ pub use task_contract::{
     ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue,
     ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
-    ImagerPlaneSelection, ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressEvent,
-    ImagerProgressMemory, ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime,
-    ImagerProgressUvCoverage, ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo,
-    ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
-    ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
-    ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+    ImagerObservabilitySnapshot, ImagerObservabilitySpan, ImagerObservedResource,
+    ImagerObservedResourceMemory, ImagerPlaneSelection, ImagerProgressCube,
+    ImagerProgressDeconvolution, ImagerProgressEvent, ImagerProgressMemory, ImagerProgressMsWindow,
+    ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage, ImagerProgressUvPoint,
+    ImagerProgressWork, ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport,
+    ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+    ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
+    ImagerWTermMode, ImagerWeighting,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -159,6 +161,14 @@ const PROGRESS_RESOURCE_DECONVOLVER: &str = "deconvolver";
 const PROGRESS_RESOURCE_PRODUCTS: &str = "product-scratch";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
+const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 1;
+const PROGRESS_RESOURCE_ROWS: &[(&str, &str)] = &[
+    (PROGRESS_RESOURCE_SOURCE_STREAM, "Source Stream"),
+    (PROGRESS_RESOURCE_GRID, "Grid/FFT"),
+    (PROGRESS_RESOURCE_PLANE_STATE, "Plane State"),
+    (PROGRESS_RESOURCE_DECONVOLVER, "Deconvolver"),
+    (PROGRESS_RESOURCE_PRODUCTS, "Products"),
+];
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
     "imsize",
@@ -592,6 +602,82 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
     }
 }
 
+fn imager_observed_memory_for_resource(
+    resource_id: &str,
+    memory: Option<&ImagerProgressMemory>,
+) -> Option<ImagerObservedResourceMemory> {
+    let memory = memory?;
+    match resource_id {
+        PROGRESS_RESOURCE_SOURCE_STREAM => Some(ImagerObservedResourceMemory {
+            resident_bytes: None,
+            planned_bytes: Some(memory.source_stream_buffer_bytes),
+            row_block_rows: Some(memory.row_block_rows),
+            active_planes: None,
+        }),
+        PROGRESS_RESOURCE_PLANE_STATE => Some(ImagerObservedResourceMemory {
+            resident_bytes: None,
+            planned_bytes: None,
+            row_block_rows: None,
+            active_planes: Some(memory.active_planes),
+        }),
+        PROGRESS_RESOURCE_PRODUCTS => Some(ImagerObservedResourceMemory {
+            resident_bytes: None,
+            planned_bytes: Some(memory.product_scratch_bytes),
+            row_block_rows: None,
+            active_planes: None,
+        }),
+        _ => None,
+    }
+}
+
+fn imager_observability_snapshot(
+    event: &ImagerProgressEvent,
+    context: &ImagerProgressContext,
+    active_resources: &[String],
+    active_resource_threads: &BTreeMap<String, usize>,
+) -> ImagerObservabilitySnapshot {
+    let memory = context.memory.as_ref();
+    let resources = PROGRESS_RESOURCE_ROWS
+        .iter()
+        .map(|(id, label)| {
+            let lease_count = context
+                .active_resource_counts
+                .get(*id)
+                .copied()
+                .unwrap_or(0);
+            let active_threads = active_resource_threads.get(*id).copied().unwrap_or(0);
+            let is_busy = lease_count > 0 || active_threads > 0;
+            ImagerObservedResource {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                state: if is_busy { "busy" } else { "idle" }.to_string(),
+                lease_count,
+                active_threads,
+                gpu_active: event
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.gpu_active && is_busy),
+                owner: is_busy.then(|| event.phase.clone()),
+                memory: imager_observed_memory_for_resource(id, memory),
+            }
+        })
+        .collect::<Vec<_>>();
+    let active_spans = (!active_resources.is_empty()).then(|| ImagerObservabilitySpan {
+        id: event.phase.clone(),
+        name: event.summary.clone(),
+        state: "running".to_string(),
+        resource_ids: active_resources.to_vec(),
+        elapsed_ms: event.elapsed_ms,
+    });
+    ImagerObservabilitySnapshot {
+        schema_version: IMAGER_OBSERVABILITY_SCHEMA_VERSION,
+        resources,
+        active_spans: active_spans.into_iter().collect(),
+        memory_target_bytes: memory.map(|memory| memory.memory_target_bytes),
+        memory_target_source: memory.and_then(|memory| memory.memory_target_source.clone()),
+    }
+}
+
 fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return;
@@ -652,14 +738,14 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
         }
         if let Some(runtime) = event.runtime.as_mut() {
             if runtime.active_resources.is_empty() {
-                runtime.active_resources = active_resources;
+                runtime.active_resources = active_resources.clone();
             } else if !active_resources.is_empty() {
                 let mut merged = runtime
                     .active_resources
                     .iter()
                     .cloned()
                     .collect::<BTreeSet<_>>();
-                merged.extend(active_resources);
+                merged.extend(active_resources.iter().cloned());
                 runtime.active_resources = merged.into_iter().collect();
             }
             for (resource, threads) in active_resource_threads {
@@ -679,6 +765,18 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                     runtime.backend = backend.clone();
                 }
             }
+        }
+        if event.observability.is_none() {
+            event.observability = Some(imager_observability_snapshot(
+                &event,
+                context,
+                &active_resources,
+                &event
+                    .runtime
+                    .as_ref()
+                    .map(|runtime| runtime.active_resource_threads.clone())
+                    .unwrap_or_default(),
+            ));
         }
         context.last_emit_at = Some(now);
         serde_json::to_string(&event)
@@ -1124,6 +1222,7 @@ fn emit_imager_progress_run_started(request: &ImagerRunTaskRequest) {
                 residual_history_mjy_per_beam: Vec::new(),
             }),
             runtime: Some(progress_runtime_from_config(&config, 0, None)),
+            observability: None,
         },
         true,
     );
@@ -1175,6 +1274,7 @@ fn emit_imager_progress_ms_window(
                 "source stream",
                 &[PROGRESS_RESOURCE_SOURCE_STREAM],
             )),
+            observability: None,
         },
         force_emit,
     );
@@ -1241,6 +1341,7 @@ fn emit_imager_progress_cube_slab(
                 active_threads,
                 selected_backend,
             )),
+            observability: None,
         },
         false,
     );
@@ -1344,6 +1445,7 @@ fn emit_imager_progress_deconvolution_with_resources(
                 selected_backend,
                 active_resources,
             )),
+            observability: None,
         },
         force,
     );
@@ -1388,6 +1490,7 @@ fn emit_imager_progress_product_write(config: &CliConfig, run_result: &RunProduc
                 if active { "product writer" } else { "idle" },
                 active_resources,
             )),
+            observability: None,
         },
         true,
     );
@@ -1609,6 +1712,7 @@ fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &R
                     .collect(),
             }),
             runtime: Some(progress_runtime_from_config(&config, 0, None)),
+            observability: None,
         },
         true,
     );
@@ -2454,6 +2558,7 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
                         uv_coverage: None,
                         deconvolution: None,
                         runtime: None,
+                        observability: None,
                     },
                     true,
                 );
@@ -3777,6 +3882,7 @@ fn execute_json_task_request_with_progress(
                             uv_coverage: None,
                             deconvolution: None,
                             runtime: None,
+                            observability: None,
                         },
                         true,
                     );
@@ -39518,6 +39624,129 @@ mod tests {
                 .is_empty()
         );
         drop(context);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn imager_observability_snapshot_reports_leases_workers_and_known_memory() {
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024 * 1024 * 1024,
+            planned_active_bytes: 12 * 1024 * 1024 * 1024,
+            source_stream_buffer_bytes: 3 * 1024 * 1024 * 1024,
+            product_scratch_bytes: 5 * 1024 * 1024 * 1024,
+            active_planes: 4,
+            row_block_rows: 292_000,
+            memory_target_source: Some("test".to_string()),
+        });
+        let resource_guard = acquire_imager_progress_resources_with_threads(
+            &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE],
+            4,
+        )
+        .expect("resources acquired");
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let active_resources = context
+            .active_resource_counts
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let active_resource_threads = context
+            .active_resource_thread_counts
+            .iter()
+            .filter_map(|(resource, counts)| {
+                counts
+                    .iter()
+                    .copied()
+                    .max()
+                    .map(|threads| (resource.clone(), threads))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 7,
+            elapsed_ms: 1250,
+            phase: "residual_refresh".to_string(),
+            summary: "refreshing residual".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 4,
+                total_threads: 8,
+                gpu_active: true,
+                backend: "metal".to_string(),
+                active_resources: active_resources.clone(),
+                active_resource_threads: active_resource_threads.clone(),
+                memory: context.memory.clone(),
+            }),
+            observability: None,
+        };
+
+        let snapshot = imager_observability_snapshot(
+            &event,
+            context,
+            &active_resources,
+            &active_resource_threads,
+        );
+        assert_eq!(snapshot.schema_version, IMAGER_OBSERVABILITY_SCHEMA_VERSION);
+        assert_eq!(snapshot.resources.len(), PROGRESS_RESOURCE_ROWS.len());
+        assert_eq!(snapshot.memory_target_source.as_deref(), Some("test"));
+        let grid = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == PROGRESS_RESOURCE_GRID)
+            .expect("grid row");
+        assert_eq!(grid.state, "busy");
+        assert_eq!(grid.lease_count, 1);
+        assert_eq!(grid.active_threads, 4);
+        assert!(grid.gpu_active);
+        assert!(grid.memory.is_none());
+        let source = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == PROGRESS_RESOURCE_SOURCE_STREAM)
+            .expect("source stream row");
+        assert_eq!(source.state, "idle");
+        assert_eq!(
+            source
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.planned_bytes),
+            Some(3 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(
+            source
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.row_block_rows),
+            Some(292_000)
+        );
+        let plane = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == PROGRESS_RESOURCE_PLANE_STATE)
+            .expect("plane state row");
+        assert_eq!(
+            plane
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.active_planes),
+            Some(4)
+        );
+        assert_eq!(snapshot.active_spans[0].resource_ids.len(), 2);
+
+        drop(context_guard);
+        drop(resource_guard);
         drop(progress_guard);
     }
 
