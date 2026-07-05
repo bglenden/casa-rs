@@ -768,7 +768,13 @@ public struct ImagingExecutionSpanSummary: Codable, Equatable, Identifiable {
         state = span.state
         let resourceDetail = span.resourceIDs.isEmpty ? "no resources" : span.resourceIDs.joined(separator: ", ")
         let counterDetail = Self.counterDetailLabel(span.counters)
-        detail = counterDetail.isEmpty ? resourceDetail : "\(resourceDetail) / \(counterDetail)"
+        let workerDetail = span.workerID.map { "worker=\($0)" }
+        let optionalDetailParts: [String?] = [resourceDetail, workerDetail, counterDetail]
+        let detailParts = optionalDetailParts.compactMap { part -> String? in
+            guard let part, !part.isEmpty else { return nil }
+            return part
+        }
+        detail = detailParts.joined(separator: " / ")
         elapsedLabel = Self.elapsedSecondsLabel(milliseconds: span.elapsedMilliseconds)
     }
 
@@ -1213,6 +1219,7 @@ public struct ImagingObservabilitySpan: Codable, Equatable, Identifiable {
     public var id: String
     public var name: String
     public var state: String
+    public var workerID: String?
     public var resourceIDs: [String]
     public var counters: [String: UInt64]
     public var elapsedMilliseconds: UInt64
@@ -1221,6 +1228,7 @@ public struct ImagingObservabilitySpan: Codable, Equatable, Identifiable {
         id: String,
         name: String,
         state: String,
+        workerID: String? = nil,
         resourceIDs: [String],
         counters: [String: UInt64] = [:],
         elapsedMilliseconds: UInt64
@@ -1228,6 +1236,7 @@ public struct ImagingObservabilitySpan: Codable, Equatable, Identifiable {
         self.id = id
         self.name = name
         self.state = state
+        self.workerID = workerID
         self.resourceIDs = resourceIDs
         self.counters = counters
         self.elapsedMilliseconds = elapsedMilliseconds
@@ -2049,6 +2058,7 @@ struct ImagerObservabilitySpanPayload: Decodable, Equatable {
     var id: String
     var name: String
     var state: String
+    var workerID: String?
     var resourceIDs: [String]
     var counters: [String: UInt64]
     var elapsedMilliseconds: UInt64
@@ -2057,6 +2067,7 @@ struct ImagerObservabilitySpanPayload: Decodable, Equatable {
         case id
         case name
         case state
+        case workerID = "worker_id"
         case resourceIDs = "resource_ids"
         case counters
         case elapsedMilliseconds = "elapsed_ms"
@@ -2067,6 +2078,7 @@ struct ImagerObservabilitySpanPayload: Decodable, Equatable {
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         state = try container.decode(String.self, forKey: .state)
+        workerID = try container.decodeIfPresent(String.self, forKey: .workerID)
         resourceIDs = try container.decodeIfPresent([String].self, forKey: .resourceIDs) ?? []
         counters = try container.decodeIfPresent([String: UInt64].self, forKey: .counters) ?? [:]
         elapsedMilliseconds = try container.decode(UInt64.self, forKey: .elapsedMilliseconds)
@@ -2201,6 +2213,7 @@ extension ImagingObservabilitySpan {
             id: payload.id,
             name: payload.name,
             state: payload.state,
+            workerID: payload.workerID,
             resourceIDs: payload.resourceIDs,
             counters: payload.counters,
             elapsedMilliseconds: payload.elapsedMilliseconds

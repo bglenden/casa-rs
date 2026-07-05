@@ -1137,10 +1137,46 @@ fn imager_memory_ledger_snapshot(
     })
 }
 
+fn imager_active_resource_span_ids(context: &ImagerProgressContext) -> BTreeMap<String, String> {
+    let mut span_ids = BTreeMap::new();
+    for span_id in &context.active_span_stack {
+        if let Some(resources) = context.active_span_resource_counts.get(span_id) {
+            for resource in resources.keys() {
+                span_ids.insert(resource.clone(), span_id.clone());
+            }
+        }
+    }
+    for (span_id, resources) in &context.active_span_resource_counts {
+        for resource in resources.keys() {
+            span_ids
+                .entry(resource.clone())
+                .or_insert_with(|| span_id.clone());
+        }
+    }
+    span_ids
+}
+
+fn imager_worker_id_for_span_resources(
+    resources: &[ImagerObservedResourceId],
+) -> Option<&'static str> {
+    if resources.is_empty() {
+        return None;
+    }
+    if resources
+        .iter()
+        .all(|resource| *resource == ImagerObservedResourceId::SourceStream)
+    {
+        Some("source-io")
+    } else {
+        Some("cpu-compute")
+    }
+}
+
 fn imager_observed_worker_snapshots(
     event: &ImagerProgressEvent,
     active_resources: &[String],
     active_resource_threads: &BTreeMap<String, usize>,
+    active_resource_span_ids: &BTreeMap<String, String>,
 ) -> Vec<ImagerObservedWorkerSnapshot> {
     let Some(runtime) = event.runtime.as_ref() else {
         return vec![ImagerObservedWorkerSnapshot {
@@ -1169,15 +1205,18 @@ fn imager_observed_worker_snapshots(
         })
         .min(active_threads);
     let non_io_threads = active_threads.saturating_sub(source_threads);
-    let primary_compute_resource = active_resources
+    let primary_compute_progress_resource = active_resources
         .iter()
         .find(|id| id.as_str() != PROGRESS_RESOURCE_SOURCE_STREAM)
-        .map(|id| imager_observed_resource_id(id))
-        .or_else(|| {
-            active_resources
-                .first()
-                .map(|id| imager_observed_resource_id(id))
-        });
+        .or_else(|| active_resources.first());
+    let primary_compute_resource =
+        primary_compute_progress_resource.map(|id| imager_observed_resource_id(id));
+    let primary_compute_span_id = primary_compute_progress_resource
+        .and_then(|resource| active_resource_span_ids.get(resource))
+        .cloned();
+    let source_span_id = active_resource_span_ids
+        .get(PROGRESS_RESOURCE_SOURCE_STREAM)
+        .cloned();
     let resource_blocked = active_threads == 0 && !active_resources.is_empty();
     let mut workers = Vec::new();
     if source_threads > 0 {
@@ -1186,7 +1225,7 @@ fn imager_observed_worker_snapshots(
             label: "Source I/O".to_string(),
             state: ImagerObservedWorkerState::RunningIo,
             resource_id: Some(ImagerObservedResourceId::SourceStream),
-            span_id: None,
+            span_id: source_span_id,
             active_count: source_threads,
             capacity: Some(total_threads.max(source_threads)),
         });
@@ -1197,7 +1236,7 @@ fn imager_observed_worker_snapshots(
             label: "CPU compute".to_string(),
             state: ImagerObservedWorkerState::RunningCpu,
             resource_id: primary_compute_resource,
-            span_id: None,
+            span_id: primary_compute_span_id.clone(),
             active_count: non_io_threads,
             capacity: Some(total_threads.max(non_io_threads)),
         });
@@ -1208,7 +1247,7 @@ fn imager_observed_worker_snapshots(
             label: "Blocked".to_string(),
             state: ImagerObservedWorkerState::Blocked,
             resource_id: primary_compute_resource,
-            span_id: None,
+            span_id: primary_compute_span_id.clone(),
             active_count: active_resources.len(),
             capacity: Some(total_threads),
         });
@@ -1219,7 +1258,7 @@ fn imager_observed_worker_snapshots(
             label: "GPU submit".to_string(),
             state: ImagerObservedWorkerState::GpuSubmit,
             resource_id: primary_compute_resource.or(Some(ImagerObservedResourceId::GpuStaging)),
-            span_id: None,
+            span_id: primary_compute_span_id,
             active_count: usize::from(active_threads > 0),
             capacity: Some(1),
         });
@@ -1309,6 +1348,7 @@ fn imager_observability_snapshot(
     active_resource_threads: &BTreeMap<String, usize>,
 ) -> ImagerObservabilitySnapshot {
     let memory = context.memory.as_ref();
+    let active_resource_span_ids = imager_active_resource_span_ids(context);
     let resources = PROGRESS_RESOURCE_ROWS
         .iter()
         .map(|(id, label)| {
@@ -1353,7 +1393,13 @@ fn imager_observability_snapshot(
                 stage_kind: imager_observed_stage_kind(&event.phase),
                 state: ImagerObservabilitySpanState::Running,
                 parent_id: None,
-                worker_id: None,
+                worker_id: imager_worker_id_for_span_resources(
+                    &active_resources
+                        .iter()
+                        .map(|resource| imager_observed_resource_id(resource))
+                        .collect::<Vec<_>>(),
+                )
+                .map(str::to_string),
                 resource_ids: active_resources
                     .iter()
                     .map(|resource| imager_observed_resource_id(resource))
@@ -1391,6 +1437,10 @@ fn imager_observability_snapshot(
                             .collect()
                     })
                     .unwrap_or_default();
+                if span.worker_id.is_none() {
+                    span.worker_id =
+                        imager_worker_id_for_span_resources(&span.resource_ids).map(str::to_string);
+                }
                 span.elapsed_ms = event.elapsed_ms;
                 span
             })
@@ -1412,7 +1462,12 @@ fn imager_observability_snapshot(
                 Some(&context.memory_high_water),
             )
         },
-        workers: imager_observed_worker_snapshots(event, active_resources, active_resource_threads),
+        workers: imager_observed_worker_snapshots(
+            event,
+            active_resources,
+            active_resource_threads,
+            &active_resource_span_ids,
+        ),
         queues: imager_observed_queue_snapshots(event.runtime.as_ref(), memory, active_resources),
     }
 }
@@ -42058,13 +42113,23 @@ mod tests {
             parent.resource_ids,
             vec![ImagerObservedResourceId::VisibilityGrid]
         );
+        assert_eq!(parent.worker_id.as_deref(), Some("cpu-compute"));
         assert_eq!(
             child.resource_ids,
             vec![ImagerObservedResourceId::Deconvolver]
         );
+        assert_eq!(child.worker_id.as_deref(), Some("cpu-compute"));
         assert_eq!(
             parent.extent.as_ref().and_then(|extent| extent.plane_start),
             Some(1)
+        );
+        assert_eq!(
+            snapshot
+                .workers
+                .iter()
+                .find(|worker| worker.id == "cpu-compute")
+                .and_then(|worker| worker.span_id.as_deref()),
+            Some(child.id.as_str())
         );
         drop(context_guard);
 
