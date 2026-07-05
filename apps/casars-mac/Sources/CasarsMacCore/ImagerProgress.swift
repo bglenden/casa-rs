@@ -261,6 +261,10 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
 }
 
 extension ImagerProgressSnapshot {
+    public var executionStateSummary: ImagingExecutionStateSummary? {
+        observability.map { ImagingExecutionStateSummary(snapshot: $0) }
+    }
+
     public var sourceStreamIsActive: Bool {
         resourceActivities.first { $0.id == "source-stream" }?.isBusy ?? false
     }
@@ -399,6 +403,7 @@ extension ImagerProgressSnapshot {
             detail: observedResourceDetail(resource),
             kind: Self.resourceKind(for: resource.id),
             state: busy ? .busy : .idle,
+            observedState: Self.normalizedObservedState(resource.state),
             residentBytes: bytes,
             targetBytes: memoryTarget,
             sectionStartFraction: Self.resourceSection(for: resource.id, snapshot: self).0,
@@ -407,6 +412,11 @@ extension ImagerProgressSnapshot {
             totalThreads: runtime.totalThreads,
             gpuActive: busy && resource.gpuActive
         )
+    }
+
+    private static func normalizedObservedState(_ state: String) -> String {
+        let trimmed = state.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "unknown" : trimmed
     }
 
     private func observedResourceDetail(_ resource: ImagingObservedResource) -> String {
@@ -555,6 +565,7 @@ public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
     public var detail: String
     public var kind: ImagingResourceActivityKind
     public var state: ImagingResourceActivityState
+    public var observedState: String
     public var residentBytes: Int
     public var targetBytes: Int
     public var sectionStartFraction: Double
@@ -569,6 +580,7 @@ public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
         detail: String,
         kind: ImagingResourceActivityKind,
         state: ImagingResourceActivityState,
+        observedState: String? = nil,
         residentBytes: Int,
         targetBytes: Int,
         sectionStartFraction: Double,
@@ -582,6 +594,7 @@ public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
         self.detail = detail
         self.kind = kind
         self.state = state
+        self.observedState = observedState ?? state.rawValue
         self.residentBytes = residentBytes
         self.targetBytes = max(1, targetBytes)
         self.sectionStartFraction = min(1, max(0, sectionStartFraction))
@@ -597,6 +610,184 @@ public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
 
     public var byteFraction: Double {
         fraction(residentBytes, total: targetBytes)
+    }
+}
+
+public struct ImagingExecutionStateSummary: Codable, Equatable {
+    public var subtitle: String
+    public var currentSpans: [ImagingExecutionSpanSummary]
+    public var recentSpans: [ImagingExecutionSpanSummary]
+    public var resourceStates: [ImagingExecutionKeyValueSummary]
+    public var workers: [ImagingExecutionKeyValueSummary]
+    public var queues: [ImagingExecutionKeyValueSummary]
+    public var memory: [ImagingExecutionKeyValueSummary]
+
+    public init(snapshot: ImagingObservabilitySnapshot) {
+        currentSpans = snapshot.activeSpans.map(ImagingExecutionSpanSummary.init(span:))
+        recentSpans = snapshot.recentSpans.map(ImagingExecutionSpanSummary.init(span:))
+        resourceStates = Self.resourceStateRows(snapshot.resources)
+        workers = snapshot.workers.map(Self.workerRow)
+        queues = snapshot.queues.map(Self.queueRow)
+        memory = Self.memoryRows(snapshot.memoryLedger, targetBytes: snapshot.memoryTargetBytes)
+        subtitle = "\(currentSpans.count) current / \(recentSpans.count) recent"
+    }
+
+    private static func resourceStateRows(_ resources: [ImagingObservedResource]) -> [ImagingExecutionKeyValueSummary] {
+        let counts = Dictionary(grouping: resources) { resource in
+            let state = resource.state.trimmingCharacters(in: .whitespacesAndNewlines)
+            return state.isEmpty ? "unknown" : state
+        }
+        return counts.keys.sorted().map { state in
+            ImagingExecutionKeyValueSummary(
+                id: "resource-state-\(state)",
+                label: state,
+                value: "\(counts[state]?.count ?? 0)",
+                detail: "resources"
+            )
+        }
+    }
+
+    private static func workerRow(_ worker: ImagingObservedWorkerSnapshot) -> ImagingExecutionKeyValueSummary {
+        let capacity = worker.capacity.map { "/\($0)" } ?? ""
+        let detail = [worker.resourceID, worker.spanID]
+            .compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " / ")
+        return ImagingExecutionKeyValueSummary(
+            id: "worker-\(worker.id)",
+            label: worker.label,
+            value: "\(worker.activeCount)\(capacity)",
+            detail: detail.isEmpty ? worker.state : "\(worker.state) / \(detail)"
+        )
+    }
+
+    private static func queueRow(_ queue: ImagingObservedQueueSnapshot) -> ImagingExecutionKeyValueSummary {
+        var valueParts: [String] = []
+        if let len = queue.len, let capacity = queue.capacity {
+            valueParts.append("\(len)/\(capacity)")
+        } else if let len = queue.len {
+            valueParts.append("\(len)")
+        } else if let capacity = queue.capacity {
+            valueParts.append("cap \(capacity)")
+        }
+        if let bytes = queue.bytes, bytes > 0 {
+            valueParts.append(compactByteSizeLabel(bytes))
+        }
+        if queue.blockedCount > 0 {
+            valueParts.append("\(queue.blockedCount) blocked")
+        }
+        let producerConsumer = "\(queue.producersActive ? "P" : "p")/\(queue.consumersActive ? "C" : "c")"
+        let optionalDetailParts: [String?] = [queue.resourceID, queue.confidence, producerConsumer]
+        let detailParts = optionalDetailParts
+            .compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+        return ImagingExecutionKeyValueSummary(
+            id: "queue-\(queue.id)",
+            label: queue.label,
+            value: valueParts.isEmpty ? "observed" : valueParts.joined(separator: " / "),
+            detail: detailParts.joined(separator: " / ")
+        )
+    }
+
+    private static func memoryRows(
+        _ ledger: ImagingMemoryLedgerSnapshot?,
+        targetBytes: Int?
+    ) -> [ImagingExecutionKeyValueSummary] {
+        guard let ledger else { return [] }
+        var rows: [ImagingExecutionKeyValueSummary] = [
+            ImagingExecutionKeyValueSummary(
+                id: "memory-tracked",
+                label: "Tracked",
+                value: compactByteSizeLabel(ledger.trackedLiveTotalBytes),
+                detail: ledger.plannedTotalBytes > 0
+                    ? "\(compactByteSizeLabel(ledger.plannedTotalBytes)) planned"
+                    : "live"
+            )
+        ]
+        if let targetBytes, targetBytes > 0 {
+            rows.append(ImagingExecutionKeyValueSummary(
+                id: "memory-target",
+                label: "Target",
+                value: compactByteSizeLabel(targetBytes),
+                detail: "planner"
+            ))
+        }
+        if let rss = ledger.processRSSBytes, rss > 0 {
+            rows.append(ImagingExecutionKeyValueSummary(
+                id: "memory-rss",
+                label: "RSS",
+                value: compactByteSizeLabel(rss),
+                detail: ledger.processPeakRSSBytes.map { "\(compactByteSizeLabel($0)) peak" } ?? "measured"
+            ))
+        }
+        if let untracked = ledger.untrackedResidentBytes, untracked > 0 {
+            rows.append(ImagingExecutionKeyValueSummary(
+                id: "memory-untracked",
+                label: "Untracked",
+                value: compactByteSizeLabel(untracked),
+                detail: "resident"
+            ))
+        }
+        return rows
+    }
+
+    private static func compactByteSizeLabel(_ bytes: Int) -> String {
+        let absolute = abs(bytes)
+        if absolute >= 1_000_000_000 {
+            return String(format: "%.1f GB", Double(bytes) / 1_000_000_000.0)
+        }
+        if absolute >= 1_000_000 {
+            return String(format: "%.0f MB", Double(bytes) / 1_000_000.0)
+        }
+        if absolute >= 1_000 {
+            return String(format: "%.0f kB", Double(bytes) / 1_000.0)
+        }
+        return "\(bytes) B"
+    }
+}
+
+public struct ImagingExecutionSpanSummary: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var state: String
+    public var detail: String
+    public var elapsedLabel: String
+
+    public init(span: ImagingObservabilitySpan) {
+        id = span.id
+        label = span.name
+        state = span.state
+        detail = span.resourceIDs.isEmpty ? "no resources" : span.resourceIDs.joined(separator: ", ")
+        elapsedLabel = Self.elapsedSecondsLabel(milliseconds: span.elapsedMilliseconds)
+    }
+
+    private static func elapsedSecondsLabel(milliseconds: UInt64) -> String {
+        let seconds = Double(milliseconds) / 1_000.0
+        if seconds < 10 {
+            return String(format: "%.2f s", seconds)
+        }
+        if seconds < 100 {
+            return String(format: "%.1f s", seconds)
+        }
+        return String(format: "%.0f s", seconds)
+    }
+}
+
+public struct ImagingExecutionKeyValueSummary: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var value: String
+    public var detail: String
+
+    public init(id: String, label: String, value: String, detail: String) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.detail = detail
     }
 }
 

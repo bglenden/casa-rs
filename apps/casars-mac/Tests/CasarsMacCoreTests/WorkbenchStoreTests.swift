@@ -3067,6 +3067,51 @@ final class WorkbenchStoreTests: XCTestCase {
         let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
         XCTAssertEqual(productResource.detail, "5.4 GB planned")
         XCTAssertEqual(productResource.byteFraction, Double(5_368_709_120) / Double(17_179_869_184), accuracy: 0.001)
+
+        let executionState = try XCTUnwrap(progress.executionStateSummary)
+        XCTAssertEqual(executionState.subtitle, "1 current / 1 recent")
+        XCTAssertEqual(executionState.currentSpans.first?.elapsedLabel, "1.25 s")
+        XCTAssertEqual(executionState.currentSpans.first?.detail, "visibility-grid, plane-state")
+        XCTAssertEqual(executionState.recentSpans.first?.detail, "source-stream")
+        XCTAssertEqual(executionState.resourceStates.map(\.label), ["active", "idle"])
+        XCTAssertEqual(executionState.resourceStates.map(\.value), ["2", "3"])
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-tracked" }?.value, "8.6 GB")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-tracked" }?.detail, "8.6 GB planned")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-target" }?.value, "17.2 GB")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-rss" }?.detail, "12.9 GB peak")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-untracked" }?.value, "2.1 GB")
+        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute" }?.value, "4/8")
+        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute" }?.detail, "running-cpu / visibility-grid")
+        XCTAssertEqual(executionState.queues.first { $0.id == "queue-source-row-block" }?.value, "0/1 / 3.2 GB")
+        XCTAssertEqual(executionState.queues.first { $0.id == "queue-source-row-block" }?.detail, "source-stream / estimated / p/C")
+    }
+
+    func testImagerProgressPreservesObservedResourceStates() throws {
+        var parser = ImagerProgressStderrParser()
+        let progressJSON = #"{"schema_version":1,"sequence":6,"elapsed_ms":2000,"phase":"deconvolving and writing products","summary":"phase text mentions work that should not drive state","runtime":{"active_threads":8,"total_threads":8,"gpu_active":true,"backend":"observed-only"},"observability":{"schema_version":1,"resources":[{"id":"source-stream","label":"Source Stream","state":"retained","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"visibility-grid","label":"Grid/FFT","state":"blocked","lease_count":1,"active_threads":0,"gpu_active":false},{"id":"plane-state","label":"Plane State","state":"unknown","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"deconvolver","label":"Deconvolver","state":"active","lease_count":1,"active_threads":6,"gpu_active":true},{"id":"product-scratch","label":"Products","state":"stale","lease_count":0,"active_threads":0,"gpu_active":false}]}}"#
+
+        let records = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-observed-states", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertFalse(progress.runtime.activeResourceIDsAreAuthoritative)
+        let statesByResource = Dictionary(uniqueKeysWithValues: progress.resourceActivities.map { ($0.id, $0.observedState) })
+        XCTAssertEqual(statesByResource["source-stream"], "retained")
+        XCTAssertEqual(statesByResource["visibility-grid"], "blocked")
+        XCTAssertEqual(statesByResource["plane-state"], "unknown")
+        XCTAssertEqual(statesByResource["deconvolver"], "active")
+        XCTAssertEqual(statesByResource["product-scratch"], "stale")
+        XCTAssertEqual(progress.resourceActivities.filter(\.isBusy).map(\.id), ["deconvolver"])
+        XCTAssertEqual(progress.resourceActivities.first { $0.id == "deconvolver" }?.activeThreads, 6)
+        XCTAssertTrue(progress.resourceActivities.first { $0.id == "deconvolver" }?.gpuActive ?? false)
+        XCTAssertEqual(progress.executionStateSummary?.resourceStates.map(\.label), [
+            "active",
+            "blocked",
+            "retained",
+            "stale",
+            "unknown"
+        ])
     }
 
     func testImagerProgressUsesExplicitRuntimeResourceOwnershipWhenNoSnapshotExists() throws {

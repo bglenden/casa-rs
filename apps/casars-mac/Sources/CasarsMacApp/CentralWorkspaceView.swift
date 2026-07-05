@@ -6744,6 +6744,15 @@ private struct ImagerProgressDashboard: View {
                     OutputCubeProgressView(cube: snapshot.outputCube)
                 }
 
+                if let executionState = snapshot.executionStateSummary {
+                    ImagerProgressSection(
+                        title: "Execution State",
+                        subtitle: executionState.subtitle
+                    ) {
+                        ImagerExecutionStateView(summary: executionState)
+                    }
+                }
+
                 ImagerProgressSection(
                     title: "Buffer Activity",
                     subtitle: "\(snapshot.resourceActivities.filter(\.isBusy).count) busy / \(snapshot.resourceActivities.count) tracked"
@@ -7549,7 +7558,7 @@ private struct ResourceActivityFlowView: View {
             anchor: .leading
         )
         context.draw(
-            Text(resource.detail).font(.caption2).foregroundColor(.secondary),
+            Text("\(resource.observedState) / \(resource.detail)").font(.caption2).foregroundColor(.secondary),
             at: CGPoint(x: rect.minX + 8, y: rect.midY + 8),
             anchor: .leading
         )
@@ -7626,6 +7635,114 @@ private struct ResourceActivityFlowView: View {
         case .product:
             return .orange
         }
+    }
+}
+
+private struct ImagerExecutionStateView: View {
+    let summary: ImagingExecutionStateSummary
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 128), spacing: 6, alignment: .top)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ImagerExecutionSpanGroupView(title: "Current", rows: summary.currentSpans, emptyLabel: "idle")
+            ImagerExecutionSpanGroupView(title: "Recent", rows: summary.recentSpans, emptyLabel: "none")
+
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+                ForEach(summary.resourceStates) { row in
+                    ImagerExecutionMetricView(row: row)
+                }
+                ForEach(summary.memory) { row in
+                    ImagerExecutionMetricView(row: row)
+                }
+                ForEach(summary.workers) { row in
+                    ImagerExecutionMetricView(row: row)
+                }
+                ForEach(summary.queues) { row in
+                    ImagerExecutionMetricView(row: row)
+                }
+            }
+        }
+    }
+}
+
+private struct ImagerExecutionSpanGroupView: View {
+    let title: String
+    let rows: [ImagingExecutionSpanSummary]
+    let emptyLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .workbenchFont(.caption, weight: .semibold)
+                Spacer()
+                Text(rows.isEmpty ? emptyLabel : "\(rows.count)")
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+
+            if rows.isEmpty {
+                Text(emptyLabel)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 3)
+            } else {
+                ForEach(rows.prefix(3)) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(row.label)
+                            .workbenchFont(.caption2, weight: .semibold)
+                            .lineLimit(1)
+                        Text(row.state)
+                            .workbenchFont(.caption2, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 6)
+                        Text(row.elapsedLabel)
+                            .workbenchFont(.caption2, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(row.detail)
+                        .workbenchFont(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(6)
+        .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct ImagerExecutionMetricView: View {
+    let row: ImagingExecutionKeyValueSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(row.label)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(row.value)
+                    .workbenchFont(.caption2, design: .monospaced)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            if !row.detail.isEmpty {
+                Text(row.detail)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(.secondary.opacity(0.055), in: RoundedRectangle(cornerRadius: 5))
     }
 }
 
