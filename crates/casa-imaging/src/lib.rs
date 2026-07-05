@@ -1042,6 +1042,10 @@ pub enum StandardMfsProgressPhase {
     ResidualGridStart,
     /// The controller has finished gridding residual visibilities.
     ResidualGridEnd,
+    /// The controller is about to form weighted mosaic pointing groups.
+    WeightedMosaicStart,
+    /// The controller has finished forming weighted mosaic pointing groups.
+    WeightedMosaicEnd,
 }
 
 /// Coarse standard-MFS progress event emitted from the imaging controller.
@@ -2700,6 +2704,16 @@ where
         &weighting_plans,
         &mut replay_unweighted_blocks,
         SinglePlaneStreamPass::InitialDirty,
+        execution_config.progress_callback.as_ref(),
+        Some(standard_mfs_progress_context(
+            &request,
+            execution_config.minor_cycle_backend,
+            0,
+            0,
+            0,
+            None,
+            None,
+        )),
         |groups| {
             pointing_weights.accumulate(request.geometry, &config, &groups);
             max_abs_w_lambda = max_abs_w_lambda.max(max_abs_w_lambda_for_mosaic_groups(&groups));
@@ -2820,7 +2834,7 @@ where
     let controller_started = Instant::now();
     let mut refresh_residual = |model: &Array2<f32>,
                                 stage_timings: &mut ImagingStageTimings,
-                                _progress_context: Option<StandardMfsProgressContext>|
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         compute_mosaic_residual_streaming(
             &clean_request,
@@ -2834,6 +2848,8 @@ where
             &psf_state,
             &weight_image,
             stage_timings,
+            execution_config.progress_callback.as_ref(),
+            progress_context,
         )
     };
     let clean_state = if clean_request.clean.niter > 0 {
@@ -3126,6 +3142,7 @@ fn weight_mosaic_streaming_batch(
     Ok(weighted)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stream_weighted_mosaic_groups<F, C>(
     request: &ImagingRequest,
     config: &MosaicGridderConfig,
@@ -3133,6 +3150,8 @@ fn stream_weighted_mosaic_groups<F, C>(
     weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
     replay_unweighted_blocks: &mut F,
     pass: SinglePlaneStreamPass,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
     mut consume_groups: C,
 ) -> Result<(), ImagingError>
 where
@@ -3148,9 +3167,26 @@ where
                 "streaming mosaic MFS requires mosaic metadata blocks".to_string(),
             ));
         };
-        let weighted =
-            weight_mosaic_streaming_batch(request, block.visibility, &metadata, weighting_plans)?;
-        let groups = build_mosaic_pointing_groups_from_grouped(&[weighted], &[metadata], false)?;
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::WeightedMosaicStart,
+        );
+        let groups = (|| {
+            let weighted = weight_mosaic_streaming_batch(
+                request,
+                block.visibility,
+                &metadata,
+                weighting_plans,
+            )?;
+            build_mosaic_pointing_groups_from_grouped(&[weighted], &[metadata], false)
+        })();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::WeightedMosaicEnd,
+        );
+        let groups = groups?;
         if profile::standard_mfs_profile_detail_enabled() {
             let samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
             eprintln!(
@@ -3518,6 +3554,8 @@ fn compute_mosaic_residual_streaming<F>(
     psf_state: &PsfState,
     weight_image: &Array2<f32>,
     stage_timings: &mut ImagingStageTimings,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError>
 where
     F: FnMut(
@@ -3529,17 +3567,32 @@ where
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let model_for_prediction =
             flat_sky_mosaic_model_for_prediction(model, weight_image, config.pb_limit)?;
         let transformed =
             centered_fft2(&gridder.apodize_mosaic_model(&model_for_prediction, conv_sampling));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_started = Instant::now();
     let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
@@ -3550,6 +3603,8 @@ where
         weighting_plans,
         replay_unweighted_blocks,
         SinglePlaneStreamPass::ResidualRefresh,
+        progress_callback,
+        progress_context,
         |groups| {
             let residual_projectors = prepare_mosaic_residual_projectors(
                 request,
@@ -3591,10 +3646,25 @@ where
         },
     )?;
     timings.degrid_grid = degrid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
     timings.fft += fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let accumulated_residual_image =
         gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
@@ -31337,9 +31407,18 @@ mod tests {
         let retained = run_imaging(&request).unwrap();
         let mut streaming_request = request.clone();
         streaming_request.visibility_batches.clear();
+        let observed_phases = Arc::new(Mutex::new(Vec::new()));
+        let callback_phases = Arc::clone(&observed_phases);
+        let progress_callback: StandardMfsProgressCallback = Arc::new(move |event| {
+            callback_phases.lock().unwrap().push(event.phase);
+        });
+        let execution_config = StandardMfsExecutionConfig {
+            progress_callback: Some(progress_callback),
+            ..StandardMfsExecutionConfig::default()
+        };
         let streaming = run_mosaic_mfs_from_single_plane_stream(
             streaming_request,
-            StandardMfsExecutionConfig::default(),
+            execution_config,
             WeightDensityMode::Combined,
             |_, consumer| {
                 consumer(SinglePlaneVisibilityBlock {
@@ -31363,6 +31442,15 @@ mod tests {
             retained.diagnostics.clean_stop_reason
         );
         assert!(streaming.diagnostics.mosaic_weight_image.is_some());
+        let phases = observed_phases.lock().unwrap();
+        assert!(
+            phases.contains(&StandardMfsProgressPhase::WeightedMosaicStart),
+            "streaming mosaic should report weighted mosaic grouping"
+        );
+        assert!(
+            phases.contains(&StandardMfsProgressPhase::WeightedMosaicEnd),
+            "streaming mosaic should close weighted mosaic grouping"
+        );
     }
 
     #[test]

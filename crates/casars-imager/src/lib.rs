@@ -2474,6 +2474,8 @@ struct StandardMfsProgressResourceGuards {
     residual_grid: Option<ImagerProgressResourceGuard>,
     fft_span: Option<ImagerObservationSpanGuard>,
     fft: Option<ImagerProgressResourceGuard>,
+    weighted_mosaic_span: Option<ImagerObservationSpanGuard>,
+    weighted_mosaic: Option<ImagerProgressResourceGuard>,
 }
 
 fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgressCallback> {
@@ -2607,6 +2609,27 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 guards.fft = None;
                 guards.fft_span = None;
                 ("FFT plane work complete", 0)
+            }
+            StandardMfsProgressPhase::WeightedMosaicStart => {
+                guards.weighted_mosaic_span = begin_imager_observation_span(
+                    ImagerObservedStageKind::WeightedMosaic,
+                    "forming weighted mosaic groups",
+                    &[ImagerObservedResourceId::VisibilityGrid],
+                    None,
+                );
+                guards.weighted_mosaic = acquire_imager_progress_resource_ids_with_threads(
+                    &[ImagerObservedResourceId::VisibilityGrid],
+                    env_standard_mfs_grid_threads().unwrap_or(1),
+                );
+                (
+                    "forming weighted mosaic groups",
+                    env_standard_mfs_grid_threads().unwrap_or(1),
+                )
+            }
+            StandardMfsProgressPhase::WeightedMosaicEnd => {
+                guards.weighted_mosaic = None;
+                guards.weighted_mosaic_span = None;
+                ("weighted mosaic groups complete", 0)
             }
         };
         drop(guards);
@@ -41289,6 +41312,38 @@ mod tests {
         assert_eq!(fft_span.counters.get(OBS_COUNTER_MAJOR_CYCLE), Some(&1));
         assert_eq!(
             fft_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
+            Some(&25)
+        );
+
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::WeightedMosaicStart,
+            deconvolver: Deconvolver::Hogbom,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 1,
+            minor_iterations: 25,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 50,
+            peak_residual_jy_per_beam: Some(0.0025),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let weighted_mosaic_span = observability
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::WeightedMosaic)
+            .expect("weighted mosaic span");
+        assert_eq!(
+            weighted_mosaic_span.resource_ids,
+            vec![ImagerObservedResourceId::VisibilityGrid]
+        );
+        assert_eq!(
+            weighted_mosaic_span
+                .counters
+                .get(OBS_COUNTER_MINOR_ITERATIONS),
             Some(&25)
         );
         drop(callback);
