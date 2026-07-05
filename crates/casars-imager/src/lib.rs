@@ -2047,6 +2047,12 @@ fn emit_imager_progress_spectral_stage(
     if let Some(slab_id) = slab_id {
         counters.push((OBS_COUNTER_SLAB_ID, slab_id as u64));
     }
+    if let Some(window) = ms_read.as_ref() {
+        counters.push((
+            OBS_COUNTER_ROW_BLOCK_ROWS,
+            window.row_end.saturating_sub(window.row_start) as u64,
+        ));
+    }
     observe_current_imager_span_counters(counters);
     let _resource_guard =
         acquire_imager_progress_resource_ids_with_threads(resources, active_threads);
@@ -41202,6 +41208,95 @@ mod tests {
             spectral_stage_observability(spectral_slab::SpectralEventStage::ProductWrite);
         assert_eq!(product_kind, ImagerObservedStageKind::ProductWrite);
         assert_eq!(product_resources, SPECTRAL_PRODUCT_RESOURCES);
+    }
+
+    #[test]
+    fn spectral_source_read_progress_reports_row_block_counter() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("spectral-source.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/spectral-source.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/spectral-source-image"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse config");
+        emit_imager_progress_spectral_stage(
+            &config,
+            spectral_slab::SpectralEventStage::SourceRead,
+            Some(2),
+            3,
+            7,
+            1,
+            "source stream",
+            Some(ImagerProgressMsWindow {
+                total_rows: 1024,
+                total_channels: 32,
+                row_start: 32,
+                row_end: 96,
+                channel_start: 4,
+                channel_end: 12,
+            }),
+            true,
+        );
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let source = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+            .expect("source stream");
+        assert_eq!(source.state, ImagerObservedResourceState::Active);
+        assert_eq!(source.active_threads, 1);
+        let span = observability
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::SourceStream)
+            .expect("source read span");
+        assert_eq!(
+            span.resource_ids,
+            vec![ImagerObservedResourceId::SourceStream]
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.row_start),
+            Some(32)
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.row_end),
+            Some(96)
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.channel_start),
+            Some(4)
+        );
+        assert_eq!(
+            span.extent.as_ref().and_then(|extent| extent.channel_end),
+            Some(12)
+        );
+        assert_eq!(span.counters.get(OBS_COUNTER_ACTIVE_PLANES), Some(&4));
+        assert_eq!(span.counters.get(OBS_COUNTER_ACTIVE_THREADS), Some(&1));
+        assert_eq!(span.counters.get(OBS_COUNTER_SLAB_ID), Some(&2));
+        assert_eq!(span.counters.get(OBS_COUNTER_ROW_BLOCK_ROWS), Some(&64));
+        drop(progress_guard);
     }
 
     #[test]
