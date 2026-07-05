@@ -163,6 +163,14 @@ const PROGRESS_RESOURCE_GRID: &str = "visibility-grid";
 const PROGRESS_RESOURCE_PLANE_STATE: &str = "plane-state";
 const PROGRESS_RESOURCE_DECONVOLVER: &str = "deconvolver";
 const PROGRESS_RESOURCE_PRODUCTS: &str = "product-scratch";
+const OBS_COUNTER_ACTIVE_THREADS: &str = "active_threads";
+const OBS_COUNTER_ACTIVE_PLANES: &str = "active_planes";
+const OBS_COUNTER_OUTPUT_PLANES: &str = "output_planes";
+const OBS_COUNTER_MAJOR_CYCLE: &str = "major_cycle";
+const OBS_COUNTER_MINOR_ITERATIONS: &str = "minor_iterations";
+const OBS_COUNTER_MINOR_ITERATION_LIMIT: &str = "minor_iteration_limit";
+const OBS_COUNTER_CYCLE_ITERATION_LIMIT: &str = "cycle_iteration_limit";
+const OBS_COUNTER_SLAB_ID: &str = "slab_id";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
 const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 1;
@@ -744,6 +752,27 @@ fn begin_imager_observation_span(
     );
     context.active_span_stack.push(span_id.clone());
     Some(ImagerObservationSpanGuard { span_id })
+}
+
+fn observe_current_imager_span_counters(counters: impl IntoIterator<Item = (&'static str, u64)>) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+        return;
+    };
+    let Some(context) = context.as_mut() else {
+        return;
+    };
+    let Some(span_id) = context.active_span_stack.last().cloned() else {
+        return;
+    };
+    let Some(span) = context.active_spans.get_mut(&span_id) else {
+        return;
+    };
+    for (counter, value) in counters {
+        span.counters.insert(counter.to_string(), value);
+    }
 }
 
 fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgressGuard> {
@@ -1623,6 +1652,10 @@ fn begin_imager_progress_product_write_observation(
         &[ImagerObservedResourceId::ProductScratch],
         1,
     );
+    observe_current_imager_span_counters([(
+        OBS_COUNTER_OUTPUT_PLANES,
+        output_planes.max(1) as u64,
+    )]);
     (span.is_some() || resources.is_some()).then_some(ImagerProductWriteObservationGuard {
         _span: span,
         _resources: resources,
@@ -1949,6 +1982,17 @@ fn emit_imager_progress_spectral_stage(
     };
     let _span_guard =
         begin_imager_observation_span(stage_kind, span_name.clone(), resources, Some(extent));
+    let mut counters = vec![
+        (
+            OBS_COUNTER_ACTIVE_PLANES,
+            active_plane_end.saturating_sub(active_plane_start) as u64,
+        ),
+        (OBS_COUNTER_ACTIVE_THREADS, active_threads as u64),
+    ];
+    if let Some(slab_id) = slab_id {
+        counters.push((OBS_COUNTER_SLAB_ID, slab_id as u64));
+    }
+    observe_current_imager_span_counters(counters);
     let _resource_guard =
         acquire_imager_progress_resource_ids_with_threads(resources, active_threads);
     let active_resource_ids = resources
@@ -2527,6 +2571,21 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
             .peak_residual_jy_per_beam
             .map(|peak| vec![peak])
             .unwrap_or_default();
+        if active_threads > 0 {
+            observe_current_imager_span_counters([
+                (OBS_COUNTER_MAJOR_CYCLE, event.major_cycle as u64),
+                (OBS_COUNTER_MINOR_ITERATIONS, event.minor_iterations as u64),
+                (
+                    OBS_COUNTER_MINOR_ITERATION_LIMIT,
+                    event.minor_iteration_limit as u64,
+                ),
+                (
+                    OBS_COUNTER_CYCLE_ITERATION_LIMIT,
+                    event.cycle_iteration_limit as u64,
+                ),
+                (OBS_COUNTER_ACTIVE_THREADS, active_threads as u64),
+            ]);
+        }
         emit_imager_progress_deconvolution_with_resources(
             &config,
             0,
@@ -41122,6 +41181,26 @@ mod tests {
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
+        assert_eq!(
+            residual_span.counters.get(OBS_COUNTER_MAJOR_CYCLE),
+            Some(&1)
+        );
+        assert_eq!(
+            residual_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
+            Some(&25)
+        );
+        assert_eq!(
+            residual_span
+                .counters
+                .get(OBS_COUNTER_MINOR_ITERATION_LIMIT),
+            Some(&100)
+        );
+        assert_eq!(
+            residual_span
+                .counters
+                .get(OBS_COUNTER_CYCLE_ITERATION_LIMIT),
+            Some(&50)
+        );
         assert!(observability.workers.iter().any(|worker| worker.state
             == ImagerObservedWorkerState::RunningCpu
             && worker.active_count > 0));
@@ -41219,6 +41298,7 @@ mod tests {
             span.extent.as_ref().and_then(|extent| extent.plane_end),
             Some(3)
         );
+        assert_eq!(span.counters.get(OBS_COUNTER_OUTPUT_PLANES), Some(&3));
         drop(context_guard);
         drop(product_guard);
         drop(progress_guard);
