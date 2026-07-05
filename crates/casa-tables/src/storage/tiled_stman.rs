@@ -557,6 +557,30 @@ fn read_tiled_header(path: &Path) -> Result<(TiledVariant, TiledStManHeader), St
     }
 }
 
+pub(crate) fn tiled_2d_channel_tile_width(
+    table_path: &Path,
+    dm_seq_nr: u32,
+) -> Result<Option<usize>, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    for cube in &header.cubes {
+        if cube.tile_shape.len() >= 3 && cube.cube_shape.len() >= 3 {
+            return Ok(Some(cube.tile_shape[1].max(1)));
+        }
+    }
+    let default_tile_shape = match variant {
+        TiledVariant::Column { default_tile_shape }
+        | TiledVariant::Shape {
+            default_tile_shape, ..
+        }
+        | TiledVariant::Cell { default_tile_shape }
+        | TiledVariant::Data {
+            default_tile_shape, ..
+        } => default_tile_shape,
+    };
+    Ok((default_tile_shape.len() >= 3).then(|| default_tile_shape[1].max(1) as usize))
+}
+
 /// Parse the `TiledStMan` base class AipsIO object.
 ///
 /// Handles versions 1 (big-endian, 32-bit), 2 (explicit endian, 32-bit),

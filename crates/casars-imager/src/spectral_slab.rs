@@ -731,6 +731,7 @@ pub(crate) struct VisibilitySlabShape {
     pub(crate) active_planes: usize,
     pub(crate) slab_count: usize,
     pub(crate) source_channel_visits: usize,
+    pub(crate) physical_source_channel_visits: usize,
     pub(crate) max_slab_source_channels: usize,
 }
 
@@ -1063,7 +1064,10 @@ impl VisibilitySourceShape {
     }
 
     fn no_cache_source_read_bytes(&self, candidate: VisibilitySlabShape) -> usize {
-        self.source_read_bytes(candidate.source_channel_visits, candidate.slab_count)
+        self.source_read_bytes(
+            candidate.physical_source_channel_visits,
+            candidate.slab_count,
+        )
     }
 
     fn cache_read_bytes(&self, candidate: VisibilitySlabShape) -> usize {
@@ -2927,6 +2931,8 @@ mod tests {
                     active_planes,
                     slab_count,
                     source_channel_visits: nplanes.saturating_mul(source_channels_per_plane),
+                    physical_source_channel_visits: nplanes
+                        .saturating_mul(source_channels_per_plane),
                     max_slab_source_channels: active_planes
                         .saturating_mul(source_channels_per_plane),
                 }
@@ -2945,6 +2951,7 @@ mod tests {
                     active_planes,
                     slab_count,
                     source_channel_visits: slab_count.saturating_mul(full_source_channels),
+                    physical_source_channel_visits: slab_count.saturating_mul(full_source_channels),
                     max_slab_source_channels: full_source_channels,
                 }
             })
@@ -2970,6 +2977,7 @@ mod tests {
                     active_planes,
                     slab_count: slabs.len(),
                     source_channel_visits,
+                    physical_source_channel_visits: source_channel_visits,
                     max_slab_source_channels,
                 }
             })
@@ -3179,6 +3187,7 @@ mod tests {
             active_planes: 2,
             slab_count: 3,
             source_channel_visits: 12,
+            physical_source_channel_visits: 12,
             max_slab_source_channels: 4,
         };
         let expected = visibility.active_rows.saturating_mul(
@@ -3217,6 +3226,7 @@ mod tests {
             active_planes: 2,
             slab_count: 3,
             source_channel_visits: 12,
+            physical_source_channel_visits: 12,
             max_slab_source_channels: 4,
         };
         let physical_source_bytes = visibility.no_cache_source_read_bytes(shape);
@@ -3281,6 +3291,7 @@ mod tests {
                 active_planes: 4,
                 slab_count: 2,
                 source_channel_visits: 128,
+                physical_source_channel_visits: 128,
                 max_slab_source_channels: 64,
             }],
         );
@@ -3577,6 +3588,7 @@ mod tests {
             active_planes: 47,
             slab_count: 2,
             source_channel_visits: 64,
+            physical_source_channel_visits: 64,
             max_slab_source_channels: 47,
         };
         let residency = PreparedVisibilityResidency {

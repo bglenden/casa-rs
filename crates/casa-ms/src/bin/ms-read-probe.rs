@@ -11,6 +11,7 @@ use casa_ms::{
     MeasurementSet, SourcePartition, SourcePartitionId, VisibilityBuffer,
     VisibilityBufferColumnReport, VisibilityBufferRequest, VisibilityBufferTimings,
     VisibilityComplexSamples, VisibilityDataColumn, VisibilityFloatSamples,
+    VisibilityRowSelectionRequest,
 };
 use casa_types::{ArrayValue, ScalarValue};
 use serde::Serialize;
@@ -67,6 +68,15 @@ fn run() -> Result<(), String> {
     if selected_rows == 0 {
         return Err("selected row count is zero".to_string());
     }
+    let row_blocks = if options.visibility_selection {
+        visibility_selection_row_blocks(&ms, &source_partition, options.block_rows)?
+    } else {
+        contiguous_row_blocks(options.row_start, selected_end, options.block_rows)
+    };
+    let selected_rows = row_blocks.iter().map(Vec::len).sum::<usize>();
+    if selected_rows == 0 {
+        return Err("selected row count is zero after visibility selection".to_string());
+    }
 
     let mut buffer = VisibilityBuffer::default();
     let mut block_reports = Vec::new();
@@ -74,16 +84,11 @@ fn run() -> Result<(), String> {
     let mut column_aggregates = ColumnAggregates::default();
     let probe_started = Instant::now();
     for repeat_index in 0..options.repeat {
-        let mut block_start = options.row_start;
-        while block_start < selected_end {
-            let block_end = block_start
-                .saturating_add(options.block_rows)
-                .min(selected_end);
-            let row_indices = (block_start..block_end).collect::<Vec<_>>();
+        for row_indices in &row_blocks {
             let request = options.sidecars.apply_to(
                 VisibilityBufferRequest::imaging(
                     options.data_column,
-                    row_indices,
+                    row_indices.clone(),
                     options.channel_start,
                     channel_count,
                 )
@@ -99,8 +104,8 @@ fn run() -> Result<(), String> {
             aggregate.add(&fill_report);
             block_reports.push(BlockProbeReport {
                 repeat_index,
-                row_start: block_start,
-                row_count: block_end - block_start,
+                row_start: row_indices.first().copied().unwrap_or(0),
+                row_count: row_indices.len(),
                 elapsed_ns: elapsed.as_nanos(),
                 logical_output_bytes: fill_report.logical_output_bytes,
                 modeled_physical_read_bytes: fill_report.modeled_physical_read_bytes,
@@ -109,7 +114,6 @@ fn run() -> Result<(), String> {
                     .allocation
                     .grown_or_retyped_buffers,
             });
-            block_start = block_end;
         }
     }
     let probe_elapsed = probe_started.elapsed();
@@ -148,6 +152,7 @@ fn run() -> Result<(), String> {
             repeat: options.repeat,
             sidecars: options.sidecars,
             columns: options.columns,
+            visibility_selection: options.visibility_selection,
         },
         elapsed_ns: probe_elapsed.as_nanos(),
         aggregate,
@@ -181,6 +186,7 @@ struct ProbeOptions {
     sidecars: ProbeSidecarMode,
     columns: ProbeColumnSelection,
     verify_full_read_rows: Option<usize>,
+    visibility_selection: bool,
 }
 
 impl ProbeOptions {
@@ -196,6 +202,7 @@ impl ProbeOptions {
         let mut sidecars = ProbeSidecarMode::Imaging;
         let mut columns = ProbeColumnSelection::default();
         let mut verify_full_read_rows = None;
+        let mut visibility_selection = false;
 
         let mut index = 0usize;
         while index < args.len() {
@@ -254,6 +261,9 @@ impl ProbeOptions {
                         "--verify-full-read",
                     )?);
                 }
+                "--visibility-selection" => {
+                    visibility_selection = true;
+                }
                 other => return Err(format!("unknown argument {other:?}\n{}", usage())),
             }
             index += 1;
@@ -276,6 +286,7 @@ impl ProbeOptions {
             sidecars,
             columns,
             verify_full_read_rows,
+            visibility_selection,
         })
     }
 }
@@ -417,6 +428,7 @@ struct SelectionReport {
     repeat: usize,
     sidecars: ProbeSidecarMode,
     columns: ProbeColumnSelection,
+    visibility_selection: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -864,6 +876,77 @@ fn source_partition_for_row(
         full_channel_count,
         corr_count,
     ))
+}
+
+fn contiguous_row_blocks(
+    row_start: usize,
+    selected_end: usize,
+    block_rows: usize,
+) -> Vec<Vec<usize>> {
+    let mut blocks = Vec::new();
+    let mut block_start = row_start;
+    while block_start < selected_end {
+        let block_end = block_start.saturating_add(block_rows).min(selected_end);
+        blocks.push((block_start..block_end).collect());
+        block_start = block_end;
+    }
+    blocks
+}
+
+fn visibility_selection_row_blocks(
+    ms: &MeasurementSet,
+    source_partition: &SourcePartition,
+    block_rows: usize,
+) -> Result<Vec<Vec<usize>>, String> {
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_to_spw_pol = (0..data_description.row_count())
+        .map(|row| {
+            let spw = data_description
+                .spectral_window_id(row)
+                .map_err(|error| format!("read DATA_DESCRIPTION.SPECTRAL_WINDOW_ID: {error}"))?;
+            let pol = data_description
+                .polarization_id(row)
+                .map_err(|error| format!("read DATA_DESCRIPTION.POLARIZATION_ID: {error}"))?;
+            if spw < 0 || pol < 0 {
+                Ok(None)
+            } else {
+                Ok(Some((spw as usize, pol as usize)))
+            }
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut allowed_ddids = vec![false; ddid_to_spw_pol.len()];
+    if let Some(slot) = allowed_ddids.get_mut(source_partition.data_desc_id as usize) {
+        *slot = true;
+    }
+    let plan = ms
+        .select_visibility_rows(&VisibilityRowSelectionRequest::new(
+            ddid_to_spw_pol,
+            allowed_ddids,
+            Some(source_partition.data_desc_id),
+            None,
+            false,
+            false,
+        ))
+        .map_err(|error| format!("select visibility rows: {error}"))?;
+    let (selected_rows, _selected_ddid, _fields, flag_row, _reference_time, _time_bounds) =
+        plan.into_parts();
+    let active_rows = selected_rows
+        .into_iter()
+        .filter_map(|row| {
+            let (row_index, _field, _ddid, _spw, _pol, _time) = row.parts();
+            flag_row
+                .get(row_index)
+                .copied()
+                .map(|flagged| (!flagged).then_some(row_index))
+                .unwrap_or(Some(row_index))
+        })
+        .collect::<Vec<_>>();
+    Ok(active_rows
+        .chunks(block_rows)
+        .map(|chunk| chunk.to_vec())
+        .collect())
 }
 
 fn data_manager_info(ms: &MeasurementSet) -> Vec<DataManagerReport> {

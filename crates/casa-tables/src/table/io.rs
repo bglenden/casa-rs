@@ -1150,6 +1150,38 @@ impl Table {
         &self.dm_info
     }
 
+    /// Returns the channel-axis tile width for a tiled rank-2 array column.
+    ///
+    /// Non-tiled columns, in-memory tables, or columns whose tiled shape is not
+    /// a 2-D cell plus row axis return `Ok(None)`.
+    pub fn array_column_2d_channel_tile_width(
+        &self,
+        column: &str,
+    ) -> Result<Option<usize>, TableError> {
+        if let Some(schema) = self.schema()
+            && !schema
+                .columns()
+                .iter()
+                .any(|candidate| candidate.name() == column)
+        {
+            return Err(TableError::ColumnNotFound {
+                row_index: 0,
+                column: column.to_string(),
+            });
+        }
+        let Some(path) = self.path() else {
+            return Ok(None);
+        };
+        crate::storage::CompositeStorage
+            .array_column_2d_channel_tile_width(path, column)
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to inspect tiled channel tile width for column '{column}' from table {}: {err}",
+                    path.display()
+                ))
+            })
+    }
+
     /// Returns a human-readable summary of the table's structure.
     ///
     /// Includes row count, column names and types, and (for disk-loaded

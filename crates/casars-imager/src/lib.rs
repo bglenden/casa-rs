@@ -381,7 +381,7 @@ impl BoundedUvCoverageAccumulator {
         for (samples, quota) in grouped.into_values().zip(quotas) {
             for index in progress_uv_sampled_indices(samples.len(), quota) {
                 if let Some(sample) = samples.get(index) {
-                    measured.push(sample.point.clone());
+                    measured.push(sample.point);
                 }
             }
         }
@@ -623,9 +623,7 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
             if runtime.memory.is_none() {
                 runtime.memory = context.memory.clone();
             }
-            if runtime.active_threads > 0 {
-                context.last_active_runtime_backend = Some(runtime.backend.clone());
-            } else if context.last_active_runtime_backend.is_none() {
+            if runtime.active_threads > 0 || context.last_active_runtime_backend.is_none() {
                 context.last_active_runtime_backend = Some(runtime.backend.clone());
             } else if event.phase == "finished" {
                 if let Some(backend) = context.last_active_runtime_backend.as_ref() {
@@ -678,8 +676,9 @@ fn observe_imager_progress_shared_slab_uv_once(
     table_values: &PreparedSelectionTableValues,
     frequency_hz: f64,
 ) {
-    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed)
-        || !(frequency_hz.is_finite() && frequency_hz > 0.0)
+    if !(IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed)
+        && frequency_hz.is_finite()
+        && frequency_hz > 0.0)
     {
         return;
     }
@@ -7997,8 +7996,14 @@ fn run_standard_spectral_cube_slab_from_open_ms(
     let active_row_count = active_selected_rows.len().max(1);
     let backend_residency =
         cube_per_plane_backend_residency_shape(config, &per_plane_backend_plan, active_row_count);
+    let channel_tile_width = main_column_2d_channel_tile_width(ms, data_column.name())?;
     let slab_shapes = if let Some(plane_read_ranges) = direct_plane_read_ranges.as_ref() {
-        cube_slab_visibility_shapes_from_plane_read_ranges(nplanes, plane_read_ranges)
+        cube_slab_visibility_shapes_from_plane_read_ranges(
+            nplanes,
+            plane_read_ranges,
+            table_values.spw_freqs_hz.len(),
+            channel_tile_width,
+        )
     } else {
         cube_slab_visibility_shapes(
             config,
@@ -8007,6 +8012,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             &table_values,
             &selection,
             &derived_engine,
+            channel_tile_width,
         )?
     };
     let visibility_shape = visibility_source_shape_from_ms_shape(
@@ -13349,6 +13355,15 @@ fn main_column_channel_read_granularity(
     }
 }
 
+fn main_column_2d_channel_tile_width(
+    ms: &MeasurementSet,
+    column_name: &str,
+) -> Result<Option<usize>, String> {
+    ms.main_table()
+        .array_column_2d_channel_tile_width(column_name)
+        .map_err(|error| error.to_string())
+}
+
 fn visibility_source_shape_from_ms_shape(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -13488,6 +13503,7 @@ fn visibility_source_shape_for_single_plane_stream(
                 active_planes: 1,
                 slab_count: 1,
                 source_channel_visits: selected_channel_count.max(1),
+                physical_source_channel_visits: selected_channel_count.max(1),
                 max_slab_source_channels: selected_channel_count.max(1),
             }],
         },
@@ -13534,6 +13550,7 @@ fn estimated_single_plane_visibility_source_shape(
             active_planes: 1,
             slab_count: 1,
             source_channel_visits: selected_channel_count.max(1),
+            physical_source_channel_visits: selected_channel_count.max(1),
             max_slab_source_channels: selected_channel_count.max(1),
         }],
     }
@@ -13546,11 +13563,13 @@ fn cube_slab_visibility_shapes(
     table_values: &PreparedSelectionTableValues,
     selection: &SelectedRowsContext,
     derived_engine: &MsCalEngine,
+    channel_tile_width: Option<usize>,
 ) -> Result<Vec<spectral_slab::VisibilitySlabShape>, String> {
     let mut shapes = Vec::with_capacity(nplanes);
     for active_planes in 1..=nplanes {
         let slabs = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
         let mut source_channel_visits = 0usize;
+        let mut physical_source_channel_visits = 0usize;
         let mut max_slab_source_channels = 0usize;
         for slab in &slabs {
             let slab_config = slab_config_for_cube_planes(
@@ -13568,12 +13587,20 @@ fn cube_slab_visibility_shapes(
             let selected_channel_count =
                 source_stream_selected_channel_count(table_values, channel_read_range);
             source_channel_visits = source_channel_visits.saturating_add(selected_channel_count);
+            physical_source_channel_visits = physical_source_channel_visits.saturating_add(
+                physical_source_channel_count_for_range(
+                    channel_read_range,
+                    table_values.spw_freqs_hz.len(),
+                    channel_tile_width,
+                ),
+            );
             max_slab_source_channels = max_slab_source_channels.max(selected_channel_count);
         }
         shapes.push(spectral_slab::VisibilitySlabShape {
             active_planes,
             slab_count: slabs.len(),
             source_channel_visits,
+            physical_source_channel_visits: physical_source_channel_visits.max(1),
             max_slab_source_channels,
         });
     }
@@ -13583,31 +13610,68 @@ fn cube_slab_visibility_shapes(
 fn cube_slab_visibility_shapes_from_plane_read_ranges(
     nplanes: usize,
     plane_read_ranges: &[Option<SelectedChannelReadRange>],
+    full_source_channel_count: usize,
+    channel_tile_width: Option<usize>,
 ) -> Vec<spectral_slab::VisibilitySlabShape> {
     let mut shapes = Vec::with_capacity(nplanes);
     for active_planes in 1..=nplanes {
         let slabs = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
         let mut source_channel_visits = 0usize;
+        let mut physical_source_channel_visits = 0usize;
         let mut max_slab_source_channels = 0usize;
         for slab in &slabs {
-            let selected_channel_count = selected_channel_read_range_for_plane_span(
+            let channel_read_range = selected_channel_read_range_for_plane_span(
                 plane_read_ranges,
                 slab.plane_start,
                 slab.plane_end,
-            )
-            .map(|range| range.count)
-            .unwrap_or(0);
+            );
+            let selected_channel_count = channel_read_range.map(|range| range.count).unwrap_or(0);
             source_channel_visits = source_channel_visits.saturating_add(selected_channel_count);
+            physical_source_channel_visits = physical_source_channel_visits.saturating_add(
+                physical_source_channel_count_for_range(
+                    channel_read_range,
+                    full_source_channel_count,
+                    channel_tile_width,
+                ),
+            );
             max_slab_source_channels = max_slab_source_channels.max(selected_channel_count);
         }
         shapes.push(spectral_slab::VisibilitySlabShape {
             active_planes,
             slab_count: slabs.len(),
             source_channel_visits: source_channel_visits.max(1),
+            physical_source_channel_visits: physical_source_channel_visits.max(1),
             max_slab_source_channels: max_slab_source_channels.max(1),
         });
     }
     shapes
+}
+
+fn physical_source_channel_count_for_range(
+    channel_read_range: Option<SelectedChannelReadRange>,
+    full_source_channel_count: usize,
+    channel_tile_width: Option<usize>,
+) -> usize {
+    let full_source_channel_count = full_source_channel_count.max(1);
+    let Some(range) = channel_read_range else {
+        return full_source_channel_count;
+    };
+    let Some(tile_width) = channel_tile_width.filter(|width| *width > 1) else {
+        return range.count.max(1);
+    };
+    let range_start = range.start.min(full_source_channel_count);
+    let range_end = range
+        .start
+        .saturating_add(range.count)
+        .min(full_source_channel_count)
+        .max(range_start.saturating_add(1).min(full_source_channel_count));
+    let physical_start = (range_start / tile_width).saturating_mul(tile_width);
+    let physical_end = range_end
+        .saturating_add(tile_width - 1)
+        .saturating_div(tile_width)
+        .saturating_mul(tile_width)
+        .min(full_source_channel_count);
+    physical_end.saturating_sub(physical_start).max(1)
 }
 
 fn log_cube_slab_source_read_ranges(
@@ -25258,7 +25322,7 @@ fn read_shared_columnar_cube_slab_source(
     derived_engine: &MsCalEngine,
     channel_read_range: Option<SelectedChannelReadRange>,
     spectral_plan: Option<&CubeRowSpectralReusablePlan>,
-    row_block_rows: usize,
+    _row_block_rows: usize,
     prepare_started_at: Instant,
     pass_kind: spectral_slab::ImagingPassKind,
     slab_id: usize,
@@ -25286,7 +25350,7 @@ fn read_shared_columnar_cube_slab_source(
     let mut rows_done = 0usize;
     let mut logical_output_bytes = 0u64;
     let mut modeled_physical_read_bytes = 0u64;
-    let row_block_rows = row_block_rows.max(1);
+    let row_block_rows = active_selected_rows.len().max(1);
     let selected_channel_count =
         source_stream_selected_channel_count(table_values, channel_read_range);
 
@@ -38837,7 +38901,7 @@ mod tests {
             freq_ref: FrequencyRef::TOPO,
             corr_types: vec![9],
         };
-        let rows = vec![
+        let rows = [
             progress_uv_geometry_row(4, 0, 0, 5.0, [0.0, 0.0, 0.0]),
             progress_uv_geometry_row(0, 0, 1, 30.0, [30.0, -30.0, 0.0]),
             progress_uv_geometry_row(1, 0, 1, 10.0, [10.0, -10.0, 0.0]),
@@ -38877,7 +38941,7 @@ mod tests {
             freq_ref: FrequencyRef::TOPO,
             corr_types: vec![9],
         };
-        let rows = vec![
+        let rows = [
             progress_uv_geometry_row(0, 0, 1, 10.0, [10.0, -10.0, 0.0]),
             progress_uv_geometry_row(1, 0, 1, 20.0, [20.0, -20.0, 0.0]),
             progress_uv_geometry_row(2, 0, 1, 30.0, [30.0, -30.0, 0.0]),
@@ -38927,7 +38991,7 @@ mod tests {
             freq_ref: FrequencyRef::TOPO,
             corr_types: vec![9],
         };
-        let rows = vec![progress_uv_geometry_row(0, 0, 1, 10.0, [10.0, -10.0, 0.0])];
+        let rows = [progress_uv_geometry_row(0, 0, 1, 10.0, [10.0, -10.0, 0.0])];
 
         let mut accumulator = BoundedUvCoverageAccumulator::new(10);
         accumulator.observe_plotms_like_geometry_rows_incremental(

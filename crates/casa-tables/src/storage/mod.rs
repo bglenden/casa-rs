@@ -2501,6 +2501,51 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn array_column_2d_channel_tile_width(
+        &self,
+        table_path: &Path,
+        column: &str,
+    ) -> Result<Option<usize>, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        let TableDatResult::Plain(table_dat) = read_table_dat_dispatch(&control_path)? else {
+            return Ok(None);
+        };
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        match dm.type_name.as_str() {
+            "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
+                tiled_stman::tiled_2d_channel_tile_width(table_path, dm.seq_nr)
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn load_plain_array_column_rows_2d_channel_range_typed(
         &self,
         table_path: &Path,
