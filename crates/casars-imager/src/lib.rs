@@ -40974,6 +40974,120 @@ mod tests {
     }
 
     #[test]
+    fn standard_mfs_progress_callback_reports_compute_active_without_source_stream() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("standard-mfs.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024 * 1024 * 1024,
+            planned_active_bytes: 12 * 1024 * 1024 * 1024,
+            source_stream_buffer_bytes: 3 * 1024 * 1024 * 1024,
+            product_scratch_bytes: 5 * 1024 * 1024 * 1024,
+            active_planes: 1,
+            row_block_rows: 292_000,
+            memory_target_source: Some("test".to_string()),
+        });
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/observability.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/observability-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse config");
+        let callback = standard_mfs_progress_callback(&config).expect("progress callback");
+
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::ResidualRefreshStart,
+            deconvolver: Deconvolver::Hogbom,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 1,
+            minor_iterations: 25,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 50,
+            peak_residual_jy_per_beam: Some(0.0025),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let runtime = event.runtime.as_ref().expect("runtime");
+        assert!(!runtime
+            .active_resources
+            .contains(&PROGRESS_RESOURCE_SOURCE_STREAM.to_string()));
+        assert!(runtime
+            .active_resources
+            .contains(&PROGRESS_RESOURCE_GRID.to_string()));
+        assert!(runtime
+            .active_resources
+            .contains(&PROGRESS_RESOURCE_PLANE_STATE.to_string()));
+        let observability = event.observability.as_ref().expect("observability");
+        let source = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+            .expect("source stream");
+        assert_eq!(source.state, ImagerObservedResourceState::Retained);
+        assert_eq!(source.lease_count, 0);
+        let grid = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::VisibilityGrid)
+            .expect("grid");
+        assert_eq!(grid.state, ImagerObservedResourceState::Active);
+        assert!(grid.active_threads > 0);
+        let plane = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::PlaneState)
+            .expect("plane");
+        assert_eq!(plane.state, ImagerObservedResourceState::Active);
+        let residual_span = observability
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::ResidualRefresh)
+            .expect("residual refresh span");
+        assert_eq!(
+            residual_span.resource_ids,
+            vec![
+                ImagerObservedResourceId::PlaneState,
+                ImagerObservedResourceId::VisibilityGrid
+            ]
+        );
+        assert!(observability
+            .workers
+            .iter()
+            .any(|worker| worker.state == ImagerObservedWorkerState::RunningCpu
+                && worker.active_count > 0));
+        assert_eq!(
+            observability
+                .queues
+                .iter()
+                .find(|queue| queue.id == "source-row-block")
+                .and_then(|queue| queue.len),
+            Some(0)
+        );
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
     fn imager_observer_spans_own_typed_resource_leases() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
