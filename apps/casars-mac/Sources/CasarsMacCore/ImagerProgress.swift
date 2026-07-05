@@ -205,8 +205,19 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 backend: "unknown",
                 sampleCadence: "event stream"
             ),
-            sampledAtLabel: "\(event.elapsedMs) ms"
+            sampledAtLabel: Self.elapsedSecondsLabel(milliseconds: event.elapsedMs)
         )
+    }
+
+    static func elapsedSecondsLabel(milliseconds: UInt64) -> String {
+        let seconds = Double(milliseconds) / 1_000.0
+        if seconds < 10 {
+            return String(format: "%.2f s", seconds)
+        }
+        if seconds < 100 {
+            return String(format: "%.1f s", seconds)
+        }
+        return String(format: "%.0f s", seconds)
     }
 }
 
@@ -457,11 +468,15 @@ public struct UVCoverageProgress: Codable, Equatable {
 
 extension UVCoverageProgress {
     init(payload: ImagerProgressUvCoveragePayload) {
+        let measured = payload.measured.map(UVPoint.init(payload:))
+        let conjugate = payload.conjugate.isEmpty
+            ? measured.map { UVPoint(uKilolambda: -$0.uKilolambda, vKilolambda: -$0.vKilolambda, weight: $0.weight) }
+            : payload.conjugate.map(UVPoint.init(payload:))
         self.init(
             uExtentKilolambda: payload.uExtentKilolambda,
             vExtentKilolambda: payload.vExtentKilolambda,
-            measured: payload.measured.map(UVPoint.init(payload:)),
-            conjugate: payload.conjugate.map(UVPoint.init(payload:)),
+            measured: measured,
+            conjugate: conjugate,
             droppedPointCount: payload.droppedPointCount,
             sampleLimit: payload.sampleLimit
         )
@@ -698,6 +713,13 @@ struct ImagerProgressUvPointPayload: Decodable, Equatable {
         case uKilolambda = "u_klambda"
         case vKilolambda = "v_klambda"
         case weight
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        uKilolambda = try container.decode(Double.self, forKey: .uKilolambda)
+        vKilolambda = try container.decode(Double.self, forKey: .vKilolambda)
+        weight = try container.decodeIfPresent(Float.self, forKey: .weight) ?? 1.0
     }
 }
 

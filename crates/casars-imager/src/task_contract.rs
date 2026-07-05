@@ -39,6 +39,10 @@ pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Prefix used before each stderr progress-event JSON line.
 pub const IMAGER_PROGRESS_STDERR_PREFIX: &str = "CASARS_IMAGER_PROGRESS ";
 
+fn default_imager_progress_uv_point_weight() -> f32 {
+    1.0
+}
+
 /// Version/compatibility information for the JSON task protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerProtocolInfo {
@@ -218,7 +222,9 @@ pub struct ImagerProgressUvPoint {
     pub u_klambda: f64,
     /// V coordinate in kilolambda.
     pub v_klambda: f64,
-    /// Natural or effective sample weight.
+    /// Natural or effective sample weight. Live progress displays use fixed
+    /// one-pixel points, so this remains an in-memory/back-compat field only.
+    #[serde(default = "default_imager_progress_uv_point_weight", skip_serializing)]
     pub weight: f32,
 }
 
@@ -232,6 +238,10 @@ pub struct ImagerProgressUvCoverage {
     /// Measured UV points retained in the bounded sample.
     pub measured: Vec<ImagerProgressUvPoint>,
     /// Hermitian/conjugate points derived from the measured sample.
+    ///
+    /// Progress consumers may derive this client-side; live progress events omit
+    /// it to avoid sending the same point cloud twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conjugate: Vec<ImagerProgressUvPoint>,
     /// Accepted points not retained because the bounded sample was full.
     pub dropped_points: u64,

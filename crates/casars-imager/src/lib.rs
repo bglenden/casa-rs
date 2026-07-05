@@ -180,6 +180,7 @@ struct BoundedUvCoverageAccumulator {
     measured: Vec<ImagerProgressUvPoint>,
     u_extent_klambda: f64,
     v_extent_klambda: f64,
+    last_observed_row_index: Option<usize>,
 }
 
 impl BoundedUvCoverageAccumulator {
@@ -187,21 +188,40 @@ impl BoundedUvCoverageAccumulator {
         Self {
             sample_limit,
             accepted_points: 0,
-            measured: Vec::with_capacity(sample_limit.min(4096)),
+            measured: Vec::with_capacity(sample_limit.min(262_144)),
             u_extent_klambda: 0.0,
             v_extent_klambda: 0.0,
+            last_observed_row_index: None,
         }
+    }
+
+    fn reset(&mut self) {
+        self.accepted_points = 0;
+        self.measured.clear();
+        self.u_extent_klambda = 0.0;
+        self.v_extent_klambda = 0.0;
+        self.last_observed_row_index = None;
     }
 
     fn observe_point(&mut self, u_lambda: f64, v_lambda: f64, weight: f32) {
         if !(u_lambda.is_finite() && v_lambda.is_finite() && weight.is_finite() && weight > 0.0) {
             return;
         }
-        let point = ImagerProgressUvPoint {
+        self.observe_klambda_point(ImagerProgressUvPoint {
             u_klambda: u_lambda / 1000.0,
             v_klambda: v_lambda / 1000.0,
             weight,
-        };
+        });
+    }
+
+    fn observe_klambda_point(&mut self, point: ImagerProgressUvPoint) {
+        if !(point.u_klambda.is_finite()
+            && point.v_klambda.is_finite()
+            && point.weight.is_finite()
+            && point.weight > 0.0)
+        {
+            return;
+        }
         self.u_extent_klambda = self.u_extent_klambda.max(point.u_klambda.abs());
         self.v_extent_klambda = self.v_extent_klambda.max(point.v_klambda.abs());
         self.accepted_points = self.accepted_points.saturating_add(1);
@@ -251,27 +271,256 @@ impl BoundedUvCoverageAccumulator {
         }
     }
 
-    fn snapshot(&self) -> ImagerProgressUvCoverage {
-        let conjugate = self
-            .measured
-            .iter()
-            .map(|point| ImagerProgressUvPoint {
-                u_klambda: -point.u_klambda,
-                v_klambda: -point.v_klambda,
-                weight: point.weight,
-            })
+    fn observe_plotms_like_geometry_rows_incremental<'a, I>(
+        &mut self,
+        rows: I,
+        table_values: &PreparedSelectionTableValues,
+        representative_frequency_hz: f64,
+    ) where
+        I: IntoIterator<Item = &'a PreparedGeometryRow>,
+    {
+        let table_center_frequency_hz = representative_spw_frequency_hz(&table_values.spw_freqs_hz);
+        let representative_frequency_hz = (representative_frequency_hz.is_finite()
+            && representative_frequency_hz > 0.0)
+            .then_some(representative_frequency_hz);
+        let mut max_observed_row_index = self.last_observed_row_index;
+
+        for row in rows {
+            let row_index = row.selected_row.row_index;
+            if self
+                .last_observed_row_index
+                .is_some_and(|last_row_index| row_index <= last_row_index)
+            {
+                continue;
+            }
+            max_observed_row_index =
+                Some(max_observed_row_index.map_or(row_index, |current| current.max(row_index)));
+            if let Some(point) = plotms_like_uv_point_from_geometry_row(
+                row,
+                table_values.spw_id,
+                representative_frequency_hz,
+                table_center_frequency_hz,
+            ) {
+                self.observe_klambda_point(point);
+            }
+        }
+
+        self.last_observed_row_index = max_observed_row_index;
+    }
+
+    fn observe_plotms_like_geometry_rows<'a, I>(
+        &mut self,
+        rows: I,
+        table_values: &PreparedSelectionTableValues,
+        representative_frequency_hz: f64,
+    ) where
+        I: IntoIterator<Item = &'a PreparedGeometryRow>,
+    {
+        let table_center_frequency_hz = representative_spw_frequency_hz(&table_values.spw_freqs_hz);
+        let representative_frequency_hz = (representative_frequency_hz.is_finite()
+            && representative_frequency_hz > 0.0)
+            .then_some(representative_frequency_hz);
+        let mut grouped = BTreeMap::<(i32, i32, usize, usize), Vec<ProgressUvSample>>::new();
+        let mut accepted_points = 0_u64;
+        let mut u_extent_klambda = 0.0_f64;
+        let mut v_extent_klambda = 0.0_f64;
+        let mut max_observed_row_index = self.last_observed_row_index;
+
+        for row in rows {
+            let row_index = row.selected_row.row_index;
+            max_observed_row_index =
+                Some(max_observed_row_index.map_or(row_index, |current| current.max(row_index)));
+            let Some(point) = plotms_like_uv_point_from_geometry_row(
+                row,
+                table_values.spw_id,
+                representative_frequency_hz,
+                table_center_frequency_hz,
+            ) else {
+                continue;
+            };
+            u_extent_klambda = u_extent_klambda.max(point.u_klambda.abs());
+            v_extent_klambda = v_extent_klambda.max(point.v_klambda.abs());
+            accepted_points = accepted_points.saturating_add(1);
+            grouped
+                .entry((
+                    row.antenna1_id,
+                    row.antenna2_id,
+                    row.selected_row.field_id,
+                    row.selected_row.spw_id,
+                ))
+                .or_default()
+                .push(ProgressUvSample {
+                    row_index: row.selected_row.row_index,
+                    time_mjd_seconds: row.selected_row.time_mjd_seconds,
+                    point,
+                });
+        }
+
+        if accepted_points == 0 {
+            return;
+        }
+
+        for samples in grouped.values_mut() {
+            samples.sort_by(|left, right| {
+                left.time_mjd_seconds
+                    .unwrap_or(f64::INFINITY)
+                    .total_cmp(&right.time_mjd_seconds.unwrap_or(f64::INFINITY))
+                    .then_with(|| left.row_index.cmp(&right.row_index))
+            });
+        }
+
+        let retained_budget = self
+            .sample_limit
+            .min(usize::try_from(accepted_points).unwrap_or(usize::MAX));
+        let lengths = grouped
+            .values()
+            .map(|samples| samples.len())
             .collect::<Vec<_>>();
+        let quotas = allocate_progress_uv_track_quotas(&lengths, retained_budget);
+        let mut measured = Vec::with_capacity(retained_budget);
+        for (samples, quota) in grouped.into_values().zip(quotas) {
+            for index in progress_uv_sampled_indices(samples.len(), quota) {
+                if let Some(sample) = samples.get(index) {
+                    measured.push(sample.point.clone());
+                }
+            }
+        }
+
+        self.accepted_points = accepted_points;
+        self.measured = measured;
+        self.u_extent_klambda = u_extent_klambda;
+        self.v_extent_klambda = v_extent_klambda;
+        self.last_observed_row_index = max_observed_row_index;
+    }
+
+    fn snapshot(&self) -> ImagerProgressUvCoverage {
         ImagerProgressUvCoverage {
             u_extent_klambda: self.u_extent_klambda,
             v_extent_klambda: self.v_extent_klambda,
             measured: self.measured.clone(),
-            conjugate,
+            conjugate: Vec::new(),
             dropped_points: self
                 .accepted_points
                 .saturating_sub(self.measured.len() as u64),
             sample_limit: self.sample_limit,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ProgressUvSample {
+    row_index: usize,
+    time_mjd_seconds: Option<f64>,
+    point: ImagerProgressUvPoint,
+}
+
+fn plotms_like_uv_point_from_geometry_row(
+    row: &PreparedGeometryRow,
+    selected_spw_id: usize,
+    representative_frequency_hz: Option<f64>,
+    table_center_frequency_hz: Option<f64>,
+) -> Option<ImagerProgressUvPoint> {
+    let frequency_hz = if row.selected_row.spw_id == selected_spw_id {
+        representative_frequency_hz.or(table_center_frequency_hz)
+    } else {
+        table_center_frequency_hz.or(representative_frequency_hz)
+    }?;
+    let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+    let u_lambda = row.raw_uvw_m[0] * lambda_scale;
+    let v_lambda = row.raw_uvw_m[1] * lambda_scale;
+    (u_lambda.is_finite() && v_lambda.is_finite()).then_some(ImagerProgressUvPoint {
+        u_klambda: u_lambda / 1_000.0,
+        v_klambda: v_lambda / 1_000.0,
+        weight: 1.0,
+    })
+}
+
+fn representative_spw_frequency_hz(frequencies_hz: &[f64]) -> Option<f64> {
+    let mut sum = 0.0_f64;
+    let mut count = 0_usize;
+    for frequency_hz in frequencies_hz {
+        if frequency_hz.is_finite() && *frequency_hz > 0.0 {
+            sum += *frequency_hz;
+            count += 1;
+        }
+    }
+    (count > 0).then_some(sum / count as f64)
+}
+
+fn representative_slab_plane_frequency_hz(
+    table_values: &PreparedSelectionTableValues,
+    channel_read_range: Option<SelectedChannelReadRange>,
+) -> Option<f64> {
+    let channel_count = table_values.spw_freqs_hz.len();
+    if channel_count == 0 {
+        return None;
+    }
+    let (start, count) = channel_read_range
+        .map(|range| (range.start.min(channel_count), range.count))
+        .unwrap_or((0, channel_count));
+    let count = count.min(channel_count.saturating_sub(start));
+    if count == 0 {
+        return representative_spw_frequency_hz(&table_values.spw_freqs_hz);
+    }
+    let midpoint = start.saturating_add(count / 2).min(channel_count - 1);
+    table_values
+        .spw_freqs_hz
+        .get(midpoint)
+        .copied()
+        .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+        .or_else(|| representative_spw_frequency_hz(&table_values.spw_freqs_hz))
+}
+
+fn allocate_progress_uv_track_quotas(lengths: &[usize], budget: usize) -> Vec<usize> {
+    let total_points = lengths.iter().sum::<usize>();
+    if total_points <= budget {
+        return lengths.to_vec();
+    }
+    if budget == 0 {
+        return vec![0; lengths.len()];
+    }
+
+    let mut quotas = vec![0usize; lengths.len()];
+    let mut remainders = Vec::new();
+    let mut assigned = 0usize;
+    for (index, &length) in lengths.iter().enumerate() {
+        if length == 0 {
+            continue;
+        }
+        let scaled = length.saturating_mul(budget);
+        let base = scaled / total_points;
+        let remainder = scaled % total_points;
+        quotas[index] = base;
+        assigned += base;
+        remainders.push((index, remainder, length));
+    }
+
+    remainders.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.2.cmp(&left.2)));
+    let mut remaining = budget.saturating_sub(assigned);
+    for (index, _, _) in remainders {
+        if remaining == 0 {
+            break;
+        }
+        quotas[index] += 1;
+        remaining -= 1;
+    }
+    quotas
+}
+
+fn progress_uv_sampled_indices(length: usize, take: usize) -> Vec<usize> {
+    if take >= length {
+        return (0..length).collect();
+    }
+    if take == 0 {
+        return Vec::new();
+    }
+    if take == 1 {
+        return vec![length / 2];
+    }
+
+    (0..take)
+        .map(|slot| slot.saturating_mul(length.saturating_sub(1)) / (take - 1))
+        .collect()
 }
 
 fn splitmix64(mut value: u64) -> u64 {
@@ -287,6 +536,7 @@ struct ImagerProgressContext {
     last_emit_at: Option<Instant>,
     sequence: u64,
     uv_coverage: BoundedUvCoverageAccumulator,
+    uv_coverage_output_slab: Option<(usize, usize)>,
     last_active_runtime_backend: Option<String>,
 }
 
@@ -307,7 +557,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
     }
     let normalized = ImagerProgressOptions {
         enabled: true,
-        max_uv_points: options.max_uv_points.min(4096),
+        max_uv_points: options.max_uv_points.min(casa_ms::DEFAULT_MAX_PLOT_POINTS),
         min_interval_ms: options.min_interval_ms.max(50),
     };
     let context = ImagerProgressContext {
@@ -317,6 +567,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         last_emit_at: None,
         sequence: 0,
         last_active_runtime_backend: None,
+        uv_coverage_output_slab: None,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
         *slot = Some(context);
@@ -359,9 +610,6 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                 }
             }
         }
-        if event.uv_coverage.is_none() && !context.uv_coverage.measured.is_empty() {
-            event.uv_coverage = Some(context.uv_coverage.snapshot());
-        }
         context.last_emit_at = Some(now);
         serde_json::to_string(&event)
     };
@@ -383,6 +631,7 @@ fn observe_imager_progress_uv_batch(batch: &VisibilityBatch) {
 
 fn observe_imager_progress_shared_slab_uv_once(
     source: &SharedColumnarCubeSlabSource,
+    table_values: &PreparedSelectionTableValues,
     frequency_hz: f64,
 ) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed)
@@ -397,19 +646,52 @@ fn observe_imager_progress_shared_slab_uv_once(
         if context.uv_coverage.accepted_points > 0 {
             return;
         }
-        let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-        for block in &source.blocks {
-            for row in block.geometry_rows.iter() {
-                if row.is_cross {
-                    context.uv_coverage.observe_point(
-                        row.transform.uvw_m[0] * lambda_scale,
-                        row.transform.uvw_m[1] * lambda_scale,
-                        1.0,
-                    );
+        context.uv_coverage.observe_plotms_like_geometry_rows(
+            source
+                .blocks
+                .iter()
+                .flat_map(|block| block.geometry_rows.iter()),
+            table_values,
+            frequency_hz,
+        );
+    }
+}
+
+fn observe_imager_progress_geometry_rows(
+    rows: &[PreparedGeometryRow],
+    table_values: &PreparedSelectionTableValues,
+    output_cube: Option<&ImagerProgressCube>,
+    representative_frequency_hz: Option<f64>,
+) -> Option<ImagerProgressUvCoverage> {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    let representative_frequency_hz = representative_frequency_hz
+        .or_else(|| representative_spw_frequency_hz(&table_values.spw_freqs_hz))
+        .unwrap_or(0.0);
+    if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
+        if let Some(context) = context.as_mut() {
+            if let Some(cube) = output_cube {
+                let slab_range = (cube.active_plane_start, cube.active_plane_end);
+                if context.uv_coverage_output_slab != Some(slab_range) {
+                    context.uv_coverage.reset();
+                    context.uv_coverage_output_slab = Some(slab_range);
+                }
+                if cube.active_plane_start == cube.active_plane_end {
+                    return Some(context.uv_coverage.snapshot());
                 }
             }
+            context
+                .uv_coverage
+                .observe_plotms_like_geometry_rows_incremental(
+                    rows.iter(),
+                    table_values,
+                    representative_frequency_hz,
+                );
+            return Some(context.uv_coverage.snapshot());
         }
     }
+    None
 }
 
 fn observe_imager_progress_prepared_input(input: &PreparedInput) {
@@ -579,6 +861,8 @@ fn emit_imager_progress_ms_window(
     table_values: &PreparedSelectionTableValues,
     row_chunk: &[SelectedMainRow],
     channel_read_range: Option<SelectedChannelReadRange>,
+    output_cube: Option<ImagerProgressCube>,
+    uv_coverage: Option<ImagerProgressUvCoverage>,
 ) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) || row_chunk.is_empty() {
         return;
@@ -596,6 +880,7 @@ fn emit_imager_progress_ms_window(
         .map(|row| row.row_index.saturating_add(1))
         .max()
         .unwrap_or(row_start);
+    let force_emit = uv_coverage.is_some();
     emit_imager_progress_event(
         ImagerProgressEvent {
             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -608,12 +893,12 @@ fn emit_imager_progress_ms_window(
             ),
             work: None,
             ms_read: Some(ms_read),
-            output_cube: None,
-            uv_coverage: None,
+            output_cube,
+            uv_coverage,
             deconvolution: None,
             runtime: None,
         },
-        false,
+        force_emit,
     );
 }
 
@@ -5119,6 +5404,8 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             "mosaic_cube_shared_columnar_slab_source",
         );
         let source_prepare_started = Instant::now();
+        let progress_output_cube =
+            progress_output_cube_from_config(config, slab.plane_start, slab.plane_end);
         let shared_visibility_source = Arc::new(read_shared_columnar_cube_slab_source(
             ms,
             &slab_source_config,
@@ -5140,6 +5427,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             worker_count,
             "mosaic_multi_plane_stream",
             &mut geometry_cache,
+            progress_output_cube.clone(),
         )?);
         let mut shared_source_read_elapsed = shared_visibility_source.elapsed;
         get_ms_values_into_processing_buffer += shared_visibility_source
@@ -5152,6 +5440,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         {
             observe_imager_progress_shared_slab_uv_once(
                 shared_visibility_source.as_ref(),
+                &table_values,
                 slab_center_frequency_hz,
             );
             emit_imager_progress_cube_slab(
@@ -5195,6 +5484,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                     worker_count,
                     "mosaic_multi_plane_stream",
                     &mut geometry_cache,
+                    progress_output_cube.clone(),
                 )?);
                 shared_source_read_elapsed += density_source.elapsed;
                 get_ms_values_into_processing_buffer += density_source
@@ -8026,6 +8316,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 memory_plan.worker_count,
                 memory_plan.backend,
                 &mut geometry_cache,
+                progress_output_cube_from_config(config, slab.plane_start, slab.plane_end),
             )?);
             source_read_elapsed += shared_source.elapsed;
             modeled_read_bytes = modeled_read_bytes.saturating_add(
@@ -8042,6 +8333,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             {
                 observe_imager_progress_shared_slab_uv_once(
                     shared_source.as_ref(),
+                    &table_values,
                     slab_center_frequency_hz,
                 );
                 emit_imager_progress_cube_slab(
@@ -8380,6 +8672,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 memory_plan.worker_count,
                 memory_plan.backend,
                 &mut geometry_cache,
+                progress_output_cube_from_config(config, slab.plane_start, slab.plane_end),
             )?;
             let source_read_elapsed = shared_source.elapsed;
             prepare_plane_input_time += source_read_elapsed;
@@ -8412,6 +8705,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             {
                 observe_imager_progress_shared_slab_uv_once(
                     &shared_source,
+                    &table_values,
                     slab_center_frequency_hz,
                 );
                 emit_imager_progress_cube_slab(
@@ -18793,6 +19087,41 @@ fn read_columnar_prepared_source(
     geometry_cache: Option<&mut VisibilityGeometryCache>,
     geometry_cache_key: Option<VisibilityGeometryCacheKey>,
 ) -> Result<ColumnarPreparedSource, String> {
+    read_columnar_prepared_source_with_progress_cube(
+        ms,
+        data_column_kind,
+        include_data,
+        selection,
+        table_values,
+        ddid_info,
+        row_chunk,
+        derived_engine,
+        reprojection_mode,
+        channel_read_range,
+        geometry_columns,
+        geometry_cache,
+        geometry_cache_key,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_columnar_prepared_source_with_progress_cube(
+    ms: &MeasurementSet,
+    data_column_kind: VisibilityDataColumn,
+    include_data: bool,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    ddid_info: &[Option<(usize, usize)>],
+    row_chunk: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    reprojection_mode: UvwReprojectionMode,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    geometry_cache: Option<&mut VisibilityGeometryCache>,
+    geometry_cache_key: Option<VisibilityGeometryCacheKey>,
+    progress_output_cube: Option<ImagerProgressCube>,
+) -> Result<ColumnarPreparedSource, String> {
     let row_indices = row_chunk
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -18835,7 +19164,14 @@ fn read_columnar_prepared_source(
     let fill_report = ms
         .fill_visibility_buffer(&request, &mut visibility)
         .map_err(|error| format!("fill columnar visibility buffer: {error}"))?;
-    emit_imager_progress_ms_window(ms, table_values, row_chunk, channel_read_range);
+    emit_imager_progress_ms_window(
+        ms,
+        table_values,
+        row_chunk,
+        channel_read_range,
+        progress_output_cube.clone(),
+        None,
+    );
     let geometry_started_at = Instant::now();
     let (geometry_rows, geometry_cache_lookup) =
         if let (Some(cache), Some(key)) = (geometry_cache, geometry_cache_key) {
@@ -18864,6 +19200,20 @@ fn read_columnar_prepared_source(
                 None,
             )
         };
+    let uv_coverage = observe_imager_progress_geometry_rows(
+        geometry_rows.as_ref(),
+        table_values,
+        progress_output_cube.as_ref(),
+        representative_slab_plane_frequency_hz(table_values, channel_read_range),
+    );
+    emit_imager_progress_ms_window(
+        ms,
+        table_values,
+        row_chunk,
+        channel_read_range,
+        progress_output_cube,
+        uv_coverage,
+    );
     let mut read_timings = fill_report_read_timings(&fill_report);
     read_timings.geometry_rows = geometry_started_at.elapsed();
     Ok(ColumnarPreparedSource {
@@ -24853,6 +25203,7 @@ fn read_shared_columnar_cube_slab_source(
     worker_count: usize,
     backend: &'static str,
     geometry_cache: &mut VisibilityGeometryCache,
+    progress_output_cube: ImagerProgressCube,
 ) -> Result<SharedColumnarCubeSlabSource, String> {
     let started = Instant::now();
     let geometry_columns_started = Instant::now();
@@ -24885,7 +25236,7 @@ fn read_shared_columnar_cube_slab_source(
             channel_read_range,
             pass_kind,
         );
-        let mut columnar_source = read_columnar_prepared_source(
+        let mut columnar_source = read_columnar_prepared_source_with_progress_cube(
             ms,
             data_column_kind,
             include_data,
@@ -24899,6 +25250,7 @@ fn read_shared_columnar_cube_slab_source(
             &geometry_columns,
             Some(geometry_cache),
             Some(cache_key),
+            Some(progress_output_cube.clone()),
         )?;
         if let Some(spectral_plan) = spectral_plan {
             if spectral_plan.shared_spectral_binding.is_some() {
@@ -38376,7 +38728,7 @@ mod tests {
     }
 
     #[test]
-    fn bounded_uv_coverage_accumulator_keeps_limit_and_conjugates() {
+    fn bounded_uv_coverage_accumulator_keeps_measured_limit() {
         let mut accumulator = BoundedUvCoverageAccumulator::new(2);
         accumulator.observe_point(1000.0, -2000.0, 0.5);
         accumulator.observe_point(-3000.0, 4000.0, 1.5);
@@ -38385,15 +38737,10 @@ mod tests {
         let snapshot = accumulator.snapshot();
         assert_eq!(snapshot.sample_limit, 2);
         assert_eq!(snapshot.measured.len(), 2);
-        assert_eq!(snapshot.conjugate.len(), 2);
+        assert!(snapshot.conjugate.is_empty());
         assert_eq!(snapshot.dropped_points, 1);
         assert_eq!(snapshot.u_extent_klambda, 5.0);
         assert_eq!(snapshot.v_extent_klambda, 6.0);
-        for (measured, conjugate) in snapshot.measured.iter().zip(snapshot.conjugate.iter()) {
-            assert_eq!(conjugate.u_klambda, -measured.u_klambda);
-            assert_eq!(conjugate.v_klambda, -measured.v_klambda);
-            assert_eq!(conjugate.weight, measured.weight);
-        }
     }
 
     #[test]
@@ -38415,6 +38762,156 @@ mod tests {
         assert_eq!(snapshot.measured[0].u_klambda, 1.0);
         assert_eq!(snapshot.measured[0].v_klambda, -1.0);
         assert_eq!(snapshot.dropped_points, 0);
+    }
+
+    #[test]
+    fn plotms_like_uv_coverage_groups_sorts_and_decimates_per_track() {
+        let table_values = PreparedSelectionTableValues {
+            spw_id: 0,
+            spw_freqs_hz: vec![SPEED_OF_LIGHT_M_PER_S],
+            spw_widths_hz: vec![1.0],
+            freq_ref: FrequencyRef::TOPO,
+            corr_types: vec![9],
+        };
+        let rows = vec![
+            progress_uv_geometry_row(4, 0, 0, 5.0, [0.0, 0.0, 0.0]),
+            progress_uv_geometry_row(0, 0, 1, 30.0, [30.0, -30.0, 0.0]),
+            progress_uv_geometry_row(1, 0, 1, 10.0, [10.0, -10.0, 0.0]),
+            progress_uv_geometry_row(2, 0, 1, 20.0, [20.0, -20.0, 0.0]),
+            progress_uv_geometry_row(3, 1, 2, 40.0, [40.0, -40.0, 0.0]),
+        ];
+
+        let mut accumulator = BoundedUvCoverageAccumulator::new(4);
+        accumulator.observe_plotms_like_geometry_rows(
+            rows.iter(),
+            &table_values,
+            SPEED_OF_LIGHT_M_PER_S,
+        );
+        let snapshot = accumulator.snapshot();
+
+        assert_eq!(snapshot.sample_limit, 4);
+        assert_eq!(snapshot.dropped_points, 1);
+        assert_eq!(
+            snapshot
+                .measured
+                .iter()
+                .map(|point| point.u_klambda)
+                .collect::<Vec<_>>(),
+            vec![0.0, 0.01, 0.03, 0.04]
+        );
+        assert_eq!(snapshot.u_extent_klambda, 0.04);
+        assert_eq!(snapshot.v_extent_klambda, 0.04);
+        assert!(snapshot.conjugate.is_empty());
+    }
+
+    #[test]
+    fn plotms_like_uv_coverage_accumulates_incrementally_without_replaying_rows() {
+        let table_values = PreparedSelectionTableValues {
+            spw_id: 0,
+            spw_freqs_hz: vec![SPEED_OF_LIGHT_M_PER_S],
+            spw_widths_hz: vec![1.0],
+            freq_ref: FrequencyRef::TOPO,
+            corr_types: vec![9],
+        };
+        let rows = vec![
+            progress_uv_geometry_row(0, 0, 1, 10.0, [10.0, -10.0, 0.0]),
+            progress_uv_geometry_row(1, 0, 1, 20.0, [20.0, -20.0, 0.0]),
+            progress_uv_geometry_row(2, 0, 1, 30.0, [30.0, -30.0, 0.0]),
+            progress_uv_geometry_row(3, 1, 2, 40.0, [40.0, -40.0, 0.0]),
+        ];
+
+        let mut accumulator = BoundedUvCoverageAccumulator::new(10);
+        accumulator.observe_plotms_like_geometry_rows_incremental(
+            rows[..2].iter(),
+            &table_values,
+            SPEED_OF_LIGHT_M_PER_S,
+        );
+        assert_eq!(accumulator.accepted_points, 2);
+        assert_eq!(
+            accumulator
+                .snapshot()
+                .measured
+                .iter()
+                .map(|point| point.u_klambda)
+                .collect::<Vec<_>>(),
+            vec![0.01, 0.02]
+        );
+
+        accumulator.observe_plotms_like_geometry_rows_incremental(
+            rows[1..].iter(),
+            &table_values,
+            SPEED_OF_LIGHT_M_PER_S,
+        );
+        assert_eq!(accumulator.accepted_points, 4);
+        assert_eq!(
+            accumulator
+                .snapshot()
+                .measured
+                .iter()
+                .map(|point| point.u_klambda)
+                .collect::<Vec<_>>(),
+            vec![0.01, 0.02, 0.03, 0.04]
+        );
+    }
+
+    #[test]
+    fn plotms_like_uv_coverage_uses_representative_slab_plane_frequency() {
+        let table_values = PreparedSelectionTableValues {
+            spw_id: 0,
+            spw_freqs_hz: vec![SPEED_OF_LIGHT_M_PER_S],
+            spw_widths_hz: vec![1.0],
+            freq_ref: FrequencyRef::TOPO,
+            corr_types: vec![9],
+        };
+        let rows = vec![progress_uv_geometry_row(0, 0, 1, 10.0, [10.0, -10.0, 0.0])];
+
+        let mut accumulator = BoundedUvCoverageAccumulator::new(10);
+        accumulator.observe_plotms_like_geometry_rows_incremental(
+            rows.iter(),
+            &table_values,
+            2.0 * SPEED_OF_LIGHT_M_PER_S,
+        );
+        let snapshot = accumulator.snapshot();
+
+        assert_eq!(snapshot.measured[0].u_klambda, 0.02);
+        assert_eq!(snapshot.measured[0].v_klambda, -0.02);
+    }
+
+    fn progress_uv_geometry_row(
+        row_index: usize,
+        field_id: usize,
+        antenna2_id: i32,
+        time_mjd_seconds: f64,
+        raw_uvw_m: [f64; 3],
+    ) -> PreparedGeometryRow {
+        let pointing = ResolvedPointingDirection {
+            source_row_index: None,
+            used_fallback: true,
+            angles_rad: [0.0, 0.0],
+        };
+        PreparedGeometryRow {
+            selected_row: SelectedMainRow {
+                row_index,
+                field_id,
+                ddid: 0,
+                spw_id: 0,
+                polarization_id: 0,
+                time_mjd_seconds: Some(time_mjd_seconds),
+            },
+            phase_center_field_id: Some(field_id),
+            pointing_id: None,
+            field_phase_center_direction_rad: [0.0, 0.0],
+            antenna1_pointing: pointing,
+            antenna2_pointing: pointing,
+            antenna1_id: 0,
+            antenna2_id,
+            is_cross: antenna2_id != 0,
+            raw_uvw_m,
+            transform: RowImagingTransform {
+                uvw_m: [999.0, 999.0, 0.0],
+                phase_shift_m: 0.0,
+            },
+        }
     }
 
     #[test]

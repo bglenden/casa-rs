@@ -2974,7 +2974,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
     func testImagerProgressStderrParserBuildsSnapshotAndDiagnostics() throws {
         var parser = ImagerProgressStderrParser()
-        let progressJSON = #"{"schema_version":1,"sequence":2,"elapsed_ms":50,"phase":"reading_ms","summary":"reading rows","work":{"completed_units":3,"total_units":10,"unit_label":"scheduled units","basis":"test","confidence":"coarse"},"ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"uv_coverage":{"u_extent_klambda":2.0,"v_extent_klambda":3.0,"measured":[{"u_klambda":1.0,"v_klambda":-2.0,"weight":0.5}],"conjugate":[{"u_klambda":-1.0,"v_klambda":2.0,"weight":0.5}],"dropped_points":0,"sample_limit":1},"runtime":{"active_threads":2,"total_threads":8,"gpu_active":false,"backend":"auto"}}"#
+        let progressJSON = #"{"schema_version":1,"sequence":2,"elapsed_ms":50,"phase":"reading_ms","summary":"reading rows","work":{"completed_units":3,"total_units":10,"unit_label":"scheduled units","basis":"test","confidence":"coarse"},"ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"uv_coverage":{"u_extent_klambda":2.0,"v_extent_klambda":3.0,"measured":[{"u_klambda":1.0,"v_klambda":-2.0}],"dropped_points":0,"sample_limit":1},"runtime":{"active_threads":2,"total_threads":8,"gpu_active":false,"backend":"auto"}}"#
         let line = imagerProgressStderrPrefix + progressJSON + "\nplain stderr\n"
 
         let records = parser.append(line, runID: "imager-7", state: .running)
@@ -2988,8 +2988,11 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.outputCube.activePlaneStart, 4)
         XCTAssertEqual(progress.uvCoverage.measured.count, 1)
         XCTAssertEqual(progress.uvCoverage.conjugate.first?.uKilolambda, -1.0)
+        XCTAssertEqual(progress.uvCoverage.conjugate.first?.vKilolambda, 2.0)
+        XCTAssertEqual(progress.uvCoverage.conjugate.first?.weight, 1.0)
         XCTAssertEqual(progress.uvCoverage.droppedPointCount, 0)
         XCTAssertEqual(progress.uvCoverage.sampleLimit, 1)
+        XCTAssertEqual(progress.sampledAtLabel, "0.05 s")
         guard case .diagnostic(let diagnostic) = records[1] else {
             return XCTFail("expected diagnostic record")
         }
@@ -3224,7 +3227,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(arguments.contains("--managed-output"))
         XCTAssertTrue(arguments.contains("--progress"))
         XCTAssertTrue(arguments.contains("--progress-max-uv-points"))
-        XCTAssertTrue(arguments.contains("1024"))
+        XCTAssertTrue(arguments.contains("16384"))
         XCTAssertTrue(arguments.contains("--ms"))
         XCTAssertTrue(arguments.contains("probed.ms"))
         waitFor("imager completion") {

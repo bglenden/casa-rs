@@ -7232,9 +7232,9 @@ private struct UVCoverageProgressView: View {
         for point in points {
             let x = rect.midX + rect.width * 0.5 * CGFloat(point.uKilolambda / uExtent)
             let y = rect.midY - rect.height * 0.5 * CGFloat(point.vKilolambda / vExtent)
-            let radius = CGFloat(0.75 + 0.75 * min(1, max(0, point.weight)))
+            let radius = CGFloat(0.5)
             let pointRect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
-            context.fill(Path(ellipseIn: pointRect), with: .color(color.opacity(0.82)))
+            context.fill(Path(ellipseIn: pointRect), with: .color(color.opacity(0.72)))
         }
     }
 

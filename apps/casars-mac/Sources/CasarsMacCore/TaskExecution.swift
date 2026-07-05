@@ -172,15 +172,29 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             do {
                 try Self.createOutputParentDirectories(for: request)
                 var progressParser = ImagerProgressStderrParser()
+                var progressDiagnostics: [String] = []
                 let progressParserLock = NSLock()
+                let progressParserQueue = request.task.id == "imager"
+                    ? DispatchQueue(label: "casars.mac.imager-progress-parser", qos: .userInitiated)
+                    : nil
                 let handleProgressChunk: ((String) -> Void)? = request.task.id == "imager" ? { chunk in
                     progressParserLock.lock()
                     let records = progressParser.append(chunk, runID: request.runID, state: .running)
-                    progressParserLock.unlock()
-                    for record in records {
+                    let snapshots = records.compactMap { record -> ImagerProgressSnapshot? in
                         if case .progress(let snapshot) = record {
-                            eventHandler(.progress(snapshot))
+                            return snapshot
                         }
+                        return nil
+                    }
+                    progressDiagnostics.append(contentsOf: records.compactMap { record -> String? in
+                        if case .diagnostic(let diagnostic) = record {
+                            return diagnostic
+                        }
+                        return nil
+                    })
+                    progressParserLock.unlock()
+                    for snapshot in snapshots {
+                        eventHandler(.progress(snapshot))
                     }
                 } : nil
                 let output = try Self.runProcess(
@@ -189,20 +203,33 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                     arguments: arguments,
                     workingDirectoryPath: request.workingDirectoryPath,
                     execution: execution,
-                    stderrChunkHandler: handleProgressChunk
+                    stderrChunkHandler: handleProgressChunk,
+                    stderrChunkHandlerQueue: progressParserQueue,
+                    storesStderr: request.task.id != "imager"
                 )
                 if request.task.id == "imager" {
+                    progressParserQueue?.sync {}
                     progressParserLock.lock()
                     let finalRecords = progressParser.finish(runID: request.runID, state: .running)
-                    progressParserLock.unlock()
-                    for record in finalRecords {
+                    let finalSnapshots = finalRecords.compactMap { record -> ImagerProgressSnapshot? in
                         if case .progress(let snapshot) = record {
-                            eventHandler(.progress(snapshot))
+                            return snapshot
                         }
+                        return nil
+                    }
+                    progressDiagnostics.append(contentsOf: finalRecords.compactMap { record -> String? in
+                        if case .diagnostic(let diagnostic) = record {
+                            return diagnostic
+                        }
+                        return nil
+                    })
+                    progressParserLock.unlock()
+                    for snapshot in finalSnapshots {
+                        eventHandler(.progress(snapshot))
                     }
                 }
                 let stderr = request.task.id == "imager"
-                    ? Self.stderrWithoutImagerProgress(output.stderr)
+                    ? progressDiagnostics.joined(separator: "\n")
                     : output.stderr
                 if execution.isCancelled {
                     eventHandler(.cancelled(GenericTaskFailure(message: "Task was cancelled.", diagnostics: [stderr].filter { !$0.isEmpty })))
@@ -325,7 +352,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 "--progress",
                 "true",
                 "--progress-max-uv-points",
-                "1024",
+                "16384",
                 "--progress-min-interval-ms",
                 "250"
             ])
@@ -339,7 +366,9 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         arguments: [String],
         workingDirectoryPath: String?,
         execution: ProcessTaskExecution,
-        stderrChunkHandler: ((String) -> Void)? = nil
+        stderrChunkHandler: ((String) -> Void)? = nil,
+        stderrChunkHandlerQueue: DispatchQueue? = nil,
+        storesStderr: Bool = true
     ) throws -> ProcessOutput {
         if execution.isCancelled {
             return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
@@ -360,7 +389,11 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectoryPath, isDirectory: true)
         }
         let stdoutCollector = ProcessPipeTextCollector(chunkHandler: nil)
-        let stderrCollector = ProcessPipeTextCollector(chunkHandler: stderrChunkHandler)
+        let stderrCollector = ProcessPipeTextCollector(
+            chunkHandler: stderrChunkHandler,
+            chunkHandlerQueue: stderrChunkHandlerQueue,
+            storesText: storesStderr
+        )
         guard execution.setProcess(process) else {
             return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
         }
@@ -488,17 +521,35 @@ private final class ProcessPipeTextCollector {
     private let lock = NSLock()
     private var data = Data()
     private let chunkHandler: ((String) -> Void)?
+    private let chunkHandlerQueue: DispatchQueue?
+    private let storesText: Bool
 
-    init(chunkHandler: ((String) -> Void)?) {
+    init(
+        chunkHandler: ((String) -> Void)?,
+        chunkHandlerQueue: DispatchQueue? = nil,
+        storesText: Bool = true
+    ) {
         self.chunkHandler = chunkHandler
+        self.chunkHandlerQueue = chunkHandlerQueue
+        self.storesText = storesText
     }
 
     func append(_ newData: Data) {
         guard !newData.isEmpty else { return }
-        lock.lock()
-        data.append(newData)
-        lock.unlock()
-        chunkHandler?(String(decoding: newData, as: UTF8.self))
+        if storesText {
+            lock.lock()
+            data.append(newData)
+            lock.unlock()
+        }
+        guard let chunkHandler else { return }
+        if let chunkHandlerQueue {
+            let chunk = newData
+            chunkHandlerQueue.async {
+                chunkHandler(String(decoding: chunk, as: UTF8.self))
+            }
+        } else {
+            chunkHandler(String(decoding: newData, as: UTF8.self))
+        }
     }
 
     func text() -> String {
