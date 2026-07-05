@@ -1038,6 +1038,10 @@ pub enum StandardMfsProgressPhase {
     FftStart,
     /// The controller has finished an FFT-backed image-plane transform.
     FftEnd,
+    /// The controller is about to grid residual visibilities.
+    ResidualGridStart,
+    /// The controller has finished gridding residual visibilities.
+    ResidualGridEnd,
 }
 
 /// Coarse standard-MFS progress event emitted from the imaging controller.
@@ -5725,6 +5729,11 @@ where
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     let mut counts = StandardMfsTiledResidualAccumulation::default();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     if executor.has_all_resident_tiles() {
         counts = executor.accumulate_residual_grid_direct_owned_replay(
@@ -5745,6 +5754,11 @@ where
         })?;
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
     emit_standard_mfs_context_progress(
         progress_callback.as_ref(),
@@ -5838,6 +5852,11 @@ fn compute_residual_standard_sample_replay(
             gridder,
             execution_config.clone(),
         )?;
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::ResidualGridStart,
+        );
         let degrid_grid_started = Instant::now();
         let counts = if execution_config.fixed_tile_use_planned_run_blocks {
             let mut replay = |consumer: &mut dyn FnMut(
@@ -5863,6 +5882,11 @@ fn compute_residual_standard_sample_replay(
             )?
         };
         timings.degrid_grid = degrid_grid_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::ResidualGridEnd,
+        );
 
         emit_standard_mfs_context_progress(
             progress_callback.as_ref(),
@@ -5917,6 +5941,11 @@ fn compute_residual_standard_sample_replay(
     }
 
     let mut counts = StandardMfsTiledResidualAccumulation::default();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let mut grid_update_elapsed = Duration::ZERO;
     if let (Some(model_storage), Some(residual_storage)) = (
@@ -5973,6 +6002,11 @@ fn compute_residual_standard_sample_replay(
         })?;
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
     stage_timings.planned_sample_replay += timings.degrid_grid.saturating_sub(grid_update_elapsed);
     stage_timings.grid_update += grid_update_elapsed;
 
@@ -6065,6 +6099,11 @@ fn compute_residual_standard_routed_visibility_run_replay(
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
@@ -6141,6 +6180,11 @@ fn compute_residual_standard_routed_visibility_run_replay(
         }
     };
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
     emit_standard_mfs_context_progress(
         progress_callback.as_ref(),
@@ -10972,6 +11016,11 @@ fn compute_mosaic_residual(
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_started = Instant::now();
     let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let residual_parallel_threads = mosaic_parallel_thread_count(groups.len());
@@ -11026,6 +11075,11 @@ fn compute_mosaic_residual(
         }
         timings.degrid_grid = degrid_started.elapsed();
     }
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
     emit_standard_mfs_context_progress(
         progress_callback,
@@ -23093,12 +23147,22 @@ fn compute_residual_standard_tiled(
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
     let counts =
         executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
     emit_standard_mfs_context_progress(
         progress_callback.as_ref(),
@@ -23192,9 +23256,19 @@ fn compute_residual_standard_with_executor(
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     accumulate_standard_mfs_residual_grid(gridder, plan, model_grid.as_ref(), residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
     emit_standard_mfs_context_progress(
         progress_callback,
@@ -23911,6 +23985,11 @@ fn compute_residual_standard_internal(
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let grid_threads = if capture_samples || use_direct_point_predict {
         1
@@ -23969,6 +24048,11 @@ fn compute_residual_standard_internal(
         counts
     };
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
     emit_standard_mfs_context_progress(
         progress_callback,
@@ -33299,12 +33383,23 @@ mod tests {
             .iter()
             .position(|phase| *phase == StandardMfsProgressPhase::FftEnd)
             .expect("fft end");
+        let residual_grid_start = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::ResidualGridStart)
+            .expect("residual grid start");
+        let residual_grid_end = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::ResidualGridEnd)
+            .expect("residual grid end");
         let refresh_end = phases
             .iter()
             .position(|phase| *phase == StandardMfsProgressPhase::ResidualRefreshEnd)
             .expect("residual refresh end");
         assert!(refresh_start < fft_start);
         assert!(fft_start < fft_end);
+        assert!(refresh_start < residual_grid_start);
+        assert!(residual_grid_start < residual_grid_end);
+        assert!(residual_grid_end < refresh_end);
         assert!(fft_end < refresh_end);
     }
 

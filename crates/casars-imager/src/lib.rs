@@ -2470,7 +2470,8 @@ struct StandardMfsProgressResourceGuards {
     minor_cycle_span: Option<ImagerObservationSpanGuard>,
     minor_cycle: Option<ImagerProgressResourceGuard>,
     residual_refresh_span: Option<ImagerObservationSpanGuard>,
-    residual_refresh: Option<ImagerProgressResourceGuard>,
+    residual_grid_span: Option<ImagerObservationSpanGuard>,
+    residual_grid: Option<ImagerProgressResourceGuard>,
     fft_span: Option<ImagerObservationSpanGuard>,
     fft: Option<ImagerProgressResourceGuard>,
 }
@@ -2544,13 +2545,26 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 guards.residual_refresh_span = begin_imager_observation_span(
                     ImagerObservedStageKind::ResidualRefresh,
                     "refreshing residual",
+                    &[],
+                    None,
+                );
+                ("refreshing residual", 0)
+            }
+            StandardMfsProgressPhase::ResidualRefreshEnd => {
+                guards.residual_refresh_span = None;
+                ("residual refresh complete", 0)
+            }
+            StandardMfsProgressPhase::ResidualGridStart => {
+                guards.residual_grid_span = begin_imager_observation_span(
+                    ImagerObservedStageKind::Gridding,
+                    "gridding residual visibilities",
                     &[
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
                     None,
                 );
-                guards.residual_refresh = acquire_imager_progress_resource_ids_with_threads(
+                guards.residual_grid = acquire_imager_progress_resource_ids_with_threads(
                     &[
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
@@ -2558,14 +2572,14 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     env_standard_mfs_grid_threads().unwrap_or(1),
                 );
                 (
-                    "refreshing residual",
+                    "gridding residual visibilities",
                     env_standard_mfs_grid_threads().unwrap_or(1),
                 )
             }
-            StandardMfsProgressPhase::ResidualRefreshEnd => {
-                guards.residual_refresh = None;
-                guards.residual_refresh_span = None;
-                ("residual refresh complete", 0)
+            StandardMfsProgressPhase::ResidualGridEnd => {
+                guards.residual_grid = None;
+                guards.residual_grid_span = None;
+                ("residual gridding complete", 0)
             }
             StandardMfsProgressPhase::FftStart => {
                 guards.fft_span = begin_imager_observation_span(
@@ -41146,7 +41160,7 @@ mod tests {
         let callback = standard_mfs_progress_callback(&config).expect("progress callback");
 
         callback(StandardMfsProgressEvent {
-            phase: StandardMfsProgressPhase::ResidualRefreshStart,
+            phase: StandardMfsProgressPhase::ResidualGridStart,
             deconvolver: Deconvolver::Hogbom,
             minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
             major_cycle: 1,
@@ -41198,34 +41212,36 @@ mod tests {
             .find(|resource| resource.id == ImagerObservedResourceId::PlaneState)
             .expect("plane");
         assert_eq!(plane.state, ImagerObservedResourceState::Active);
-        let residual_span = observability
+        let residual_grid_span = observability
             .active_spans
             .iter()
-            .find(|span| span.stage_kind == ImagerObservedStageKind::ResidualRefresh)
-            .expect("residual refresh span");
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Gridding)
+            .expect("residual grid span");
         assert_eq!(
-            residual_span.resource_ids,
+            residual_grid_span.resource_ids,
             vec![
                 ImagerObservedResourceId::PlaneState,
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
         assert_eq!(
-            residual_span.counters.get(OBS_COUNTER_MAJOR_CYCLE),
+            residual_grid_span.counters.get(OBS_COUNTER_MAJOR_CYCLE),
             Some(&1)
         );
         assert_eq!(
-            residual_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
+            residual_grid_span
+                .counters
+                .get(OBS_COUNTER_MINOR_ITERATIONS),
             Some(&25)
         );
         assert_eq!(
-            residual_span
+            residual_grid_span
                 .counters
                 .get(OBS_COUNTER_MINOR_ITERATION_LIMIT),
             Some(&100)
         );
         assert_eq!(
-            residual_span
+            residual_grid_span
                 .counters
                 .get(OBS_COUNTER_CYCLE_ITERATION_LIMIT),
             Some(&50)
