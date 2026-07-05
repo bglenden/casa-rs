@@ -61,6 +61,8 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
     public var deconvolution: ImagingDeconvolutionProgress
     public var runtime: ImagingRuntimeProgress
     public var sampledAtLabel: String
+    public var sampledAtMilliseconds: UInt64?
+    public var receivedAt: Date?
 
     public init(
         source: String,
@@ -74,7 +76,9 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
         uvCoverage: UVCoverageProgress,
         deconvolution: ImagingDeconvolutionProgress,
         runtime: ImagingRuntimeProgress,
-        sampledAtLabel: String
+        sampledAtLabel: String,
+        sampledAtMilliseconds: UInt64? = nil,
+        receivedAt: Date? = nil
     ) {
         self.source = source
         self.runID = runID
@@ -88,6 +92,8 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
         self.deconvolution = deconvolution
         self.runtime = runtime
         self.sampledAtLabel = sampledAtLabel
+        self.sampledAtMilliseconds = sampledAtMilliseconds
+        self.receivedAt = receivedAt
     }
 
     public static func stub(request: ImagerProgressRequest) -> ImagerProgressSnapshot {
@@ -214,8 +220,20 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 backend: "unknown",
                 sampleCadence: "event stream"
             ),
-            sampledAtLabel: Self.elapsedSecondsLabel(milliseconds: event.elapsedMs)
+            sampledAtLabel: Self.elapsedSecondsLabel(milliseconds: event.elapsedMs),
+            sampledAtMilliseconds: event.elapsedMs,
+            receivedAt: Date()
         )
+    }
+
+    public func elapsedLabel(now: Date = Date()) -> String {
+        guard state == .running,
+              let sampledAtMilliseconds,
+              let receivedAt else {
+            return sampledAtLabel
+        }
+        let additionalMilliseconds = UInt64(max(0, now.timeIntervalSince(receivedAt)) * 1_000.0)
+        return Self.elapsedSecondsLabel(milliseconds: sampledAtMilliseconds + additionalMilliseconds)
     }
 
     static func elapsedSecondsLabel(milliseconds: UInt64) -> String {
@@ -231,6 +249,10 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
 }
 
 extension ImagerProgressSnapshot {
+    public var sourceStreamIsActive: Bool {
+        resourceActivities.first { $0.id == "source-stream" }?.isBusy ?? false
+    }
+
     public var resourceActivities: [ImagingResourceActivity] {
         guard let memory = runtime.memory else {
             return []
@@ -248,11 +270,13 @@ extension ImagerProgressSnapshot {
         let activityPhaseText = retainedCyclePhaseIsActive
             ? "\(currentPhaseText) \(cyclePhaseText)"
             : currentPhaseText
-        let planeBytes = max(
+        let sharedPlaneBytes = max(
             0,
             memory.plannedActiveBytes - memory.sourceStreamBufferBytes - memory.productScratchBytes
         )
-        let gridBytes = max(memory.sourceStreamBufferBytes, planeBytes / 2)
+        let gridBytes = sharedPlaneBytes
+        let planeBytes = sharedPlaneBytes
+        let deconvolverBytes = sharedPlaneBytes
         let plannedTarget = max(memory.memoryTargetBytes, memory.plannedActiveBytes, 1)
 
         func phaseBusy(_ keywords: [String], includeRetainedCycle: Bool = true) -> Bool {
@@ -260,10 +284,14 @@ extension ImagerProgressSnapshot {
             return state == .running && keywords.contains { text.contains($0) }
         }
         let explicitActiveResources = Set(runtime.activeResourceIDs)
-        let hasExplicitActiveResources = !explicitActiveResources.isEmpty
+        let ownershipIsAuthoritative = runtime.activeResourceIDsAreAuthoritative
         func resourceBusy(_ id: String, fallback: Bool) -> Bool {
             guard state == .running else { return false }
-            return hasExplicitActiveResources ? explicitActiveResources.contains(id) : fallback
+            return ownershipIsAuthoritative ? explicitActiveResources.contains(id) : fallback
+        }
+        func resourceThreadCount(_ id: String, fallback: Int) -> Int {
+            guard state == .running else { return 0 }
+            return max(0, runtime.activeResourceThreadCounts[id] ?? fallback)
         }
         let sourceBusy = resourceBusy(
             "source-stream",
@@ -275,86 +303,136 @@ extension ImagerProgressSnapshot {
         let deconvolverBusy = resourceBusy("deconvolver", fallback: deconvolverFallbackBusy)
         let productBusy = resourceBusy(
             "product-scratch",
-            fallback: phaseBusy(["write", "product", "restore", "model", "image"])
-                || gridFallbackBusy
-                || deconvolverFallbackBusy
+            fallback: phaseBusy(["write", "product", "restore", "output", "flush"], includeRetainedCycle: false)
         )
-        let planeBusy = memory.activePlanes > 0 && state == .running && (
+        let planeFallbackBusy = memory.activePlanes > 0 && state == .running && (
             gridBusy || deconvolverBusy || productBusy || phaseBusy(["plane", "slab"])
         )
+        let planeBusy = resourceBusy("plane-state", fallback: planeFallbackBusy)
 
         return [
             ImagingResourceActivity(
                 id: "source-stream",
                 name: "Source stream",
-                detail: "\(memory.rowBlockRows.formatted()) rows",
+                detail: Self.resourceDetail(
+                    context: "\(Self.compactQuantityLabel(memory.rowBlockRows)) rows",
+                    plannedBytes: memory.sourceStreamBufferBytes
+                ),
                 kind: .source,
                 state: sourceBusy ? .busy : .idle,
                 residentBytes: memory.sourceStreamBufferBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.rowStartFraction,
                 sectionEndFraction: measurementSetWindow.rowEndFraction,
-                activeThreads: sourceBusy ? min(activeThreadBudget, max(0, runtime.totalThreads)) : 0,
+                activeThreads: sourceBusy
+                    ? resourceThreadCount("source-stream", fallback: min(activeThreadBudget, max(0, runtime.totalThreads)))
+                    : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: false
             ),
             ImagingResourceActivity(
                 id: "visibility-grid",
                 name: "Grid / FFT",
-                detail: "channel window",
+                detail: Self.resourceDetail(context: "shared", plannedBytes: gridBytes),
                 kind: .grid,
                 state: gridBusy ? .busy : .idle,
                 residentBytes: gridBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.channelStartFraction,
                 sectionEndFraction: measurementSetWindow.channelEndFraction,
-                activeThreads: gridBusy ? activeThreadBudget : 0,
+                activeThreads: gridBusy ? resourceThreadCount("visibility-grid", fallback: activeThreadBudget) : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: runtime.gpuActive && gridBusy
             ),
             ImagingResourceActivity(
                 id: "plane-state",
                 name: "Plane state",
-                detail: "\(memory.activePlanes.formatted()) active planes",
+                detail: Self.resourceDetail(
+                    context: Self.planeCountLabel(memory.activePlanes),
+                    plannedBytes: planeBytes
+                ),
                 kind: .plane,
                 state: planeBusy ? .busy : .idle,
                 residentBytes: planeBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
                 sectionEndFraction: outputCube.activePlaneEndFraction,
-                activeThreads: planeBusy ? activeThreadBudget : 0,
+                activeThreads: planeBusy ? resourceThreadCount("plane-state", fallback: activeThreadBudget) : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: runtime.gpuActive && (gridBusy || deconvolverBusy)
             ),
             ImagingResourceActivity(
                 id: "deconvolver",
                 name: "Deconvolver",
-                detail: "minor cycle",
+                detail: Self.resourceDetail(context: "minor", plannedBytes: deconvolverBytes),
                 kind: .deconvolver,
                 state: deconvolverBusy ? .busy : .idle,
-                residentBytes: memory.productScratchBytes,
+                residentBytes: deconvolverBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: 0,
                 sectionEndFraction: deconvolution.minorIterationFraction,
-                activeThreads: deconvolverBusy ? activeThreadBudget : 0,
+                activeThreads: deconvolverBusy ? resourceThreadCount("deconvolver", fallback: activeThreadBudget) : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: runtime.gpuActive && deconvolverBusy
             ),
             ImagingResourceActivity(
                 id: "product-scratch",
                 name: "Products",
-                detail: "scratch + writes",
+                detail: Self.resourceSizeDetail(plannedBytes: memory.productScratchBytes),
                 kind: .product,
                 state: productBusy ? .busy : .idle,
                 residentBytes: memory.productScratchBytes,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
                 sectionEndFraction: outputCube.activePlaneEndFraction,
-                activeThreads: productBusy ? min(activeThreadBudget, 2) : 0,
+                activeThreads: productBusy ? resourceThreadCount("product-scratch", fallback: min(activeThreadBudget, 2)) : 0,
                 totalThreads: runtime.totalThreads,
                 gpuActive: false
             )
         ]
+    }
+
+    private static func resourceDetail(context: String, plannedBytes: Int) -> String {
+        guard plannedBytes > 0 else {
+            return context
+        }
+        return "\(context) / \(compactByteSizeLabel(plannedBytes)) planned"
+    }
+
+    private static func resourceSizeDetail(plannedBytes: Int) -> String {
+        guard plannedBytes > 0 else {
+            return "unplanned"
+        }
+        return "\(compactByteSizeLabel(plannedBytes)) planned"
+    }
+
+    private static func planeCountLabel(_ count: Int) -> String {
+        count == 1 ? "1 plane" : "\(compactQuantityLabel(count)) planes"
+    }
+
+    private static func compactQuantityLabel(_ value: Int) -> String {
+        let absolute = abs(value)
+        if absolute >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000.0)
+        }
+        if absolute >= 1_000 {
+            return String(format: "%.1fk", Double(value) / 1_000.0)
+        }
+        return "\(value)"
+    }
+
+    private static func compactByteSizeLabel(_ bytes: Int) -> String {
+        let absolute = abs(bytes)
+        if absolute >= 1_000_000_000 {
+            return String(format: "%.1f GB", Double(bytes) / 1_000_000_000.0)
+        }
+        if absolute >= 1_000_000 {
+            return String(format: "%.0f MB", Double(bytes) / 1_000_000.0)
+        }
+        if absolute >= 1_000 {
+            return String(format: "%.0f kB", Double(bytes) / 1_000.0)
+        }
+        return "\(bytes) B"
     }
 }
 
@@ -768,6 +846,8 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
     public var backend: String
     public var sampleCadence: String
     public var activeResourceIDs: [String]
+    public var activeResourceIDsAreAuthoritative: Bool
+    public var activeResourceThreadCounts: [String: Int]
     public var memory: ImagingMemoryProgress?
 
     public init(
@@ -777,6 +857,8 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
         backend: String,
         sampleCadence: String,
         activeResourceIDs: [String] = [],
+        activeResourceIDsAreAuthoritative: Bool = false,
+        activeResourceThreadCounts: [String: Int] = [:],
         memory: ImagingMemoryProgress? = nil
     ) {
         self.activeThreads = activeThreads
@@ -785,6 +867,8 @@ public struct ImagingRuntimeProgress: Codable, Equatable {
         self.backend = backend
         self.sampleCadence = sampleCadence
         self.activeResourceIDs = activeResourceIDs
+        self.activeResourceIDsAreAuthoritative = activeResourceIDsAreAuthoritative
+        self.activeResourceThreadCounts = activeResourceThreadCounts
         self.memory = memory
     }
 
@@ -830,6 +914,8 @@ extension ImagingRuntimeProgress {
             backend: payload.backend,
             sampleCadence: "event stream",
             activeResourceIDs: payload.activeResources,
+            activeResourceIDsAreAuthoritative: payload.activeResourcesPresent,
+            activeResourceThreadCounts: payload.activeResourceThreads,
             memory: payload.memory.map(ImagingMemoryProgress.init(payload:))
         )
     }
@@ -1003,6 +1089,8 @@ struct ImagerProgressRuntimePayload: Decodable, Equatable {
     var gpuActive: Bool
     var backend: String
     var activeResources: [String]
+    var activeResourcesPresent: Bool
+    var activeResourceThreads: [String: Int]
     var memory: ImagerProgressMemoryPayload?
 
     enum CodingKeys: String, CodingKey {
@@ -1011,6 +1099,7 @@ struct ImagerProgressRuntimePayload: Decodable, Equatable {
         case gpuActive = "gpu_active"
         case backend
         case activeResources = "active_resources"
+        case activeResourceThreads = "active_resource_threads"
         case memory
     }
 
@@ -1020,7 +1109,9 @@ struct ImagerProgressRuntimePayload: Decodable, Equatable {
         totalThreads = try container.decode(Int.self, forKey: .totalThreads)
         gpuActive = try container.decode(Bool.self, forKey: .gpuActive)
         backend = try container.decode(String.self, forKey: .backend)
+        activeResourcesPresent = container.contains(.activeResources)
         activeResources = try container.decodeIfPresent([String].self, forKey: .activeResources) ?? []
+        activeResourceThreads = try container.decodeIfPresent([String: Int].self, forKey: .activeResourceThreads) ?? [:]
         memory = try container.decodeIfPresent(ImagerProgressMemoryPayload.self, forKey: .memory)
     }
 }

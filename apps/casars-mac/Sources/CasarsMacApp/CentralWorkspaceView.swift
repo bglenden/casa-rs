@@ -6691,6 +6691,7 @@ struct TaskPanel: View {
 
 private struct ImagerProgressDashboard: View {
     let snapshot: ImagerProgressSnapshot
+    @State private var currentTime = Date()
 
     private let columns = [
         GridItem(.adaptive(minimum: 300), spacing: 14, alignment: .top)
@@ -6709,7 +6710,7 @@ private struct ImagerProgressDashboard: View {
                 Spacer()
                 HStack(spacing: 8) {
                     ImagerProgressStateBadge(state: snapshot.state)
-                    Text(snapshot.sampledAtLabel)
+                    Text(snapshot.elapsedLabel(now: currentTime))
                         .workbenchFont(.caption, design: .monospaced)
                         .foregroundStyle(.secondary)
                 }
@@ -6730,7 +6731,7 @@ private struct ImagerProgressDashboard: View {
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                 ImagerProgressSection(
-                    title: "MS Read Window",
+                    title: snapshot.sourceStreamIsActive ? "MS Read Window" : "Last MS Read Window",
                     subtitle: snapshot.measurementSetWindow.rangeLabel
                 ) {
                     MeasurementSetReadWindowView(window: snapshot.measurementSetWindow)
@@ -6773,6 +6774,11 @@ private struct ImagerProgressDashboard: View {
             }
         }
         .accessibilityIdentifier("task.imagerProgress")
+        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { date in
+            if snapshot.state == .running {
+                currentTime = date
+            }
+        }
     }
 }
 
@@ -6836,7 +6842,7 @@ private struct ImagerProgressStatusStrip: View {
                 accent: .cyan
             )
             ImagerProgressStatusChip(
-                title: "MS rows",
+                title: snapshot.sourceStreamIsActive ? "MS rows" : "Last MS rows",
                 value: snapshot.measurementSetWindow.activeRowPercentLabel,
                 detail: "channels \(snapshot.measurementSetWindow.activeChannelPercentLabel)",
                 systemImage: "tablecells",
@@ -7498,8 +7504,9 @@ private struct ResourceActivityFlowView: View {
         context.fill(rowPath, with: .color(tint.opacity(resource.isBusy ? 0.12 : 0.045)))
         context.stroke(rowPath, with: .color(outline), style: strokeStyle)
 
-        let textWidth = min(max(92, rect.width * 0.34), 126)
         let metricWidth: CGFloat = 78
+        let maxTextWidth = max(112, rect.width - metricWidth - 36)
+        let textWidth = min(max(150, rect.width * 0.55), min(176, maxTextWidth))
         let barRect = CGRect(
             x: rect.minX + textWidth,
             y: rect.minY + 7,

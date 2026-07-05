@@ -1022,6 +1022,10 @@ impl StandardMfsMinorCycleBackend {
 /// Coarse standard-MFS phase emitted by the CLEAN controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StandardMfsProgressPhase {
+    /// The controller is building the initial dirty image, PSF, and residual grid.
+    InitialGridStart,
+    /// The controller has built the initial dirty image, PSF, and residual grid.
+    InitialGridEnd,
     /// A minor-cycle deconvolver pass is about to start.
     MinorCycleStart,
     /// A minor-cycle deconvolver pass has finished.
@@ -1997,87 +2001,97 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     let has_initial_model = request.initial_model.is_some();
     let can_start_from_combined_dirty_pass =
         !has_initial_model && matches!(request.w_term_mode, WTermMode::None | WTermMode::WProject);
-    let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
-        if request.w_term_mode == WTermMode::WProject {
-            compute_dirty_psf_and_residual_w_project(
-                request.geometry,
-                weighted_batches,
-                gridder,
-                request.w_project_planes,
-                &mut stage_timings,
-            )?
-        } else if use_metal_executor {
-            compute_dirty_psf_and_residual_standard_metal(
-                weighted_batches,
-                gridder,
-                execution_config.clone(),
-                &mut stage_timings,
-            )?
-        } else if use_tiled_executor {
-            compute_dirty_psf_and_residual_standard_tiled(
-                weighted_batches,
-                gridder,
-                execution_config.clone(),
-                &mut stage_timings,
-            )?
-        } else if let Some(executor) = standard_executor.as_mut() {
-            compute_dirty_psf_and_residual_standard_with_executor(executor, &mut stage_timings)?
-        } else {
-            compute_dirty_psf_and_residual_standard_streaming(
-                weighted_batches,
-                gridder,
-                &mut stage_timings,
-            )?
-        }
-    } else {
-        let psf_state = if use_metal_executor {
-            compute_psf_standard_metal(
-                weighted_batches,
-                gridder,
-                execution_config.clone(),
-                &mut stage_timings,
-            )?
-        } else if use_tiled_executor {
-            compute_psf_standard_tiled(
-                weighted_batches,
-                gridder,
-                execution_config.clone(),
-                &mut stage_timings,
-            )?
-        } else if let Some(executor) = standard_executor.as_mut() {
-            compute_psf_standard(executor, &mut stage_timings)?
-        } else {
-            compute_psf_standard_streaming(weighted_batches, gridder, &mut stage_timings)?
-        };
-        let residual = if use_metal_executor || use_tiled_executor {
-            compute_residual_standard_tiled(
-                weighted_batches,
-                gridder,
-                &model,
-                &psf_state,
-                execution_config.clone(),
-                &mut stage_timings,
-            )?
-        } else if let Some(executor) = standard_executor.as_mut() {
-            compute_residual_standard_with_executor(
-                executor,
-                &model,
-                &psf_state,
-                &mut stage_timings,
-            )?
-        } else {
-            compute_residual_standard_streaming(
-                request.geometry,
-                weighted_batches,
-                gridder,
-                &model,
-                &psf_state,
-                false,
-                &mut stage_timings,
-            )?
-        };
-        (psf_state, residual)
-    };
+    let (psf_state, mut residual) = run_with_standard_mfs_initial_grid_progress(
+        execution_config.progress_callback.as_ref(),
+        request,
+        execution_config.minor_cycle_backend,
+        || {
+            if can_start_from_combined_dirty_pass {
+                if request.w_term_mode == WTermMode::WProject {
+                    compute_dirty_psf_and_residual_w_project(
+                        request.geometry,
+                        weighted_batches,
+                        gridder,
+                        request.w_project_planes,
+                        &mut stage_timings,
+                    )
+                } else if use_metal_executor {
+                    compute_dirty_psf_and_residual_standard_metal(
+                        weighted_batches,
+                        gridder,
+                        execution_config.clone(),
+                        &mut stage_timings,
+                    )
+                } else if use_tiled_executor {
+                    compute_dirty_psf_and_residual_standard_tiled(
+                        weighted_batches,
+                        gridder,
+                        execution_config.clone(),
+                        &mut stage_timings,
+                    )
+                } else if let Some(executor) = standard_executor.as_mut() {
+                    compute_dirty_psf_and_residual_standard_with_executor(
+                        executor,
+                        &mut stage_timings,
+                    )
+                } else {
+                    compute_dirty_psf_and_residual_standard_streaming(
+                        weighted_batches,
+                        gridder,
+                        &mut stage_timings,
+                    )
+                }
+            } else {
+                let psf_state = if use_metal_executor {
+                    compute_psf_standard_metal(
+                        weighted_batches,
+                        gridder,
+                        execution_config.clone(),
+                        &mut stage_timings,
+                    )?
+                } else if use_tiled_executor {
+                    compute_psf_standard_tiled(
+                        weighted_batches,
+                        gridder,
+                        execution_config.clone(),
+                        &mut stage_timings,
+                    )?
+                } else if let Some(executor) = standard_executor.as_mut() {
+                    compute_psf_standard(executor, &mut stage_timings)?
+                } else {
+                    compute_psf_standard_streaming(weighted_batches, gridder, &mut stage_timings)?
+                };
+                let residual = if use_metal_executor || use_tiled_executor {
+                    compute_residual_standard_tiled(
+                        weighted_batches,
+                        gridder,
+                        &model,
+                        &psf_state,
+                        execution_config.clone(),
+                        &mut stage_timings,
+                    )?
+                } else if let Some(executor) = standard_executor.as_mut() {
+                    compute_residual_standard_with_executor(
+                        executor,
+                        &model,
+                        &psf_state,
+                        &mut stage_timings,
+                    )?
+                } else {
+                    compute_residual_standard_streaming(
+                        request.geometry,
+                        weighted_batches,
+                        gridder,
+                        &model,
+                        &psf_state,
+                        false,
+                        &mut stage_timings,
+                    )?
+                };
+                Ok((psf_state, residual))
+            }
+        },
+    )?;
     let beam_fit_started = Instant::now();
     let BeamFitOutcome {
         beam,
@@ -2269,65 +2283,76 @@ where
         None
     };
 
-    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
-        if request.w_term_mode == WTermMode::WProject {
-            let (projector, max_abs_w_lambda) = w_project_context.as_ref().ok_or_else(|| {
-                ImagingError::InvalidRequest("missing wproject execution context".to_string())
-            })?;
-            compute_dirty_psf_and_residual_w_project_replay(
-                &gridder,
-                projector,
-                *max_abs_w_lambda,
-                &mut replay_weighted_batches,
-                &mut stage_timings,
-            )?
-        } else {
-            compute_dirty_psf_and_residual_standard_tiled_replay(
-                &gridder,
-                execution_config.clone(),
-                &mut replay_weighted_batches,
-                &mut stage_timings,
-            )?
-        }
-    } else {
-        if request.w_term_mode == WTermMode::WProject {
-            let (projector, max_abs_w_lambda) = w_project_context.as_ref().ok_or_else(|| {
-                ImagingError::InvalidRequest("missing wproject execution context".to_string())
-            })?;
-            let psf_state = compute_psf_w_project_replay(
-                &gridder,
-                projector,
-                &mut replay_weighted_batches,
-                &mut stage_timings,
-            )?;
-            let residual = compute_residual_w_project_replay(
-                &gridder,
-                &model,
-                &psf_state,
-                projector,
-                &mut replay_weighted_batches,
-                &mut stage_timings,
-            )?;
-            (psf_state, residual, *max_abs_w_lambda)
-        } else {
-            let psf_state = compute_psf_standard_tiled_replay(
-                &gridder,
-                execution_config.clone(),
-                &mut replay_weighted_batches,
-                &mut stage_timings,
-            )?;
-            let residual = compute_residual_standard_tiled_replay(
-                request.geometry,
-                &gridder,
-                &model,
-                &psf_state,
-                execution_config.clone(),
-                &mut replay_weighted_batches,
-                &mut stage_timings,
-            )?;
-            (psf_state, residual, 0.0)
-        }
-    };
+    let (psf_state, mut residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
+        execution_config.progress_callback.as_ref(),
+        &request,
+        execution_config.minor_cycle_backend,
+        || {
+            if !has_initial_model {
+                if request.w_term_mode == WTermMode::WProject {
+                    let (projector, max_abs_w_lambda) =
+                        w_project_context.as_ref().ok_or_else(|| {
+                            ImagingError::InvalidRequest(
+                                "missing wproject execution context".to_string(),
+                            )
+                        })?;
+                    compute_dirty_psf_and_residual_w_project_replay(
+                        &gridder,
+                        projector,
+                        *max_abs_w_lambda,
+                        &mut replay_weighted_batches,
+                        &mut stage_timings,
+                    )
+                } else {
+                    compute_dirty_psf_and_residual_standard_tiled_replay(
+                        &gridder,
+                        execution_config.clone(),
+                        &mut replay_weighted_batches,
+                        &mut stage_timings,
+                    )
+                }
+            } else if request.w_term_mode == WTermMode::WProject {
+                let (projector, max_abs_w_lambda) =
+                    w_project_context.as_ref().ok_or_else(|| {
+                        ImagingError::InvalidRequest(
+                            "missing wproject execution context".to_string(),
+                        )
+                    })?;
+                let psf_state = compute_psf_w_project_replay(
+                    &gridder,
+                    projector,
+                    &mut replay_weighted_batches,
+                    &mut stage_timings,
+                )?;
+                let residual = compute_residual_w_project_replay(
+                    &gridder,
+                    &model,
+                    &psf_state,
+                    projector,
+                    &mut replay_weighted_batches,
+                    &mut stage_timings,
+                )?;
+                Ok((psf_state, residual, *max_abs_w_lambda))
+            } else {
+                let psf_state = compute_psf_standard_tiled_replay(
+                    &gridder,
+                    execution_config.clone(),
+                    &mut replay_weighted_batches,
+                    &mut stage_timings,
+                )?;
+                let residual = compute_residual_standard_tiled_replay(
+                    request.geometry,
+                    &gridder,
+                    &model,
+                    &psf_state,
+                    execution_config.clone(),
+                    &mut replay_weighted_batches,
+                    &mut stage_timings,
+                )?;
+                Ok((psf_state, residual, 0.0))
+            }
+        },
+    )?;
     let beam_fit_started = Instant::now();
     let BeamFitOutcome {
         beam,
@@ -3848,21 +3873,30 @@ fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_c
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
     let mut stage_timings = ImagingStageTimings::default();
+    let progress_callback = execution_config.progress_callback.clone();
+    let minor_cycle_backend = execution_config.minor_cycle_backend;
     let mut replay_plan =
         StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
 
-    let (psf_state, residual, max_abs_w_lambda) = if !has_initial_model {
-        replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?
-    } else {
-        let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
-        let residual = replay_plan.compute_residual(
-            request.geometry,
-            &model,
-            &psf_state,
-            &mut stage_timings,
-        )?;
-        (psf_state, residual, 0.0)
-    };
+    let (psf_state, residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
+        progress_callback.as_ref(),
+        &request,
+        minor_cycle_backend,
+        || {
+            if !has_initial_model {
+                replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)
+            } else {
+                let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
+                let residual = replay_plan.compute_residual(
+                    request.geometry,
+                    &model,
+                    &psf_state,
+                    &mut stage_timings,
+                )?;
+                Ok((psf_state, residual, 0.0))
+            }
+        },
+    )?;
 
     let beam_fit_started = Instant::now();
     let BeamFitOutcome {
@@ -4305,18 +4339,25 @@ fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
         replay_weighted_samples,
     );
 
-    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
-        replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?
-    } else {
-        let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
-        let residual = replay_plan.compute_residual(
-            request.geometry,
-            &model,
-            &psf_state,
-            &mut stage_timings,
-        )?;
-        (psf_state, residual, 0.0)
-    };
+    let (psf_state, mut residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
+        execution_config.progress_callback.as_ref(),
+        &request,
+        execution_config.minor_cycle_backend,
+        || {
+            if !has_initial_model {
+                replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)
+            } else {
+                let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
+                let residual = replay_plan.compute_residual(
+                    request.geometry,
+                    &model,
+                    &psf_state,
+                    &mut stage_timings,
+                )?;
+                Ok((psf_state, residual, 0.0))
+            }
+        },
+    )?;
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf,
         request.geometry.cell_size_rad,
@@ -4504,10 +4545,16 @@ fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_c
     let gridder = StandardGridder::new(request.geometry)?;
     let [nx, ny] = request.geometry.image_shape;
     let mut stage_timings = ImagingStageTimings::default();
+    let progress_callback = execution_config.progress_callback.clone();
+    let minor_cycle_backend = execution_config.minor_cycle_backend;
     let mut replay_plan =
         StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
-    let (psf_state, residual, max_abs_w_lambda) =
-        replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?;
+    let (psf_state, residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
+        progress_callback.as_ref(),
+        &request,
+        minor_cycle_backend,
+        || replay_plan.compute_dirty_psf_and_residual(&mut stage_timings),
+    )?;
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf,
         request.geometry.cell_size_rad,
@@ -4655,18 +4702,25 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
         metal_grouped_input_cache.as_mut(),
     );
 
-    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
-        replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)?
-    } else {
-        let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
-        let residual = replay_plan.compute_residual(
-            request.geometry,
-            &model,
-            &psf_state,
-            &mut stage_timings,
-        )?;
-        (psf_state, residual, 0.0)
-    };
+    let (psf_state, mut residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
+        execution_config.progress_callback.as_ref(),
+        &request,
+        execution_config.minor_cycle_backend,
+        || {
+            if !has_initial_model {
+                replay_plan.compute_dirty_psf_and_residual(&mut stage_timings)
+            } else {
+                let psf_state = replay_plan.compute_psf(&mut stage_timings)?;
+                let residual = replay_plan.compute_residual(
+                    request.geometry,
+                    &model,
+                    &psf_state,
+                    &mut stage_timings,
+                )?;
+                Ok((psf_state, residual, 0.0))
+            }
+        },
+    )?;
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf,
         request.geometry.cell_size_rad,
@@ -13640,6 +13694,40 @@ fn emit_standard_mfs_controller_progress(
             cycle_threshold_jy_per_beam,
         });
     }
+}
+
+fn run_with_standard_mfs_initial_grid_progress<T>(
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    request: &ImagingRequest,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    work: impl FnOnce() -> Result<T, ImagingError>,
+) -> Result<T, ImagingError> {
+    emit_standard_mfs_controller_progress(
+        progress_callback,
+        request,
+        minor_cycle_backend,
+        StandardMfsProgressPhase::InitialGridStart,
+        0,
+        0,
+        0,
+        None,
+        None,
+    );
+    let result = work();
+    if result.is_ok() {
+        emit_standard_mfs_controller_progress(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            StandardMfsProgressPhase::InitialGridEnd,
+            0,
+            0,
+            0,
+            None,
+            None,
+        );
+    }
+    result
 }
 
 fn image_center_value(image: &Array2<f32>) -> f32 {

@@ -157,6 +157,8 @@ const PROGRESS_RESOURCE_GRID: &str = "visibility-grid";
 const PROGRESS_RESOURCE_PLANE_STATE: &str = "plane-state";
 const PROGRESS_RESOURCE_DECONVOLVER: &str = "deconvolver";
 const PROGRESS_RESOURCE_PRODUCTS: &str = "product-scratch";
+const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
+    &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
     "imsize",
@@ -545,6 +547,7 @@ struct ImagerProgressContext {
     uv_coverage_output_slab: Option<(usize, usize)>,
     last_active_runtime_backend: Option<String>,
     active_resource_counts: BTreeMap<String, usize>,
+    active_resource_thread_counts: BTreeMap<String, Vec<usize>>,
     memory: Option<ImagerProgressMemory>,
 }
 
@@ -577,6 +580,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         last_active_runtime_backend: None,
         uv_coverage_output_slab: None,
         active_resource_counts: BTreeMap::new(),
+        active_resource_thread_counts: BTreeMap::new(),
         memory: None,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
@@ -616,6 +620,18 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
             .keys()
             .cloned()
             .collect::<Vec<_>>();
+        let active_resource_threads = context
+            .active_resource_thread_counts
+            .iter()
+            .filter_map(|(resource, thread_counts)| {
+                thread_counts
+                    .iter()
+                    .copied()
+                    .max()
+                    .filter(|threads| *threads > 0)
+                    .map(|threads| (resource.clone(), threads))
+            })
+            .collect::<BTreeMap<_, _>>();
         if event.runtime.is_none() {
             if let Some(memory) = context.memory.clone() {
                 event.runtime = Some(ImagerProgressRuntime {
@@ -629,6 +645,7 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                         .clone()
                         .unwrap_or_else(|| "memory plan".to_string()),
                     active_resources: Vec::new(),
+                    active_resource_threads: BTreeMap::new(),
                     memory: Some(memory),
                 });
             }
@@ -644,6 +661,13 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                     .collect::<BTreeSet<_>>();
                 merged.extend(active_resources);
                 runtime.active_resources = merged.into_iter().collect();
+            }
+            for (resource, threads) in active_resource_threads {
+                runtime
+                    .active_resource_threads
+                    .entry(resource)
+                    .and_modify(|existing| *existing = (*existing).max(threads))
+                    .or_insert(threads);
             }
             if runtime.memory.is_none() {
                 runtime.memory = context.memory.clone();
@@ -665,7 +689,7 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
 }
 
 struct ImagerProgressResourceGuard {
-    resources: Vec<String>,
+    resources: Vec<(String, usize)>,
 }
 
 impl Drop for ImagerProgressResourceGuard {
@@ -679,11 +703,25 @@ impl Drop for ImagerProgressResourceGuard {
         let Some(context) = context.as_mut() else {
             return;
         };
-        for resource in &self.resources {
+        for (resource, active_threads) in &self.resources {
             if let Some(count) = context.active_resource_counts.get_mut(resource) {
                 *count = count.saturating_sub(1);
                 if *count == 0 {
                     context.active_resource_counts.remove(resource);
+                }
+            }
+            if *active_threads > 0 {
+                if let Some(thread_counts) = context.active_resource_thread_counts.get_mut(resource)
+                {
+                    if let Some(position) = thread_counts
+                        .iter()
+                        .position(|candidate| candidate == active_threads)
+                    {
+                        thread_counts.remove(position);
+                    }
+                    if thread_counts.is_empty() {
+                        context.active_resource_thread_counts.remove(resource);
+                    }
                 }
             }
         }
@@ -691,10 +729,17 @@ impl Drop for ImagerProgressResourceGuard {
 }
 
 fn acquire_imager_progress_resources(resources: &[&str]) -> Option<ImagerProgressResourceGuard> {
+    acquire_imager_progress_resources_with_threads(resources, 0)
+}
+
+fn acquire_imager_progress_resources_with_threads(
+    resources: &[&str],
+    active_threads: usize,
+) -> Option<ImagerProgressResourceGuard> {
     if resources.is_empty() || !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return None;
     }
-    let mut acquired = Vec::<String>::new();
+    let mut acquired = Vec::<(String, usize)>::new();
     let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
         return None;
     };
@@ -707,7 +752,14 @@ fn acquire_imager_progress_resources(resources: &[&str]) -> Option<ImagerProgres
             .active_resource_counts
             .entry(resource.clone())
             .or_insert(0) += 1;
-        acquired.push(resource);
+        if active_threads > 0 {
+            context
+                .active_resource_thread_counts
+                .entry(resource.clone())
+                .or_default()
+                .push(active_threads);
+        }
+        acquired.push((resource, active_threads));
     }
     Some(ImagerProgressResourceGuard {
         resources: acquired,
@@ -876,6 +928,19 @@ fn progress_runtime_from_config(
     progress_runtime_from_config_with_resources(config, active_threads, selected_backend, &[])
 }
 
+fn progress_resource_thread_counts(
+    active_resources: &[&str],
+    active_threads: usize,
+) -> BTreeMap<String, usize> {
+    if active_threads == 0 {
+        return BTreeMap::new();
+    }
+    active_resources
+        .iter()
+        .map(|resource| ((*resource).to_string(), active_threads))
+        .collect()
+}
+
 fn progress_runtime_from_config_with_resources(
     config: &CliConfig,
     active_threads: usize,
@@ -928,6 +993,7 @@ fn progress_runtime_from_config_with_resources(
             .iter()
             .map(|resource| (*resource).to_string())
             .collect(),
+        active_resource_threads: progress_resource_thread_counts(active_resources, active_threads),
         memory: imager_progress_memory(),
     }
 }
@@ -949,6 +1015,7 @@ fn progress_runtime_for_resource_scope(
             .iter()
             .map(|resource| (*resource).to_string())
             .collect(),
+        active_resource_threads: progress_resource_thread_counts(active_resources, active_threads),
         memory: imager_progress_memory(),
     }
 }
@@ -1342,14 +1409,13 @@ fn standard_mfs_replay_progress_minor_iterations(
 }
 
 fn emit_standard_mfs_replay_progress(config: &CliConfig, replay_ordinal: usize, phase: &str) {
-    let active_resources = if phase.contains("dirty image") || phase.contains("residual") {
-        &[
-            PROGRESS_RESOURCE_GRID,
-            PROGRESS_RESOURCE_PLANE_STATE,
-            PROGRESS_RESOURCE_PRODUCTS,
-        ][..]
+    let replay_resources_active = STANDARD_MFS_REPLAY_PROGRESS_RESOURCES
+        .iter()
+        .any(|resource| imager_progress_resource_is_active(resource));
+    let active_threads = if replay_resources_active {
+        env_standard_mfs_grid_threads().unwrap_or(1)
     } else {
-        &[][..]
+        0
     };
     emit_imager_progress_deconvolution_with_resources(
         config,
@@ -1360,16 +1426,32 @@ fn emit_standard_mfs_replay_progress(config: &CliConfig, replay_ordinal: usize, 
         replay_ordinal,
         None,
         Vec::new(),
-        env_standard_mfs_grid_threads().unwrap_or(1),
+        active_threads,
         None,
         phase,
-        active_resources,
-        false,
+        &[],
+        true,
     );
+}
+
+fn standard_mfs_replay_post_stream_phase(replay_ordinal: usize) -> &'static str {
+    if replay_ordinal == 0 {
+        "accumulating dirty image grid"
+    } else {
+        "accumulating residual grid"
+    }
+}
+
+fn acquire_standard_mfs_replay_progress_resources() -> Option<ImagerProgressResourceGuard> {
+    acquire_imager_progress_resources_with_threads(
+        STANDARD_MFS_REPLAY_PROGRESS_RESOURCES,
+        env_standard_mfs_grid_threads().unwrap_or(1),
+    )
 }
 
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
+    initial_grid: Option<ImagerProgressResourceGuard>,
     minor_cycle: Option<ImagerProgressResourceGuard>,
     residual_refresh: Option<ImagerProgressResourceGuard>,
 }
@@ -1385,12 +1467,25 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
             return;
         };
         let (phase, active_threads) = match event.phase {
+            StandardMfsProgressPhase::InitialGridStart => {
+                guards.initial_grid = acquire_imager_progress_resources_with_threads(
+                    &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE],
+                    env_standard_mfs_grid_threads().unwrap_or(1),
+                );
+                (
+                    "building dirty image grid",
+                    env_standard_mfs_grid_threads().unwrap_or(1),
+                )
+            }
+            StandardMfsProgressPhase::InitialGridEnd => {
+                guards.initial_grid = None;
+                ("dirty image grid complete", 0)
+            }
             StandardMfsProgressPhase::MinorCycleStart => {
-                guards.minor_cycle = acquire_imager_progress_resources(&[
-                    PROGRESS_RESOURCE_DECONVOLVER,
-                    PROGRESS_RESOURCE_PLANE_STATE,
-                    PROGRESS_RESOURCE_PRODUCTS,
-                ]);
+                guards.minor_cycle = acquire_imager_progress_resources_with_threads(
+                    &[PROGRESS_RESOURCE_DECONVOLVER, PROGRESS_RESOURCE_PLANE_STATE],
+                    env_standard_mfs_grid_threads().unwrap_or(1),
+                );
                 (
                     "deconvolving minor cycle",
                     env_standard_mfs_grid_threads().unwrap_or(1),
@@ -1401,11 +1496,10 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 ("minor cycle complete", 0)
             }
             StandardMfsProgressPhase::ResidualRefreshStart => {
-                guards.residual_refresh = acquire_imager_progress_resources(&[
-                    PROGRESS_RESOURCE_GRID,
-                    PROGRESS_RESOURCE_PLANE_STATE,
-                    PROGRESS_RESOURCE_PRODUCTS,
-                ]);
+                guards.residual_refresh = acquire_imager_progress_resources_with_threads(
+                    &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE],
+                    env_standard_mfs_grid_threads().unwrap_or(1),
+                );
                 (
                     "refreshing residual",
                     env_standard_mfs_grid_threads().unwrap_or(1),
@@ -7557,6 +7651,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 } else {
                     "refreshing residual"
                 };
+                let replay_resource_guard = acquire_standard_mfs_replay_progress_resources();
                 emit_standard_mfs_replay_progress(config, replay_ordinal, replay_progress_phase);
                 let mut replay_stats =
                     StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
@@ -7597,14 +7692,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         if let Some(error) = stream_error {
                             return Err(error);
                         }
+                        drop(replay_resource_guard);
                         emit_standard_mfs_replay_progress(
                             config,
                             replay_ordinal,
-                            if replay_ordinal == 0 {
-                                "dirty image replay complete"
-                            } else {
-                                "residual replay complete"
-                            },
+                            standard_mfs_replay_post_stream_phase(replay_ordinal),
                         );
                         return Ok(());
                     }
@@ -7640,14 +7732,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     if let Some(error) = stream_error {
                         return Err(error);
                     }
+                    drop(replay_resource_guard);
                     emit_standard_mfs_replay_progress(
                         config,
                         replay_ordinal,
-                        if replay_ordinal == 0 {
-                            "dirty image replay complete"
-                        } else {
-                            "residual replay complete"
-                        },
+                        standard_mfs_replay_post_stream_phase(replay_ordinal),
                     );
                     return Ok(());
                 }
@@ -7678,14 +7767,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     )
                     .map_err(ImagingError::InvalidRequest)?;
                     replay_stats.log();
+                    drop(replay_resource_guard);
                     emit_standard_mfs_replay_progress(
                         config,
                         replay_ordinal,
-                        if replay_ordinal == 0 {
-                            "dirty image replay complete"
-                        } else {
-                            "residual replay complete"
-                        },
+                        standard_mfs_replay_post_stream_phase(replay_ordinal),
                     );
                     return Ok(());
                 }
@@ -7730,14 +7816,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     return Err(error);
                 }
                 stream_result.map_err(ImagingError::InvalidRequest)?;
+                drop(replay_resource_guard);
                 emit_standard_mfs_replay_progress(
                     config,
                     replay_ordinal,
-                    if replay_ordinal == 0 {
-                        "dirty image replay complete"
-                    } else {
-                        "residual replay complete"
-                    },
+                    standard_mfs_replay_post_stream_phase(replay_ordinal),
                 );
                 if let Some(cache) = new_cache {
                     if standard_mfs_profile_detail_enabled() {
@@ -7779,6 +7862,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     } else {
                         "refreshing residual"
                     };
+                    let replay_resource_guard = acquire_standard_mfs_replay_progress_resources();
                     emit_standard_mfs_replay_progress(
                         config,
                         replay_ordinal,
@@ -7821,14 +7905,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         return Err(error);
                     }
                     stream_result.map_err(ImagingError::InvalidRequest)?;
+                    drop(replay_resource_guard);
                     emit_standard_mfs_replay_progress(
                         config,
                         replay_ordinal,
-                        if replay_ordinal == 0 {
-                            "dirty image replay complete"
-                        } else {
-                            "residual replay complete"
-                        },
+                        standard_mfs_replay_post_stream_phase(replay_ordinal),
                     );
                     Ok(())
                 };
@@ -7857,6 +7938,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             } else {
                 "refreshing residual"
             };
+            let replay_resource_guard = acquire_standard_mfs_replay_progress_resources();
             emit_standard_mfs_replay_progress(config, replay_ordinal, replay_progress_phase);
             let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
             let mut stream_error = None::<ImagingError>;
@@ -7918,14 +8000,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 return Err(error);
             }
             stream_result.map_err(ImagingError::InvalidRequest)?;
+            drop(replay_resource_guard);
             emit_standard_mfs_replay_progress(
                 config,
                 replay_ordinal,
-                if replay_ordinal == 0 {
-                    "dirty image replay complete"
-                } else {
-                    "residual replay complete"
-                },
+                standard_mfs_replay_post_stream_phase(replay_ordinal),
             );
             Ok(())
         };
@@ -39388,6 +39467,60 @@ mod tests {
         assert_eq!(snapshot.dropped_points, 1);
         assert_eq!(snapshot.u_extent_klambda, 5.0);
         assert_eq!(snapshot.v_extent_klambda, 6.0);
+    }
+
+    #[test]
+    fn standard_mfs_replay_progress_guard_tracks_grid_and_plane() {
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+
+        {
+            let replay_guard = acquire_standard_mfs_replay_progress_resources()
+                .expect("standard MFS replay resources acquired");
+            let context = IMAGER_PROGRESS_CONTEXT
+                .lock()
+                .expect("progress context lock");
+            let active_resources = &context
+                .as_ref()
+                .expect("progress context")
+                .active_resource_counts;
+            assert_eq!(active_resources.get(PROGRESS_RESOURCE_GRID), Some(&1));
+            assert_eq!(
+                active_resources.get(PROGRESS_RESOURCE_PLANE_STATE),
+                Some(&1)
+            );
+            assert_eq!(active_resources.get(PROGRESS_RESOURCE_PRODUCTS), None);
+            assert_eq!(active_resources.get(PROGRESS_RESOURCE_SOURCE_STREAM), None);
+            let active_resource_threads = &context
+                .as_ref()
+                .expect("progress context")
+                .active_resource_thread_counts;
+            assert_eq!(
+                active_resource_threads
+                    .get(PROGRESS_RESOURCE_GRID)
+                    .and_then(|counts| counts.iter().copied().max()),
+                Some(env_standard_mfs_grid_threads().unwrap_or(1))
+            );
+            drop(context);
+            drop(replay_guard);
+        }
+
+        let context = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        assert!(
+            context
+                .as_ref()
+                .expect("progress context")
+                .active_resource_counts
+                .is_empty()
+        );
+        drop(context);
+        drop(progress_guard);
     }
 
     #[test]

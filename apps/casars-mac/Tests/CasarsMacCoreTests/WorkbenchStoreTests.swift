@@ -2993,6 +2993,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.uvCoverage.droppedPointCount, 0)
         XCTAssertEqual(progress.uvCoverage.sampleLimit, 1)
         XCTAssertEqual(progress.sampledAtLabel, "0.05 s")
+        XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
+        let receivedAt = try XCTUnwrap(progress.receivedAt)
+        XCTAssertEqual(progress.elapsedLabel(now: receivedAt.addingTimeInterval(2.0)), "2.05 s")
         XCTAssertEqual(progress.runtime.memory?.activePlanes, 47)
         XCTAssertEqual(progress.runtime.memory?.rowBlockRows, 128704)
         XCTAssertEqual(progress.runtime.memory?.memoryTargetSource, "system_half")
@@ -3000,16 +3003,24 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.resourceActivities.count, 5)
         let sourceResource = try XCTUnwrap(progress.resourceActivities.first)
         XCTAssertEqual(sourceResource.id, "source-stream")
+        XCTAssertEqual(sourceResource.detail, "128.7k rows / 3.8 GB planned")
         XCTAssertEqual(sourceResource.state, .busy)
         XCTAssertEqual(sourceResource.sectionStartFraction, 0.2, accuracy: 0.001)
         XCTAssertEqual(sourceResource.sectionEndFraction, 0.4, accuracy: 0.001)
         XCTAssertEqual(sourceResource.activeThreads, 2)
         let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
+        XCTAssertEqual(gridResource.detail, "shared / 2.4 GB planned")
         XCTAssertEqual(gridResource.state, .idle)
         XCTAssertEqual(gridResource.activeThreads, 0)
         let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
+        XCTAssertEqual(planeResource.detail, "47 planes / 2.4 GB planned")
         XCTAssertEqual(planeResource.state, .idle)
         XCTAssertEqual(planeResource.activeThreads, 0)
+        let deconvolverResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "deconvolver" })
+        XCTAssertEqual(deconvolverResource.detail, "minor / 2.4 GB planned")
+        let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
+        XCTAssertEqual(productResource.detail, "10.9 GB planned")
+        XCTAssertTrue(progress.sourceStreamIsActive)
         guard case .diagnostic(let diagnostic) = records[1] else {
             return XCTFail("expected diagnostic record")
         }
@@ -3026,6 +3037,7 @@ final class WorkbenchStoreTests: XCTestCase {
             return XCTFail("expected progress record")
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["visibility-grid", "plane-state", "product-scratch"])
+        XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
         let sourceResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "source-stream" })
         XCTAssertEqual(sourceResource.state, .idle)
         let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
@@ -3047,6 +3059,49 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         XCTAssertTrue(finishedProgress.resourceActivities.allSatisfy { $0.state == .idle })
         XCTAssertTrue(finishedProgress.resourceActivities.allSatisfy { $0.activeThreads == 0 })
+        XCTAssertFalse(finishedProgress.sourceStreamIsActive)
+    }
+
+    func testImagerProgressEmptyResourceOwnershipClearsPhaseFallback() throws {
+        var parser = ImagerProgressStderrParser()
+        let progressJSON = #"{"schema_version":1,"sequence":5,"elapsed_ms":3000,"phase":"refreshing residual","summary":"idle after residual refresh","output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":1,"active_plane_start":0,"active_plane_end":1},"deconvolution":{"phase":"refreshing residual","major_cycle":1,"major_cycle_limit":-1,"minor_iterations":1000,"minor_iteration_limit":3000,"components_cleaned":1000,"peak_residual_mjy_per_beam":2.7,"target_residual_mjy_per_beam":0.0,"residual_history_mjy_per_beam":[3.1,2.7]},"runtime":{"active_threads":0,"total_threads":8,"gpu_active":false,"backend":"idle","active_resources":[],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":1,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#
+
+        let records = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-10", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertEqual(progress.runtime.activeResourceIDs, [])
+        XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
+        XCTAssertTrue(progress.resourceActivities.allSatisfy { $0.state == .idle })
+        XCTAssertTrue(progress.resourceActivities.allSatisfy { $0.activeThreads == 0 })
+        XCTAssertFalse(progress.sourceStreamIsActive)
+    }
+
+    func testImagerProgressNestedReplaySourceReadShowsCombinedResourceOwnership() throws {
+        var parser = ImagerProgressStderrParser()
+        let progressJSON = #"{"schema_version":1,"sequence":4,"elapsed_ms":2750,"phase":"reading_ms","summary":"reading rows during residual replay","ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":1,"active_plane_start":0,"active_plane_end":1},"deconvolution":{"phase":"refreshing residual","major_cycle":1,"major_cycle_limit":-1,"minor_iterations":1000,"minor_iteration_limit":3000,"components_cleaned":1000,"peak_residual_mjy_per_beam":2.7,"target_residual_mjy_per_beam":0.0,"residual_history_mjy_per_beam":[3.1,2.7]},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":false,"backend":"source stream","active_resources":["source-stream","visibility-grid","plane-state"],"active_resource_threads":{"source-stream":1,"visibility-grid":4,"plane-state":4},"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":1,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#
+
+        let records = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-9", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertEqual(progress.runtime.activeResourceIDs, ["source-stream", "visibility-grid", "plane-state"])
+        XCTAssertEqual(progress.resourceActivities.filter(\.isBusy).map(\.id), [
+            "source-stream",
+            "visibility-grid",
+            "plane-state"
+        ])
+        XCTAssertEqual(progress.runtime.activeResourceThreadCounts["source-stream"], 1)
+        XCTAssertEqual(progress.runtime.activeResourceThreadCounts["visibility-grid"], 4)
+        XCTAssertEqual(progress.runtime.activeResourceThreadCounts["plane-state"], 4)
+        XCTAssertEqual(progress.resourceActivities.first { $0.id == "source-stream" }?.activeThreads, 1)
+        XCTAssertTrue(progress.sourceStreamIsActive)
+        XCTAssertEqual(progress.resourceActivities.first { $0.id == "visibility-grid" }?.activeThreads, 4)
+        XCTAssertEqual(progress.resourceActivities.first { $0.id == "plane-state" }?.activeThreads, 4)
+        XCTAssertEqual(progress.resourceActivities.first { $0.id == "product-scratch" }?.activeThreads, 0)
+        XCTAssertEqual(progress.resourceActivities.first { $0.id == "deconvolver" }?.state, .idle)
     }
 
     func testOpenImagerTaskDoesNotSeedMockProgressBeforeRun() throws {

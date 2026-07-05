@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical imager task request/result contracts shared by CLI, shell, and Python.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -288,8 +289,11 @@ pub struct ImagerProgressRuntime {
     /// Human-readable backend label.
     pub backend: String,
     /// Stable resource row ids that are actively owned or being worked.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub active_resources: Vec<String>,
+    /// Per-resource active worker counts keyed by `active_resources` id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub active_resource_threads: BTreeMap<String, usize>,
     /// Optional bounded-memory imaging plan snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<ImagerProgressMemory>,
@@ -2097,6 +2101,7 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -2116,9 +2121,9 @@ mod tests {
         ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
         ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
         ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerProgressEvent,
-        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
-        ImagerWTermMode, ImagerWeighting,
+        ImagerProgressRuntime, ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel,
+        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
+        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy};
 
@@ -3051,6 +3056,7 @@ mod tests {
             "gpu_active": false,
             "backend": "auto",
             "active_resources": ["source-stream", "visibility-grid"],
+            "active_resource_threads": {"source-stream": 1, "visibility-grid": 4},
             "memory": {
               "memory_target_bytes": 17179869184,
               "planned_active_bytes": 17179863154,
@@ -3081,6 +3087,15 @@ mod tests {
                 .runtime
                 .as_ref()
                 .unwrap()
+                .active_resource_threads
+                .get("visibility-grid"),
+            Some(&4)
+        );
+        assert_eq!(
+            event
+                .runtime
+                .as_ref()
+                .unwrap()
                 .memory
                 .as_ref()
                 .unwrap()
@@ -3094,6 +3109,30 @@ mod tests {
         .expect("parse minimal progress event");
         assert!(minimal.ms_read.is_none());
         assert!(minimal.uv_coverage.is_none());
+
+        let idle_runtime = ImagerProgressEvent {
+            schema_version: 1,
+            sequence: 8,
+            elapsed_ms: 1300,
+            phase: "idle".to_string(),
+            summary: "idle".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 0,
+                total_threads: 8,
+                gpu_active: false,
+                backend: "idle".to_string(),
+                active_resources: Vec::new(),
+                active_resource_threads: BTreeMap::new(),
+                memory: None,
+            }),
+        };
+        let serialized = serde_json::to_string(&idle_runtime).expect("serialize idle runtime");
+        assert!(serialized.contains(r#""active_resources":[]"#));
     }
 
     #[test]
