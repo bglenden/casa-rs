@@ -449,6 +449,111 @@ pub struct ImagerObservedResourceMemory {
     pub active_planes: Option<usize>,
 }
 
+/// Coarse memory categories reported by the imager observability ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedMemoryKind {
+    /// MeasurementSet/source stream buffers.
+    SourceBuffer,
+    /// Prepared row or visibility group buffers.
+    RowVisibilityBuffer,
+    /// Visibility grid, FFT, and image-domain scratch.
+    GridFftScratch,
+    /// Resident output-plane/model/residual state.
+    PlaneState,
+    /// Deconvolver scratch and bookkeeping.
+    DeconvolverScratch,
+    /// Product writer and product scratch storage.
+    Products,
+    /// Worker queues, task queues, and producer/consumer staging.
+    WorkerQueue,
+    /// GPU host-side staging storage.
+    GpuStaging,
+    /// GPU device-resident storage.
+    GpuDevice,
+    /// Process RSS sample used as a separate runtime fact.
+    ProcessBaseline,
+    /// RSS not currently attributed to tracked domain allocations.
+    UntrackedResident,
+}
+
+/// Confidence class for an imager memory-ledger entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedMemoryConfidence {
+    /// Measured directly from the owning allocator, process, or device API.
+    Measured,
+    /// Planned by the imager memory planner, not sampled from an allocator.
+    Planned,
+    /// Derived from another observation such as RSS minus tracked bytes.
+    Estimated,
+    /// Category exists, but bytes are not yet attributable.
+    Unknown,
+}
+
+/// One category entry in the imager memory ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerObservedMemoryEntry {
+    /// Stable category id.
+    pub kind: ImagerObservedMemoryKind,
+    /// Short display label.
+    pub label: String,
+    /// Resource row associated with this category, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<ImagerObservedResourceId>,
+    /// Planned or target bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_bytes: Option<usize>,
+    /// Currently tracked live bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_live_bytes: Option<usize>,
+    /// High-water bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high_water_bytes: Option<usize>,
+    /// Current process RSS bytes for process-level entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_rss_bytes: Option<usize>,
+    /// Peak process RSS bytes for process-level entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_peak_rss_bytes: Option<usize>,
+    /// RSS bytes not currently explained by tracked live category bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untracked_bytes: Option<usize>,
+    /// Rolling source row-block size when this category is a stream buffer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_block_rows: Option<usize>,
+    /// Active output planes represented by this category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_planes: Option<usize>,
+    /// Confidence class for this entry.
+    pub confidence: ImagerObservedMemoryConfidence,
+    /// Short note explaining unknown or estimated entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Memory ledger attached to an imager observability snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerMemoryLedgerSnapshot {
+    /// Category entries. Unknown-byte categories are retained as explicit gaps.
+    pub entries: Vec<ImagerObservedMemoryEntry>,
+    /// Sum of planned bytes in entries that report planned bytes.
+    pub planned_total_bytes: usize,
+    /// Sum of tracked live bytes in entries that report live bytes.
+    pub tracked_live_total_bytes: usize,
+    /// Sum of high-water bytes in entries that report high-water bytes.
+    pub tracked_high_water_total_bytes: usize,
+    /// Current process RSS sample, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_rss_bytes: Option<usize>,
+    /// Peak process RSS sample, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_peak_rss_bytes: Option<usize>,
+    /// RSS bytes not currently explained by tracked live category bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untracked_resident_bytes: Option<usize>,
+}
+
 /// Authoritative resource row in an imager observability snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservedResource {
@@ -521,6 +626,9 @@ pub struct ImagerObservabilitySnapshot {
     /// Source label for the memory target when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_target_source: Option<String>,
+    /// Authoritative memory ledger for tracked and untracked runtime memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_ledger: Option<ImagerMemoryLedgerSnapshot>,
 }
 
 /// One coarse progress event emitted while an imager task is running.

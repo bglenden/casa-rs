@@ -134,14 +134,15 @@ pub use task_contract::{
     ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue,
     ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
-    ImagerObservabilityExtent, ImagerObservabilitySnapshot, ImagerObservabilitySpan,
-    ImagerObservabilitySpanState, ImagerObservedResource, ImagerObservedResourceId,
-    ImagerObservedResourceMemory, ImagerObservedResourceState, ImagerObservedStageKind,
-    ImagerPlaneSelection, ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressEvent,
-    ImagerProgressMemory, ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime,
-    ImagerProgressUvCoverage, ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo,
-    ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
-    ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
+    ImagerMemoryLedgerSnapshot, ImagerObservabilityExtent, ImagerObservabilitySnapshot,
+    ImagerObservabilitySpan, ImagerObservabilitySpanState, ImagerObservedMemoryConfidence,
+    ImagerObservedMemoryEntry, ImagerObservedMemoryKind, ImagerObservedResource,
+    ImagerObservedResourceId, ImagerObservedResourceMemory, ImagerObservedResourceState,
+    ImagerObservedStageKind, ImagerPlaneSelection, ImagerProgressCube, ImagerProgressDeconvolution,
+    ImagerProgressEvent, ImagerProgressMemory, ImagerProgressMsWindow, ImagerProgressOptions,
+    ImagerProgressRuntime, ImagerProgressUvCoverage, ImagerProgressUvPoint, ImagerProgressWork,
+    ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
+    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
     ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
 };
 
@@ -773,6 +774,247 @@ fn imager_observed_memory_for_resource(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn imager_memory_ledger_entry(
+    kind: ImagerObservedMemoryKind,
+    label: &str,
+    resource_id: Option<ImagerObservedResourceId>,
+    planned_bytes: Option<usize>,
+    tracked_live_bytes: Option<usize>,
+    high_water_bytes: Option<usize>,
+    process_rss_bytes: Option<usize>,
+    process_peak_rss_bytes: Option<usize>,
+    untracked_bytes: Option<usize>,
+    row_block_rows: Option<usize>,
+    active_planes: Option<usize>,
+    confidence: ImagerObservedMemoryConfidence,
+    note: Option<&str>,
+) -> ImagerObservedMemoryEntry {
+    ImagerObservedMemoryEntry {
+        kind,
+        label: label.to_string(),
+        resource_id,
+        planned_bytes,
+        tracked_live_bytes,
+        high_water_bytes,
+        process_rss_bytes,
+        process_peak_rss_bytes,
+        untracked_bytes,
+        row_block_rows,
+        active_planes,
+        confidence,
+        note: note.map(str::to_string),
+    }
+}
+
+fn imager_memory_ledger_snapshot(
+    memory: Option<&ImagerProgressMemory>,
+    process_rss_bytes: Option<usize>,
+    process_peak_rss_bytes: Option<usize>,
+) -> Option<ImagerMemoryLedgerSnapshot> {
+    if memory.is_none() && process_rss_bytes.is_none() && process_peak_rss_bytes.is_none() {
+        return None;
+    }
+
+    let mut entries = Vec::new();
+    if let Some(memory) = memory {
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::SourceBuffer,
+            "Source stream",
+            Some(ImagerObservedResourceId::SourceStream),
+            Some(memory.source_stream_buffer_bytes),
+            Some(memory.source_stream_buffer_bytes),
+            None,
+            None,
+            None,
+            None,
+            Some(memory.row_block_rows),
+            None,
+            ImagerObservedMemoryConfidence::Planned,
+            Some("planner-sized rolling source buffer"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::RowVisibilityBuffer,
+            "Row visibility buffers",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory.row_block_rows),
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("visibility row/group buffers are not yet separately attributed"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::GridFftScratch,
+            "Grid / FFT scratch",
+            Some(ImagerObservedResourceId::VisibilityGrid),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("grid and FFT scratch are not yet separately attributed"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::PlaneState,
+            "Plane state",
+            Some(ImagerObservedResourceId::PlaneState),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory.active_planes),
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("active planes are known but resident bytes are not yet separately attributed"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::DeconvolverScratch,
+            "Deconvolver scratch",
+            Some(ImagerObservedResourceId::Deconvolver),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("minor-cycle scratch is not yet separately attributed"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::Products,
+            "Products",
+            Some(ImagerObservedResourceId::ProductScratch),
+            Some(memory.product_scratch_bytes),
+            Some(memory.product_scratch_bytes),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Planned,
+            Some("planner-sized product scratch"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::WorkerQueue,
+            "Worker queues",
+            Some(ImagerObservedResourceId::WorkerQueue),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("queue lengths and queue bytes will be attributed by worker instrumentation"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::GpuStaging,
+            "GPU staging",
+            Some(ImagerObservedResourceId::GpuStaging),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("host staging bytes are not yet separately attributed"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::GpuDevice,
+            "GPU device",
+            Some(ImagerObservedResourceId::GpuStaging),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("device memory requires backend-specific sampling"),
+        ));
+    }
+
+    let planned_total_bytes = entries
+        .iter()
+        .filter_map(|entry| entry.planned_bytes)
+        .sum::<usize>();
+    let tracked_live_total_bytes = entries
+        .iter()
+        .filter_map(|entry| entry.tracked_live_bytes)
+        .sum::<usize>();
+    let tracked_high_water_total_bytes = entries
+        .iter()
+        .filter_map(|entry| entry.high_water_bytes)
+        .sum::<usize>();
+    if process_rss_bytes.is_some() || process_peak_rss_bytes.is_some() {
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::ProcessBaseline,
+            "Process RSS",
+            Some(ImagerObservedResourceId::ProcessRuntime),
+            None,
+            None,
+            None,
+            process_rss_bytes,
+            process_peak_rss_bytes,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Measured,
+            Some("process-wide RSS is sampled separately from tracked domain allocations"),
+        ));
+    }
+    let untracked_resident_bytes =
+        process_rss_bytes.map(|rss| rss.saturating_sub(tracked_live_total_bytes));
+    if let Some(untracked_bytes) = untracked_resident_bytes.filter(|bytes| *bytes > 0) {
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::UntrackedResident,
+            "Untracked resident",
+            Some(ImagerObservedResourceId::ProcessRuntime),
+            None,
+            None,
+            None,
+            process_rss_bytes,
+            process_peak_rss_bytes,
+            Some(untracked_bytes),
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Estimated,
+            Some("RSS minus currently attributed live category bytes"),
+        ));
+    }
+
+    Some(ImagerMemoryLedgerSnapshot {
+        entries,
+        planned_total_bytes,
+        tracked_live_total_bytes,
+        tracked_high_water_total_bytes,
+        process_rss_bytes,
+        process_peak_rss_bytes,
+        untracked_resident_bytes,
+    })
+}
+
 fn imager_observability_snapshot(
     event: &ImagerProgressEvent,
     context: &ImagerProgressContext,
@@ -870,6 +1112,14 @@ fn imager_observability_snapshot(
         active_spans,
         memory_target_bytes: memory.map(|memory| memory.memory_target_bytes),
         memory_target_source: memory.and_then(|memory| memory.memory_target_source.clone()),
+        memory_ledger: {
+            let process_memory = spectral_slab::current_process_memory_snapshot();
+            imager_memory_ledger_snapshot(
+                memory,
+                process_memory.current_rss_bytes,
+                process_memory.peak_rss_bytes,
+            )
+        },
     }
 }
 
@@ -39979,6 +40229,24 @@ mod tests {
         assert_eq!(snapshot.schema_version, IMAGER_OBSERVABILITY_SCHEMA_VERSION);
         assert_eq!(snapshot.resources.len(), PROGRESS_RESOURCE_ROWS.len());
         assert_eq!(snapshot.memory_target_source.as_deref(), Some("test"));
+        let ledger = snapshot.memory_ledger.as_ref().expect("memory ledger");
+        assert!(ledger.process_rss_bytes.is_some());
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
+                .and_then(|entry| entry.planned_bytes),
+            Some(3 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .find(|entry| entry.kind == ImagerObservedMemoryKind::PlaneState)
+                .map(|entry| entry.confidence),
+            Some(ImagerObservedMemoryConfidence::Unknown)
+        );
         let grid = snapshot
             .resources
             .iter()
@@ -40026,6 +40294,54 @@ mod tests {
         drop(context_guard);
         drop(resource_guard);
         drop(progress_guard);
+    }
+
+    #[test]
+    fn imager_memory_ledger_separates_tracked_planned_and_untracked_rss() {
+        let memory = ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 12 * 1024,
+            source_stream_buffer_bytes: 3 * 1024,
+            product_scratch_bytes: 5 * 1024,
+            active_planes: 2,
+            row_block_rows: 128,
+            memory_target_source: Some("test".to_string()),
+        };
+        let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
+            .expect("ledger");
+        assert_eq!(ledger.planned_total_bytes, 8 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 8 * 1024);
+        assert_eq!(ledger.process_rss_bytes, Some(20 * 1024));
+        assert_eq!(ledger.untracked_resident_bytes, Some(12 * 1024));
+        let source = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
+            .expect("source buffer");
+        assert_eq!(
+            source.resource_id,
+            Some(ImagerObservedResourceId::SourceStream)
+        );
+        assert_eq!(source.row_block_rows, Some(128));
+        assert_eq!(source.confidence, ImagerObservedMemoryConfidence::Planned);
+        let plane = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::PlaneState)
+            .expect("plane state");
+        assert_eq!(plane.active_planes, Some(2));
+        assert_eq!(plane.planned_bytes, None);
+        assert_eq!(plane.confidence, ImagerObservedMemoryConfidence::Unknown);
+        let untracked = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::UntrackedResident)
+            .expect("untracked rss");
+        assert_eq!(untracked.untracked_bytes, Some(12 * 1024));
+        assert_eq!(
+            untracked.confidence,
+            ImagerObservedMemoryConfidence::Estimated
+        );
     }
 
     #[test]

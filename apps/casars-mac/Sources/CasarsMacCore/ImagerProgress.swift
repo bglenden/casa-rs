@@ -400,15 +400,24 @@ extension ImagerProgressSnapshot {
     }
 
     private func observedResourceActivity(_ resource: ImagingObservedResource) -> ImagingResourceActivity {
+        let ledgerEntry = observability?.memoryLedger?.entry(for: resource.id)
         let memoryTarget = observability?.memoryTargetBytes
             ?? runtime.memory?.memoryTargetBytes
-            ?? max(resource.memory?.plannedBytes ?? 0, resource.memory?.residentBytes ?? 0, 1)
-        let bytes = resource.memory?.residentBytes ?? resource.memory?.plannedBytes ?? 0
+            ?? max(
+                ledgerEntry?.trackedLiveBytes ?? ledgerEntry?.plannedBytes ?? 0,
+                resource.memory?.residentBytes ?? resource.memory?.plannedBytes ?? 0,
+                1
+            )
+        let bytes = ledgerEntry?.trackedLiveBytes
+            ?? resource.memory?.residentBytes
+            ?? ledgerEntry?.plannedBytes
+            ?? resource.memory?.plannedBytes
+            ?? 0
         let busy = state == .running && (resource.state == "active" || resource.state == "busy")
         return ImagingResourceActivity(
             id: resource.id,
             name: resource.label,
-            detail: Self.observedResourceDetail(resource),
+            detail: observedResourceDetail(resource),
             kind: Self.resourceKind(for: resource.id),
             state: busy ? .busy : .idle,
             residentBytes: bytes,
@@ -421,27 +430,43 @@ extension ImagerProgressSnapshot {
         )
     }
 
-    private static func observedResourceDetail(_ resource: ImagingObservedResource) -> String {
+    private func observedResourceDetail(_ resource: ImagingObservedResource) -> String {
+        let ledgerEntry = observability?.memoryLedger?.entry(for: resource.id)
         var parts: [String] = []
-        if let rows = resource.memory?.rowBlockRows {
-            parts.append("\(compactQuantityLabel(rows)) rows")
+        if let rows = ledgerEntry?.rowBlockRows ?? resource.memory?.rowBlockRows {
+            parts.append("\(Self.compactQuantityLabel(rows)) rows")
         }
-        if let planes = resource.memory?.activePlanes {
-            parts.append(planeCountLabel(planes))
+        if let planes = ledgerEntry?.activePlanes ?? resource.memory?.activePlanes {
+            parts.append(Self.planeCountLabel(planes))
         }
-        let residentBytes = resource.memory?.residentBytes ?? 0
-        let plannedBytes = resource.memory?.plannedBytes ?? 0
-        if residentBytes > 0, plannedBytes > 0 {
-            parts.append("\(compactByteSizeLabel(residentBytes)) now / \(compactByteSizeLabel(plannedBytes)) planned")
-        } else if residentBytes > 0 {
-            parts.append("\(compactByteSizeLabel(residentBytes)) now")
-        } else if plannedBytes > 0 {
-            parts.append("\(compactByteSizeLabel(plannedBytes)) planned")
+        if let sizeDetail = Self.observedResourceSizeDetail(resource.memory, ledgerEntry: ledgerEntry) {
+            parts.append(sizeDetail)
         }
         if parts.isEmpty, let owner = resource.owner, !owner.isEmpty {
             parts.append(owner)
         }
         return parts.isEmpty ? "observed" : parts.joined(separator: " / ")
+    }
+
+    private static func observedResourceSizeDetail(
+        _ memory: ImagingObservedResourceMemory?,
+        ledgerEntry: ImagingMemoryLedgerEntry?
+    ) -> String? {
+        let liveBytes = ledgerEntry?.trackedLiveBytes ?? memory?.residentBytes
+        let plannedBytes = ledgerEntry?.plannedBytes ?? memory?.plannedBytes
+        if let liveBytes, liveBytes > 0, let plannedBytes, plannedBytes > 0, liveBytes != plannedBytes {
+            return "\(compactByteSizeLabel(liveBytes)) now / \(compactByteSizeLabel(plannedBytes)) planned"
+        }
+        if let liveBytes, liveBytes > 0, ledgerEntry?.confidence == "measured" || memory?.residentBytes != nil {
+            return "\(compactByteSizeLabel(liveBytes)) now"
+        }
+        if let plannedBytes, plannedBytes > 0 {
+            return "\(compactByteSizeLabel(plannedBytes)) planned"
+        }
+        if let liveBytes, liveBytes > 0 {
+            return "\(compactByteSizeLabel(liveBytes)) now"
+        }
+        return nil
     }
 
     private static func resourceKind(for id: String) -> ImagingResourceActivityKind {
@@ -602,19 +627,101 @@ public struct ImagingObservabilitySnapshot: Codable, Equatable {
     public var activeSpans: [ImagingObservabilitySpan]
     public var memoryTargetBytes: Int?
     public var memoryTargetSource: String?
+    public var memoryLedger: ImagingMemoryLedgerSnapshot?
 
     public init(
         schemaVersion: UInt64,
         resources: [ImagingObservedResource],
         activeSpans: [ImagingObservabilitySpan],
         memoryTargetBytes: Int?,
-        memoryTargetSource: String?
+        memoryTargetSource: String?,
+        memoryLedger: ImagingMemoryLedgerSnapshot? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.resources = resources
         self.activeSpans = activeSpans
         self.memoryTargetBytes = memoryTargetBytes
         self.memoryTargetSource = memoryTargetSource
+        self.memoryLedger = memoryLedger
+    }
+}
+
+public struct ImagingMemoryLedgerSnapshot: Codable, Equatable {
+    public var entries: [ImagingMemoryLedgerEntry]
+    public var plannedTotalBytes: Int
+    public var trackedLiveTotalBytes: Int
+    public var trackedHighWaterTotalBytes: Int
+    public var processRSSBytes: Int?
+    public var processPeakRSSBytes: Int?
+    public var untrackedResidentBytes: Int?
+
+    public init(
+        entries: [ImagingMemoryLedgerEntry],
+        plannedTotalBytes: Int,
+        trackedLiveTotalBytes: Int,
+        trackedHighWaterTotalBytes: Int,
+        processRSSBytes: Int?,
+        processPeakRSSBytes: Int?,
+        untrackedResidentBytes: Int?
+    ) {
+        self.entries = entries
+        self.plannedTotalBytes = plannedTotalBytes
+        self.trackedLiveTotalBytes = trackedLiveTotalBytes
+        self.trackedHighWaterTotalBytes = trackedHighWaterTotalBytes
+        self.processRSSBytes = processRSSBytes
+        self.processPeakRSSBytes = processPeakRSSBytes
+        self.untrackedResidentBytes = untrackedResidentBytes
+    }
+
+    public func entry(for resourceID: String) -> ImagingMemoryLedgerEntry? {
+        entries.first { $0.resourceID == resourceID }
+    }
+}
+
+public struct ImagingMemoryLedgerEntry: Codable, Equatable, Identifiable {
+    public var id: String { kind }
+    public var kind: String
+    public var label: String
+    public var resourceID: String?
+    public var plannedBytes: Int?
+    public var trackedLiveBytes: Int?
+    public var highWaterBytes: Int?
+    public var processRSSBytes: Int?
+    public var processPeakRSSBytes: Int?
+    public var untrackedBytes: Int?
+    public var rowBlockRows: Int?
+    public var activePlanes: Int?
+    public var confidence: String
+    public var note: String?
+
+    public init(
+        kind: String,
+        label: String,
+        resourceID: String?,
+        plannedBytes: Int?,
+        trackedLiveBytes: Int?,
+        highWaterBytes: Int?,
+        processRSSBytes: Int?,
+        processPeakRSSBytes: Int?,
+        untrackedBytes: Int?,
+        rowBlockRows: Int?,
+        activePlanes: Int?,
+        confidence: String,
+        note: String?
+    ) {
+        self.kind = kind
+        self.label = label
+        self.resourceID = resourceID
+        self.plannedBytes = plannedBytes
+        self.trackedLiveBytes = trackedLiveBytes
+        self.highWaterBytes = highWaterBytes
+        self.processRSSBytes = processRSSBytes
+        self.processPeakRSSBytes = processPeakRSSBytes
+        self.untrackedBytes = untrackedBytes
+        self.rowBlockRows = rowBlockRows
+        self.activePlanes = activePlanes
+        self.confidence = confidence
+        self.note = note
     }
 }
 
@@ -1334,6 +1441,7 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
     var activeSpans: [ImagerObservabilitySpanPayload]
     var memoryTargetBytes: Int?
     var memoryTargetSource: String?
+    var memoryLedger: ImagerMemoryLedgerPayload?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -1341,6 +1449,7 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
         case activeSpans = "active_spans"
         case memoryTargetBytes = "memory_target_bytes"
         case memoryTargetSource = "memory_target_source"
+        case memoryLedger = "memory_ledger"
     }
 
     init(from decoder: Decoder) throws {
@@ -1350,6 +1459,59 @@ struct ImagerObservabilityPayload: Decodable, Equatable {
         activeSpans = try container.decodeIfPresent([ImagerObservabilitySpanPayload].self, forKey: .activeSpans) ?? []
         memoryTargetBytes = try container.decodeIfPresent(Int.self, forKey: .memoryTargetBytes)
         memoryTargetSource = try container.decodeIfPresent(String.self, forKey: .memoryTargetSource)
+        memoryLedger = try container.decodeIfPresent(ImagerMemoryLedgerPayload.self, forKey: .memoryLedger)
+    }
+}
+
+struct ImagerMemoryLedgerPayload: Decodable, Equatable {
+    var entries: [ImagerMemoryLedgerEntryPayload]
+    var plannedTotalBytes: Int
+    var trackedLiveTotalBytes: Int
+    var trackedHighWaterTotalBytes: Int
+    var processRSSBytes: Int?
+    var processPeakRSSBytes: Int?
+    var untrackedResidentBytes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case entries
+        case plannedTotalBytes = "planned_total_bytes"
+        case trackedLiveTotalBytes = "tracked_live_total_bytes"
+        case trackedHighWaterTotalBytes = "tracked_high_water_total_bytes"
+        case processRSSBytes = "process_rss_bytes"
+        case processPeakRSSBytes = "process_peak_rss_bytes"
+        case untrackedResidentBytes = "untracked_resident_bytes"
+    }
+}
+
+struct ImagerMemoryLedgerEntryPayload: Decodable, Equatable {
+    var kind: String
+    var label: String
+    var resourceID: String?
+    var plannedBytes: Int?
+    var trackedLiveBytes: Int?
+    var highWaterBytes: Int?
+    var processRSSBytes: Int?
+    var processPeakRSSBytes: Int?
+    var untrackedBytes: Int?
+    var rowBlockRows: Int?
+    var activePlanes: Int?
+    var confidence: String
+    var note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case label
+        case resourceID = "resource_id"
+        case plannedBytes = "planned_bytes"
+        case trackedLiveBytes = "tracked_live_bytes"
+        case highWaterBytes = "high_water_bytes"
+        case processRSSBytes = "process_rss_bytes"
+        case processPeakRSSBytes = "process_peak_rss_bytes"
+        case untrackedBytes = "untracked_bytes"
+        case rowBlockRows = "row_block_rows"
+        case activePlanes = "active_planes"
+        case confidence
+        case note
     }
 }
 
@@ -1426,7 +1588,42 @@ extension ImagingObservabilitySnapshot {
             resources: payload.resources.map(ImagingObservedResource.init(payload:)),
             activeSpans: payload.activeSpans.map(ImagingObservabilitySpan.init(payload:)),
             memoryTargetBytes: payload.memoryTargetBytes,
-            memoryTargetSource: payload.memoryTargetSource
+            memoryTargetSource: payload.memoryTargetSource,
+            memoryLedger: payload.memoryLedger.map(ImagingMemoryLedgerSnapshot.init(payload:))
+        )
+    }
+}
+
+extension ImagingMemoryLedgerSnapshot {
+    init(payload: ImagerMemoryLedgerPayload) {
+        self.init(
+            entries: payload.entries.map(ImagingMemoryLedgerEntry.init(payload:)),
+            plannedTotalBytes: payload.plannedTotalBytes,
+            trackedLiveTotalBytes: payload.trackedLiveTotalBytes,
+            trackedHighWaterTotalBytes: payload.trackedHighWaterTotalBytes,
+            processRSSBytes: payload.processRSSBytes,
+            processPeakRSSBytes: payload.processPeakRSSBytes,
+            untrackedResidentBytes: payload.untrackedResidentBytes
+        )
+    }
+}
+
+extension ImagingMemoryLedgerEntry {
+    init(payload: ImagerMemoryLedgerEntryPayload) {
+        self.init(
+            kind: payload.kind,
+            label: payload.label,
+            resourceID: payload.resourceID,
+            plannedBytes: payload.plannedBytes,
+            trackedLiveBytes: payload.trackedLiveBytes,
+            highWaterBytes: payload.highWaterBytes,
+            processRSSBytes: payload.processRSSBytes,
+            processPeakRSSBytes: payload.processPeakRSSBytes,
+            untrackedBytes: payload.untrackedBytes,
+            rowBlockRows: payload.rowBlockRows,
+            activePlanes: payload.activePlanes,
+            confidence: payload.confidence,
+            note: payload.note
         )
     }
 }
