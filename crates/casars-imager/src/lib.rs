@@ -166,6 +166,20 @@ const PROGRESS_RESOURCE_PRODUCTS: &str = "product-scratch";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
 const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 1;
+const SPECTRAL_SOURCE_RESOURCES: &[ImagerObservedResourceId] =
+    &[ImagerObservedResourceId::SourceStream];
+const SPECTRAL_GRID_PLANE_RESOURCES: &[ImagerObservedResourceId] = &[
+    ImagerObservedResourceId::VisibilityGrid,
+    ImagerObservedResourceId::PlaneState,
+];
+const SPECTRAL_DECONVOLVER_RESOURCES: &[ImagerObservedResourceId] = &[
+    ImagerObservedResourceId::Deconvolver,
+    ImagerObservedResourceId::PlaneState,
+];
+const SPECTRAL_PLANE_RESOURCES: &[ImagerObservedResourceId] =
+    &[ImagerObservedResourceId::PlaneState];
+const SPECTRAL_PRODUCT_RESOURCES: &[ImagerObservedResourceId] =
+    &[ImagerObservedResourceId::ProductScratch];
 const PROGRESS_RESOURCE_ROWS: &[(ImagerObservedResourceId, &str)] = &[
     (ImagerObservedResourceId::SourceStream, "Source Stream"),
     (ImagerObservedResourceId::VisibilityGrid, "Grid/FFT"),
@@ -1741,6 +1755,120 @@ fn progress_runtime_for_resource_scope(
         active_resource_threads: progress_resource_thread_counts(active_resources, active_threads),
         memory: imager_progress_memory(),
     }
+}
+
+fn spectral_stage_observability(
+    stage: spectral_slab::SpectralEventStage,
+) -> (ImagerObservedStageKind, &'static [ImagerObservedResourceId]) {
+    match stage {
+        spectral_slab::SpectralEventStage::SourceRead
+        | spectral_slab::SpectralEventStage::CacheFill
+        | spectral_slab::SpectralEventStage::CacheHit
+        | spectral_slab::SpectralEventStage::CacheMiss => (
+            ImagerObservedStageKind::SourceStream,
+            SPECTRAL_SOURCE_RESOURCES,
+        ),
+        spectral_slab::SpectralEventStage::MinorCycleDiagnostics
+        | spectral_slab::SpectralEventStage::MinorCycleUpdate => (
+            ImagerObservedStageKind::ClarkMinorCycle,
+            SPECTRAL_DECONVOLVER_RESOURCES,
+        ),
+        spectral_slab::SpectralEventStage::ResidualRefresh => (
+            ImagerObservedStageKind::ResidualRefresh,
+            SPECTRAL_GRID_PLANE_RESOURCES,
+        ),
+        spectral_slab::SpectralEventStage::ProductWrite => (
+            ImagerObservedStageKind::ProductWrite,
+            SPECTRAL_PRODUCT_RESOURCES,
+        ),
+        spectral_slab::SpectralEventStage::PlaneStateLoad => {
+            (ImagerObservedStageKind::Gridding, SPECTRAL_PLANE_RESOURCES)
+        }
+        spectral_slab::SpectralEventStage::PlaneStateStore => (
+            ImagerObservedStageKind::ProductWrite,
+            SPECTRAL_PRODUCT_RESOURCES,
+        ),
+        spectral_slab::SpectralEventStage::RowBlockPreparation
+        | spectral_slab::SpectralEventStage::VisibilityRouting
+        | spectral_slab::SpectralEventStage::WeightingDensity
+        | spectral_slab::SpectralEventStage::PsfDirty
+        | spectral_slab::SpectralEventStage::BackendExecution => (
+            ImagerObservedStageKind::Gridding,
+            SPECTRAL_GRID_PLANE_RESOURCES,
+        ),
+        spectral_slab::SpectralEventStage::Planner => {
+            (ImagerObservedStageKind::MemoryPlanning, &[])
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_imager_progress_spectral_stage(
+    config: &CliConfig,
+    stage: spectral_slab::SpectralEventStage,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    backend: &str,
+    ms_read: Option<ImagerProgressMsWindow>,
+    force: bool,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let (stage_kind, resources) = spectral_stage_observability(stage);
+    let extent = ImagerObservabilityExtent {
+        row_start: ms_read.as_ref().map(|window| window.row_start),
+        row_end: ms_read.as_ref().map(|window| window.row_end),
+        channel_start: ms_read.as_ref().map(|window| window.channel_start),
+        channel_end: ms_read.as_ref().map(|window| window.channel_end),
+        plane_start: Some(active_plane_start),
+        plane_end: Some(active_plane_end),
+    };
+    let span_name = match slab_id {
+        Some(slab_id) => format!(
+            "{} slab {slab_id} planes {active_plane_start}..{active_plane_end}",
+            stage.as_str()
+        ),
+        None => format!(
+            "{} planes {active_plane_start}..{active_plane_end}",
+            stage.as_str()
+        ),
+    };
+    let _span_guard =
+        begin_imager_observation_span(stage_kind, span_name.clone(), resources, Some(extent));
+    let _resource_guard =
+        acquire_imager_progress_resource_ids_with_threads(resources, active_threads);
+    let active_resource_ids = resources
+        .iter()
+        .map(|resource| resource.as_progress_id())
+        .collect::<Vec<_>>();
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: stage.as_str().to_string(),
+            summary: span_name,
+            work: Some(progress_work_from_config(config, active_plane_start, 0)),
+            ms_read,
+            output_cube: Some(progress_output_cube_from_config(
+                config,
+                active_plane_start,
+                active_plane_end,
+            )),
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(progress_runtime_for_resource_scope(
+                active_threads,
+                backend,
+                &active_resource_ids,
+            )),
+            observability: None,
+        },
+        force,
+    );
 }
 
 fn imager_progress_memory_from_spectral_plan(
@@ -10151,6 +10279,22 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 }
                 .log_line()
             );
+            emit_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::SourceRead,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                imager_progress_ms_window_from_selection(
+                    ms,
+                    &table_values,
+                    &active_selected_rows,
+                    channel_read_range,
+                ),
+                true,
+            );
             let outcome = run_independent_shared_cube_slab_planes(
                 config,
                 geometry,
@@ -10200,6 +10344,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 }
                 .log_line()
             );
+            emit_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::RowBlockPreparation,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                None,
+                true,
+            );
             eprintln!(
                 "{}",
                 spectral_slab::SpectralObservabilityEvent {
@@ -10218,6 +10373,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
                 .log_line()
+            );
+            emit_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::VisibilityRouting,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                None,
+                true,
             );
             (outcome, slab_bytes_read, slab_visibility_staging_bytes)
         };
@@ -10280,6 +10446,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             }
             .log_line()
         );
+        emit_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::WeightingDensity,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            memory_plan.worker_count,
+            memory_plan.backend,
+            None,
+            true,
+        );
         if !clean_is_dirty(config) {
             eprintln!(
                 "{}",
@@ -10300,6 +10477,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 }
                 .log_line()
             );
+            emit_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::MinorCycleDiagnostics,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                None,
+                true,
+            );
             eprintln!(
                 "{}",
                 spectral_slab::SpectralObservabilityEvent {
@@ -10319,6 +10507,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 }
                 .log_line()
             );
+            emit_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::MinorCycleUpdate,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                None,
+                true,
+            );
             eprintln!(
                 "{}",
                 spectral_slab::SpectralObservabilityEvent {
@@ -10337,6 +10536,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
                 .log_line()
+            );
+            emit_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::ResidualRefresh,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                memory_plan.backend,
+                None,
+                true,
             );
         }
         eprintln!(
@@ -10358,6 +10568,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             }
             .log_line()
         );
+        emit_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::PsfDirty,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            memory_plan.worker_count,
+            memory_plan.backend,
+            None,
+            true,
+        );
         eprintln!(
             "{}",
             spectral_slab::SpectralObservabilityEvent {
@@ -10376,6 +10597,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 estimated_resident_bytes: Some(slab_resident_bytes),
             }
             .log_line()
+        );
+        emit_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::BackendExecution,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            memory_plan.worker_count,
+            memory_plan.backend,
+            None,
+            true,
         );
         product_write_time += slab_outcome.product_write_elapsed;
         memory_logger.log(
@@ -10408,6 +10640,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 estimated_resident_bytes: Some(slab_resident_bytes),
             }
             .log_line()
+        );
+        emit_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::PlaneStateStore,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            1,
+            memory_plan.backend,
+            None,
+            true,
         );
         eprintln!(
             "cube_plane_state_store_summary kind=product_backed_write_through slab_id={} plane_start={} plane_end={} planes={} bytes_read=0 bytes_written={} elapsed_ms={:.3} cleanup_policy=drop_after_write product_write_state=written components=psf,residual,image,sumwt",
@@ -10473,6 +10716,17 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             estimated_resident_bytes: Some(memory_plan.product_scratch_bytes),
         }
         .log_line()
+    );
+    emit_imager_progress_spectral_stage(
+        config,
+        spectral_slab::SpectralEventStage::ProductWrite,
+        None,
+        0,
+        nplanes,
+        1,
+        memory_plan.backend,
+        None,
+        true,
     );
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
 
@@ -40518,6 +40772,31 @@ mod tests {
             untracked.confidence,
             ImagerObservedMemoryConfidence::Estimated
         );
+    }
+
+    #[test]
+    fn spectral_stage_observability_maps_compute_without_source_stream() {
+        let (source_kind, source_resources) =
+            spectral_stage_observability(spectral_slab::SpectralEventStage::SourceRead);
+        assert_eq!(source_kind, ImagerObservedStageKind::SourceStream);
+        assert_eq!(source_resources, SPECTRAL_SOURCE_RESOURCES);
+
+        let (residual_kind, residual_resources) =
+            spectral_stage_observability(spectral_slab::SpectralEventStage::ResidualRefresh);
+        assert_eq!(residual_kind, ImagerObservedStageKind::ResidualRefresh);
+        assert_eq!(residual_resources, SPECTRAL_GRID_PLANE_RESOURCES);
+        assert!(!residual_resources.contains(&ImagerObservedResourceId::SourceStream));
+
+        let (minor_kind, minor_resources) =
+            spectral_stage_observability(spectral_slab::SpectralEventStage::MinorCycleUpdate);
+        assert_eq!(minor_kind, ImagerObservedStageKind::ClarkMinorCycle);
+        assert_eq!(minor_resources, SPECTRAL_DECONVOLVER_RESOURCES);
+        assert!(!minor_resources.contains(&ImagerObservedResourceId::SourceStream));
+
+        let (product_kind, product_resources) =
+            spectral_stage_observability(spectral_slab::SpectralEventStage::ProductWrite);
+        assert_eq!(product_kind, ImagerObservedStageKind::ProductWrite);
+        assert_eq!(product_resources, SPECTRAL_PRODUCT_RESOURCES);
     }
 
     #[test]
