@@ -1034,6 +1034,18 @@ pub enum StandardMfsProgressPhase {
     ResidualRefreshStart,
     /// The controller has refreshed residuals from the current model.
     ResidualRefreshEnd,
+    /// The controller is about to run an FFT-backed image-plane transform.
+    FftStart,
+    /// The controller has finished an FFT-backed image-plane transform.
+    FftEnd,
+    /// The controller is about to grid residual visibilities.
+    ResidualGridStart,
+    /// The controller has finished gridding residual visibilities.
+    ResidualGridEnd,
+    /// The controller is about to form weighted mosaic pointing groups.
+    WeightedMosaicStart,
+    /// The controller has finished forming weighted mosaic pointing groups.
+    WeightedMosaicEnd,
 }
 
 /// Coarse standard-MFS progress event emitted from the imaging controller.
@@ -2052,6 +2064,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
                         &psf_state,
                         execution_config.clone(),
                         &mut stage_timings,
+                        None,
                     )?
                 } else if let Some(executor) = standard_executor.as_mut() {
                     compute_residual_standard_with_executor(
@@ -2059,6 +2072,8 @@ fn run_standard_mfs_imaging_with_weighted_batches(
                         &model,
                         &psf_state,
                         &mut stage_timings,
+                        None,
+                        None,
                     )?
                 } else {
                     compute_residual_standard_streaming(
@@ -2069,6 +2084,8 @@ fn run_standard_mfs_imaging_with_weighted_batches(
                         &psf_state,
                         false,
                         &mut stage_timings,
+                        None,
+                        None,
                     )?
                 };
                 Ok((psf_state, residual))
@@ -2331,6 +2348,7 @@ where
                     execution_config.clone(),
                     &mut replay_weighted_batches,
                     &mut stage_timings,
+                    None,
                 )?;
                 Ok((psf_state, residual, 0.0))
             }
@@ -2360,7 +2378,8 @@ where
     let mut warnings = Vec::new();
 
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
         let refresh_started = Instant::now();
@@ -2385,6 +2404,7 @@ where
                 execution_config.clone(),
                 &mut replay_weighted_batches,
                 stage_timings,
+                progress_context,
             )?
         };
         let refresh_elapsed = refresh_started.elapsed();
@@ -2684,6 +2704,16 @@ where
         &weighting_plans,
         &mut replay_unweighted_blocks,
         SinglePlaneStreamPass::InitialDirty,
+        execution_config.progress_callback.as_ref(),
+        Some(standard_mfs_progress_context(
+            &request,
+            execution_config.minor_cycle_backend,
+            0,
+            0,
+            0,
+            None,
+            None,
+        )),
         |groups| {
             pointing_weights.accumulate(request.geometry, &config, &groups);
             max_abs_w_lambda = max_abs_w_lambda.max(max_abs_w_lambda_for_mosaic_groups(&groups));
@@ -2803,7 +2833,8 @@ where
     let mut warnings = Vec::<String>::new();
     let controller_started = Instant::now();
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         compute_mosaic_residual_streaming(
             &clean_request,
@@ -2817,6 +2848,8 @@ where
             &psf_state,
             &weight_image,
             stage_timings,
+            execution_config.progress_callback.as_ref(),
+            progress_context,
         )
     };
     let clean_state = if clean_request.clean.niter > 0 {
@@ -3109,6 +3142,7 @@ fn weight_mosaic_streaming_batch(
     Ok(weighted)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stream_weighted_mosaic_groups<F, C>(
     request: &ImagingRequest,
     config: &MosaicGridderConfig,
@@ -3116,6 +3150,8 @@ fn stream_weighted_mosaic_groups<F, C>(
     weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
     replay_unweighted_blocks: &mut F,
     pass: SinglePlaneStreamPass,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
     mut consume_groups: C,
 ) -> Result<(), ImagingError>
 where
@@ -3131,9 +3167,26 @@ where
                 "streaming mosaic MFS requires mosaic metadata blocks".to_string(),
             ));
         };
-        let weighted =
-            weight_mosaic_streaming_batch(request, block.visibility, &metadata, weighting_plans)?;
-        let groups = build_mosaic_pointing_groups_from_grouped(&[weighted], &[metadata], false)?;
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::WeightedMosaicStart,
+        );
+        let groups = (|| {
+            let weighted = weight_mosaic_streaming_batch(
+                request,
+                block.visibility,
+                &metadata,
+                weighting_plans,
+            )?;
+            build_mosaic_pointing_groups_from_grouped(&[weighted], &[metadata], false)
+        })();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::WeightedMosaicEnd,
+        );
+        let groups = groups?;
         if profile::standard_mfs_profile_detail_enabled() {
             let samples = groups.iter().map(|group| group.batch.len()).sum::<usize>();
             eprintln!(
@@ -3501,6 +3554,8 @@ fn compute_mosaic_residual_streaming<F>(
     psf_state: &PsfState,
     weight_image: &Array2<f32>,
     stage_timings: &mut ImagingStageTimings,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError>
 where
     F: FnMut(
@@ -3512,17 +3567,32 @@ where
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let model_for_prediction =
             flat_sky_mosaic_model_for_prediction(model, weight_image, config.pb_limit)?;
         let transformed =
             centered_fft2(&gridder.apodize_mosaic_model(&model_for_prediction, conv_sampling));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_started = Instant::now();
     let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
@@ -3533,6 +3603,8 @@ where
         weighting_plans,
         replay_unweighted_blocks,
         SinglePlaneStreamPass::ResidualRefresh,
+        progress_callback,
+        progress_context,
         |groups| {
             let residual_projectors = prepare_mosaic_residual_projectors(
                 request,
@@ -3574,10 +3646,25 @@ where
         },
     )?;
     timings.degrid_grid = degrid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
     timings.fft += fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let accumulated_residual_image =
         gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
@@ -3875,6 +3962,7 @@ fn prepare_standard_mfs_planned_sample_block_source_clean_plane_with_execution_c
                     &model,
                     &psf_state,
                     &mut stage_timings,
+                    None,
                 )?;
                 Ok((psf_state, residual, 0.0))
             }
@@ -4119,12 +4207,18 @@ fn finish_standard_mfs_prepared_clean_plane_with_block_source(
         replay_weighted_samples,
     );
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
         let refresh_started = Instant::now();
-        let residual =
-            replay_plan.compute_residual(request.geometry, model, &psf_state, stage_timings)?;
+        let residual = replay_plan.compute_residual(
+            request.geometry,
+            model,
+            &psf_state,
+            stage_timings,
+            progress_context,
+        )?;
         let refresh_elapsed = refresh_started.elapsed();
         let accounted = before.accounted_delta(stage_timings);
         stage_timings.major_cycle_refresh += refresh_elapsed;
@@ -4336,6 +4430,7 @@ fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
                     &model,
                     &psf_state,
                     &mut stage_timings,
+                    None,
                 )?;
                 Ok((psf_state, residual, 0.0))
             }
@@ -4355,12 +4450,18 @@ fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
     let mut warnings = Vec::new();
 
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
         let refresh_started = Instant::now();
-        let residual =
-            replay_plan.compute_residual(request.geometry, model, &psf_state, stage_timings)?;
+        let residual = replay_plan.compute_residual(
+            request.geometry,
+            model,
+            &psf_state,
+            stage_timings,
+            progress_context,
+        )?;
         let refresh_elapsed = refresh_started.elapsed();
         let accounted = before.accounted_delta(stage_timings);
         stage_timings.major_cycle_refresh += refresh_elapsed;
@@ -4699,6 +4800,7 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
                     &model,
                     &psf_state,
                     &mut stage_timings,
+                    None,
                 )?;
                 Ok((psf_state, residual, 0.0))
             }
@@ -4718,12 +4820,18 @@ fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config
     let mut warnings = Vec::new();
 
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
         let refresh_started = Instant::now();
-        let residual =
-            replay_plan.compute_residual(request.geometry, model, &psf_state, stage_timings)?;
+        let residual = replay_plan.compute_residual(
+            request.geometry,
+            model,
+            &psf_state,
+            stage_timings,
+            progress_context,
+        )?;
         let refresh_elapsed = refresh_started.elapsed();
         let accounted = before.accounted_delta(stage_timings);
         stage_timings.major_cycle_refresh += refresh_elapsed;
@@ -4981,6 +5089,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
         model: &Array2<f32>,
         psf_state: &PsfState,
         stage_timings: &mut ImagingStageTimings,
+        progress_context: Option<StandardMfsProgressContext>,
     ) -> Result<Array2<f32>, ImagingError> {
         match &mut self.source {
             StandardMfsReplaySource::PlannedSamples(source) => {
@@ -4992,6 +5101,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
                     self.execution_config.clone(),
                     *source,
                     stage_timings,
+                    progress_context,
                 )
             }
             StandardMfsReplaySource::RoutedVisibilityRuns {
@@ -5008,6 +5118,7 @@ impl<'a> StandardMfsReplayPlan<'a> {
                 *source,
                 stage_timings,
                 metal_grouped_input_cache.as_deref_mut(),
+                progress_context,
             ),
         }
     }
@@ -5646,6 +5757,7 @@ fn compute_psf_standard_routed_visibility_run_replay(
     psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_tiled_replay<F>(
     _geometry: ImageGeometry,
     gridder: &StandardGridder,
@@ -5654,19 +5766,31 @@ fn compute_residual_standard_tiled_replay<F>(
     execution_config: StandardMfsExecutionConfig,
     replay_weighted_batches: &mut F,
     stage_timings: &mut ImagingStageTimings,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError>
 where
     F: FnMut(
         &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
+    let progress_callback = execution_config.progress_callback.clone();
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
@@ -5675,6 +5799,11 @@ where
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config.clone())?;
     let mut counts = StandardMfsTiledResidualAccumulation::default();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     if executor.has_all_resident_tiles() {
         counts = executor.accumulate_residual_grid_direct_owned_replay(
@@ -5695,10 +5824,25 @@ where
         })?;
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -5739,6 +5883,7 @@ where
     Ok(image)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_sample_replay(
     _geometry: ImageGeometry,
     gridder: &StandardGridder,
@@ -5747,14 +5892,26 @@ fn compute_residual_standard_sample_replay(
     execution_config: StandardMfsExecutionConfig,
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
     stage_timings: &mut ImagingStageTimings,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
+    let progress_callback = execution_config.progress_callback.clone();
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
@@ -5765,6 +5922,11 @@ fn compute_residual_standard_sample_replay(
             gridder,
             execution_config.clone(),
         )?;
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::ResidualGridStart,
+        );
         let degrid_grid_started = Instant::now();
         let counts = if execution_config.fixed_tile_use_planned_run_blocks {
             let mut replay = |consumer: &mut dyn FnMut(
@@ -5790,10 +5952,25 @@ fn compute_residual_standard_sample_replay(
             )?
         };
         timings.degrid_grid = degrid_grid_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::ResidualGridEnd,
+        );
 
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let fft_started = Instant::now();
         let raw = centered_ifft2_f64(&residual_grid);
         timings.fft = fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         let normalize_started = Instant::now();
         let mut image = gridder.corrected_image_from_grid_f64(&raw);
         image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -5834,6 +6011,11 @@ fn compute_residual_standard_sample_replay(
     }
 
     let mut counts = StandardMfsTiledResidualAccumulation::default();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let mut grid_update_elapsed = Duration::ZERO;
     if let (Some(model_storage), Some(residual_storage)) = (
@@ -5890,12 +6072,27 @@ fn compute_residual_standard_sample_replay(
         })?;
     }
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
     stage_timings.planned_sample_replay += timings.degrid_grid.saturating_sub(grid_update_elapsed);
     stage_timings.grid_update += grid_update_elapsed;
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -5947,19 +6144,36 @@ fn compute_residual_standard_routed_visibility_run_replay(
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
     stage_timings: &mut ImagingStageTimings,
     _metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
+    let progress_callback = execution_config.progress_callback.clone();
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
@@ -6036,10 +6250,25 @@ fn compute_residual_standard_routed_visibility_run_replay(
         }
     };
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -10829,22 +11058,39 @@ fn compute_mosaic_residual(
     weight_image: &Array2<f32>,
     stage_timings: &mut ImagingStageTimings,
     metal_group_cache: Option<&[Option<MosaicMetalPreparedGroup>]>,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
     let refresh_started = Instant::now();
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let model_for_prediction =
             flat_sky_mosaic_model_for_prediction(model, weight_image, config.pb_limit)?;
         let transformed =
             centered_fft2(&gridder.apodize_mosaic_model(&model_for_prediction, conv_sampling));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_started = Instant::now();
     let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let residual_parallel_threads = mosaic_parallel_thread_count(groups.len());
@@ -10899,10 +11145,25 @@ fn compute_mosaic_residual(
         }
         timings.degrid_grid = degrid_started.elapsed();
     }
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
     timings.fft += fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let accumulated_residual_image =
         gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
@@ -13649,8 +13910,66 @@ struct CottonSchwabState {
     final_cycle_threshold_jy_per_beam: f32,
 }
 
-type ResidualRefreshCallback<'a> =
-    dyn FnMut(&Array2<f32>, &mut ImagingStageTimings) -> Result<Array2<f32>, ImagingError> + 'a;
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StandardMfsProgressContext {
+    deconvolver: Deconvolver,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    major_cycle: usize,
+    minor_iterations: usize,
+    minor_iteration_limit: usize,
+    cycle_iteration_limit: usize,
+    peak_residual_jy_per_beam: Option<f32>,
+    cycle_threshold_jy_per_beam: Option<f32>,
+}
+
+type ResidualRefreshCallback<'a> = dyn FnMut(
+        &Array2<f32>,
+        &mut ImagingStageTimings,
+        Option<StandardMfsProgressContext>,
+    ) -> Result<Array2<f32>, ImagingError>
+    + 'a;
+
+fn standard_mfs_progress_context(
+    request: &ImagingRequest,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    major_cycle: usize,
+    minor_iterations: usize,
+    cycle_iteration_limit: usize,
+    peak_residual_jy_per_beam: Option<f32>,
+    cycle_threshold_jy_per_beam: Option<f32>,
+) -> StandardMfsProgressContext {
+    StandardMfsProgressContext {
+        deconvolver: request.deconvolver,
+        minor_cycle_backend,
+        major_cycle,
+        minor_iterations,
+        minor_iteration_limit: request.clean.niter,
+        cycle_iteration_limit,
+        peak_residual_jy_per_beam,
+        cycle_threshold_jy_per_beam,
+    }
+}
+
+fn emit_standard_mfs_context_progress(
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    context: Option<StandardMfsProgressContext>,
+    phase: StandardMfsProgressPhase,
+) {
+    let (Some(callback), Some(context)) = (progress_callback, context) else {
+        return;
+    };
+    callback(StandardMfsProgressEvent {
+        phase,
+        deconvolver: context.deconvolver,
+        minor_cycle_backend: context.minor_cycle_backend,
+        major_cycle: context.major_cycle,
+        minor_iterations: context.minor_iterations,
+        minor_iteration_limit: context.minor_iteration_limit,
+        cycle_iteration_limit: context.cycle_iteration_limit,
+        peak_residual_jy_per_beam: context.peak_residual_jy_per_beam,
+        cycle_threshold_jy_per_beam: context.cycle_threshold_jy_per_beam,
+    });
+}
 
 #[allow(clippy::too_many_arguments)]
 fn emit_standard_mfs_controller_progress(
@@ -13788,7 +14107,8 @@ fn run_cotton_schwab_controller(
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         refresh_standard_mfs_residual(
             request,
@@ -13799,6 +14119,7 @@ fn run_cotton_schwab_controller(
             psf_state,
             execution_config.clone(),
             stage_timings,
+            progress_context,
         )
     };
     let progress_callback = execution_config.progress_callback.as_ref();
@@ -13908,7 +14229,8 @@ fn run_mosaic_image_domain_controller(
         ));
     }
     let mut refresh_residual = |model: &Array2<f32>,
-                                stage_timings: &mut ImagingStageTimings|
+                                stage_timings: &mut ImagingStageTimings,
+                                progress_context: Option<StandardMfsProgressContext>|
      -> Result<Array2<f32>, ImagingError> {
         compute_mosaic_residual(
             request,
@@ -13922,6 +14244,8 @@ fn run_mosaic_image_domain_controller(
             weight_image,
             stage_timings,
             metal_group_cache,
+            progress_callback,
+            progress_context,
         )
     };
     run_cotton_schwab_controller_with_refresh(
@@ -14146,7 +14470,19 @@ fn run_multiscale_cotton_schwab_metal(
             Some(minor_peak),
             Some(outcome.final_cycle_threshold_jy_per_beam),
         );
-        residual = refresh_residual(model, stage_timings)?;
+        residual = refresh_residual(
+            model,
+            stage_timings,
+            Some(standard_mfs_progress_context(
+                request,
+                StandardMfsMinorCycleBackend::Metal,
+                major_cycles,
+                reported_minor_iterations,
+                cycle_reported_niter,
+                Some(minor_peak),
+                Some(outcome.final_cycle_threshold_jy_per_beam),
+            )),
+        )?;
         let multiscale_refresh_started = Instant::now();
         refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
         stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
@@ -14194,7 +14530,22 @@ fn run_multiscale_cotton_schwab_metal(
             )),
             Some(final_cycle_threshold_jy_per_beam),
         );
-        residual = refresh_residual(model, stage_timings)?;
+        residual = refresh_residual(
+            model,
+            stage_timings,
+            Some(standard_mfs_progress_context(
+                request,
+                StandardMfsMinorCycleBackend::Metal,
+                major_cycles,
+                reported_minor_iterations,
+                request.clean.minor_cycle_length,
+                Some(peak_abs_value_masked(
+                    &residual,
+                    request.clean_mask.as_ref(),
+                )),
+                Some(final_cycle_threshold_jy_per_beam),
+            )),
+        )?;
         major_cycles += 1;
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
         emit_standard_mfs_controller_progress(
@@ -15249,7 +15600,19 @@ fn run_hogbom_cotton_schwab(
             Some(minor_peak),
             Some(final_cycle_threshold_jy_per_beam),
         );
-        residual = refresh_residual(model, stage_timings)?;
+        residual = refresh_residual(
+            model,
+            stage_timings,
+            Some(standard_mfs_progress_context(
+                request,
+                minor_cycle_backend,
+                major_cycles,
+                reported_minor_iterations,
+                cycle_reported_niter,
+                Some(minor_peak),
+                Some(final_cycle_threshold_jy_per_beam),
+            )),
+        )?;
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -15297,7 +15660,22 @@ fn run_hogbom_cotton_schwab(
             )),
             Some(final_cycle_threshold_jy_per_beam),
         );
-        residual = refresh_residual(model, stage_timings)?;
+        residual = refresh_residual(
+            model,
+            stage_timings,
+            Some(standard_mfs_progress_context(
+                request,
+                minor_cycle_backend,
+                major_cycles,
+                reported_minor_iterations,
+                request.clean.minor_cycle_length,
+                Some(peak_abs_value_masked(
+                    &residual,
+                    request.clean_mask.as_ref(),
+                )),
+                Some(final_cycle_threshold_jy_per_beam),
+            )),
+        )?;
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
         emit_standard_mfs_controller_progress(
             progress_callback,
@@ -18998,7 +19376,19 @@ fn run_clark_cotton_schwab(
                 Some(post_minor_peak),
                 Some(outcome.final_cycle_threshold_jy_per_beam),
             );
-            residual = refresh_residual(model, stage_timings)?;
+            residual = refresh_residual(
+                model,
+                stage_timings,
+                Some(standard_mfs_progress_context(
+                    request,
+                    minor_cycle_backend,
+                    major_cycles,
+                    reported_after_outcome,
+                    casa_step_reported_niter,
+                    Some(post_minor_peak),
+                    Some(outcome.final_cycle_threshold_jy_per_beam),
+                )),
+            )?;
             let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
             if reported_after_outcome < request.clean.niter {
                 major_cycles += 1;
@@ -19417,7 +19807,19 @@ fn run_multiscale_cotton_schwab(
             Some(minor_peak),
             Some(final_cycle_threshold_jy_per_beam),
         );
-        residual = refresh_residual(model, stage_timings)?;
+        residual = refresh_residual(
+            model,
+            stage_timings,
+            Some(standard_mfs_progress_context(
+                request,
+                minor_cycle_backend,
+                major_cycles,
+                reported_minor_iterations,
+                cycle_reported_niter,
+                Some(minor_peak),
+                Some(final_cycle_threshold_jy_per_beam),
+            )),
+        )?;
         let multiscale_refresh_started = Instant::now();
         refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
         stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
@@ -19465,7 +19867,22 @@ fn run_multiscale_cotton_schwab(
             )),
             Some(final_cycle_threshold_jy_per_beam),
         );
-        residual = refresh_residual(model, stage_timings)?;
+        residual = refresh_residual(
+            model,
+            stage_timings,
+            Some(standard_mfs_progress_context(
+                request,
+                minor_cycle_backend,
+                major_cycles,
+                reported_minor_iterations,
+                request.clean.minor_cycle_length,
+                Some(peak_abs_value_masked(
+                    &residual,
+                    request.clean_mask.as_ref(),
+                )),
+                Some(final_cycle_threshold_jy_per_beam),
+            )),
+        )?;
         major_cycles += 1;
         refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual);
         emit_standard_mfs_controller_progress(
@@ -22457,6 +22874,7 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
     counts
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual(
     request: &ImagingRequest,
     batches: &[VisibilityBatch],
@@ -22465,6 +22883,7 @@ fn compute_residual(
     psf_state: &PsfState,
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
     match request.w_term_mode {
         WTermMode::Direct => {
@@ -22498,6 +22917,7 @@ fn compute_residual(
         false,
         execution_config,
         stage_timings,
+        progress_context,
     )
 }
 
@@ -22603,11 +23023,19 @@ fn refresh_standard_mfs_residual(
     psf_state: &PsfState,
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
     let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
     let refresh_started = Instant::now();
     let residual = if let Some(executor) = standard_executor.as_mut() {
-        compute_residual_standard_with_executor(executor, model, psf_state, stage_timings)?
+        compute_residual_standard_with_executor(
+            executor,
+            model,
+            psf_state,
+            stage_timings,
+            execution_config.progress_callback.as_ref(),
+            progress_context,
+        )?
     } else {
         compute_residual(
             request,
@@ -22617,6 +23045,7 @@ fn refresh_standard_mfs_residual(
             psf_state,
             execution_config.clone(),
             stage_timings,
+            progress_context,
         )?
     };
     let refresh_elapsed = refresh_started.elapsed();
@@ -22677,7 +23106,9 @@ fn compute_residual_standard(
     use_direct_point_predict: bool,
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
+    let progress_callback = execution_config.progress_callback.clone();
     if !use_direct_point_predict
         && (standard_mfs_fixed_tile_backend_enabled() || standard_mfs_metal_backend_enabled())
     {
@@ -22688,6 +23119,7 @@ fn compute_residual_standard(
             psf_state,
             execution_config,
             stage_timings,
+            progress_context,
         );
     }
     if !use_direct_point_predict
@@ -22709,6 +23141,8 @@ fn compute_residual_standard(
             model,
             psf_state,
             stage_timings,
+            progress_callback.as_ref(),
+            progress_context,
         );
     }
     compute_residual_standard_streaming(
@@ -22719,9 +23153,12 @@ fn compute_residual_standard(
         psf_state,
         use_direct_point_predict,
         stage_timings,
+        progress_callback.as_ref(),
+        progress_context,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_streaming(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -22730,6 +23167,8 @@ fn compute_residual_standard_streaming(
     psf_state: &PsfState,
     use_direct_point_predict: bool,
     stage_timings: &mut ImagingStageTimings,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
     Ok(compute_residual_standard_internal(
         geometry,
@@ -22740,6 +23179,8 @@ fn compute_residual_standard_streaming(
         use_direct_point_predict,
         false,
         stage_timings,
+        progress_callback,
+        progress_context,
     )?
     .residual_image)
 }
@@ -22751,29 +23192,61 @@ fn compute_residual_standard_tiled(
     psf_state: &PsfState,
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
+    let progress_callback = execution_config.progress_callback.clone();
     let [nx, ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback.as_ref(),
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
     let counts =
         executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback.as_ref(),
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -22816,6 +23289,8 @@ fn compute_residual_standard_with_executor(
     model: &Array2<f32>,
     psf_state: &PsfState,
     stage_timings: &mut ImagingStageTimings,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<Array2<f32>, ImagingError> {
     let (gridder, plan, workspace) = executor.parts_mut();
     if profile::standard_mfs_profile_detail_enabled() {
@@ -22833,21 +23308,51 @@ fn compute_residual_standard_with_executor(
     let residual_grid = workspace.clear_residual_grid();
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     accumulate_standard_mfs_residual_grid(gridder, plan, model_grid.as_ref(), residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(residual_grid);
     timings.fft = fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -23496,6 +24001,8 @@ fn compute_residual_trace_standard(
         use_direct_point_predict,
         true,
         stage_timings,
+        None,
+        None,
     )
 }
 
@@ -23509,6 +24016,8 @@ fn compute_residual_standard_internal(
     use_direct_point_predict: bool,
     capture_samples: bool,
     stage_timings: &mut ImagingStageTimings,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
 ) -> Result<ResidualRefreshTraceInternal, ImagingError> {
     let trace_timing = env::var_os("CASA_RS_TRACE_RESIDUAL_TIMING").is_some();
     let total_started = trace_timing.then(Instant::now);
@@ -23528,14 +24037,29 @@ fn compute_residual_standard_internal(
         .map(|pixels| build_direct_components(model, pixels, geometry.image_shape[1]));
     let direct_setup_elapsed = direct_setup_started.map(|started| started.elapsed());
     let model_grid = if !use_direct_point_predict && model_nonzero_components > 0 {
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
         Some(transformed)
     } else {
         None
     };
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
     let degrid_grid_started = Instant::now();
     let grid_threads = if capture_samples || use_direct_point_predict {
         1
@@ -23594,10 +24118,25 @@ fn compute_residual_standard_internal(
         counts
     };
     timings.degrid_grid = degrid_grid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
 
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
     let fft_started = Instant::now();
     let raw = centered_ifft2_f64(&residual_grid);
     timings.fft = fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
     let normalize_started = Instant::now();
     let mut image = gridder.corrected_image_from_grid_f64(&raw);
     image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
@@ -28410,6 +28949,7 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use super::{
@@ -28424,9 +28964,10 @@ mod tests {
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
         StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlan,
         StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsWeightedSample, VisibilityBatch,
-        VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample, WProjectSkipReason,
-        WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
+        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsProgressCallback,
+        StandardMfsProgressContext, StandardMfsProgressPhase, StandardMfsWeightedSample,
+        VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample,
+        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
         add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
         build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
         build_image_spectral_coordinate, build_multiscale_scale_masks,
@@ -30866,9 +31407,18 @@ mod tests {
         let retained = run_imaging(&request).unwrap();
         let mut streaming_request = request.clone();
         streaming_request.visibility_batches.clear();
+        let observed_phases = Arc::new(Mutex::new(Vec::new()));
+        let callback_phases = Arc::clone(&observed_phases);
+        let progress_callback: StandardMfsProgressCallback = Arc::new(move |event| {
+            callback_phases.lock().unwrap().push(event.phase);
+        });
+        let execution_config = StandardMfsExecutionConfig {
+            progress_callback: Some(progress_callback),
+            ..StandardMfsExecutionConfig::default()
+        };
         let streaming = run_mosaic_mfs_from_single_plane_stream(
             streaming_request,
-            StandardMfsExecutionConfig::default(),
+            execution_config,
             WeightDensityMode::Combined,
             |_, consumer| {
                 consumer(SinglePlaneVisibilityBlock {
@@ -30892,6 +31442,15 @@ mod tests {
             retained.diagnostics.clean_stop_reason
         );
         assert!(streaming.diagnostics.mosaic_weight_image.is_some());
+        let phases = observed_phases.lock().unwrap();
+        assert!(
+            phases.contains(&StandardMfsProgressPhase::WeightedMosaicStart),
+            "streaming mosaic should report weighted mosaic grouping"
+        );
+        assert!(
+            phases.contains(&StandardMfsProgressPhase::WeightedMosaicEnd),
+            "streaming mosaic should close weighted mosaic grouping"
+        );
     }
 
     #[test]
@@ -31132,6 +31691,7 @@ mod tests {
             &separate_psf,
             StandardMfsExecutionConfig::default(),
             &mut separate_timings,
+            None,
         )
         .unwrap();
 
@@ -31522,6 +32082,7 @@ mod tests {
             &psf_state,
             StandardMfsExecutionConfig::default(),
             &mut stage_timings,
+            None,
         )
         .unwrap();
 
@@ -31815,6 +32376,7 @@ mod tests {
             &psf_state,
             StandardMfsExecutionConfig::default(),
             &mut stage_timings,
+            None,
         )
         .unwrap();
         let fft_peak = peak_abs_value(&fft_residual);
@@ -31967,6 +32529,7 @@ mod tests {
             &psf_state,
             StandardMfsExecutionConfig::default(),
             &mut stage_timings,
+            None,
         )
         .unwrap();
         let fft_peak = peak_abs_value(&fft_residual);
@@ -32150,6 +32713,7 @@ mod tests {
             &psf_state,
             StandardMfsExecutionConfig::default(),
             &mut stage_timings,
+            None,
         )
         .unwrap();
         let direct_dirty = compute_residual_direct(
@@ -32832,6 +33396,102 @@ mod tests {
     }
 
     #[test]
+    fn standard_mfs_clean_refresh_emits_typed_fft_progress_phases() {
+        let samples = vec![
+            (-140.0, -110.0, 0.0),
+            (-80.0, 60.0, 0.0),
+            (45.0, -95.0, 0.0),
+            (120.0, 70.0, 0.0),
+            (0.0, 0.0, 0.0),
+        ];
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let weighted_batch =
+            point_source_visibilities(&samples, 1.0e-4, [64, 64], (32.0, 32.0), 1.0);
+        let observed_phases = Arc::new(Mutex::new(Vec::new()));
+        let callback_phases = Arc::clone(&observed_phases);
+        let progress_callback: StandardMfsProgressCallback = Arc::new(move |event| {
+            callback_phases.lock().unwrap().push(event.phase);
+        });
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Clark,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 1,
+                major_cycle_limit: None,
+                gain: 0.2,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 1,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 0.0,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let execution_config = StandardMfsExecutionConfig {
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            progress_callback: Some(progress_callback),
+            ..StandardMfsExecutionConfig::default()
+        };
+
+        run_standard_mfs_plan(StandardMfsPlan::weighted_batches(
+            request,
+            execution_config,
+            |consumer| consumer(vec![weighted_batch.clone()]),
+        ))
+        .unwrap();
+
+        let phases = observed_phases.lock().unwrap();
+        let refresh_start = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::ResidualRefreshStart)
+            .expect("residual refresh start");
+        let fft_start = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::FftStart)
+            .expect("fft start");
+        let fft_end = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::FftEnd)
+            .expect("fft end");
+        let residual_grid_start = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::ResidualGridStart)
+            .expect("residual grid start");
+        let residual_grid_end = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::ResidualGridEnd)
+            .expect("residual grid end");
+        let refresh_end = phases
+            .iter()
+            .position(|phase| *phase == StandardMfsProgressPhase::ResidualRefreshEnd)
+            .expect("residual refresh end");
+        assert!(refresh_start < fft_start);
+        assert!(fft_start < fft_end);
+        assert!(refresh_start < residual_grid_start);
+        assert!(residual_grid_start < residual_grid_end);
+        assert!(residual_grid_end < refresh_end);
+        assert!(fft_end < refresh_end);
+    }
+
+    #[test]
     fn clark_minor_cycle_refreshes_image_residual_between_subcycles() {
         let request = ImagingRequest {
             geometry: ImageGeometry {
@@ -33100,7 +33760,8 @@ mod tests {
         let refreshed_residual = Array2::<f32>::zeros((21, 21));
         let mut refresh_calls = 0usize;
         let mut refresh_residual = |_model: &Array2<f32>,
-                                    _stage_timings: &mut ImagingStageTimings|
+                                    _stage_timings: &mut ImagingStageTimings,
+                                    _progress_context: Option<StandardMfsProgressContext>|
          -> Result<Array2<f32>, ImagingError> {
             refresh_calls += 1;
             Ok(refreshed_residual.clone())
@@ -33575,6 +34236,7 @@ mod tests {
                 &psf,
                 StandardMfsExecutionConfig::default(),
                 &mut timings,
+                None,
             )
             .unwrap();
             (residual, peak_abs_value(&psf.psf))
@@ -34449,7 +35111,8 @@ mod tests {
         let mut cpu_timings = ImagingStageTimings::default();
         let mut metal_timings = ImagingStageTimings::default();
         let mut cpu_refresh = |current_model: &Array2<f32>,
-                               _timings: &mut ImagingStageTimings|
+                               _timings: &mut ImagingStageTimings,
+                               _progress_context: Option<StandardMfsProgressContext>|
          -> Result<Array2<f32>, ImagingError> {
             Ok(&initial_residual - &fft_convolve_real(&psf, current_model))
         };
@@ -34469,7 +35132,8 @@ mod tests {
         )
         .expect("run CPU multiscale");
         let mut metal_refresh = |current_model: &Array2<f32>,
-                                 _timings: &mut ImagingStageTimings|
+                                 _timings: &mut ImagingStageTimings,
+                                 _progress_context: Option<StandardMfsProgressContext>|
          -> Result<Array2<f32>, ImagingError> {
             Ok(&initial_residual - &fft_convolve_real(&psf_state.psf, current_model))
         };
