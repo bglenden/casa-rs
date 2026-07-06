@@ -15858,6 +15858,7 @@ fn run_hogbom_minor_cycle_with_progress(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 fn run_hogbom_minor_cycle_cpu(
     request: &ImagingRequest,
     psf_state: &PsfState,
