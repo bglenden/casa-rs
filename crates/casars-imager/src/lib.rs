@@ -883,30 +883,38 @@ fn set_imager_progress_queue_snapshots(
     }
 }
 
-fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgressGuard> {
+fn begin_imager_progress(
+    options: &ImagerProgressOptions,
+) -> Result<Option<ImagerProgressGuard>, String> {
     if !options.enabled {
-        return None;
+        return Ok(None);
     }
-    let telemetry_writer = options.telemetry_jsonl_path.as_ref().and_then(|path| {
+    let telemetry_writer = if let Some(path) = options.telemetry_jsonl_path.as_ref() {
         if let Some(parent) = path.parent() {
             if let Err(error) = fs::create_dir_all(parent) {
-                eprintln!("failed to create imager progress telemetry directory: {error}");
-                return None;
+                return Err(format!(
+                    "failed to create imager progress telemetry directory {}: {error}",
+                    parent.display()
+                ));
             }
         }
-        match OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)
-        {
-            Ok(file) => Some(BufWriter::new(file)),
-            Err(error) => {
-                eprintln!("failed to open imager progress telemetry JSONL: {error}");
-                None
-            }
-        }
-    });
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(path)
+                .map(BufWriter::new)
+                .map_err(|error| {
+                    format!(
+                        "failed to open imager progress telemetry JSONL {}: {error}",
+                        path.display()
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
     let normalized = ImagerProgressOptions {
         enabled: true,
         telemetry_jsonl_path: options.telemetry_jsonl_path.clone(),
@@ -938,9 +946,9 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
         *slot = Some(context);
         IMAGER_PROGRESS_ACTIVE.store(true, Ordering::Relaxed);
-        Some(ImagerProgressGuard)
+        Ok(Some(ImagerProgressGuard))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -4569,7 +4577,10 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         } else {
             progress_options
         };
-        let _progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
+        let _progress_guard = match progress_options.as_ref() {
+            Some(options) => begin_imager_progress(options)?,
+            None => None,
+        };
         let result = execute_json_task_request_with_progress(&request)?;
         println!(
             "{}",
@@ -4645,7 +4656,10 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     }
     let request = ImagerRunTaskRequest::from_cli_config(&config);
     let cli_started_at = Instant::now();
-    let progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
+    let progress_guard = match progress_options.as_ref() {
+        Some(options) => begin_imager_progress(options)?,
+        None => None,
+    };
     let progress_active = progress_guard.is_some();
     let mut run_span = progress_active
         .then(|| begin_imager_progress_run_observation(&request))
@@ -42230,6 +42244,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
 
         {
@@ -42290,6 +42305,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
 
         emit_imager_progress_event(
@@ -42340,6 +42356,38 @@ mod tests {
     }
 
     #[test]
+    fn imager_progress_jsonl_transport_setup_errors_instead_of_stderr_fallback() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let not_a_directory = temp.path().join("not-a-directory");
+        fs::write(&not_a_directory, "not a directory").expect("write parent file");
+        let telemetry_path = not_a_directory.join("imager.jsonl");
+
+        let error = match begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        }) {
+            Ok(_) => panic!("invalid JSONL side channel should be an error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.contains("failed to create imager progress telemetry directory"),
+            "{error}"
+        );
+        assert!(
+            error.contains(&not_a_directory.display().to_string()),
+            "{error}"
+        );
+        assert!(!IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed));
+        assert!(!telemetry_path.exists());
+    }
+
+    #[test]
     fn imager_observability_snapshot_reports_leases_workers_and_known_memory() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
@@ -42350,6 +42398,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024 * 1024 * 1024,
@@ -42722,6 +42771,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -42805,6 +42855,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let resource_guard = acquire_imager_progress_resource_ids_with_threads(
             &[ImagerObservedResourceId::VisibilityGrid],
@@ -42998,6 +43049,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -43090,6 +43142,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -43227,6 +43280,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -43332,6 +43386,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -43451,6 +43506,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -43562,6 +43618,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024 * 1024 * 1024,
@@ -43802,6 +43859,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -43886,6 +43944,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 50,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -43993,6 +44052,7 @@ mod tests {
             max_uv_points: 1024,
             min_interval_ms: 10_000,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -44157,6 +44217,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -44295,6 +44356,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let rows = vec![
             SelectedMainRow {
@@ -44426,6 +44488,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let parent_span = begin_imager_observation_span(
             ImagerObservedStageKind::ResidualRefresh,
@@ -54779,6 +54842,7 @@ deconvolver=mtmfs
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let mut writer = FakePlaneGroupWriter { writes: Vec::new() };
         let mut aggregate = FakePlaneGroupAggregate { groups: Vec::new() };
