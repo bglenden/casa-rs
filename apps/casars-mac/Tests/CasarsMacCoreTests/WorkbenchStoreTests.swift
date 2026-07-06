@@ -3000,27 +3000,8 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.runtime.memory?.rowBlockRows, 128704)
         XCTAssertEqual(progress.runtime.memory?.memoryTargetSource, "system_half")
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["source-stream"])
-        XCTAssertEqual(progress.resourceActivities.count, 5)
-        let sourceResource = try XCTUnwrap(progress.resourceActivities.first)
-        XCTAssertEqual(sourceResource.id, "source-stream")
-        XCTAssertEqual(sourceResource.detail, "128.7k rows / 3.8 GB planned")
-        XCTAssertEqual(sourceResource.state, .active)
-        XCTAssertEqual(sourceResource.sectionStartFraction, 0.2, accuracy: 0.001)
-        XCTAssertEqual(sourceResource.sectionEndFraction, 0.4, accuracy: 0.001)
-        XCTAssertEqual(sourceResource.activeThreads, 2)
-        let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
-        XCTAssertEqual(gridResource.detail, "backend declared")
-        XCTAssertEqual(gridResource.state, .idle)
-        XCTAssertEqual(gridResource.activeThreads, 0)
-        let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
-        XCTAssertEqual(planeResource.detail, "47 planes")
-        XCTAssertEqual(planeResource.state, .idle)
-        XCTAssertEqual(planeResource.activeThreads, 0)
-        let deconvolverResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "deconvolver" })
-        XCTAssertEqual(deconvolverResource.detail, "backend declared")
-        let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
-        XCTAssertEqual(productResource.detail, "10.9 GB planned")
-        XCTAssertTrue(progress.sourceStreamIsActive)
+        XCTAssertEqual(progress.resourceActivities, [])
+        XCTAssertFalse(progress.sourceStreamIsActive)
         guard case .diagnostic(let diagnostic) = records[1] else {
             return XCTFail("expected diagnostic record")
         }
@@ -3129,7 +3110,7 @@ final class WorkbenchStoreTests: XCTestCase {
         ])
     }
 
-    func testImagerProgressUsesExplicitRuntimeResourceOwnershipWhenNoSnapshotExists() throws {
+    func testImagerProgressIgnoresRuntimeResourceOwnershipWhenNoSnapshotExists() throws {
         var parser = ImagerProgressStderrParser()
         let progressJSON = #"{"schema_version":1,"sequence":3,"elapsed_ms":1500,"phase":"reading_ms","summary":"resource ownership","ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"explicit test","active_resources":["visibility-grid","plane-state","product-scratch"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":4,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#
 
@@ -3140,27 +3121,15 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["visibility-grid", "plane-state", "product-scratch"])
         XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
-        let sourceResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "source-stream" })
-        XCTAssertEqual(sourceResource.state, .idle)
-        let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
-        XCTAssertEqual(gridResource.state, .active)
-        XCTAssertEqual(gridResource.activeThreads, 4)
-        XCTAssertTrue(gridResource.gpuActive)
-        let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
-        XCTAssertEqual(planeResource.state, .active)
-        let deconvolverResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "deconvolver" })
-        XCTAssertEqual(deconvolverResource.state, .idle)
-        let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
-        XCTAssertEqual(productResource.state, .active)
-        XCTAssertEqual(productResource.activeThreads, 4)
+        XCTAssertEqual(progress.resourceActivities, [])
+        XCTAssertFalse(progress.sourceStreamIsActive)
 
         let finishedRecords = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-8", state: .succeeded)
 
         guard case .progress(let finishedProgress) = finishedRecords.first else {
             return XCTFail("expected completed progress record")
         }
-        XCTAssertTrue(finishedProgress.resourceActivities.allSatisfy { $0.state == .idle })
-        XCTAssertTrue(finishedProgress.resourceActivities.allSatisfy { $0.activeThreads == 0 })
+        XCTAssertEqual(finishedProgress.resourceActivities, [])
         XCTAssertFalse(finishedProgress.sourceStreamIsActive)
     }
 
@@ -3175,8 +3144,7 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, [])
         XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
-        XCTAssertTrue(progress.resourceActivities.allSatisfy { $0.state == .idle })
-        XCTAssertTrue(progress.resourceActivities.allSatisfy { $0.activeThreads == 0 })
+        XCTAssertEqual(progress.resourceActivities, [])
         XCTAssertFalse(progress.sourceStreamIsActive)
     }
 
@@ -3204,20 +3172,11 @@ final class WorkbenchStoreTests: XCTestCase {
             return XCTFail("expected progress record")
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["source-stream", "visibility-grid", "plane-state"])
-        XCTAssertEqual(progress.resourceActivities.filter(\.isBusy).map(\.id), [
-            "source-stream",
-            "visibility-grid",
-            "plane-state"
-        ])
         XCTAssertEqual(progress.runtime.activeResourceThreadCounts["source-stream"], 1)
         XCTAssertEqual(progress.runtime.activeResourceThreadCounts["visibility-grid"], 4)
         XCTAssertEqual(progress.runtime.activeResourceThreadCounts["plane-state"], 4)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "source-stream" }?.activeThreads, 1)
-        XCTAssertTrue(progress.sourceStreamIsActive)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "visibility-grid" }?.activeThreads, 4)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "plane-state" }?.activeThreads, 4)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "product-scratch" }?.activeThreads, 0)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "deconvolver" }?.state, .idle)
+        XCTAssertEqual(progress.resourceActivities, [])
+        XCTAssertFalse(progress.sourceStreamIsActive)
     }
 
     func testOpenImagerTaskDoesNotSeedMockProgressBeforeRun() throws {
