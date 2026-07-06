@@ -141,11 +141,11 @@ pub use task_contract::{
     ImagerObservedResourceMemory, ImagerObservedResourceState, ImagerObservedStageKind,
     ImagerObservedWorkerSnapshot, ImagerObservedWorkerState, ImagerPlaneSelection,
     ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressEvent, ImagerProgressMemory,
-    ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage,
-    ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo, ImagerRestoringBeamMode,
-    ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel,
-    ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper,
-    ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+    ImagerProgressMemoryCategory, ImagerProgressMsWindow, ImagerProgressOptions,
+    ImagerProgressRuntime, ImagerProgressUvCoverage, ImagerProgressUvPoint, ImagerProgressWork,
+    ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
+    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
+    ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -808,31 +808,116 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
     }
 }
 
+fn imager_memory_kind_default_resource(
+    kind: ImagerObservedMemoryKind,
+) -> Option<ImagerObservedResourceId> {
+    match kind {
+        ImagerObservedMemoryKind::SourceBuffer => Some(ImagerObservedResourceId::SourceStream),
+        ImagerObservedMemoryKind::RowVisibilityBuffer => None,
+        ImagerObservedMemoryKind::GridFftScratch => Some(ImagerObservedResourceId::VisibilityGrid),
+        ImagerObservedMemoryKind::PlaneState => Some(ImagerObservedResourceId::PlaneState),
+        ImagerObservedMemoryKind::DeconvolverScratch => Some(ImagerObservedResourceId::Deconvolver),
+        ImagerObservedMemoryKind::Products => Some(ImagerObservedResourceId::ProductScratch),
+        ImagerObservedMemoryKind::WorkerQueue => Some(ImagerObservedResourceId::WorkerQueue),
+        ImagerObservedMemoryKind::GpuStaging | ImagerObservedMemoryKind::GpuDevice => {
+            Some(ImagerObservedResourceId::GpuStaging)
+        }
+        ImagerObservedMemoryKind::ProcessBaseline | ImagerObservedMemoryKind::UntrackedResident => {
+            Some(ImagerObservedResourceId::ProcessRuntime)
+        }
+    }
+}
+
+fn imager_memory_category_resource_id(
+    category: &ImagerProgressMemoryCategory,
+) -> Option<ImagerObservedResourceId> {
+    category
+        .resource_id
+        .or_else(|| imager_memory_kind_default_resource(category.kind))
+}
+
+fn imager_memory_category_for_kind(
+    memory: &ImagerProgressMemory,
+    kind: ImagerObservedMemoryKind,
+) -> Option<&ImagerProgressMemoryCategory> {
+    memory
+        .categories
+        .iter()
+        .find(|category| category.kind == kind)
+}
+
+fn imager_optional_sum(values: impl IntoIterator<Item = Option<usize>>) -> Option<usize> {
+    let mut saw_value = false;
+    let mut total = 0usize;
+    for value in values.into_iter().flatten() {
+        saw_value = true;
+        total = total.saturating_add(value);
+    }
+    saw_value.then_some(total)
+}
+
 fn imager_observed_memory_for_resource(
     resource_id: ImagerObservedResourceId,
     memory: Option<&ImagerProgressMemory>,
 ) -> Option<ImagerObservedResourceMemory> {
     let memory = memory?;
+    let categories = memory
+        .categories
+        .iter()
+        .filter(|category| imager_memory_category_resource_id(category) == Some(resource_id))
+        .collect::<Vec<_>>();
+    let category_planned_bytes =
+        imager_optional_sum(categories.iter().map(|category| category.planned_bytes));
+    let category_resident_bytes = imager_optional_sum(
+        categories
+            .iter()
+            .map(|category| category.tracked_live_bytes),
+    );
+    let category_row_block_rows = categories
+        .iter()
+        .find_map(|category| category.row_block_rows);
+    let category_active_planes = categories
+        .iter()
+        .find_map(|category| category.active_planes);
     match resource_id {
         ImagerObservedResourceId::SourceStream => Some(ImagerObservedResourceMemory {
-            resident_bytes: None,
-            planned_bytes: Some(memory.source_stream_buffer_bytes),
-            row_block_rows: Some(memory.row_block_rows),
+            resident_bytes: category_resident_bytes,
+            planned_bytes: category_planned_bytes.or(Some(memory.source_stream_buffer_bytes)),
+            row_block_rows: category_row_block_rows.or(Some(memory.row_block_rows)),
             active_planes: None,
         }),
         ImagerObservedResourceId::PlaneState => Some(ImagerObservedResourceMemory {
-            resident_bytes: None,
-            planned_bytes: None,
+            resident_bytes: category_resident_bytes,
+            planned_bytes: category_planned_bytes,
             row_block_rows: None,
-            active_planes: Some(memory.active_planes),
+            active_planes: category_active_planes.or(Some(memory.active_planes)),
         }),
         ImagerObservedResourceId::ProductScratch => Some(ImagerObservedResourceMemory {
-            resident_bytes: None,
-            planned_bytes: Some(memory.product_scratch_bytes),
+            resident_bytes: category_resident_bytes,
+            planned_bytes: category_planned_bytes.or(Some(memory.product_scratch_bytes)),
             row_block_rows: None,
             active_planes: None,
         }),
-        _ => None,
+        ImagerObservedResourceId::VisibilityGrid
+        | ImagerObservedResourceId::Deconvolver
+        | ImagerObservedResourceId::WorkerQueue
+        | ImagerObservedResourceId::GpuStaging
+        | ImagerObservedResourceId::ProcessRuntime => {
+            if category_planned_bytes.is_some()
+                || category_resident_bytes.is_some()
+                || category_row_block_rows.is_some()
+                || category_active_planes.is_some()
+            {
+                Some(ImagerObservedResourceMemory {
+                    resident_bytes: category_resident_bytes,
+                    planned_bytes: category_planned_bytes,
+                    row_block_rows: category_row_block_rows,
+                    active_planes: category_active_planes,
+                })
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -870,6 +955,38 @@ fn imager_memory_ledger_entry(
         active_planes,
         confidence,
         note: note.map(str::to_string),
+    }
+}
+
+fn imager_apply_memory_category(
+    entry: &mut ImagerObservedMemoryEntry,
+    category: &ImagerProgressMemoryCategory,
+) {
+    if entry.resource_id.is_none() {
+        entry.resource_id = imager_memory_category_resource_id(category);
+    }
+    if let Some(planned_bytes) = category.planned_bytes {
+        entry.planned_bytes = Some(planned_bytes);
+    }
+    if let Some(tracked_live_bytes) = category.tracked_live_bytes {
+        entry.tracked_live_bytes = Some(tracked_live_bytes);
+    }
+    if let Some(high_water_bytes) = category.high_water_bytes {
+        entry.high_water_bytes = Some(high_water_bytes);
+    }
+    if let Some(row_block_rows) = category.row_block_rows {
+        entry.row_block_rows = Some(row_block_rows);
+    }
+    if let Some(active_planes) = category.active_planes {
+        entry.active_planes = Some(active_planes);
+    }
+    if let Some(confidence) = category.confidence {
+        entry.confidence = confidence;
+    } else if category.tracked_live_bytes.is_some() || category.high_water_bytes.is_some() {
+        entry.confidence = ImagerObservedMemoryConfidence::Measured;
+    }
+    if let Some(note) = &category.note {
+        entry.note = Some(note.clone());
     }
 }
 
@@ -1019,6 +1136,11 @@ fn imager_memory_ledger_snapshot(
             ImagerObservedMemoryConfidence::Unknown,
             Some("device memory requires backend-specific sampling"),
         ));
+        for entry in &mut entries {
+            if let Some(category) = imager_memory_category_for_kind(memory, entry.kind) {
+                imager_apply_memory_category(entry, category);
+            }
+        }
     }
 
     let planned_total_bytes = entries
@@ -1793,6 +1915,28 @@ fn imager_progress_memory() -> Option<ImagerProgressMemory> {
         .and_then(|context| context.as_ref().and_then(|context| context.memory.clone()))
 }
 
+fn imager_planned_memory_category(
+    kind: ImagerObservedMemoryKind,
+    planned_bytes: usize,
+    row_block_rows: Option<usize>,
+    active_planes: Option<usize>,
+    note: &'static str,
+) -> Option<ImagerProgressMemoryCategory> {
+    (planned_bytes > 0 || row_block_rows.is_some() || active_planes.is_some()).then_some(
+        ImagerProgressMemoryCategory {
+            kind,
+            resource_id: imager_memory_kind_default_resource(kind),
+            planned_bytes: (planned_bytes > 0).then_some(planned_bytes),
+            tracked_live_bytes: None,
+            high_water_bytes: None,
+            row_block_rows,
+            active_planes,
+            confidence: Some(ImagerObservedMemoryConfidence::Planned),
+            note: Some(note.to_string()),
+        },
+    )
+}
+
 fn observe_imager_progress_uv_batch(batch: &VisibilityBatch) {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return;
@@ -2146,6 +2290,69 @@ fn imager_progress_memory_from_spectral_plan(
     memory_plan: &spectral_slab::SpectralMemoryPlan,
     memory_target_source: &'static str,
 ) -> ImagerProgressMemory {
+    let active_plane_count = memory_plan.active_planes.max(1);
+    let mut categories = Vec::new();
+    categories.extend(
+        [
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::SourceBuffer,
+                memory_plan.source_stream_buffer_bytes,
+                Some(memory_plan.row_block_rows),
+                None,
+                "spectral planner source stream buffer target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::RowVisibilityBuffer,
+                memory_plan
+                    .prepared_visibility_staging_bytes
+                    .saturating_add(memory_plan.live_prepared_visibility_bytes)
+                    .saturating_add(memory_plan.live_bucket_bytes)
+                    .saturating_add(memory_plan.visibility_cache_bytes),
+                Some(memory_plan.row_block_rows),
+                None,
+                "spectral planner prepared visibility and cache target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GridFftScratch,
+                memory_plan
+                    .visibility_staging_bytes_per_plane
+                    .saturating_mul(active_plane_count),
+                None,
+                Some(active_plane_count),
+                "spectral planner gridding and FFT staging target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::PlaneState,
+                memory_plan.resident_plane_state_bytes,
+                None,
+                Some(active_plane_count),
+                "spectral planner resident plane-state target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::Products,
+                memory_plan.product_scratch_bytes,
+                None,
+                Some(memory_plan.product_batch_planes.max(1)),
+                "spectral planner product scratch target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::WorkerQueue,
+                memory_plan.worker_staging_bytes,
+                None,
+                None,
+                "spectral planner worker staging target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GpuStaging,
+                memory_plan.gpu_staging_bytes,
+                None,
+                None,
+                "spectral planner GPU staging target",
+            ),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     ImagerProgressMemory {
         memory_target_bytes: memory_plan.memory_target_bytes,
         planned_active_bytes: memory_plan.planned_active_bytes,
@@ -2154,6 +2361,7 @@ fn imager_progress_memory_from_spectral_plan(
         active_planes: memory_plan.active_planes,
         row_block_rows: memory_plan.row_block_rows,
         memory_target_source: Some(memory_target_source.to_string()),
+        categories,
     }
 }
 
@@ -2161,14 +2369,80 @@ fn imager_progress_memory_from_standard_mfs_plan(
     memory_plan: &StandardMfsMemoryPlan,
     active_planes: usize,
 ) -> ImagerProgressMemory {
+    let active_planes = active_planes.max(1);
+    let mut categories = Vec::new();
+    categories.extend(
+        [
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::SourceBuffer,
+                memory_plan.source_stream_buffer_bytes,
+                Some(memory_plan.row_block_rows),
+                None,
+                "standard-MFS planner source stream buffer target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::RowVisibilityBuffer,
+                memory_plan
+                    .live_row_block_bytes
+                    .saturating_add(memory_plan.live_bucket_bytes)
+                    .saturating_add(memory_plan.visibility_row_cache_overhead_bytes)
+                    .saturating_add(memory_plan.prepare_buffer_bytes),
+                Some(memory_plan.row_block_rows),
+                None,
+                "standard-MFS planner row visibility and prepare buffer target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GridFftScratch,
+                memory_plan
+                    .image_working_set_bytes
+                    .saturating_add(memory_plan.weighting_density_bytes)
+                    .saturating_add(memory_plan.gridded_visibility_bytes)
+                    .saturating_add(memory_plan.global_grid_bytes)
+                    .saturating_add(memory_plan.tile_cell_bin_bytes)
+                    .saturating_add(memory_plan.resident_tile_buffer_bytes),
+                None,
+                Some(active_planes),
+                "standard-MFS planner grid, FFT, and weighting scratch target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::Products,
+                memory_plan.output_image_bytes,
+                None,
+                Some(active_planes),
+                "standard-MFS planner output product target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::WorkerQueue,
+                memory_plan
+                    .queued_task_bytes
+                    .saturating_add(memory_plan.worker_staging_bytes),
+                None,
+                None,
+                "standard-MFS planner worker queue and staging target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GpuStaging,
+                memory_plan
+                    .gpu_staging_bytes
+                    .saturating_add(memory_plan.metal_grouped_input_cache_bytes)
+                    .saturating_add(memory_plan.routed_replay_cache_bytes),
+                None,
+                None,
+                "standard-MFS planner GPU and replay staging target",
+            ),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     ImagerProgressMemory {
         memory_target_bytes: memory_plan.memory_target_bytes,
         planned_active_bytes: memory_plan.planned_active_bytes,
         source_stream_buffer_bytes: memory_plan.source_stream_buffer_bytes,
         product_scratch_bytes: memory_plan.output_image_bytes,
-        active_planes: active_planes.max(1),
+        active_planes,
         row_block_rows: memory_plan.row_block_rows,
         memory_target_source: Some(memory_plan.memory_target_source.to_string()),
+        categories,
     }
 }
 
@@ -41060,6 +41334,7 @@ mod tests {
             active_planes: 4,
             row_block_rows: 292_000,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         let resource_guard = acquire_imager_progress_resources_with_threads(
             &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE],
@@ -41227,6 +41502,7 @@ mod tests {
             active_planes: 2,
             row_block_rows: 128,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         };
         let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
             .expect("ledger");
@@ -41270,6 +41546,111 @@ mod tests {
     }
 
     #[test]
+    fn imager_memory_ledger_uses_tracked_categories_without_plan_promotion() {
+        let memory = ImagerProgressMemory {
+            memory_target_bytes: 32 * 1024,
+            planned_active_bytes: 18 * 1024,
+            source_stream_buffer_bytes: 3 * 1024,
+            product_scratch_bytes: 5 * 1024,
+            active_planes: 2,
+            row_block_rows: 128,
+            memory_target_source: Some("test".to_string()),
+            categories: vec![
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::SourceBuffer,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(1024),
+                    high_water_bytes: Some(2 * 1024),
+                    row_block_rows: Some(64),
+                    active_planes: None,
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: Some("sampled source buffer residency".to_string()),
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::GridFftScratch,
+                    resource_id: None,
+                    planned_bytes: Some(7 * 1024),
+                    tracked_live_bytes: Some(4 * 1024),
+                    high_water_bytes: Some(6 * 1024),
+                    row_block_rows: None,
+                    active_planes: None,
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: Some("sampled FFT scratch".to_string()),
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::PlaneState,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(2 * 1024),
+                    high_water_bytes: Some(3 * 1024),
+                    row_block_rows: None,
+                    active_planes: Some(2),
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: None,
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::DeconvolverScratch,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(1024),
+                    high_water_bytes: Some(1024),
+                    row_block_rows: None,
+                    active_planes: None,
+                    confidence: None,
+                    note: None,
+                },
+            ],
+        };
+
+        let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
+            .expect("ledger");
+        assert_eq!(ledger.planned_total_bytes, 15 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 8 * 1024);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 12 * 1024);
+        assert_eq!(ledger.untracked_resident_bytes, Some(12 * 1024));
+
+        let source = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
+            .expect("source");
+        assert_eq!(source.planned_bytes, Some(3 * 1024));
+        assert_eq!(source.tracked_live_bytes, Some(1024));
+        assert_eq!(source.high_water_bytes, Some(2 * 1024));
+        assert_eq!(source.row_block_rows, Some(64));
+
+        let grid = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::GridFftScratch)
+            .expect("grid");
+        assert_eq!(
+            grid.resource_id,
+            Some(ImagerObservedResourceId::VisibilityGrid)
+        );
+        assert_eq!(grid.planned_bytes, Some(7 * 1024));
+        assert_eq!(grid.tracked_live_bytes, Some(4 * 1024));
+        assert_eq!(grid.confidence, ImagerObservedMemoryConfidence::Measured);
+
+        let grid_resource = imager_observed_memory_for_resource(
+            ImagerObservedResourceId::VisibilityGrid,
+            Some(&memory),
+        )
+        .expect("grid resource memory");
+        assert_eq!(grid_resource.resident_bytes, Some(4 * 1024));
+        assert_eq!(grid_resource.planned_bytes, Some(7 * 1024));
+
+        let deconvolver_resource = imager_observed_memory_for_resource(
+            ImagerObservedResourceId::Deconvolver,
+            Some(&memory),
+        )
+        .expect("deconvolver resource memory");
+        assert_eq!(deconvolver_resource.resident_bytes, Some(1024));
+        assert_eq!(deconvolver_resource.planned_bytes, None);
+    }
+
+    #[test]
     fn imager_memory_ledger_does_not_promote_plan_updates_to_live_high_water() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
@@ -41289,6 +41670,7 @@ mod tests {
             active_planes: 4,
             row_block_rows: 256,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -41298,6 +41680,7 @@ mod tests {
             active_planes: 1,
             row_block_rows: 128,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         let context_guard = IMAGER_PROGRESS_CONTEXT
             .lock()
@@ -41725,6 +42108,7 @@ mod tests {
             active_planes: 1,
             row_block_rows: 292_000,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -44910,6 +45294,47 @@ mod tests {
         assert_eq!(progress_memory.active_planes, 3);
         assert_eq!(progress_memory.row_block_rows, plan.row_block_rows);
         assert_eq!(progress_memory.memory_target_source.as_deref(), Some("env"));
+        let source_category = progress_memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::SourceBuffer)
+            .expect("source category");
+        assert_eq!(
+            source_category.planned_bytes,
+            Some(plan.source_stream_buffer_bytes)
+        );
+        assert_eq!(source_category.row_block_rows, Some(plan.row_block_rows));
+        assert_eq!(
+            source_category.confidence,
+            Some(ImagerObservedMemoryConfidence::Planned)
+        );
+        let grid_category = progress_memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::GridFftScratch)
+            .expect("grid category");
+        assert_eq!(
+            grid_category.resource_id,
+            Some(ImagerObservedResourceId::VisibilityGrid)
+        );
+        assert_eq!(grid_category.active_planes, Some(3));
+        assert!(grid_category.planned_bytes.unwrap_or(0) > 0);
+        assert_eq!(grid_category.tracked_live_bytes, None);
+        let products_category = progress_memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::Products)
+            .expect("products category");
+        assert_eq!(
+            products_category.planned_bytes,
+            (plan.output_image_bytes > 0).then_some(plan.output_image_bytes)
+        );
+        assert!(
+            progress_memory
+                .categories
+                .iter()
+                .all(|category| category.tracked_live_bytes.is_none())
+        );
     }
 
     #[test]

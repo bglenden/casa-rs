@@ -321,6 +321,13 @@ pub struct ImagerProgressMemory {
     /// Short source label for the memory target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_target_source: Option<String>,
+    /// Optional directly attributed memory categories sampled by the backend.
+    ///
+    /// Planner fields above describe the intended memory shape. These rows are
+    /// for measured or otherwise specifically attributed bytes and must not be
+    /// fabricated from the planner totals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<ImagerProgressMemoryCategory>,
 }
 
 /// Stable resource rows reported by imager observability snapshots.
@@ -493,6 +500,37 @@ pub enum ImagerObservedMemoryConfidence {
     Estimated,
     /// Category exists, but bytes are not yet attributable.
     Unknown,
+}
+
+/// Backend-attributed memory facts attached to a runtime memory snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressMemoryCategory {
+    /// Stable category id.
+    pub kind: ImagerObservedMemoryKind,
+    /// Resource row associated with this category, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<ImagerObservedResourceId>,
+    /// Planned or target bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_bytes: Option<usize>,
+    /// Currently tracked live bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_live_bytes: Option<usize>,
+    /// High-water bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high_water_bytes: Option<usize>,
+    /// Rolling source row-block size when this category is a stream buffer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_block_rows: Option<usize>,
+    /// Active output planes represented by this category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_planes: Option<usize>,
+    /// Confidence class for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<ImagerObservedMemoryConfidence>,
+    /// Short note explaining unknown or estimated entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One category entry in the imager memory ledger.
@@ -2517,6 +2555,8 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 
 #[cfg(test)]
 mod tests {
+    use super::{ImagerObservedMemoryConfidence, ImagerObservedMemoryKind};
+
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs;
@@ -3486,7 +3526,18 @@ mod tests {
               "product_scratch_bytes": 10945390173,
               "active_planes": 47,
               "row_block_rows": 128704,
-              "memory_target_source": "system_half"
+              "memory_target_source": "system_half",
+              "categories": [
+                {
+                  "kind": "grid-fft-scratch",
+                  "resource_id": "visibility-grid",
+                  "planned_bytes": 7340032,
+                  "tracked_live_bytes": 6291456,
+                  "high_water_bytes": 8388608,
+                  "confidence": "measured",
+                  "note": "sampled FFT scratch"
+                }
+              ]
             }
           },
           "observability": {
@@ -3561,6 +3612,25 @@ mod tests {
                 .unwrap()
                 .active_planes,
             47
+        );
+        let category = &event
+            .runtime
+            .as_ref()
+            .unwrap()
+            .memory
+            .as_ref()
+            .unwrap()
+            .categories[0];
+        assert_eq!(category.kind, ImagerObservedMemoryKind::GridFftScratch);
+        assert_eq!(
+            category.resource_id,
+            Some(ImagerObservedResourceId::VisibilityGrid)
+        );
+        assert_eq!(category.tracked_live_bytes, Some(6_291_456));
+        assert_eq!(category.high_water_bytes, Some(8_388_608));
+        assert_eq!(
+            category.confidence,
+            Some(ImagerObservedMemoryConfidence::Measured)
         );
         let observability = event.observability.as_ref().unwrap();
         assert_eq!(observability.schema_version, 1);
