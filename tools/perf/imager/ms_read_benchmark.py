@@ -35,6 +35,14 @@ class ReadFailure(BenchmarkError):
         )
 
 
+class BenchmarkReportError(BenchmarkError):
+    """Benchmark failure that still has a partial JSON report."""
+
+    def __init__(self, message: str, report: dict) -> None:
+        self.report = report
+        super().__init__(message)
+
+
 def parse_size(text: str) -> int:
     value = text.strip().lower()
     multipliers = {
@@ -131,6 +139,40 @@ def read_file(path: Path, bytes_to_read: int, chunk_bytes: int) -> int:
     return read_bytes
 
 
+def build_report(
+    ms_path: Path,
+    require_mount: Path | None,
+    files: list[tuple[Path, int]],
+    selected: list[tuple[Path, int]],
+    planned_bytes: int,
+    actual_bytes: int,
+    started: float,
+    file_reports: list[dict],
+    error: str | None = None,
+) -> dict:
+    elapsed = time.perf_counter() - started
+    mount_present_after = require_mount.exists() if require_mount is not None else None
+    report = {
+        "measurement_set": str(ms_path),
+        "required_mount": str(require_mount) if require_mount is not None else None,
+        "mount_present_after": mount_present_after,
+        "candidate_file_count": len(files),
+        "read_file_count": len(selected),
+        "planned_bytes": planned_bytes,
+        "read_bytes": actual_bytes,
+        "elapsed_s": elapsed,
+        "mb_per_s": (actual_bytes / 1_000_000.0 / elapsed) if elapsed > 0.0 else 0.0,
+        "mib_per_s": (actual_bytes / 1024.0 / 1024.0 / elapsed) if elapsed > 0.0 else 0.0,
+        "files": file_reports,
+    }
+    if error is not None:
+        report["status"] = "failed"
+        report["error"] = error
+    else:
+        report["status"] = "ok"
+    return report
+
+
 def benchmark(
     ms_path: Path,
     require_mount: Path | None,
@@ -153,11 +195,53 @@ def benchmark(
     file_reports = []
     for index, (path, bytes_to_read) in enumerate(selected, start=1):
         if require_mount is not None and not require_mount.exists():
-            raise BenchmarkError(
-                f"required mount disappeared before file {index}: {require_mount}"
+            message = f"required mount disappeared before file {index}: {require_mount}"
+            raise BenchmarkReportError(
+                message,
+                build_report(
+                    ms_path,
+                    require_mount,
+                    files,
+                    selected,
+                    planned_bytes,
+                    actual_bytes,
+                    started,
+                    file_reports,
+                    message,
+                ),
             )
         file_started = time.perf_counter()
-        read_bytes = read_file(path, bytes_to_read, chunk_bytes)
+        try:
+            read_bytes = read_file(path, bytes_to_read, chunk_bytes)
+        except ReadFailure as error:
+            file_elapsed = time.perf_counter() - file_started
+            actual_bytes += error.read_bytes
+            file_reports.append(
+                {
+                    "path": str(path),
+                    "planned_bytes": bytes_to_read,
+                    "read_bytes": error.read_bytes,
+                    "elapsed_s": file_elapsed,
+                    "mb_per_s": (error.read_bytes / 1_000_000.0 / file_elapsed)
+                    if file_elapsed > 0.0
+                    else 0.0,
+                    "error": str(error.error),
+                }
+            )
+            raise BenchmarkReportError(
+                str(error),
+                build_report(
+                    ms_path,
+                    require_mount,
+                    files,
+                    selected,
+                    planned_bytes,
+                    actual_bytes,
+                    started,
+                    file_reports,
+                    str(error),
+                ),
+            ) from error
         file_elapsed = time.perf_counter() - file_started
         actual_bytes += read_bytes
         report = {
@@ -178,26 +262,39 @@ def benchmark(
                 flush=True,
             )
         if read_bytes != bytes_to_read:
-            raise BenchmarkError(
+            message = (
                 f"short read from {path}: planned {bytes_to_read}, read {read_bytes}"
             )
-    elapsed = time.perf_counter() - started
-    mount_present_after = require_mount.exists() if require_mount is not None else None
-    if mount_present_after is False:
-        raise BenchmarkError(f"required mount disappeared after read: {require_mount}")
-    return {
-        "measurement_set": str(ms_path),
-        "required_mount": str(require_mount) if require_mount is not None else None,
-        "mount_present_after": mount_present_after,
-        "candidate_file_count": len(files),
-        "read_file_count": len(selected),
-        "planned_bytes": planned_bytes,
-        "read_bytes": actual_bytes,
-        "elapsed_s": elapsed,
-        "mb_per_s": (actual_bytes / 1_000_000.0 / elapsed) if elapsed > 0.0 else 0.0,
-        "mib_per_s": (actual_bytes / 1024.0 / 1024.0 / elapsed) if elapsed > 0.0 else 0.0,
-        "files": file_reports,
-    }
+            raise BenchmarkReportError(
+                message,
+                build_report(
+                    ms_path,
+                    require_mount,
+                    files,
+                    selected,
+                    planned_bytes,
+                    actual_bytes,
+                    started,
+                    file_reports,
+                    message,
+                ),
+            )
+    report = build_report(
+        ms_path,
+        require_mount,
+        files,
+        selected,
+        planned_bytes,
+        actual_bytes,
+        started,
+        file_reports,
+    )
+    if report["mount_present_after"] is False:
+        message = f"required mount disappeared after read: {require_mount}"
+        report["status"] = "failed"
+        report["error"] = message
+        raise BenchmarkReportError(message, report)
+    return report
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -247,6 +344,14 @@ def main(argv: list[str]) -> int:
             args.chunk_bytes,
             args.quiet,
         )
+    except BenchmarkReportError as error:
+        text = json.dumps(error.report, indent=2, sort_keys=True)
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(text + "\n", encoding="utf-8")
+        print(text)
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     except BenchmarkError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
