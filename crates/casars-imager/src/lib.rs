@@ -879,12 +879,7 @@ fn imager_observed_memory_for_resource(
 }
 
 fn imager_observed_resource_is_retained(memory: Option<&ImagerObservedResourceMemory>) -> bool {
-    memory.is_some_and(|memory| {
-        memory.resident_bytes.is_some_and(|bytes| bytes > 0)
-            || memory.planned_bytes.is_some_and(|bytes| bytes > 0)
-            || memory.active_planes.is_some_and(|planes| planes > 0)
-            || memory.row_block_rows.is_some_and(|rows| rows > 0)
-    })
+    memory.is_some_and(|memory| memory.resident_bytes.is_some_and(|bytes| bytes > 0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -924,7 +919,7 @@ fn imager_memory_ledger_snapshot(
     memory: Option<&ImagerProgressMemory>,
     process_rss_bytes: Option<usize>,
     process_peak_rss_bytes: Option<usize>,
-    memory_high_water: Option<&ImagerProgressMemoryHighWater>,
+    _memory_high_water: Option<&ImagerProgressMemoryHighWater>,
 ) -> Option<ImagerMemoryLedgerSnapshot> {
     if memory.is_none() && process_rss_bytes.is_none() && process_peak_rss_bytes.is_none() {
         return None;
@@ -932,28 +927,20 @@ fn imager_memory_ledger_snapshot(
 
     let mut entries = Vec::new();
     if let Some(memory) = memory {
-        let source_high_water = memory_high_water
-            .map(|high_water| high_water.source_stream_buffer_bytes)
-            .unwrap_or(memory.source_stream_buffer_bytes)
-            .max(memory.source_stream_buffer_bytes);
-        let product_high_water = memory_high_water
-            .map(|high_water| high_water.product_scratch_bytes)
-            .unwrap_or(memory.product_scratch_bytes)
-            .max(memory.product_scratch_bytes);
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::SourceBuffer,
             "Source stream",
             Some(ImagerObservedResourceId::SourceStream),
             Some(memory.source_stream_buffer_bytes),
-            Some(memory.source_stream_buffer_bytes),
-            Some(source_high_water),
+            None,
+            None,
             None,
             None,
             None,
             Some(memory.row_block_rows),
             None,
             ImagerObservedMemoryConfidence::Planned,
-            Some("planner-sized rolling source buffer"),
+            Some("planner-sized rolling source buffer; live bytes are not yet separately measured"),
         ));
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::RowVisibilityBuffer,
@@ -1020,15 +1007,15 @@ fn imager_memory_ledger_snapshot(
             "Products",
             Some(ImagerObservedResourceId::ProductScratch),
             Some(memory.product_scratch_bytes),
-            Some(memory.product_scratch_bytes),
-            Some(product_high_water),
+            None,
+            None,
             None,
             None,
             None,
             None,
             None,
             ImagerObservedMemoryConfidence::Planned,
-            Some("planner-sized product scratch"),
+            Some("planner-sized product scratch; live bytes are not yet separately measured"),
         ));
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::WorkerQueue,
@@ -41236,7 +41223,7 @@ mod tests {
             .iter()
             .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
             .expect("source stream row");
-        assert_eq!(source.state, ImagerObservedResourceState::Retained);
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
         assert_eq!(
             source
                 .memory
@@ -41285,10 +41272,10 @@ mod tests {
             imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024), None)
                 .expect("ledger");
         assert_eq!(ledger.planned_total_bytes, 8 * 1024);
-        assert_eq!(ledger.tracked_live_total_bytes, 8 * 1024);
-        assert_eq!(ledger.tracked_high_water_total_bytes, 8 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 0);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 0);
         assert_eq!(ledger.process_rss_bytes, Some(20 * 1024));
-        assert_eq!(ledger.untracked_resident_bytes, Some(12 * 1024));
+        assert_eq!(ledger.untracked_resident_bytes, Some(20 * 1024));
         let source = ledger
             .entries
             .iter()
@@ -41299,7 +41286,9 @@ mod tests {
             Some(ImagerObservedResourceId::SourceStream)
         );
         assert_eq!(source.row_block_rows, Some(128));
-        assert_eq!(source.high_water_bytes, Some(3 * 1024));
+        assert_eq!(source.planned_bytes, Some(3 * 1024));
+        assert_eq!(source.tracked_live_bytes, None);
+        assert_eq!(source.high_water_bytes, None);
         assert_eq!(source.confidence, ImagerObservedMemoryConfidence::Planned);
         let plane = ledger
             .entries
@@ -41314,7 +41303,7 @@ mod tests {
             .iter()
             .find(|entry| entry.kind == ImagerObservedMemoryKind::UntrackedResident)
             .expect("untracked rss");
-        assert_eq!(untracked.untracked_bytes, Some(12 * 1024));
+        assert_eq!(untracked.untracked_bytes, Some(20 * 1024));
         assert_eq!(
             untracked.confidence,
             ImagerObservedMemoryConfidence::Estimated
@@ -41322,7 +41311,7 @@ mod tests {
     }
 
     #[test]
-    fn imager_memory_ledger_preserves_high_water_across_smaller_updates() {
+    fn imager_memory_ledger_does_not_promote_plan_updates_to_live_high_water() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
             .expect("progress test lock");
@@ -41379,15 +41368,16 @@ mod tests {
         };
         let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
         let ledger = snapshot.memory_ledger.as_ref().expect("memory ledger");
-        assert_eq!(ledger.tracked_live_total_bytes, 5 * 1024);
-        assert_eq!(ledger.tracked_high_water_total_bytes, 10 * 1024);
+        assert_eq!(ledger.planned_total_bytes, 5 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 0);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 0);
         assert_eq!(
             ledger
                 .entries
                 .iter()
                 .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
                 .and_then(|entry| entry.high_water_bytes),
-            Some(4 * 1024)
+            None
         );
         assert_eq!(
             ledger
@@ -41395,7 +41385,7 @@ mod tests {
                 .iter()
                 .find(|entry| entry.kind == ImagerObservedMemoryKind::Products)
                 .and_then(|entry| entry.high_water_bytes),
-            Some(6 * 1024)
+            None
         );
         drop(context_guard);
         drop(progress_guard);
