@@ -37,6 +37,8 @@ pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 2;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
+/// Version of the authoritative observability snapshot embedded in progress events.
+pub const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 2;
 /// Prefix used before each stderr progress-event JSON line.
 pub const IMAGER_PROGRESS_STDERR_PREFIX: &str = "CASARS_IMAGER_PROGRESS ";
 
@@ -2593,14 +2595,14 @@ mod tests {
     use tempfile::{NamedTempFile, tempdir};
 
     use super::{
-        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
-        ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
-        ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-        ImagerHogbomIterationMode, ImagerObservedResourceId, ImagerObservedResourceState,
-        ImagerObservedStageKind, ImagerPlaneSelection, ImagerProgressEvent, ImagerProgressRuntime,
-        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
-        ImagerWTermMode, ImagerWeighting,
+        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_TASK_PROTOCOL_NAME,
+        IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind, ImagerAutoMultiThresholdConfig,
+        ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue,
+        ImagerCubeInterpolation, ImagerDeconvolver, ImagerHogbomIterationMode,
+        ImagerObservedResourceId, ImagerObservedResourceState, ImagerObservedStageKind,
+        ImagerPlaneSelection, ImagerProgressEvent, ImagerProgressRuntime, ImagerRestoringBeamMode,
+        ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest,
+        ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy};
 
@@ -3561,7 +3563,7 @@ mod tests {
             }
           },
           "observability": {
-            "schema_version": 1,
+            "schema_version": 2,
             "resources": [
               {
                 "id": "source-stream",
@@ -3653,7 +3655,10 @@ mod tests {
             Some(ImagerObservedMemoryConfidence::Measured)
         );
         let observability = event.observability.as_ref().unwrap();
-        assert_eq!(observability.schema_version, 1);
+        assert_eq!(
+            observability.schema_version,
+            IMAGER_OBSERVABILITY_SCHEMA_VERSION
+        );
         assert_eq!(observability.resources.len(), 2);
         assert_eq!(
             observability.resources[0].id,

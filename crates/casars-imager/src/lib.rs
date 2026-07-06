@@ -130,11 +130,11 @@ pub use oracle::{
 };
 pub use schema::command_schema;
 pub use task_contract::{
-    IMAGER_PROGRESS_EVENT_SCHEMA_VERSION, IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME,
-    IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
-    ImagerAutoMultiThresholdConfig, ImagerChannelRunResult, ImagerCleanMaskMode,
-    ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue,
-    ImagerCubeInterpolation, ImagerDeconvolver,
+    IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+    IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION,
+    ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerChannelRunResult,
+    ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig,
+    ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
     ImagerMemoryLedgerSnapshot, ImagerObservabilityExtent, ImagerObservabilitySnapshot,
     ImagerObservabilitySpan, ImagerObservabilitySpanState, ImagerObservedMemoryConfidence,
@@ -177,7 +177,6 @@ const OBS_COUNTER_SLAB_ID: &str = "slab_id";
 const OBS_COUNTER_ROW_BLOCK_ROWS: &str = "row_block_rows";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
-const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 2;
 const IMAGER_RECENT_SPAN_LIMIT: usize = 16;
 const IMAGER_OBSERVED_QUEUE_STALE_AFTER_MS: u64 = 1_000;
 const SPECTRAL_SOURCE_RESOURCES: &[ImagerObservedResourceId] =

@@ -885,7 +885,7 @@ extension ImagingObservabilitySnapshot {
         let gridState = running ? "active" : "idle"
         let activeThreads = running ? 12 : 0
         return ImagingObservabilitySnapshot(
-            schemaVersion: 1,
+            schemaVersion: 2,
             resources: [
                 ImagingObservedResource(
                     id: "source-stream",
