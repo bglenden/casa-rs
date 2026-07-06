@@ -663,23 +663,7 @@ struct ImagerProgressContext {
     active_resource_counts: BTreeMap<String, usize>,
     active_resource_thread_counts: BTreeMap<String, Vec<usize>>,
     memory: Option<ImagerProgressMemory>,
-    memory_high_water: ImagerProgressMemoryHighWater,
     telemetry_writer: Option<BufWriter<File>>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ImagerProgressMemoryHighWater {
-    source_stream_buffer_bytes: usize,
-    product_scratch_bytes: usize,
-}
-
-impl ImagerProgressMemoryHighWater {
-    fn observe(&mut self, memory: &ImagerProgressMemory) {
-        self.source_stream_buffer_bytes = self
-            .source_stream_buffer_bytes
-            .max(memory.source_stream_buffer_bytes);
-        self.product_scratch_bytes = self.product_scratch_bytes.max(memory.product_scratch_bytes);
-    }
 }
 
 struct ImagerProgressGuard;
@@ -838,7 +822,6 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         active_resource_counts: BTreeMap::new(),
         active_resource_thread_counts: BTreeMap::new(),
         memory: None,
-        memory_high_water: ImagerProgressMemoryHighWater::default(),
         telemetry_writer,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
@@ -919,7 +902,6 @@ fn imager_memory_ledger_snapshot(
     memory: Option<&ImagerProgressMemory>,
     process_rss_bytes: Option<usize>,
     process_peak_rss_bytes: Option<usize>,
-    _memory_high_water: Option<&ImagerProgressMemoryHighWater>,
 ) -> Option<ImagerMemoryLedgerSnapshot> {
     if memory.is_none() && process_rss_bytes.is_none() && process_peak_rss_bytes.is_none() {
         return None;
@@ -1446,7 +1428,6 @@ fn imager_observability_snapshot(
                 memory,
                 process_memory.current_rss_bytes,
                 process_memory.peak_rss_bytes,
-                Some(&context.memory_high_water),
             )
         },
         workers: imager_observed_worker_snapshots(
@@ -1817,7 +1798,6 @@ fn set_imager_progress_memory(memory: ImagerProgressMemory) {
     }
     if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
         if let Some(context) = context.as_mut() {
-            context.memory_high_water.observe(&memory);
             context.memory = Some(memory);
         }
     }
@@ -41268,9 +41248,8 @@ mod tests {
             row_block_rows: 128,
             memory_target_source: Some("test".to_string()),
         };
-        let ledger =
-            imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024), None)
-                .expect("ledger");
+        let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
+            .expect("ledger");
         assert_eq!(ledger.planned_total_bytes, 8 * 1024);
         assert_eq!(ledger.tracked_live_total_bytes, 0);
         assert_eq!(ledger.tracked_high_water_total_bytes, 0);
