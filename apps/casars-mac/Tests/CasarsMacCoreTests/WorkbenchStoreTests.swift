@@ -4276,6 +4276,7 @@ final class WorkbenchStoreTests: XCTestCase {
           mkdir -p "$(dirname "$progress_file")"
           printf '%s\\n' '{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"jsonl_transport","summary":"side-channel progress","work":{"completed_units":1,"total_units":2,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":2,"gpu_active":false,"backend":"jsonl","active_resources":["visibility-grid"]}}' > "$progress_file"
         fi
+        printf '%s\\n' '\(imagerProgressStderrPrefix){"schema_version":1,"sequence":2,"elapsed_ms":1,"phase":"stderr_transport_should_be_ignored","summary":"legacy stderr progress","runtime":{"active_threads":1,"total_threads":2,"gpu_active":false,"backend":"stderr","active_resources":["source-stream"]}}' >&2
         printf '%s\\n' 'ordinary stderr diagnostic' >&2
         cat "\(resultURL.path)"
         """

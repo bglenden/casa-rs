@@ -248,13 +248,15 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         queue.async {
             do {
                 try Self.createOutputParentDirectories(for: executionRequest)
+                let isImagerTask = executionRequest.task.id == "imager"
+                let usesProgressTelemetry = isImagerTask && progressTelemetryPath != nil
                 var progressParser = ImagerProgressStderrParser()
                 var progressDiagnostics: [String] = []
                 let progressParserLock = NSLock()
-                let progressParserQueue = executionRequest.task.id == "imager"
+                let progressParserQueue = isImagerTask
                     ? DispatchQueue(label: "casars.mac.imager-progress-parser", qos: .userInitiated)
                     : nil
-                let handleProgressChunk: ((String) -> Void)? = executionRequest.task.id == "imager" ? { chunk in
+                let handleProgressChunk: ((String) -> Void)? = isImagerTask && !usesProgressTelemetry ? { chunk in
                     progressParserLock.lock()
                     let records = progressParser.append(chunk, runID: executionRequest.runID, state: .running)
                     let snapshots = records.compactMap { record -> ImagerProgressSnapshot? in
@@ -291,10 +293,10 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                     execution: execution,
                     stderrChunkHandler: handleProgressChunk,
                     stderrChunkHandlerQueue: progressParserQueue,
-                    storesStderr: executionRequest.task.id != "imager"
+                    storesStderr: !isImagerTask || usesProgressTelemetry
                 )
                 progressTailer?.stopAndDrain(state: .running)
-                if executionRequest.task.id == "imager" {
+                if isImagerTask && !usesProgressTelemetry {
                     progressParserQueue?.sync {}
                     progressParserLock.lock()
                     let finalRecords = progressParser.finish(runID: executionRequest.runID, state: .running)
@@ -315,9 +317,13 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                         eventHandler(.progress(snapshot))
                     }
                 }
-                let stderr = executionRequest.task.id == "imager"
-                    ? progressDiagnostics.joined(separator: "\n")
-                    : output.stderr
+                let stderr = if isImagerTask {
+                    usesProgressTelemetry
+                        ? Self.stderrWithoutImagerProgress(output.stderr)
+                        : progressDiagnostics.joined(separator: "\n")
+                } else {
+                    output.stderr
+                }
                 if execution.isCancelled {
                     eventHandler(.cancelled(GenericTaskFailure(message: "Task was cancelled.", diagnostics: [stderr].filter { !$0.isEmpty })))
                 } else if output.exitCode == 0 {
