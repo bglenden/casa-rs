@@ -43654,7 +43654,7 @@ mod tests {
             enabled: true,
             telemetry_jsonl_path: Some(telemetry_path.clone()),
             max_uv_points: 1024,
-            min_interval_ms: 50,
+            min_interval_ms: 0,
         })
         .expect("progress setup succeeds")
         .expect("progress context starts");
@@ -56501,7 +56501,7 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
             standard_mfs_tile_anchor: None,
