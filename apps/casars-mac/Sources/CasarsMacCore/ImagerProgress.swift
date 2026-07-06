@@ -701,6 +701,14 @@ public struct ImagingExecutionStateSummary: Codable, Equatable {
                 detail: ledger.processPeakRSSBytes.map { "\(compactByteSizeLabel($0)) peak" } ?? "measured"
             ))
         }
+        if let allocator = ledger.entries.first(where: { $0.kind == "allocator-runtime" }) {
+            rows.append(ImagingExecutionKeyValueSummary(
+                id: "memory-allocator",
+                label: "Allocator",
+                value: memoryEntryValue(allocator),
+                detail: memoryEntryDetail(allocator)
+            ))
+        }
         if let untracked = ledger.untrackedResidentBytes, untracked > 0 {
             rows.append(ImagingExecutionKeyValueSummary(
                 id: "memory-untracked",
@@ -710,6 +718,39 @@ public struct ImagingExecutionStateSummary: Codable, Equatable {
             ))
         }
         return rows
+    }
+
+    private static func memoryEntryValue(_ entry: ImagingMemoryLedgerEntry) -> String {
+        if let live = entry.trackedLiveBytes, live > 0 {
+            return compactByteSizeLabel(live)
+        }
+        if let untracked = entry.untrackedBytes, untracked > 0 {
+            return compactByteSizeLabel(untracked)
+        }
+        if let rss = entry.processRSSBytes, rss > 0 {
+            return compactByteSizeLabel(rss)
+        }
+        if let planned = entry.plannedBytes, planned > 0 {
+            return compactByteSizeLabel(planned)
+        }
+        return "unknown"
+    }
+
+    private static func memoryEntryDetail(_ entry: ImagingMemoryLedgerEntry) -> String {
+        var parts: [String] = []
+        if let highWater = entry.highWaterBytes, highWater > 0 {
+            parts.append("\(compactByteSizeLabel(highWater)) peak")
+        }
+        if let planned = entry.plannedBytes, planned > 0 {
+            parts.append("\(compactByteSizeLabel(planned)) planned")
+        }
+        if !entry.confidence.isEmpty {
+            parts.append(entry.confidence)
+        }
+        if parts.isEmpty {
+            return entry.note ?? "runtime"
+        }
+        return parts.joined(separator: " / ")
     }
 
     private static func compactByteSizeLabel(_ bytes: Int) -> String {

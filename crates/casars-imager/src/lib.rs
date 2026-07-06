@@ -911,7 +911,9 @@ fn imager_memory_kind_default_resource(
         ImagerObservedMemoryKind::GpuStaging | ImagerObservedMemoryKind::GpuDevice => {
             Some(ImagerObservedResourceId::GpuStaging)
         }
-        ImagerObservedMemoryKind::ProcessBaseline | ImagerObservedMemoryKind::UntrackedResident => {
+        ImagerObservedMemoryKind::ProcessBaseline
+        | ImagerObservedMemoryKind::AllocatorRuntime
+        | ImagerObservedMemoryKind::UntrackedResident => {
             Some(ImagerObservedResourceId::ProcessRuntime)
         }
     }
@@ -1225,11 +1227,46 @@ fn imager_memory_ledger_snapshot(
             ImagerObservedMemoryConfidence::Unknown,
             Some("device memory requires backend-specific sampling"),
         ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::AllocatorRuntime,
+            "Allocator runtime",
+            Some(ImagerObservedResourceId::ProcessRuntime),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("allocator caches and runtime overhead are not yet separately sampled"),
+        ));
         for entry in &mut entries {
             if let Some(category) = imager_memory_category_for_kind(memory, entry.kind) {
                 imager_apply_memory_category(entry, category);
             }
         }
+    }
+    if !entries
+        .iter()
+        .any(|entry| entry.kind == ImagerObservedMemoryKind::AllocatorRuntime)
+    {
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::AllocatorRuntime,
+            "Allocator runtime",
+            Some(ImagerObservedResourceId::ProcessRuntime),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("allocator caches and runtime overhead are not yet separately sampled"),
+        ));
     }
 
     let planned_total_bytes = entries
@@ -42468,6 +42505,20 @@ mod tests {
             untracked.confidence,
             ImagerObservedMemoryConfidence::Estimated
         );
+        let allocator = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::AllocatorRuntime)
+            .expect("allocator runtime gap");
+        assert_eq!(
+            allocator.resource_id,
+            Some(ImagerObservedResourceId::ProcessRuntime)
+        );
+        assert_eq!(allocator.tracked_live_bytes, None);
+        assert_eq!(
+            allocator.confidence,
+            ImagerObservedMemoryConfidence::Unknown
+        );
     }
 
     #[test]
@@ -42525,15 +42576,26 @@ mod tests {
                     confidence: None,
                     note: None,
                 },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::AllocatorRuntime,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(3 * 1024),
+                    high_water_bytes: Some(4 * 1024),
+                    row_block_rows: None,
+                    active_planes: None,
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: Some("malloc zone sampler".to_string()),
+                },
             ],
         };
 
         let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
             .expect("ledger");
         assert_eq!(ledger.planned_total_bytes, 15 * 1024);
-        assert_eq!(ledger.tracked_live_total_bytes, 8 * 1024);
-        assert_eq!(ledger.tracked_high_water_total_bytes, 12 * 1024);
-        assert_eq!(ledger.untracked_resident_bytes, Some(12 * 1024));
+        assert_eq!(ledger.tracked_live_total_bytes, 11 * 1024);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 16 * 1024);
+        assert_eq!(ledger.untracked_resident_bytes, Some(9 * 1024));
 
         let source = ledger
             .entries
@@ -42573,6 +42635,17 @@ mod tests {
         .expect("deconvolver resource memory");
         assert_eq!(deconvolver_resource.resident_bytes, Some(1024));
         assert_eq!(deconvolver_resource.planned_bytes, None);
+        let allocator = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::AllocatorRuntime)
+            .expect("allocator");
+        assert_eq!(allocator.tracked_live_bytes, Some(3 * 1024));
+        assert_eq!(allocator.high_water_bytes, Some(4 * 1024));
+        assert_eq!(
+            allocator.confidence,
+            ImagerObservedMemoryConfidence::Measured
+        );
     }
 
     #[test]

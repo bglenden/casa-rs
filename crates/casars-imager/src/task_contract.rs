@@ -484,6 +484,8 @@ pub enum ImagerObservedMemoryKind {
     GpuDevice,
     /// Process RSS sample used as a separate runtime fact.
     ProcessBaseline,
+    /// Allocator, cache, and runtime memory not yet attributed to imager resources.
+    AllocatorRuntime,
     /// RSS not currently attributed to tracked domain allocations.
     UntrackedResident,
 }
