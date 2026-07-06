@@ -191,6 +191,7 @@ struct CasarsMacApp: App {
         var uvCoverage: UVCoverageSample
         var deconvolution: DeconvolutionSample
         var runtime: RuntimeSample
+        var resourceActivities: [ResourceActivitySample]
 
         init(_ snapshot: ImagerProgressSnapshot) {
             source = snapshot.source
@@ -204,6 +205,7 @@ struct CasarsMacApp: App {
             uvCoverage = UVCoverageSample(snapshot.uvCoverage)
             deconvolution = DeconvolutionSample(snapshot.deconvolution)
             runtime = RuntimeSample(snapshot.runtime)
+            resourceActivities = snapshot.resourceActivities.map(ResourceActivitySample.init)
         }
     }
 
@@ -312,6 +314,38 @@ struct CasarsMacApp: App {
             totalThreads = runtime.totalThreads
             gpuActive = runtime.gpuActive
             backend = runtime.backend
+        }
+    }
+
+    private struct ResourceActivitySample: Codable {
+        var id: String
+        var name: String
+        var detail: String
+        var kind: ImagingResourceActivityKind
+        var state: ImagingResourceActivityState
+        var observedState: String
+        var residentBytes: Int
+        var targetBytes: Int
+        var sectionStartFraction: Double
+        var sectionEndFraction: Double
+        var activeThreads: Int
+        var totalThreads: Int
+        var gpuActive: Bool
+
+        init(_ resource: ImagingResourceActivity) {
+            id = resource.id
+            name = resource.name
+            detail = resource.detail
+            kind = resource.kind
+            state = resource.state
+            observedState = resource.observedState
+            residentBytes = resource.residentBytes
+            targetBytes = resource.targetBytes
+            sectionStartFraction = resource.sectionStartFraction
+            sectionEndFraction = resource.sectionEndFraction
+            activeThreads = resource.activeThreads
+            totalThreads = resource.totalThreads
+            gpuActive = resource.gpuActive
         }
     }
 

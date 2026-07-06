@@ -4161,7 +4161,18 @@ final class WorkbenchStoreTests: XCTestCase {
         let helperScript = """
         #!/bin/sh
         set -eu
-        printf '%s\\n' '\(imagerProgressStderrPrefix){"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"started","work":{"completed_units":0,"total_units":1,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":1,"gpu_active":false,"backend":"test"}}' >&2
+        progress_file=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--progress-jsonl" ]; then
+            shift
+            progress_file="$1"
+          fi
+          shift || true
+        done
+        if [ -n "$progress_file" ]; then
+          mkdir -p "$(dirname "$progress_file")"
+          printf '%s\\n' '{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"started","work":{"completed_units":0,"total_units":1,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":1,"gpu_active":false,"backend":"test"}}' > "$progress_file"
+        fi
         cat "\(resultURL.path)"
         """
         try helperScript.write(to: helperURL, atomically: true, encoding: .utf8)
