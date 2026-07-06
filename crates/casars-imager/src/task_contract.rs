@@ -616,6 +616,22 @@ pub enum ImagerObservedWorkerState {
     Unknown,
 }
 
+/// Stable queue state labels for imager observability snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedQueueState {
+    /// Queue producers or consumers are currently active.
+    Active,
+    /// Queue producers or consumers are blocked.
+    Blocked,
+    /// Queue is known empty or inactive.
+    Idle,
+    /// Last known queue observation is retained only as history.
+    Stale,
+    /// Queue state cannot currently be determined.
+    Unknown,
+}
+
 /// Aggregate worker snapshot for an imager observability event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservedWorkerSnapshot {
@@ -659,6 +675,8 @@ pub struct ImagerObservedQueueSnapshot {
     pub id: String,
     /// Short display label.
     pub label: String,
+    /// Current queue state.
+    pub state: ImagerObservedQueueState,
     /// Resource most closely associated with this queue.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_id: Option<ImagerObservedResourceId>,

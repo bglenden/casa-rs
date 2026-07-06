@@ -729,7 +729,7 @@ public struct ImagingExecutionStateSummary: Codable, Equatable {
             valueParts.append("\(queue.blockedCount) blocked")
         }
         let producerConsumer = "\(queue.producersActive ? "P" : "p")/\(queue.consumersActive ? "C" : "c")"
-        let optionalDetailParts: [String?] = [queue.resourceID, queue.confidence, producerConsumer]
+        let optionalDetailParts: [String?] = [queue.state, queue.resourceID, queue.confidence, producerConsumer]
         let detailParts = optionalDetailParts
             .compactMap { value -> String? in
                 guard let value, !value.isEmpty else { return nil }
@@ -1178,6 +1178,7 @@ public struct ImagingObservedWorkerSnapshot: Codable, Equatable, Identifiable {
 public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
     public var id: String
     public var label: String
+    public var state: String
     public var resourceID: String?
     public var len: Int?
     public var capacity: Int?
@@ -1191,6 +1192,7 @@ public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
     public init(
         id: String,
         label: String,
+        state: String,
         resourceID: String?,
         len: Int?,
         capacity: Int?,
@@ -1203,6 +1205,7 @@ public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
     ) {
         self.id = id
         self.label = label
+        self.state = state
         self.resourceID = resourceID
         self.len = len
         self.capacity = capacity
@@ -2043,6 +2046,7 @@ struct ImagerObservedWorkerPayload: Decodable, Equatable {
 struct ImagerObservedQueuePayload: Decodable, Equatable {
     var id: String
     var label: String
+    var state: String
     var resourceID: String?
     var len: Int?
     var capacity: Int?
@@ -2056,6 +2060,7 @@ struct ImagerObservedQueuePayload: Decodable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id
         case label
+        case state
         case resourceID = "resource_id"
         case len
         case capacity
@@ -2218,6 +2223,7 @@ extension ImagingObservedQueueSnapshot {
         self.init(
             id: payload.id,
             label: payload.label,
+            state: payload.state,
             resourceID: payload.resourceID,
             len: payload.len,
             capacity: payload.capacity,
