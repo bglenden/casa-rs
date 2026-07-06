@@ -7472,8 +7472,12 @@ private struct ResourceActivityFlowView: View {
             .frame(height: canvasHeight)
 
             HStack(spacing: 12) {
-                Label("busy", systemImage: "circle")
+                Label("active", systemImage: "circle")
                     .foregroundStyle(Color.cyan)
+                Label("retained", systemImage: "internaldrive")
+                    .foregroundStyle(Color.blue)
+                Label("blocked", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(Color.yellow)
                 Label("active section", systemImage: "rectangle.inset.filled")
                     .foregroundStyle(Color.green)
                 Label("GPU", systemImage: "bolt.fill")
@@ -7507,10 +7511,10 @@ private struct ResourceActivityFlowView: View {
         context: inout GraphicsContext
     ) {
         let tint = color(for: resource)
-        let outline = resource.isBusy ? tint : Color.secondary.opacity(0.35)
-        let strokeStyle = StrokeStyle(lineWidth: resource.isBusy ? 2 : 1, dash: resource.isBusy ? [] : [4, 4])
+        let outline = outlineColor(for: resource, tint: tint)
+        let strokeStyle = strokeStyle(for: resource)
         let rowPath = Path(roundedRect: rect, cornerRadius: 6)
-        context.fill(rowPath, with: .color(tint.opacity(resource.isBusy ? 0.12 : 0.045)))
+        context.fill(rowPath, with: .color(tint.opacity(fillOpacity(for: resource))))
         context.stroke(rowPath, with: .color(outline), style: strokeStyle)
 
         let metricWidth: CGFloat = 78
@@ -7537,7 +7541,7 @@ private struct ResourceActivityFlowView: View {
             )
             context.fill(
                 Path(roundedRect: sectionRect, cornerRadius: 4),
-                with: .color(tint.opacity(resource.isBusy ? 0.42 : 0.20))
+                with: .color(tint.opacity(resource.isBusy ? 0.42 : resource.isRetained ? 0.24 : 0.16))
             )
         }
 
@@ -7558,7 +7562,7 @@ private struct ResourceActivityFlowView: View {
             anchor: .leading
         )
         context.draw(
-            Text("\(resource.observedState) / \(resource.detail)").font(.caption2).foregroundColor(.secondary),
+            Text("\(resource.state.rawValue) / \(resource.detail)").font(.caption2).foregroundColor(.secondary),
             at: CGPoint(x: rect.minX + 8, y: rect.midY + 8),
             anchor: .leading
         )
@@ -7620,6 +7624,51 @@ private struct ResourceActivityFlowView: View {
         head.move(to: end)
         head.addLine(to: CGPoint(x: end.x + 4, y: end.y - 4))
         context.stroke(head, with: .color(color), style: StrokeStyle(lineWidth: active ? 1.4 : 1, lineCap: .round))
+    }
+
+    private static func outlineColor(for resource: ImagingResourceActivity, tint: Color) -> Color {
+        if resource.isBusy {
+            return tint
+        }
+        if resource.isBlocked {
+            return .yellow.opacity(0.85)
+        }
+        if resource.isRetained {
+            return tint.opacity(0.62)
+        }
+        if resource.isStaleOrUnknown {
+            return .secondary.opacity(0.26)
+        }
+        return .secondary.opacity(0.35)
+    }
+
+    private static func strokeStyle(for resource: ImagingResourceActivity) -> StrokeStyle {
+        if resource.isBusy {
+            return StrokeStyle(lineWidth: 2)
+        }
+        if resource.isBlocked {
+            return StrokeStyle(lineWidth: 1.6, dash: [6, 3])
+        }
+        if resource.isRetained {
+            return StrokeStyle(lineWidth: 1.4)
+        }
+        if resource.isStaleOrUnknown {
+            return StrokeStyle(lineWidth: 1, dash: [2, 4])
+        }
+        return StrokeStyle(lineWidth: 1, dash: [4, 4])
+    }
+
+    private static func fillOpacity(for resource: ImagingResourceActivity) -> Double {
+        if resource.isBusy {
+            return 0.12
+        }
+        if resource.isBlocked {
+            return 0.09
+        }
+        if resource.isRetained {
+            return 0.07
+        }
+        return 0.045
     }
 
     private static func color(for resource: ImagingResourceActivity) -> Color {

@@ -314,7 +314,7 @@ extension ImagerProgressSnapshot {
                     plannedBytes: $0.sourceStreamBufferBytes
                 ) } ?? "backend declared",
                 kind: .source,
-                state: sourceBusy ? .busy : .idle,
+                state: sourceBusy ? .active : .idle,
                 residentBytes: memory?.sourceStreamBufferBytes ?? 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.rowStartFraction,
@@ -328,7 +328,7 @@ extension ImagerProgressSnapshot {
                 name: "Grid / FFT",
                 detail: "backend declared",
                 kind: .grid,
-                state: gridBusy ? .busy : .idle,
+                state: gridBusy ? .active : .idle,
                 residentBytes: 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: measurementSetWindow.channelStartFraction,
@@ -342,7 +342,7 @@ extension ImagerProgressSnapshot {
                 name: "Plane state",
                 detail: memory.map { Self.planeCountLabel($0.activePlanes) } ?? "backend declared",
                 kind: .plane,
-                state: planeBusy ? .busy : .idle,
+                state: planeBusy ? .active : .idle,
                 residentBytes: 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
@@ -356,7 +356,7 @@ extension ImagerProgressSnapshot {
                 name: "Deconvolver",
                 detail: "backend declared",
                 kind: .deconvolver,
-                state: deconvolverBusy ? .busy : .idle,
+                state: deconvolverBusy ? .active : .idle,
                 residentBytes: 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: 0,
@@ -370,7 +370,7 @@ extension ImagerProgressSnapshot {
                 name: "Products",
                 detail: memory.map { Self.resourceSizeDetail(plannedBytes: $0.productScratchBytes) } ?? "backend declared",
                 kind: .product,
-                state: productBusy ? .busy : .idle,
+                state: productBusy ? .active : .idle,
                 residentBytes: memory?.productScratchBytes ?? 0,
                 targetBytes: plannedTarget,
                 sectionStartFraction: outputCube.activePlaneStartFraction,
@@ -396,27 +396,45 @@ extension ImagerProgressSnapshot {
             ?? ledgerEntry?.plannedBytes
             ?? resource.memory?.plannedBytes
             ?? 0
-        let busy = state == .running && (resource.state == "active" || resource.state == "busy")
+        let observedState = Self.resourceActivityState(resource.state)
+        let activityState = state == .running ? observedState : .idle
         return ImagingResourceActivity(
             id: resource.id,
             name: resource.label,
             detail: observedResourceDetail(resource),
             kind: Self.resourceKind(for: resource.id),
-            state: busy ? .busy : .idle,
+            state: activityState,
             observedState: Self.normalizedObservedState(resource.state),
             residentBytes: bytes,
             targetBytes: memoryTarget,
             sectionStartFraction: Self.resourceSection(for: resource.id, snapshot: self).0,
             sectionEndFraction: Self.resourceSection(for: resource.id, snapshot: self).1,
-            activeThreads: busy ? resource.activeThreads : 0,
+            activeThreads: activityState.isBusy ? resource.activeThreads : 0,
             totalThreads: runtime.totalThreads,
-            gpuActive: busy && resource.gpuActive
+            gpuActive: activityState.isBusy && resource.gpuActive
         )
     }
 
     private static func normalizedObservedState(_ state: String) -> String {
         let trimmed = state.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "unknown" : trimmed
+    }
+
+    private static func resourceActivityState(_ state: String) -> ImagingResourceActivityState {
+        switch normalizedObservedState(state) {
+        case "active", "busy":
+            return .active
+        case "retained":
+            return .retained
+        case "blocked":
+            return .blocked
+        case "idle":
+            return .idle
+        case "stale":
+            return .stale
+        default:
+            return .unknown
+        }
     }
 
     private func observedResourceDetail(_ resource: ImagingObservedResource) -> String {
@@ -547,8 +565,28 @@ extension ImagerProgressSnapshot {
 }
 
 public enum ImagingResourceActivityState: String, Codable, Equatable {
-    case busy
+    case active
+    case retained
+    case blocked
     case idle
+    case unknown
+    case stale
+
+    public var isBusy: Bool {
+        self == .active
+    }
+
+    public var isBlocked: Bool {
+        self == .blocked
+    }
+
+    public var isRetained: Bool {
+        self == .retained
+    }
+
+    public var isStaleOrUnknown: Bool {
+        self == .stale || self == .unknown
+    }
 }
 
 public enum ImagingResourceActivityKind: String, Codable, Equatable {
@@ -605,7 +643,19 @@ public struct ImagingResourceActivity: Codable, Equatable, Identifiable {
     }
 
     public var isBusy: Bool {
-        state == .busy
+        state.isBusy
+    }
+
+    public var isBlocked: Bool {
+        state.isBlocked
+    }
+
+    public var isRetained: Bool {
+        state.isRetained
+    }
+
+    public var isStaleOrUnknown: Bool {
+        state.isStaleOrUnknown
     }
 
     public var byteFraction: Double {
