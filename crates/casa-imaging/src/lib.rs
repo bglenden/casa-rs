@@ -16097,40 +16097,6 @@ fn array2_max_abs_diff_with_first(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(all(test, any(not(target_os = "macos"), coverage)))]
-fn run_hogbom_minor_cycle_metal(
-    _request: &ImagingRequest,
-    _psf_state: &PsfState,
-    _model: &mut Array2<f32>,
-    _residual: &mut Array2<f32>,
-    _cycle_reported_niter: usize,
-    _cycle_threshold_jy_per_beam: f32,
-    _nsigma_threshold_jy_per_beam: f32,
-    _stage_timings: &mut ImagingStageTimings,
-) -> Result<HogbomMinorCycleOutcome, ImagingError> {
-    let mut _minor_progress = StandardMfsMinorCycleProgressReporter::new(
-        None,
-        _request,
-        StandardMfsMinorCycleBackend::Metal,
-        0,
-        0,
-        _cycle_reported_niter,
-        _cycle_threshold_jy_per_beam,
-    );
-    run_hogbom_minor_cycle_metal_with_progress(
-        _request,
-        _psf_state,
-        _model,
-        _residual,
-        _cycle_reported_niter,
-        _cycle_threshold_jy_per_beam,
-        _nsigma_threshold_jy_per_beam,
-        _stage_timings,
-        &mut _minor_progress,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 #[cfg(any(not(target_os = "macos"), coverage))]
 fn run_hogbom_minor_cycle_metal_with_progress(
     _request: &ImagingRequest,
