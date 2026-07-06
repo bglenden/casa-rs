@@ -245,31 +245,6 @@ fn imager_observed_resource_id(progress_id: &str) -> ImagerObservedResourceId {
     }
 }
 
-fn imager_observed_stage_kind(phase: &str) -> ImagerObservedStageKind {
-    let lower = phase.to_ascii_lowercase();
-    if lower.contains("source") || lower.contains("read") || lower.contains("prepare") {
-        ImagerObservedStageKind::SourceStream
-    } else if lower.contains("residual") || lower.contains("replay") {
-        ImagerObservedStageKind::ResidualRefresh
-    } else if lower.contains("clark") || lower.contains("minor") || lower.contains("clean") {
-        ImagerObservedStageKind::ClarkMinorCycle
-    } else if lower.contains("grid") {
-        ImagerObservedStageKind::Gridding
-    } else if lower.contains("fft") {
-        ImagerObservedStageKind::Fft
-    } else if lower.contains("mosaic") {
-        ImagerObservedStageKind::MosaicResidual
-    } else if lower.contains("write") || lower.contains("product") || lower.contains("flush") {
-        ImagerObservedStageKind::ProductWrite
-    } else if lower.contains("memory") {
-        ImagerObservedStageKind::MemoryPlanning
-    } else if lower.contains("start") || lower.contains("finish") || lower.contains("fail") {
-        ImagerObservedStageKind::Run
-    } else {
-        ImagerObservedStageKind::Unknown
-    }
-}
-
 fn imager_observed_stage_kind_label(stage_kind: ImagerObservedStageKind) -> &'static str {
     match stage_kind {
         ImagerObservedStageKind::Run => "run",
@@ -1349,7 +1324,12 @@ fn imager_observability_snapshot(
                     .runtime
                     .as_ref()
                     .is_some_and(|runtime| runtime.gpu_active && is_busy),
-                owner: is_busy.then(|| event.phase.clone()),
+                owner: is_busy.then(|| {
+                    active_resource_span_ids
+                        .get(progress_id)
+                        .cloned()
+                        .unwrap_or_else(|| "unobserved active resources".to_string())
+                }),
                 memory: resource_memory,
             }
         })
@@ -1357,9 +1337,9 @@ fn imager_observability_snapshot(
     let active_spans = if context.active_spans.is_empty() {
         (!active_resources.is_empty())
             .then(|| ImagerObservabilitySpan {
-                id: event.phase.clone(),
-                name: event.summary.clone(),
-                stage_kind: imager_observed_stage_kind(&event.phase),
+                id: "unobserved-active-resources".to_string(),
+                name: "unobserved active resources".to_string(),
+                stage_kind: ImagerObservedStageKind::Unknown,
                 state: ImagerObservabilitySpanState::Running,
                 parent_id: None,
                 worker_id: imager_worker_id_for_span_resources(
@@ -41420,6 +41400,23 @@ mod tests {
         };
         let snapshot =
             imager_observability_snapshot(&event, context, &active_resources, &BTreeMap::new());
+        let grid = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::VisibilityGrid)
+            .expect("grid resource");
+        assert_eq!(grid.owner.as_deref(), Some("unobserved active resources"));
+        let fallback_span = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.id == "unobserved-active-resources")
+            .expect("unobserved fallback span");
+        assert_eq!(fallback_span.stage_kind, ImagerObservedStageKind::Unknown);
+        assert_eq!(fallback_span.name, "unobserved active resources");
+        assert_eq!(
+            fallback_span.resource_ids,
+            vec![ImagerObservedResourceId::VisibilityGrid]
+        );
         assert_eq!(
             snapshot
                 .workers
