@@ -1938,11 +1938,27 @@ fn imager_progress_resource_is_active(resource: &str) -> bool {
 struct ImagerProductWriteObservationGuard {
     _span: Option<ImagerObservationSpanGuard>,
     _resources: Option<ImagerProgressResourceGuard>,
+    _memory: Option<ImagerProgressMemoryCategoryLiveGuard>,
 }
 
 struct ImagerSourceStreamObservationGuard {
     _span: Option<ImagerObservationSpanGuard>,
     _resources: Option<ImagerProgressResourceGuard>,
+}
+
+struct ImagerProgressMemoryCategoryLiveGuard {
+    kind: ImagerObservedMemoryKind,
+}
+
+impl Drop for ImagerProgressMemoryCategoryLiveGuard {
+    fn drop(&mut self) {
+        set_imager_progress_memory_category_live(
+            self.kind,
+            None,
+            None,
+            "measured category is not currently live",
+        );
+    }
 }
 
 fn begin_imager_progress_source_stream_observation(
@@ -1998,12 +2014,20 @@ fn begin_imager_progress_source_stream_observation(
     })
 }
 
-fn begin_imager_progress_product_write_observation(
+fn begin_imager_progress_product_write_observation_with_bytes(
     output_planes: usize,
+    product_bytes: Option<usize>,
 ) -> Option<ImagerProductWriteObservationGuard> {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return None;
     }
+    let memory = product_bytes.filter(|bytes| *bytes > 0).and_then(|bytes| {
+        begin_imager_progress_memory_category_live(
+            ImagerObservedMemoryKind::Products,
+            bytes,
+            "measured product bytes being written",
+        )
+    });
     let span = begin_imager_observation_span(
         ImagerObservedStageKind::ProductWrite,
         format!("writing outputs: {} output plane(s)", output_planes.max(1)),
@@ -2028,6 +2052,7 @@ fn begin_imager_progress_product_write_observation(
     (span.is_some() || resources.is_some()).then_some(ImagerProductWriteObservationGuard {
         _span: span,
         _resources: resources,
+        _memory: memory,
     })
 }
 
@@ -2050,6 +2075,71 @@ fn imager_progress_memory() -> Option<ImagerProgressMemory> {
         .lock()
         .ok()
         .and_then(|context| context.as_ref().and_then(|context| context.memory.clone()))
+}
+
+fn set_imager_progress_memory_category_live(
+    kind: ImagerObservedMemoryKind,
+    tracked_live_bytes: Option<usize>,
+    high_water_bytes: Option<usize>,
+    note: &'static str,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+        return;
+    };
+    let Some(context) = context.as_mut() else {
+        return;
+    };
+    let Some(memory) = context.memory.as_mut() else {
+        return;
+    };
+    if let Some(existing) = memory
+        .categories
+        .iter_mut()
+        .find(|existing| existing.kind == kind)
+    {
+        existing.tracked_live_bytes = tracked_live_bytes;
+        if let Some(high_water_bytes) = high_water_bytes {
+            existing.high_water_bytes =
+                Some(existing.high_water_bytes.unwrap_or(0).max(high_water_bytes));
+        }
+        existing.resource_id = existing
+            .resource_id
+            .or_else(|| imager_memory_kind_default_resource(kind));
+        existing.confidence = Some(ImagerObservedMemoryConfidence::Measured);
+        existing.note = Some(note.to_string());
+    } else {
+        memory.categories.push(ImagerProgressMemoryCategory {
+            kind,
+            resource_id: imager_memory_kind_default_resource(kind),
+            planned_bytes: None,
+            tracked_live_bytes,
+            high_water_bytes,
+            row_block_rows: None,
+            active_planes: None,
+            confidence: Some(ImagerObservedMemoryConfidence::Measured),
+            note: Some(note.to_string()),
+        });
+    }
+}
+
+fn begin_imager_progress_memory_category_live(
+    kind: ImagerObservedMemoryKind,
+    tracked_live_bytes: usize,
+    note: &'static str,
+) -> Option<ImagerProgressMemoryCategoryLiveGuard> {
+    if tracked_live_bytes == 0 || !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    set_imager_progress_memory_category_live(
+        kind,
+        Some(tracked_live_bytes),
+        Some(tracked_live_bytes),
+        note,
+    );
+    Some(ImagerProgressMemoryCategoryLiveGuard { kind })
 }
 
 fn imager_planned_memory_category(
@@ -7577,8 +7667,9 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(output_config, &run_result, true);
     write_products(
@@ -9217,8 +9308,9 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
@@ -10213,8 +10305,9 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
@@ -10565,8 +10658,9 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
@@ -12627,6 +12721,11 @@ where
     A: MultiPlaneDiagnosticsAggregator<R>,
 {
     let product_bytes = product_writer.estimated_plane_group_product_bytes(&result);
+    let _memory_guard = begin_imager_progress_memory_category_live(
+        ImagerObservedMemoryKind::Products,
+        product_bytes,
+        "measured cube product group bytes being written",
+    );
     product_writer.write_plane_group(plane_start, &result)?;
     aggregate.add_plane_group(plane_start, result)?;
     Ok(product_bytes)
@@ -17159,8 +17258,9 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(config, &coords, &run_result, None, None)?;
@@ -17381,8 +17481,9 @@ fn run_joint_outlier_clean_from_configs(
             None
         };
         let field_run_products = RunProducts::Mfs(result.clone());
-        let product_guard = begin_imager_progress_product_write_observation(
+        let product_guard = begin_imager_progress_product_write_observation_with_bytes(
             field_run_products.channel_frequencies_hz().len().max(1),
+            Some(field_run_products.estimated_product_payload_bytes()),
         );
         emit_imager_progress_product_write(&field.config, &field_run_products, true);
         write_products(
@@ -23161,7 +23262,63 @@ struct CubeRunProducts {
     rest_frequency_hz: Option<f64>,
 }
 
+fn array_payload_bytes<T>(array: &Array4<T>) -> usize {
+    array.len().saturating_mul(std::mem::size_of::<T>())
+}
+
 impl RunProducts {
+    fn estimated_product_payload_bytes(&self) -> usize {
+        match self {
+            Self::Mfs(result) => array_payload_bytes(&result.psf)
+                .saturating_add(array_payload_bytes(&result.residual))
+                .saturating_add(array_payload_bytes(&result.model))
+                .saturating_add(array_payload_bytes(&result.image))
+                .saturating_add(array_payload_bytes(&result.sumwt)),
+            Self::Mtmfs(products) => {
+                let result = &products.result;
+                result
+                    .psf_terms
+                    .iter()
+                    .chain(result.residual_terms.iter())
+                    .chain(result.model_terms.iter())
+                    .chain(result.image_terms.iter())
+                    .chain(result.sumwt_terms.iter())
+                    .map(array_payload_bytes)
+                    .sum::<usize>()
+                    .saturating_add(result.alpha.as_ref().map(array_payload_bytes).unwrap_or(0))
+                    .saturating_add(
+                        result
+                            .alpha_error
+                            .as_ref()
+                            .map(array_payload_bytes)
+                            .unwrap_or(0),
+                    )
+            }
+            Self::Cube(products) => {
+                let result = &products.result;
+                array_payload_bytes(&result.psf)
+                    .saturating_add(array_payload_bytes(&result.residual))
+                    .saturating_add(array_payload_bytes(&result.model))
+                    .saturating_add(array_payload_bytes(&result.image))
+                    .saturating_add(array_payload_bytes(&result.sumwt))
+                    .saturating_add(
+                        result
+                            .clean_mask
+                            .as_ref()
+                            .map(array_payload_bytes)
+                            .unwrap_or(0),
+                    )
+                    .saturating_add(
+                        products
+                            .mosaic_weight
+                            .as_ref()
+                            .map(array_payload_bytes)
+                            .unwrap_or(0),
+                    )
+            }
+        }
+    }
+
     fn plane_stokes(&self) -> PlaneStokes {
         match self {
             Self::Mfs(result) => result.compatibility.plane_stokes,
@@ -43659,8 +43816,19 @@ mod tests {
             ..Default::default()
         })
         .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 8 * 1024,
+            source_stream_buffer_bytes: 1024,
+            product_scratch_bytes: 6 * 1024,
+            active_planes: 3,
+            row_block_rows: 64,
+            memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
+        });
         let product_guard =
-            begin_imager_progress_product_write_observation(3).expect("product write observed");
+            begin_imager_progress_product_write_observation_with_bytes(3, Some(4 * 1024))
+                .expect("product write observed");
         let context_guard = IMAGER_PROGRESS_CONTEXT
             .lock()
             .expect("progress context lock");
@@ -43716,6 +43884,32 @@ mod tests {
             .expect("product resource");
         assert_eq!(product.state, ImagerObservedResourceState::Active);
         assert_eq!(product.lease_count, 1);
+        assert_eq!(
+            product
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.resident_bytes),
+            Some(4 * 1024)
+        );
+        assert_eq!(
+            product
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.planned_bytes),
+            Some(6 * 1024)
+        );
+        let ledger = snapshot.memory_ledger.as_ref().expect("memory ledger");
+        let product_entry = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::Products)
+            .expect("product memory entry");
+        assert_eq!(product_entry.tracked_live_bytes, Some(4 * 1024));
+        assert_eq!(product_entry.high_water_bytes, Some(4 * 1024));
+        assert_eq!(
+            product_entry.confidence,
+            ImagerObservedMemoryConfidence::Measured
+        );
         let span = snapshot
             .active_spans
             .iter()
@@ -43732,6 +43926,19 @@ mod tests {
         assert_eq!(span.counters.get(OBS_COUNTER_OUTPUT_PLANES), Some(&3));
         drop(context_guard);
         drop(product_guard);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let memory = context.memory.as_ref().expect("memory");
+        let product_category = memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::Products)
+            .expect("product category");
+        assert_eq!(product_category.tracked_live_bytes, None);
+        assert_eq!(product_category.high_water_bytes, Some(4 * 1024));
+        drop(context_guard);
         drop(progress_guard);
     }
 
