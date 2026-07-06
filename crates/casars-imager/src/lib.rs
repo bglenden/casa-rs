@@ -3305,6 +3305,23 @@ fn standard_mfs_uses_mosaic_observability(config: &CliConfig) -> bool {
     can_plan_mosaic_mfs_acceleration(config, 1)
 }
 
+fn standard_mfs_observability_extent(config: &CliConfig) -> ImagerObservabilityExtent {
+    let output_cube = progress_output_cube_from_config(config, 0, 1);
+    let channel_start = config.channel_start;
+    let channel_end = match (config.channel_start, config.channel_count) {
+        (Some(start), Some(count)) if count > 0 => Some(start.saturating_add(count)),
+        _ => None,
+    };
+    ImagerObservabilityExtent {
+        row_start: None,
+        row_end: None,
+        channel_start,
+        channel_end,
+        plane_start: Some(output_cube.active_plane_start),
+        plane_end: Some(output_cube.active_plane_end),
+    }
+}
+
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
     initial_grid_span: Option<ImagerObservationSpanGuard>,
@@ -3424,7 +3441,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.initial_grid = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -3452,7 +3469,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                         ImagerObservedResourceId::Deconvolver,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.minor_cycle = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -3477,7 +3494,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ImagerObservedStageKind::ResidualRefresh,
                     "refreshing residual",
                     &[],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 ("refreshing residual", 0)
             }
@@ -3504,7 +3521,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.residual_grid = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -3528,7 +3545,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.fft = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -3552,7 +3569,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ImagerObservedStageKind::WeightedMosaic,
                     "forming weighted mosaic groups",
                     &[ImagerObservedResourceId::VisibilityGrid],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.weighted_mosaic = acquire_imager_progress_resource_ids_with_threads(
                     &[ImagerObservedResourceId::VisibilityGrid],
@@ -43290,6 +43307,10 @@ mod tests {
             OsString::from("64"),
             OsString::from("--cell-arcsec"),
             OsString::from("1.0"),
+            OsString::from("--channel-start"),
+            OsString::from("4"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
             OsString::from("--niter"),
             OsString::from("100"),
         ])
@@ -43375,6 +43396,11 @@ mod tests {
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
+        let residual_grid_extent = residual_grid_span.extent.as_ref().expect("extent");
+        assert_eq!(residual_grid_extent.channel_start, Some(4));
+        assert_eq!(residual_grid_extent.channel_end, Some(12));
+        assert_eq!(residual_grid_extent.plane_start, Some(0));
+        assert_eq!(residual_grid_extent.plane_end, Some(1));
         assert_eq!(
             residual_grid_span.counters.get(OBS_COUNTER_MAJOR_CYCLE),
             Some(&1)
@@ -43437,6 +43463,11 @@ mod tests {
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
+        let fft_extent = fft_span.extent.as_ref().expect("extent");
+        assert_eq!(fft_extent.channel_start, Some(4));
+        assert_eq!(fft_extent.channel_end, Some(12));
+        assert_eq!(fft_extent.plane_start, Some(0));
+        assert_eq!(fft_extent.plane_end, Some(1));
         assert_eq!(fft_span.counters.get(OBS_COUNTER_MAJOR_CYCLE), Some(&1));
         assert_eq!(
             fft_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
@@ -43468,6 +43499,11 @@ mod tests {
             weighted_mosaic_span.resource_ids,
             vec![ImagerObservedResourceId::VisibilityGrid]
         );
+        let weighted_mosaic_extent = weighted_mosaic_span.extent.as_ref().expect("extent");
+        assert_eq!(weighted_mosaic_extent.channel_start, Some(4));
+        assert_eq!(weighted_mosaic_extent.channel_end, Some(12));
+        assert_eq!(weighted_mosaic_extent.plane_start, Some(0));
+        assert_eq!(weighted_mosaic_extent.plane_end, Some(1));
         assert_eq!(
             weighted_mosaic_span
                 .counters
