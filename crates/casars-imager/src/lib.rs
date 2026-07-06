@@ -40,9 +40,11 @@ use casa_imaging::{
     StandardMfsCleanSession, StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyPlan,
     StandardMfsExecutionConfig, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
+    StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
     StandardMfsPairCollapseTransform, StandardMfsPlan, StandardMfsPlannedSampleBlock,
     StandardMfsPlannedSampleBuilder, StandardMfsProgressCallback, StandardMfsProgressEvent,
-    StandardMfsProgressPhase, StandardMfsRoutedGridSample, StandardMfsRoutedInputCachePrefill,
+    StandardMfsProgressPhase, StandardMfsQueueProgress, StandardMfsQueueProgressConfidence,
+    StandardMfsRoutedGridSample, StandardMfsRoutedInputCachePrefill,
     StandardMfsRoutedVisibilityBlock, StandardMfsStreamingWeightingPlan,
     StandardMfsVisibilityPolarization, StandardMfsVisibilityRow, UvTaperSize, VisibilityBatch,
     VisibilityBlockView, VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics,
@@ -196,6 +198,7 @@ const PROGRESS_RESOURCE_ROWS: &[(ImagerObservedResourceId, &str)] = &[
     (ImagerObservedResourceId::PlaneState, "Plane State"),
     (ImagerObservedResourceId::Deconvolver, "Deconvolver"),
     (ImagerObservedResourceId::ProductScratch, "Products"),
+    (ImagerObservedResourceId::WorkerQueue, "Worker Queue"),
 ];
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
@@ -637,6 +640,8 @@ struct ImagerProgressContext {
     active_span_resource_counts: BTreeMap<String, BTreeMap<String, usize>>,
     active_resource_counts: BTreeMap<String, usize>,
     active_resource_thread_counts: BTreeMap<String, Vec<usize>>,
+    pending_queue_snapshots: Vec<ImagerObservedQueueSnapshot>,
+    worker_queue_high_water_bytes: usize,
     memory: Option<ImagerProgressMemory>,
     telemetry_writer: Option<BufWriter<File>>,
 }
@@ -751,6 +756,61 @@ fn observe_current_imager_span_counters(counters: impl IntoIterator<Item = (&'st
     }
 }
 
+fn set_imager_progress_queue_snapshots(
+    queues: Vec<ImagerObservedQueueSnapshot>,
+    queue_high_water_bytes: Option<usize>,
+) {
+    if queues.is_empty() || !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let live_queue_bytes = imager_optional_sum(queues.iter().map(|queue| queue.bytes));
+    let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+        return;
+    };
+    let Some(context) = context.as_mut() else {
+        return;
+    };
+    let high_water_bytes = live_queue_bytes.or(queue_high_water_bytes).map(|bytes| {
+        context.worker_queue_high_water_bytes = context
+            .worker_queue_high_water_bytes
+            .max(bytes)
+            .max(queue_high_water_bytes.unwrap_or(0));
+        context.worker_queue_high_water_bytes
+    });
+    if let Some(memory) = context.memory.as_mut() {
+        if live_queue_bytes.is_some() || high_water_bytes.is_some() {
+            let category = ImagerProgressMemoryCategory {
+                kind: ImagerObservedMemoryKind::WorkerQueue,
+                resource_id: Some(ImagerObservedResourceId::WorkerQueue),
+                planned_bytes: None,
+                tracked_live_bytes: live_queue_bytes,
+                high_water_bytes,
+                row_block_rows: None,
+                active_planes: None,
+                confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                note: Some("measured from standard-MFS scheduler queue telemetry".to_string()),
+            };
+            if let Some(existing) = memory
+                .categories
+                .iter_mut()
+                .find(|existing| existing.kind == ImagerObservedMemoryKind::WorkerQueue)
+            {
+                if existing.planned_bytes.is_none() {
+                    existing.planned_bytes = category.planned_bytes;
+                }
+                existing.tracked_live_bytes = category.tracked_live_bytes;
+                existing.high_water_bytes = category.high_water_bytes;
+                existing.resource_id = category.resource_id;
+                existing.confidence = category.confidence;
+                existing.note = category.note;
+            } else {
+                memory.categories.push(category);
+            }
+        }
+    }
+    context.pending_queue_snapshots = queues;
+}
+
 fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgressGuard> {
     if !options.enabled {
         return None;
@@ -796,6 +856,8 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         active_span_resource_counts: BTreeMap::new(),
         active_resource_counts: BTreeMap::new(),
         active_resource_thread_counts: BTreeMap::new(),
+        pending_queue_snapshots: Vec::new(),
+        worker_queue_high_water_bytes: 0,
         memory: None,
         telemetry_writer,
     };
@@ -1349,6 +1411,7 @@ fn imager_observed_worker_snapshots(
 }
 
 fn imager_observed_queue_snapshots(
+    context: &ImagerProgressContext,
     runtime: Option<&ImagerProgressRuntime>,
     memory: Option<&ImagerProgressMemory>,
     active_resources: &[String],
@@ -1357,6 +1420,10 @@ fn imager_observed_queue_snapshots(
         .iter()
         .any(|id| id == PROGRESS_RESOURCE_SOURCE_STREAM);
     let compute_active = runtime.is_some_and(|runtime| runtime.active_threads > 0);
+    let measured_queues = context.pending_queue_snapshots.clone();
+    let has_measured_worker_queue = measured_queues
+        .iter()
+        .any(|queue| queue.resource_id == Some(ImagerObservedResourceId::WorkerQueue));
     let dispatch_blocked = runtime.is_some_and(|runtime| {
         runtime.active_threads == 0
             && active_resources
@@ -1381,6 +1448,10 @@ fn imager_observed_queue_snapshots(
                     .to_string(),
             ),
         });
+    }
+    queues.extend(measured_queues);
+    if has_measured_worker_queue {
+        return queues;
     }
     queues.push(ImagerObservedQueueSnapshot {
         id: "worker-dispatch".to_string(),
@@ -1538,7 +1609,12 @@ fn imager_observability_snapshot(
             active_resource_threads,
             &active_resource_span_ids,
         ),
-        queues: imager_observed_queue_snapshots(event.runtime.as_ref(), memory, active_resources),
+        queues: imager_observed_queue_snapshots(
+            context,
+            event.runtime.as_ref(),
+            memory,
+            active_resources,
+        ),
     }
 }
 
@@ -1559,6 +1635,7 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                 now.duration_since(last).as_millis() < context.options.min_interval_ms as u128
             })
         {
+            context.pending_queue_snapshots.clear();
             return;
         }
         context.sequence = context.sequence.saturating_add(1);
@@ -1642,6 +1719,7 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                     .unwrap_or_default(),
             ));
         }
+        context.pending_queue_snapshots.clear();
         context.last_emit_at = Some(now);
         serde_json::to_string(&event)
     };
@@ -2889,6 +2967,81 @@ struct StandardMfsProgressResourceGuards {
     fft: Option<ImagerProgressResourceGuard>,
     weighted_mosaic_span: Option<ImagerObservationSpanGuard>,
     weighted_mosaic: Option<ImagerProgressResourceGuard>,
+}
+
+fn imager_queue_confidence_from_standard_mfs(
+    confidence: StandardMfsQueueProgressConfidence,
+) -> ImagerObservedQueueConfidence {
+    match confidence {
+        StandardMfsQueueProgressConfidence::Measured => ImagerObservedQueueConfidence::Measured,
+        StandardMfsQueueProgressConfidence::Unknown => ImagerObservedQueueConfidence::Unknown,
+    }
+}
+
+fn imager_queue_snapshot_from_standard_mfs(
+    queue: &StandardMfsQueueProgress,
+) -> ImagerObservedQueueSnapshot {
+    ImagerObservedQueueSnapshot {
+        id: queue.id.clone(),
+        label: queue.label.clone(),
+        resource_id: Some(ImagerObservedResourceId::WorkerQueue),
+        len: queue.len,
+        capacity: queue.capacity,
+        bytes: queue.bytes,
+        producers_active: queue.producers_active,
+        consumers_active: queue.consumers_active,
+        blocked_count: queue.blocked_count,
+        confidence: imager_queue_confidence_from_standard_mfs(queue.confidence),
+        note: queue.note.clone(),
+    }
+}
+
+fn standard_mfs_observability_callback(
+    config: &CliConfig,
+) -> Option<StandardMfsObservabilityCallback> {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    let config = config.clone();
+    Some(Arc::new(move |event: StandardMfsObservabilityEvent| {
+        let queue_high_water_bytes =
+            imager_optional_sum(event.queues.iter().map(|queue| queue.high_water_bytes));
+        let queues = event
+            .queues
+            .iter()
+            .map(imager_queue_snapshot_from_standard_mfs)
+            .collect::<Vec<_>>();
+        set_imager_progress_queue_snapshots(queues, queue_high_water_bytes);
+        let resource_guard = acquire_imager_progress_resource_ids_with_threads(
+            &[ImagerObservedResourceId::WorkerQueue],
+            event.active_workers,
+        );
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: format!("standard MFS {} scheduler", event.stage),
+                summary: format!(
+                    "standard MFS {} scheduler: {} active worker(s)",
+                    event.stage, event.active_workers
+                ),
+                work: Some(progress_work_from_config(&config, 0, 0)),
+                ms_read: None,
+                output_cube: Some(progress_output_cube_from_config(&config, 0, 1)),
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: Some(progress_runtime_for_resource_scope(
+                    event.active_workers,
+                    "standard-MFS tile scheduler",
+                    &[ImagerObservedResourceId::WorkerQueue.as_progress_id()],
+                )),
+                observability: None,
+            },
+            false,
+        );
+        drop(resource_guard);
+    }))
 }
 
 fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgressCallback> {
@@ -29810,6 +29963,7 @@ fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConf
         .map(|value| value.min(2))
         .unwrap_or(1);
     execution.progress_callback = standard_mfs_progress_callback(config);
+    execution.observability_callback = standard_mfs_observability_callback(config);
     execution
 }
 
@@ -42303,6 +42457,112 @@ mod tests {
                 .get(OBS_COUNTER_MINOR_ITERATIONS),
             Some(&25)
         );
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_scheduler_observability_reports_measured_worker_queue() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp
+            .path()
+            .join("progress")
+            .join("standard-mfs-queues.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 8 * 1024,
+            source_stream_buffer_bytes: 2 * 1024,
+            product_scratch_bytes: 1024,
+            active_planes: 1,
+            row_block_rows: 128,
+            memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
+        });
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/observability.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/observability-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse config");
+        let callback =
+            standard_mfs_observability_callback(&config).expect("observability callback");
+
+        callback(StandardMfsObservabilityEvent {
+            stage: "residual".to_string(),
+            active_workers: 2,
+            worker_capacity: 4,
+            queues: vec![StandardMfsQueueProgress {
+                id: "standard-mfs-tile-inbox-residual".to_string(),
+                label: "Tile inbox residual".to_string(),
+                len: Some(3),
+                capacity: Some(8),
+                bytes: Some(4096),
+                high_water_bytes: Some(8192),
+                producers_active: true,
+                consumers_active: true,
+                blocked_count: 1,
+                confidence: StandardMfsQueueProgressConfidence::Measured,
+                note: Some("test measured queue".to_string()),
+            }],
+        });
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let queue = observability
+            .queues
+            .iter()
+            .find(|queue| queue.id == "standard-mfs-tile-inbox-residual")
+            .expect("measured scheduler queue");
+        assert_eq!(queue.confidence, ImagerObservedQueueConfidence::Measured);
+        assert_eq!(queue.len, Some(3));
+        assert_eq!(queue.bytes, Some(4096));
+        assert!(queue.producers_active);
+        assert!(queue.consumers_active);
+        assert_eq!(queue.blocked_count, 1);
+        assert!(
+            !observability
+                .queues
+                .iter()
+                .any(|queue| queue.id == "worker-dispatch")
+        );
+        let worker_queue = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::WorkerQueue)
+            .expect("worker queue resource");
+        assert_eq!(worker_queue.state, ImagerObservedResourceState::Active);
+        assert_eq!(worker_queue.active_threads, 2);
+        let ledger = observability.memory_ledger.as_ref().expect("memory ledger");
+        let worker_entry = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::WorkerQueue)
+            .expect("worker queue memory entry");
+        assert_eq!(
+            worker_entry.confidence,
+            ImagerObservedMemoryConfidence::Measured
+        );
+        assert_eq!(worker_entry.tracked_live_bytes, Some(4096));
+        assert_eq!(worker_entry.high_water_bytes, Some(8192));
+
         drop(callback);
         drop(progress_guard);
     }

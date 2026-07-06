@@ -1077,6 +1077,59 @@ pub struct StandardMfsProgressEvent {
 pub type StandardMfsProgressCallback =
     Arc<dyn Fn(StandardMfsProgressEvent) + Send + Sync + 'static>;
 
+/// Confidence class for standard-MFS scheduler queue telemetry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandardMfsQueueProgressConfidence {
+    /// Queue length and byte counters came from the scheduler state.
+    Measured,
+    /// Queue exists conceptually, but live counters are not available.
+    Unknown,
+}
+
+/// Coarse standard-MFS queue snapshot emitted by execution schedulers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StandardMfsQueueProgress {
+    /// Stable queue id within the standard-MFS execution model.
+    pub id: String,
+    /// Human-readable queue label.
+    pub label: String,
+    /// Current queue depth when known.
+    pub len: Option<usize>,
+    /// Queue capacity or worker capacity when known.
+    pub capacity: Option<usize>,
+    /// Currently queued or reserved bytes when known.
+    pub bytes: Option<usize>,
+    /// Highest queued or reserved bytes observed by this scheduler.
+    pub high_water_bytes: Option<usize>,
+    /// Whether a producer is currently filling this queue.
+    pub producers_active: bool,
+    /// Whether workers are currently consuming this queue.
+    pub consumers_active: bool,
+    /// Number of blocked producers or consumers observed by the scheduler.
+    pub blocked_count: usize,
+    /// Confidence class for this snapshot.
+    pub confidence: StandardMfsQueueProgressConfidence,
+    /// Short note explaining the queue observation.
+    pub note: Option<String>,
+}
+
+/// Coarse standard-MFS execution-state snapshot emitted by shared schedulers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StandardMfsObservabilityEvent {
+    /// Stable stage label such as `dirty`, `psf`, or `residual`.
+    pub stage: String,
+    /// Active worker count at the time of the snapshot.
+    pub active_workers: usize,
+    /// Planned worker capacity at the time of the snapshot.
+    pub worker_capacity: usize,
+    /// Queue snapshots reported by this scheduler.
+    pub queues: Vec<StandardMfsQueueProgress>,
+}
+
+/// Callback used by frontends to observe scheduler/resource state.
+pub type StandardMfsObservabilityCallback =
+    Arc<dyn Fn(StandardMfsObservabilityEvent) + Send + Sync + 'static>;
+
 /// Runtime execution knobs for standard-MFS backends.
 ///
 /// These values are deliberately separate from [`ImagingRequest`] so callers
@@ -1134,6 +1187,12 @@ pub struct StandardMfsExecutionConfig {
     /// The callback is intentionally outside the per-component hot loop. It is
     /// suitable for user-interface phase state, not detailed profiling.
     pub progress_callback: Option<StandardMfsProgressCallback>,
+    /// Optional observability callback fired by execution schedulers.
+    ///
+    /// This reports bounded aggregate scheduler facts such as queue depth,
+    /// queued bytes, worker activity, and backpressure. It must not emit
+    /// per-visibility records.
+    pub observability_callback: Option<StandardMfsObservabilityCallback>,
 }
 
 impl fmt::Debug for StandardMfsExecutionConfig {
@@ -1165,6 +1224,10 @@ impl fmt::Debug for StandardMfsExecutionConfig {
                 &self.w_project_max_abs_w_lambda,
             )
             .field("progress_callback", &self.progress_callback.is_some())
+            .field(
+                "observability_callback",
+                &self.observability_callback.is_some(),
+            )
             .finish()
     }
 }
