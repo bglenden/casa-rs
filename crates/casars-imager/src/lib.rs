@@ -2813,6 +2813,42 @@ fn emit_imager_progress_run_started(request: &ImagerRunTaskRequest) {
     );
 }
 
+fn begin_imager_progress_run_observation(
+    request: &ImagerRunTaskRequest,
+) -> Option<ImagerObservationSpanGuard> {
+    let config = request.to_cli_config().ok()?;
+    let output_planes = if config.spectral_mode.is_cube_like() {
+        config.channel_count.unwrap_or(1).max(1) as u64
+    } else {
+        1
+    };
+    let span = begin_imager_observation_span(
+        ImagerObservedStageKind::Run,
+        "imager run",
+        &[
+            ImagerObservedResourceId::SourceStream,
+            ImagerObservedResourceId::VisibilityGrid,
+            ImagerObservedResourceId::PlaneState,
+            ImagerObservedResourceId::Deconvolver,
+            ImagerObservedResourceId::ProductScratch,
+            ImagerObservedResourceId::WorkerQueue,
+        ],
+        Some(ImagerObservabilityExtent {
+            row_start: None,
+            row_end: None,
+            channel_start: None,
+            channel_end: None,
+            plane_start: Some(0),
+            plane_end: Some(output_planes as usize),
+        }),
+    );
+    observe_current_imager_span_counters([
+        (OBS_COUNTER_OUTPUT_PLANES, output_planes),
+        (OBS_COUNTER_MINOR_ITERATION_LIMIT, config.niter as u64),
+    ]);
+    span
+}
+
 fn emit_imager_progress_ms_window(
     ms: &MeasurementSet,
     table_values: &PreparedSelectionTableValues,
@@ -4378,18 +4414,26 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     let cli_started_at = Instant::now();
     let progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
     let progress_active = progress_guard.is_some();
+    let mut run_span = progress_active
+        .then(|| begin_imager_progress_run_observation(&request))
+        .flatten();
     if progress_active {
         emit_imager_progress_run_started(&request);
     }
     let summary = match run_from_request(&request) {
         Ok(summary) => {
             if progress_active {
+                drop(run_span.take());
                 emit_imager_progress_run_finished(&request, &summary);
             }
             summary
         }
         Err(error) => {
             if progress_active {
+                if let Some(run_span) = run_span.as_mut() {
+                    run_span.mark_failed();
+                }
+                drop(run_span.take());
                 emit_imager_progress_event(
                     ImagerProgressEvent {
                         schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -5704,9 +5748,11 @@ fn execute_json_task_request_with_progress(
 ) -> Result<ImagerTaskResult, String> {
     match request {
         ImagerTaskRequest::Run(run_request) => {
+            let mut run_span = begin_imager_progress_run_observation(run_request);
             emit_imager_progress_run_started(run_request);
             match run_from_request(run_request) {
                 Ok(summary) => {
+                    drop(run_span.take());
                     emit_imager_progress_run_finished(run_request, &summary);
                     Ok(ImagerTaskResult::Run(ImagerRunTaskResult::from_run(
                         run_request.clone(),
@@ -5714,6 +5760,10 @@ fn execute_json_task_request_with_progress(
                     )))
                 }
                 Err(error) => {
+                    if let Some(run_span) = run_span.as_mut() {
+                        run_span.mark_failed();
+                    }
+                    drop(run_span.take());
                     emit_imager_progress_event(
                         ImagerProgressEvent {
                             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -42622,6 +42672,111 @@ mod tests {
         assert!(observability.recent_spans.iter().any(|span| span.stage_kind
             == ImagerObservedStageKind::SourceStream
             && span.state == ImagerObservabilitySpanState::Complete));
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn run_observation_span_parents_child_stages_until_completion() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/run-span.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/run-span-image"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("25"),
+        ])
+        .expect("parse config");
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        let run_span = begin_imager_progress_run_observation(&request).expect("run span starts");
+        let child_span = begin_imager_observation_span(
+            ImagerObservedStageKind::Gridding,
+            "child gridding",
+            &[ImagerObservedResourceId::VisibilityGrid],
+            None,
+        )
+        .expect("child span starts");
+
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 13,
+            elapsed_ms: 1000,
+            phase: "inside-run".to_string(),
+            summary: "inside run".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: None,
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let run = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Run)
+            .expect("run span");
+        let child = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Gridding)
+            .expect("child span");
+        assert_eq!(child.parent_id.as_deref(), Some(run.id.as_str()));
+        assert_eq!(
+            run.expected_resource_ids,
+            vec![
+                ImagerObservedResourceId::SourceStream,
+                ImagerObservedResourceId::VisibilityGrid,
+                ImagerObservedResourceId::PlaneState,
+                ImagerObservedResourceId::Deconvolver,
+                ImagerObservedResourceId::ProductScratch,
+                ImagerObservedResourceId::WorkerQueue,
+            ]
+        );
+        assert_eq!(run.counters.get(OBS_COUNTER_OUTPUT_PLANES), Some(&8));
+        assert_eq!(
+            run.counters.get(OBS_COUNTER_MINOR_ITERATION_LIMIT),
+            Some(&25)
+        );
+        drop(context_guard);
+
+        drop(child_span);
+        drop(run_span);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        assert!(context.active_spans.is_empty());
+        assert!(
+            context
+                .recent_spans
+                .iter()
+                .any(|span| span.stage_kind == ImagerObservedStageKind::Run
+                    && span.state == ImagerObservabilitySpanState::Complete)
+        );
+        drop(context_guard);
         drop(progress_guard);
     }
 
