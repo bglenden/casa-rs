@@ -735,10 +735,26 @@ public struct ImagingExecutionSpanSummary: Codable, Equatable, Identifiable {
         id = span.id
         label = span.name
         state = span.state
-        let resourceDetail = span.resourceIDs.isEmpty ? "no resources" : span.resourceIDs.joined(separator: ", ")
+        let stageDetail = span.stageKind.isEmpty ? nil : "stage=\(span.stageKind)"
+        let resourceDetail = span.resourceIDs.isEmpty
+            ? "owns=none"
+            : "owns=\(span.resourceIDs.joined(separator: ", "))"
+        let expectedDetail = span.expectedResourceIDs.isEmpty
+            ? nil
+            : "expects=\(span.expectedResourceIDs.joined(separator: ", "))"
+        let extentDetail = span.extent?.compactLabel
         let counterDetail = Self.counterDetailLabel(span.counters)
+        let parentDetail = span.parentID.map { "parent=\($0)" }
         let workerDetail = span.workerID.map { "worker=\($0)" }
-        let optionalDetailParts: [String?] = [resourceDetail, workerDetail, counterDetail]
+        let optionalDetailParts: [String?] = [
+            stageDetail,
+            resourceDetail,
+            expectedDetail,
+            extentDetail,
+            parentDetail,
+            workerDetail,
+            counterDetail
+        ]
         let detailParts = optionalDetailParts.compactMap { part -> String? in
             guard let part, !part.isEmpty else { return nil }
             return part
@@ -1190,28 +1206,79 @@ public struct ImagingObservedResourceMemory: Codable, Equatable {
 public struct ImagingObservabilitySpan: Codable, Equatable, Identifiable {
     public var id: String
     public var name: String
+    public var stageKind: String
     public var state: String
+    public var parentID: String?
     public var workerID: String?
     public var resourceIDs: [String]
+    public var expectedResourceIDs: [String]
+    public var extent: ImagingObservabilityExtent?
     public var counters: [String: UInt64]
     public var elapsedMilliseconds: UInt64
 
     public init(
         id: String,
         name: String,
+        stageKind: String = "unknown",
         state: String,
+        parentID: String? = nil,
         workerID: String? = nil,
         resourceIDs: [String],
+        expectedResourceIDs: [String] = [],
+        extent: ImagingObservabilityExtent? = nil,
         counters: [String: UInt64] = [:],
         elapsedMilliseconds: UInt64
     ) {
         self.id = id
         self.name = name
+        self.stageKind = stageKind
         self.state = state
+        self.parentID = parentID
         self.workerID = workerID
         self.resourceIDs = resourceIDs
+        self.expectedResourceIDs = expectedResourceIDs
+        self.extent = extent
         self.counters = counters
         self.elapsedMilliseconds = elapsedMilliseconds
+    }
+}
+
+public struct ImagingObservabilityExtent: Codable, Equatable {
+    public var rowStart: Int?
+    public var rowEnd: Int?
+    public var channelStart: Int?
+    public var channelEnd: Int?
+    public var planeStart: Int?
+    public var planeEnd: Int?
+
+    public init(
+        rowStart: Int?,
+        rowEnd: Int?,
+        channelStart: Int?,
+        channelEnd: Int?,
+        planeStart: Int?,
+        planeEnd: Int?
+    ) {
+        self.rowStart = rowStart
+        self.rowEnd = rowEnd
+        self.channelStart = channelStart
+        self.channelEnd = channelEnd
+        self.planeStart = planeStart
+        self.planeEnd = planeEnd
+    }
+
+    public var compactLabel: String? {
+        var parts: [String] = []
+        if let rowStart, let rowEnd {
+            parts.append("rows \(rowStart)-\(rowEnd)")
+        }
+        if let channelStart, let channelEnd {
+            parts.append("channels \(channelStart)-\(channelEnd)")
+        }
+        if let planeStart, let planeEnd {
+            parts.append("planes \(planeStart)-\(planeEnd)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 }
 
@@ -2031,18 +2098,26 @@ struct ImagerObservedResourceMemoryPayload: Decodable, Equatable {
 struct ImagerObservabilitySpanPayload: Decodable, Equatable {
     var id: String
     var name: String
+    var stageKind: String
     var state: String
+    var parentID: String?
     var workerID: String?
     var resourceIDs: [String]
+    var expectedResourceIDs: [String]
+    var extent: ImagerObservabilityExtentPayload?
     var counters: [String: UInt64]
     var elapsedMilliseconds: UInt64
 
     enum CodingKeys: String, CodingKey {
         case id
         case name
+        case stageKind = "stage_kind"
         case state
+        case parentID = "parent_id"
         case workerID = "worker_id"
         case resourceIDs = "resource_ids"
+        case expectedResourceIDs = "expected_resource_ids"
+        case extent
         case counters
         case elapsedMilliseconds = "elapsed_ms"
     }
@@ -2051,11 +2126,33 @@ struct ImagerObservabilitySpanPayload: Decodable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        stageKind = try container.decodeIfPresent(String.self, forKey: .stageKind) ?? "unknown"
         state = try container.decode(String.self, forKey: .state)
+        parentID = try container.decodeIfPresent(String.self, forKey: .parentID)
         workerID = try container.decodeIfPresent(String.self, forKey: .workerID)
         resourceIDs = try container.decodeIfPresent([String].self, forKey: .resourceIDs) ?? []
+        expectedResourceIDs = try container.decodeIfPresent([String].self, forKey: .expectedResourceIDs) ?? []
+        extent = try container.decodeIfPresent(ImagerObservabilityExtentPayload.self, forKey: .extent)
         counters = try container.decodeIfPresent([String: UInt64].self, forKey: .counters) ?? [:]
         elapsedMilliseconds = try container.decode(UInt64.self, forKey: .elapsedMilliseconds)
+    }
+}
+
+struct ImagerObservabilityExtentPayload: Decodable, Equatable {
+    var rowStart: Int?
+    var rowEnd: Int?
+    var channelStart: Int?
+    var channelEnd: Int?
+    var planeStart: Int?
+    var planeEnd: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case rowStart = "row_start"
+        case rowEnd = "row_end"
+        case channelStart = "channel_start"
+        case channelEnd = "channel_end"
+        case planeStart = "plane_start"
+        case planeEnd = "plane_end"
     }
 }
 
@@ -2123,6 +2220,37 @@ extension ImagingMemoryLedgerEntry {
     }
 }
 
+extension ImagingObservabilitySpan {
+    init(payload: ImagerObservabilitySpanPayload) {
+        self.init(
+            id: payload.id,
+            name: payload.name,
+            stageKind: payload.stageKind,
+            state: payload.state,
+            parentID: payload.parentID,
+            workerID: payload.workerID,
+            resourceIDs: payload.resourceIDs,
+            expectedResourceIDs: payload.expectedResourceIDs,
+            extent: payload.extent.map(ImagingObservabilityExtent.init(payload:)),
+            counters: payload.counters,
+            elapsedMilliseconds: payload.elapsedMilliseconds
+        )
+    }
+}
+
+extension ImagingObservabilityExtent {
+    init(payload: ImagerObservabilityExtentPayload) {
+        self.init(
+            rowStart: payload.rowStart,
+            rowEnd: payload.rowEnd,
+            channelStart: payload.channelStart,
+            channelEnd: payload.channelEnd,
+            planeStart: payload.planeStart,
+            planeEnd: payload.planeEnd
+        )
+    }
+}
+
 extension ImagingObservedWorkerSnapshot {
     init(payload: ImagerObservedWorkerPayload) {
         self.init(
@@ -2178,20 +2306,6 @@ extension ImagingObservedResourceMemory {
             plannedBytes: payload.plannedBytes,
             rowBlockRows: payload.rowBlockRows,
             activePlanes: payload.activePlanes
-        )
-    }
-}
-
-extension ImagingObservabilitySpan {
-    init(payload: ImagerObservabilitySpanPayload) {
-        self.init(
-            id: payload.id,
-            name: payload.name,
-            state: payload.state,
-            workerID: payload.workerID,
-            resourceIDs: payload.resourceIDs,
-            counters: payload.counters,
-            elapsedMilliseconds: payload.elapsedMilliseconds
         )
     }
 }
