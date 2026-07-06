@@ -15588,7 +15588,16 @@ fn run_hogbom_cotton_schwab(
             Some(cycle_peak),
             Some(cycle_threshold_jy_per_beam),
         );
-        let outcome = run_hogbom_minor_cycle(
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+        );
+        let outcome = run_hogbom_minor_cycle_with_progress(
             request,
             psf_state,
             model,
@@ -15598,6 +15607,7 @@ fn run_hogbom_cotton_schwab(
             cycle_nsigma_threshold_jy_per_beam,
             minor_cycle_backend,
             stage_timings,
+            &mut minor_progress,
         )?;
         let reported_after_outcome =
             reported_minor_iterations.saturating_add(outcome.reported_updates);
@@ -15773,6 +15783,7 @@ fn run_hogbom_cotton_schwab(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn run_hogbom_minor_cycle(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -15784,8 +15795,44 @@ fn run_hogbom_minor_cycle(
     minor_cycle_backend: StandardMfsMinorCycleBackend,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        request,
+        minor_cycle_backend,
+        0,
+        0,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_with_progress(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        minor_cycle_backend,
+        stage_timings,
+        &mut minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hogbom_minor_cycle_with_progress(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     match minor_cycle_backend {
-        StandardMfsMinorCycleBackend::Cpu => Ok(run_hogbom_minor_cycle_cpu(
+        StandardMfsMinorCycleBackend::Cpu => Ok(run_hogbom_minor_cycle_cpu_with_progress(
             request,
             psf_state,
             model,
@@ -15794,8 +15841,9 @@ fn run_hogbom_minor_cycle(
             cycle_threshold_jy_per_beam,
             nsigma_threshold_jy_per_beam,
             stage_timings,
+            minor_progress,
         )),
-        StandardMfsMinorCycleBackend::Metal => run_hogbom_minor_cycle_metal(
+        StandardMfsMinorCycleBackend::Metal => run_hogbom_minor_cycle_metal_with_progress(
             request,
             psf_state,
             model,
@@ -15804,6 +15852,7 @@ fn run_hogbom_minor_cycle(
             cycle_threshold_jy_per_beam,
             nsigma_threshold_jy_per_beam,
             stage_timings,
+            minor_progress,
         ),
     }
 }
@@ -15818,6 +15867,40 @@ fn run_hogbom_minor_cycle_cpu(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
+) -> HogbomMinorCycleOutcome {
+    let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        request,
+        StandardMfsMinorCycleBackend::Cpu,
+        0,
+        0,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_cpu_with_progress(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        stage_timings,
+        &mut minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hogbom_minor_cycle_cpu_with_progress(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> HogbomMinorCycleOutcome {
     let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
@@ -15868,6 +15951,7 @@ fn run_hogbom_minor_cycle_cpu(
         subtract_updates = subtract_updates.saturating_add(1);
         cycle_component_updates += 1;
         updated_model = true;
+        minor_progress.emit(cycle_component_updates, Some(peak_abs));
         if collect_profile && cycle_component_updates % 100 == 0 {
             eprintln!(
                 "standard_mfs_hogbom_minor_cycle_progress updates={} budget={} image_pixels={} peak_searches={} subtract_updates={} peak_scan_estimated_bytes={} peak_search_ms={:.3} subtract_ms={:.3} elapsed_ms={:.3}",
@@ -16013,7 +16097,7 @@ fn array2_max_abs_diff_with_first(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(any(not(target_os = "macos"), coverage))]
+#[cfg(all(test, any(not(target_os = "macos"), coverage)))]
 fn run_hogbom_minor_cycle_metal(
     _request: &ImagingRequest,
     _psf_state: &PsfState,
@@ -16024,13 +16108,48 @@ fn run_hogbom_minor_cycle_metal(
     _nsigma_threshold_jy_per_beam: f32,
     _stage_timings: &mut ImagingStageTimings,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    let mut _minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        _request,
+        StandardMfsMinorCycleBackend::Metal,
+        0,
+        0,
+        _cycle_reported_niter,
+        _cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_metal_with_progress(
+        _request,
+        _psf_state,
+        _model,
+        _residual,
+        _cycle_reported_niter,
+        _cycle_threshold_jy_per_beam,
+        _nsigma_threshold_jy_per_beam,
+        _stage_timings,
+        &mut _minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(any(not(target_os = "macos"), coverage))]
+fn run_hogbom_minor_cycle_metal_with_progress(
+    _request: &ImagingRequest,
+    _psf_state: &PsfState,
+    _model: &mut Array2<f32>,
+    _residual: &mut Array2<f32>,
+    _cycle_reported_niter: usize,
+    _cycle_threshold_jy_per_beam: f32,
+    _nsigma_threshold_jy_per_beam: f32,
+    _stage_timings: &mut ImagingStageTimings,
+    _minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     Err(ImagingError::Unsupported(
         "Hogbom minor-cycle backend 'metal' requires macOS Metal".to_string(),
     ))
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(all(target_os = "macos", not(coverage)))]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 fn run_hogbom_minor_cycle_metal(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -16040,6 +16159,41 @@ fn run_hogbom_minor_cycle_metal(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        request,
+        StandardMfsMinorCycleBackend::Metal,
+        0,
+        0,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_metal_with_progress(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        stage_timings,
+        &mut minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_hogbom_minor_cycle_metal_with_progress(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     use std::{mem, slice};
 
@@ -16261,6 +16415,7 @@ fn run_hogbom_minor_cycle_metal(
     let last_peak_abs = cycle_state.peak.abs_value;
     let last_peak_value = cycle_state.peak.value;
     let last_peak_index = cycle_state.peak.flat_index;
+    minor_progress.emit(cycle_component_updates, Some(last_peak_abs));
 
     let readback_started = Instant::now();
     let residual_slice = unsafe {
@@ -19718,6 +19873,15 @@ fn run_multiscale_cotton_schwab(
             Some(cycle_peak),
             Some(final_cycle_threshold_jy_per_beam),
         );
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            final_cycle_threshold_jy_per_beam,
+        );
         let minor_started = Instant::now();
         while cycle_component_updates < cycle_reported_niter {
             let candidate_started = Instant::now();
@@ -19808,6 +19972,7 @@ fn run_multiscale_cotton_schwab(
             cycle_component_updates += 1;
             minor_iterations += 1;
             updated_model = true;
+            minor_progress.emit(cycle_component_updates, Some(component_abs));
         }
         let minor_elapsed = minor_started.elapsed();
         stage_timings.minor_cycle += minor_elapsed;
@@ -29081,8 +29246,9 @@ mod tests {
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
         primary_beam_support_mask_product, primary_beam_voltage_pattern_for_offsets,
         run_clark_cotton_schwab, run_clark_minor_cycle, run_hogbom_minor_cycle,
-        run_hogbom_plane_minor_cycle, run_imaging, run_imaging_owned,
-        run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_plan,
+        run_hogbom_minor_cycle_with_progress, run_hogbom_plane_minor_cycle, run_imaging,
+        run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        run_standard_mfs_plan,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -34659,6 +34825,122 @@ mod tests {
         assert_eq!(outcome.actual_updates, 2);
         assert_eq!(outcome.reported_updates, 1);
         assert!((model[(3, 3)] - 0.9).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn hogbom_minor_cycle_emits_in_cycle_progress() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [6, 6],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                major_cycle_limit: None,
+                gain: 0.5,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 4,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let psf = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0, //
+                0.0, 0.0, 0.1, 0.2, 0.1, 0.0, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.05, 0.2, 0.4, 1.0, 0.4, 0.1, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0,
+            ],
+        )
+        .unwrap();
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((6, 6));
+        let mut residual = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.1, 0.4, 1.2, 0.4, 0.05, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0,
+            ],
+        )
+        .unwrap();
+        let mut stage_timings = ImagingStageTimings::default();
+        let progress_events = Arc::new(Mutex::new(Vec::new()));
+        let progress_callback: StandardMfsProgressCallback = Arc::new({
+            let progress_events = Arc::clone(&progress_events);
+            move |event| {
+                progress_events
+                    .lock()
+                    .expect("progress events lock")
+                    .push(event);
+            }
+        });
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            Some(&progress_callback),
+            &request,
+            StandardMfsMinorCycleBackend::Cpu,
+            3,
+            12,
+            4,
+            0.0,
+        );
+
+        let outcome = run_hogbom_minor_cycle_with_progress(
+            &request,
+            &psf_state,
+            &mut model,
+            &mut residual,
+            4,
+            0.0,
+            0.0,
+            StandardMfsMinorCycleBackend::Cpu,
+            &mut stage_timings,
+            &mut minor_progress,
+        )
+        .expect("run Hogbom minor cycle");
+
+        assert!(outcome.actual_updates > 0);
+        let events = progress_events.lock().expect("progress events lock");
+        let progress_event = events
+            .iter()
+            .find(|event| event.phase == StandardMfsProgressPhase::MinorCycleProgress)
+            .expect("Hogbom minor cycle progress event");
+        assert_eq!(progress_event.deconvolver, Deconvolver::Hogbom);
+        assert_eq!(progress_event.major_cycle, 3);
+        assert!(progress_event.minor_iterations > 12);
+        assert!(progress_event.minor_iterations <= 16);
+        assert_eq!(progress_event.cycle_iteration_limit, 4);
     }
 
     #[test]
