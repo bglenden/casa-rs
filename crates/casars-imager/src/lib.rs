@@ -4703,7 +4703,7 @@ fn extract_string_option(
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n",
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n  --progress-jsonl PATH    Write low-rate progress telemetry to newline-delimited JSON side channel\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n",
         schema.render_help()
     )
 }
@@ -50522,6 +50522,7 @@ mod tests {
         assert!(help.contains("--json-schema"));
         assert!(help.contains("--protocol-info"));
         assert!(help.contains("--json-run <SOURCE>"));
+        assert!(help.contains("--progress-jsonl PATH"));
         assert!(help.contains("--progress true|false"));
     }
 
