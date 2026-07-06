@@ -6553,7 +6553,7 @@ fn cube_per_plane_runtime_config(
         && eligibility.selected_backend == PerPlaneExecutionBackend::Wave3MetalGrouped
     {
         plane_config.standard_mfs_residual_backend = Some("cpu".to_string());
-        plane_config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
+        plane_config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
     }
     plane_config
 }
@@ -6736,6 +6736,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
     prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
     let source_block = read_columnar_prepared_source(
@@ -6768,6 +6769,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
         prepare_started_at,
         prepare_stage_timings,
         accumulate_timings,
+        cube_row_spectral_reusable_plan,
     )
 }
 
@@ -6785,6 +6787,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     _prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
     let finish = if mosaic_cube_one_channel_can_use_single_plane_stream(config) {
@@ -6811,7 +6814,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
             standard_mfs_table_values: None,
             cube_context,
             finish,
-            cube_row_spectral_reusable_plan: None,
+            cube_row_spectral_reusable_plan,
             build_cube_briggs_density_samples: true,
             build_cube_mosaic_metadata: true,
         },
@@ -7431,6 +7434,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
+        None,
     )?;
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
@@ -7495,6 +7499,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                     prepare_started_at,
                     &mut prepare_stage_timings,
                     &mut accumulate_timings,
+                    None,
                 )
                 .map_err(ImagingError::InvalidRequest)?;
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
@@ -7576,6 +7581,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
     derived_engine: Option<&MsCalEngine>,
     shared_visibility_source: Arc<SharedColumnarCubeSlabSource>,
     shared_density_source: Option<Arc<SharedColumnarCubeSlabSource>>,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<MosaicSinglePlaneStreamProducts, String> {
     let geometry = ImageGeometry {
         image_shape: [read_config.imsize, read_config.imsize],
@@ -7651,6 +7657,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
+        cube_row_spectral_reusable_plan.clone(),
     )?;
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
@@ -7718,6 +7725,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     prepare_started_at,
                     &mut prepare_stage_timings,
                     &mut accumulate_timings,
+                    cube_row_spectral_reusable_plan.clone(),
                 )
                 .map_err(ImagingError::InvalidRequest)?;
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
@@ -8122,6 +8130,15 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic cube rows".to_string());
     }
+    let cube_row_spectral_reusable_plan = build_mosaic_cube_row_spectral_reusable_plan(
+        config,
+        &selection,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        &active_selected_rows,
+        Some(&derived_engine),
+    )?;
     let metadata = collect_cube_slab_run_metadata(
         config,
         channel_start,
@@ -8425,6 +8442,9 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                     if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
                         plane_config.standard_mfs_grid_threads = Some("1".to_string());
                     }
+                    let plane_reusable_plan = cube_row_spectral_reusable_plan
+                        .as_ref()
+                        .and_then(|plan| plan.local_output_view(plane_index));
                     let products = run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                         ms,
                         &plane_config,
@@ -8438,6 +8458,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                         Some(&derived_engine),
                         Arc::clone(&shared_visibility_source),
                         shared_density_source.as_ref().map(Arc::clone),
+                        plane_reusable_plan,
                     )?;
                     let stage_timings = products.result.diagnostics.stage_timings;
                     Ok((products, stage_timings))
@@ -21187,7 +21208,17 @@ fn build_mosaic_cube_row_spectral_reusable_plan(
     active_selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
 ) -> Result<Option<Arc<CubeRowSpectralReusablePlan>>, String> {
-    if !mosaic_cube_one_channel_can_use_single_plane_stream(config) {
+    if !matches!(config.spectral_mode, SpectralMode::Cube)
+        || !matches!(config.cube_axis.interpolation, CubeInterpolation::Nearest)
+        || !matches!(
+            config.cube_axis.start,
+            None | Some(CubeAxisValue::Channel(_))
+        )
+        || !matches!(
+            config.cube_axis.width,
+            None | Some(CubeAxisValue::Channel(_))
+        )
+    {
         return Ok(None);
     }
     let started_at = Instant::now();
@@ -21221,6 +21252,18 @@ fn build_mosaic_cube_row_spectral_reusable_plan(
         keys.insert((row_time_mjd_sec.to_bits(), row.field_id));
     }
     let keys = keys.into_iter().collect::<Vec<_>>();
+    let key_limit = env_usize("CASA_RS_MOSAIC_CUBE_REUSABLE_PLAN_MAX_KEYS")
+        .filter(|value| *value > 0)
+        .unwrap_or(2_000_000);
+    if keys.len() > key_limit {
+        eprintln!(
+            "mosaic_cube_reusable_plan_skip reason=too_many_time_field_keys entries={} limit={} active_rows={} cache_scope=per_plane",
+            keys.len(),
+            key_limit,
+            active_selected_rows.len(),
+        );
+        return Ok(None);
+    }
 
     let use_visibility_grid_assignments =
         prepared.casa_cube_grid_interpolation || prepared.cube_visibility_grid_assignments;
@@ -32939,6 +32982,29 @@ impl CubeRowSpectralReusablePlan {
         self.source_frequencies.len()
     }
 
+    fn local_output_view(&self, output_channel: usize) -> Option<Arc<Self>> {
+        let output_frequency_hz = *self.output_channel_frequencies_hz.get(output_channel)?;
+        let mut local_spectral = HashMap::with_capacity(self.spectral.len());
+        for (cache_key, contributions) in &self.spectral {
+            local_spectral.insert(
+                *cache_key,
+                Arc::new(localize_cube_row_spectral_contributions(
+                    contributions,
+                    output_channel,
+                )),
+            );
+        }
+        Some(Arc::new(Self {
+            spectral: local_spectral,
+            source_frequencies: self.source_frequencies.clone(),
+            grid_assignment_indices: HashMap::new(),
+            shared_spectral_binding: None,
+            source_channel_indices: Arc::clone(&self.source_channel_indices),
+            output_channel_frequencies_hz: Arc::from(vec![output_frequency_hz].into_boxed_slice()),
+            use_visibility_grid_assignments: self.use_visibility_grid_assignments,
+        }))
+    }
+
     fn assignment_for_output<'a>(
         &self,
         binding: &'a CubeSpectralBinding,
@@ -32975,6 +33041,72 @@ impl CubeRowSpectralReusablePlan {
             contributions: channel_contributions.as_slice(),
             nearest_weight: false,
         })
+    }
+}
+
+fn localize_cube_row_spectral_contributions(
+    contributions: &CubeRowSpectralContributions,
+    output_channel: usize,
+) -> CubeRowSpectralContributions {
+    let localize_channel_map = |mapped: &Option<usize>| match *mapped {
+        Some(channel) if channel == output_channel => Some(0),
+        _ => None,
+    };
+    let localize_model_contribution = |contribution: &CubeChannelContribution| {
+        (contribution.source_channel == output_channel).then_some(CubeChannelContribution {
+            source_channel: 0,
+            source_frequency_hz: contribution.source_frequency_hz,
+            factor: contribution.factor,
+        })
+    };
+    CubeRowSpectralContributions {
+        output_channel_contributions: vec![
+            contributions
+                .output_channel_contributions
+                .get(output_channel)
+                .cloned()
+                .unwrap_or_default(),
+        ],
+        source_channel_output_map: contributions
+            .source_channel_output_map
+            .iter()
+            .map(localize_channel_map)
+            .collect(),
+        padded_source_channel_output_map: contributions
+            .padded_source_channel_output_map
+            .iter()
+            .map(localize_channel_map)
+            .collect(),
+        padded_grid_channel_contributions: contributions
+            .padded_grid_channel_contributions
+            .iter()
+            .filter(|grid| grid.output_channel == output_channel)
+            .map(|grid| CubeGridChannelContributions {
+                output_channel: 0,
+                grid_frequency_hz: grid.grid_frequency_hz,
+                contributions: grid.contributions.clone(),
+            })
+            .collect(),
+        grid_channel_contributions: contributions
+            .grid_channel_contributions
+            .iter()
+            .filter(|grid| grid.output_channel == output_channel)
+            .map(|grid| CubeGridChannelContributions {
+                output_channel: 0,
+                grid_frequency_hz: grid.grid_frequency_hz,
+                contributions: grid.contributions.clone(),
+            })
+            .collect(),
+        source_channel_model_contributions: contributions
+            .source_channel_model_contributions
+            .iter()
+            .map(|model_contributions| {
+                model_contributions
+                    .iter()
+                    .filter_map(localize_model_contribution)
+                    .collect()
+            })
+            .collect(),
     }
 }
 
@@ -45714,7 +45846,7 @@ mod tests {
             );
             assert_eq!(
                 plane_config.standard_mfs_initial_dirty_backend.as_deref(),
-                Some("cpu")
+                Some("metal-row-run-grouped")
             );
             assert_eq!(
                 execution_config.minor_cycle_backend,
@@ -50321,6 +50453,109 @@ mod tests {
         assert_eq!(grid_assignments[0].frequency_hz, 10.5);
         assert!(grid_assignments[0].nearest_weight);
         assert_eq!(grid_assignments[0].contributions[0].source_channel, 0);
+    }
+
+    #[test]
+    fn reusable_spectral_plan_local_output_view_remaps_global_channel() {
+        let cache_key = (123_u64, 2_usize);
+        let contributions = Arc::new(CubeRowSpectralContributions {
+            output_channel_contributions: vec![
+                Vec::new(),
+                vec![CubeChannelContribution {
+                    source_channel: 4,
+                    source_frequency_hz: 1.4e9,
+                    factor: 1.0,
+                }],
+            ],
+            source_channel_output_map: vec![Some(1), Some(0), None],
+            padded_source_channel_output_map: vec![Some(1), Some(3), None],
+            padded_grid_channel_contributions: vec![
+                CubeGridChannelContributions {
+                    output_channel: 0,
+                    grid_frequency_hz: 1.3e9,
+                    contributions: Vec::new(),
+                },
+                CubeGridChannelContributions {
+                    output_channel: 1,
+                    grid_frequency_hz: 1.4e9,
+                    contributions: vec![CubeChannelContribution {
+                        source_channel: 4,
+                        source_frequency_hz: 1.4e9,
+                        factor: 1.0,
+                    }],
+                },
+            ],
+            grid_channel_contributions: vec![CubeGridChannelContributions {
+                output_channel: 1,
+                grid_frequency_hz: 1.4e9,
+                contributions: Vec::new(),
+            }],
+            source_channel_model_contributions: vec![
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    CubeChannelContribution {
+                        source_channel: 1,
+                        source_frequency_hz: 1.4e9,
+                        factor: 0.75,
+                    },
+                    CubeChannelContribution {
+                        source_channel: 0,
+                        source_frequency_hz: 1.3e9,
+                        factor: 0.25,
+                    },
+                ],
+            ],
+        });
+        let mut spectral = HashMap::new();
+        spectral.insert(cache_key, contributions);
+        let plan = CubeRowSpectralReusablePlan {
+            spectral,
+            source_frequencies: HashMap::new(),
+            grid_assignment_indices: HashMap::new(),
+            shared_spectral_binding: None,
+            source_channel_indices: Arc::from(vec![4_usize].into_boxed_slice()),
+            output_channel_frequencies_hz: Arc::from(vec![1.3e9, 1.4e9].into_boxed_slice()),
+            use_visibility_grid_assignments: true,
+        };
+
+        let local = plan.local_output_view(1).expect("local output view");
+        let local_contributions = local.spectral(&cache_key).expect("localized row");
+
+        assert_eq!(local.output_channel_frequencies_hz.as_ref(), &[1.4e9]);
+        assert_eq!(local_contributions.output_channel_contributions.len(), 1);
+        assert_eq!(
+            local_contributions.source_channel_output_map,
+            vec![Some(0), None, None]
+        );
+        assert_eq!(
+            local_contributions
+                .grid_channel_contributions
+                .first()
+                .map(|grid| grid.output_channel),
+            Some(0)
+        );
+        assert_eq!(
+            local_contributions.source_channel_model_contributions[4],
+            vec![CubeChannelContribution {
+                source_channel: 0,
+                source_frequency_hz: 1.4e9,
+                factor: 0.75,
+            }]
+        );
+        let model_contributions = combine_model_channel_contributions(
+            &local_contributions.output_channel_contributions[0],
+            &local_contributions.source_channel_model_contributions,
+        );
+        assert_eq!(
+            model_contributions,
+            vec![CubeModelChannelContribution {
+                model_channel_index: 0,
+                factor: 0.75,
+            }]
+        );
     }
 
     #[test]
