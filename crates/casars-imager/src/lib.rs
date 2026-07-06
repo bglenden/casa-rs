@@ -638,6 +638,7 @@ struct ImagerProgressContext {
     last_active_runtime_backend: Option<String>,
     active_spans: BTreeMap<String, ImagerObservabilitySpan>,
     active_span_started_at: BTreeMap<String, Instant>,
+    synthetic_span_ids: BTreeSet<String>,
     recent_spans: VecDeque<ImagerObservabilitySpan>,
     active_span_stack: Vec<String>,
     active_span_resource_counts: BTreeMap<String, BTreeMap<String, usize>>,
@@ -688,28 +689,67 @@ impl Drop for ImagerObservationSpanGuard {
         let Some(context) = context.as_mut() else {
             return;
         };
-        let started_at = context.active_span_started_at.remove(&self.span_id);
-        if let Some(mut span) = context.active_spans.remove(&self.span_id) {
-            if let Some(resources) = context.active_span_resource_counts.get(&self.span_id) {
-                span.resource_ids = resources
-                    .keys()
-                    .map(|resource| imager_observed_resource_id(resource))
-                    .collect();
-            }
-            span.state = self.completion_state;
-            span.elapsed_ms = started_at
-                .map(|started_at| Instant::now().duration_since(started_at).as_millis() as u64)
-                .unwrap_or(0);
-            context.recent_spans.push_front(span);
-            while context.recent_spans.len() > IMAGER_RECENT_SPAN_LIMIT {
-                context.recent_spans.pop_back();
-            }
-        }
-        context.active_span_resource_counts.remove(&self.span_id);
-        context
-            .active_span_stack
-            .retain(|candidate| candidate != &self.span_id);
+        complete_imager_observation_span(context, &self.span_id, self.completion_state);
     }
+}
+
+fn complete_imager_observation_span(
+    context: &mut ImagerProgressContext,
+    span_id: &str,
+    completion_state: ImagerObservabilitySpanState,
+) {
+    let started_at = context.active_span_started_at.remove(span_id);
+    context.synthetic_span_ids.remove(span_id);
+    if let Some(mut span) = context.active_spans.remove(span_id) {
+        if let Some(resources) = context.active_span_resource_counts.get(span_id) {
+            span.resource_ids = resources
+                .keys()
+                .map(|resource| imager_observed_resource_id(resource))
+                .collect();
+        }
+        span.state = completion_state;
+        span.elapsed_ms = started_at
+            .map(|started_at| Instant::now().duration_since(started_at).as_millis() as u64)
+            .unwrap_or(0);
+        context.recent_spans.push_front(span);
+        while context.recent_spans.len() > IMAGER_RECENT_SPAN_LIMIT {
+            context.recent_spans.pop_back();
+        }
+    }
+    context.active_span_resource_counts.remove(span_id);
+    context
+        .active_span_stack
+        .retain(|candidate| candidate != span_id);
+}
+
+fn begin_synthetic_unobserved_imager_span(context: &mut ImagerProgressContext) -> String {
+    context.next_span_sequence = context.next_span_sequence.saturating_add(1);
+    let span_id = format!(
+        "{}-{}",
+        imager_observed_stage_kind_label(ImagerObservedStageKind::Unknown),
+        context.next_span_sequence
+    );
+    context
+        .active_span_started_at
+        .insert(span_id.clone(), Instant::now());
+    context.synthetic_span_ids.insert(span_id.clone());
+    context.active_spans.insert(
+        span_id.clone(),
+        ImagerObservabilitySpan {
+            id: span_id.clone(),
+            name: "unobserved active resources".to_string(),
+            stage_kind: ImagerObservedStageKind::Unknown,
+            state: ImagerObservabilitySpanState::Running,
+            parent_id: None,
+            worker_id: None,
+            resource_ids: Vec::new(),
+            expected_resource_ids: Vec::new(),
+            extent: None,
+            counters: BTreeMap::new(),
+            elapsed_ms: 0,
+        },
+    );
+    span_id
 }
 
 fn begin_imager_observation_span(
@@ -884,6 +924,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         uv_coverage_output_slab: None,
         active_spans: BTreeMap::new(),
         active_span_started_at: BTreeMap::new(),
+        synthetic_span_ids: BTreeSet::new(),
         recent_spans: VecDeque::new(),
         active_span_stack: Vec::new(),
         active_span_resource_counts: BTreeMap::new(),
@@ -1900,6 +1941,13 @@ impl Drop for ImagerProgressResourceGuard {
                     }
                     if resource_counts.is_empty() {
                         context.active_span_resource_counts.remove(owner_span_id);
+                        if context.synthetic_span_ids.contains(owner_span_id) {
+                            complete_imager_observation_span(
+                                context,
+                                owner_span_id,
+                                ImagerObservabilitySpanState::Complete,
+                            );
+                        }
                     }
                 }
             }
@@ -1933,7 +1981,11 @@ fn acquire_imager_progress_resources_with_threads(
         return None;
     };
     let context = context.as_mut()?;
-    let owner_span_id = context.active_span_stack.last().cloned();
+    let owner_span_id = context
+        .active_span_stack
+        .last()
+        .cloned()
+        .or_else(|| Some(begin_synthetic_unobserved_imager_span(context)));
     for resource in resources {
         let resource = (*resource).to_string();
         *context
@@ -42797,16 +42849,16 @@ mod tests {
             .iter()
             .find(|resource| resource.id == ImagerObservedResourceId::VisibilityGrid)
             .expect("grid resource");
-        assert_eq!(grid.owner.as_deref(), Some("unobserved active resources"));
-        let fallback_span = snapshot
+        let unknown_span = snapshot
             .active_spans
             .iter()
-            .find(|span| span.id == "unobserved-active-resources")
-            .expect("unobserved fallback span");
-        assert_eq!(fallback_span.stage_kind, ImagerObservedStageKind::Unknown);
-        assert_eq!(fallback_span.name, "unobserved active resources");
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Unknown)
+            .expect("synthetic unknown span");
+        let unknown_span_id = unknown_span.id.clone();
+        assert_eq!(grid.owner.as_deref(), Some(unknown_span_id.as_str()));
+        assert_eq!(unknown_span.name, "unobserved active resources");
         assert_eq!(
-            fallback_span.resource_ids,
+            unknown_span.resource_ids,
             vec![ImagerObservedResourceId::VisibilityGrid]
         );
         assert_eq!(
@@ -42843,6 +42895,28 @@ mod tests {
         );
         drop(context_guard);
         drop(resource_guard);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        assert!(context.active_resource_counts.is_empty());
+        assert!(context.active_span_resource_counts.is_empty());
+        assert!(context.active_spans.is_empty());
+        assert!(context.synthetic_span_ids.is_empty());
+        let completed_unknown = context
+            .recent_spans
+            .front()
+            .expect("completed synthetic unknown span");
+        assert_eq!(completed_unknown.id, unknown_span_id);
+        assert_eq!(
+            completed_unknown.stage_kind,
+            ImagerObservedStageKind::Unknown
+        );
+        assert_eq!(
+            completed_unknown.resource_ids,
+            vec![ImagerObservedResourceId::VisibilityGrid]
+        );
+        drop(context_guard);
         drop(progress_guard);
     }
 
