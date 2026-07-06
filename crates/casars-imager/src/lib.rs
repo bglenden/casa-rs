@@ -637,6 +637,7 @@ struct ImagerProgressContext {
     uv_coverage_output_slab: Option<(usize, usize)>,
     last_active_runtime_backend: Option<String>,
     active_spans: BTreeMap<String, ImagerObservabilitySpan>,
+    active_span_started_at: BTreeMap<String, Instant>,
     recent_spans: VecDeque<ImagerObservabilitySpan>,
     active_span_stack: Vec<String>,
     active_span_resource_counts: BTreeMap<String, BTreeMap<String, usize>>,
@@ -687,6 +688,7 @@ impl Drop for ImagerObservationSpanGuard {
         let Some(context) = context.as_mut() else {
             return;
         };
+        let started_at = context.active_span_started_at.remove(&self.span_id);
         if let Some(mut span) = context.active_spans.remove(&self.span_id) {
             if let Some(resources) = context.active_span_resource_counts.get(&self.span_id) {
                 span.resource_ids = resources
@@ -695,9 +697,9 @@ impl Drop for ImagerObservationSpanGuard {
                     .collect();
             }
             span.state = self.completion_state;
-            span.elapsed_ms = Instant::now()
-                .duration_since(context.started_at)
-                .as_millis() as u64;
+            span.elapsed_ms = started_at
+                .map(|started_at| Instant::now().duration_since(started_at).as_millis() as u64)
+                .unwrap_or(0);
             context.recent_spans.push_front(span);
             while context.recent_spans.len() > IMAGER_RECENT_SPAN_LIMIT {
                 context.recent_spans.pop_back();
@@ -730,6 +732,9 @@ fn begin_imager_observation_span(
         context.next_span_sequence
     );
     let parent_id = context.active_span_stack.last().cloned();
+    context
+        .active_span_started_at
+        .insert(span_id.clone(), Instant::now());
     context.active_spans.insert(
         span_id.clone(),
         ImagerObservabilitySpan {
@@ -878,6 +883,7 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         last_active_runtime_backend: None,
         uv_coverage_output_slab: None,
         active_spans: BTreeMap::new(),
+        active_span_started_at: BTreeMap::new(),
         recent_spans: VecDeque::new(),
         active_span_stack: Vec::new(),
         active_span_resource_counts: BTreeMap::new(),
@@ -1662,6 +1668,7 @@ fn imager_observability_snapshot(
             .into_iter()
             .collect()
     } else {
+        let now = Instant::now();
         context
             .active_spans
             .values()
@@ -1681,7 +1688,11 @@ fn imager_observability_snapshot(
                     span.worker_id =
                         imager_worker_id_for_span_resources(&span.resource_ids).map(str::to_string);
                 }
-                span.elapsed_ms = event.elapsed_ms;
+                span.elapsed_ms = context
+                    .active_span_started_at
+                    .get(&span.id)
+                    .map(|started_at| now.duration_since(*started_at).as_millis() as u64)
+                    .unwrap_or(0);
                 span
             })
             .collect()
@@ -43233,6 +43244,123 @@ mod tests {
                     && span.state == ImagerObservabilitySpanState::Complete)
         );
         drop(context_guard);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn imager_observation_spans_report_span_local_elapsed_time() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/span-elapsed.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/span-elapsed-image"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("25"),
+        ])
+        .expect("parse config");
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        let run_span = begin_imager_progress_run_observation(&request).expect("run span");
+        let child_span = begin_imager_observation_span(
+            ImagerObservedStageKind::Gridding,
+            "grid",
+            &[ImagerObservedResourceId::VisibilityGrid],
+            None,
+        )
+        .expect("child span");
+        let child_span_id = child_span.span_id.clone();
+        {
+            let mut context_guard = IMAGER_PROGRESS_CONTEXT
+                .lock()
+                .expect("progress context lock");
+            let context = context_guard.as_mut().expect("progress context");
+            let now = Instant::now();
+            context
+                .active_span_started_at
+                .insert(run_span.span_id.clone(), now - Duration::from_millis(5_000));
+            context.active_span_started_at.insert(
+                child_span.span_id.clone(),
+                now - Duration::from_millis(1_500),
+            );
+        }
+
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 10,
+            elapsed_ms: 99_000,
+            phase: "inside-run".to_string(),
+            summary: "inside run".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: None,
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let run = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.id == run_span.span_id)
+            .expect("run span");
+        let child = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.id == child_span.span_id)
+            .expect("child span");
+        assert!(
+            (4_900..10_000).contains(&run.elapsed_ms),
+            "run span elapsed should be local duration, got {}",
+            run.elapsed_ms
+        );
+        assert!(
+            (1_400..5_000).contains(&child.elapsed_ms),
+            "child span elapsed should be local duration, got {}",
+            child.elapsed_ms
+        );
+        assert_ne!(run.elapsed_ms, event.elapsed_ms);
+        assert_ne!(child.elapsed_ms, event.elapsed_ms);
+        drop(context_guard);
+
+        drop(child_span);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let completed_child = context
+            .recent_spans
+            .front()
+            .expect("completed child span should be recent");
+        assert_eq!(completed_child.id, child_span_id);
+        assert!(
+            (1_400..5_000).contains(&completed_child.elapsed_ms),
+            "completed child elapsed should stay span-local, got {}",
+            completed_child.elapsed_ms
+        );
+        drop(context_guard);
+        drop(run_span);
         drop(progress_guard);
     }
 
