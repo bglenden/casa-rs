@@ -3211,6 +3211,10 @@ fn standard_mfs_minor_cycle_observation(
     }
 }
 
+fn standard_mfs_uses_mosaic_observability(config: &CliConfig) -> bool {
+    can_plan_mosaic_mfs_acceleration(config, 1)
+}
+
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
     initial_grid_span: Option<ImagerObservationSpanGuard>,
@@ -3392,9 +3396,20 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 ("residual refresh complete", 0)
             }
             StandardMfsProgressPhase::ResidualGridStart => {
+                let (stage_kind, label) = if standard_mfs_uses_mosaic_observability(&config) {
+                    (
+                        ImagerObservedStageKind::MosaicResidual,
+                        "computing mosaic residual",
+                    )
+                } else {
+                    (
+                        ImagerObservedStageKind::Gridding,
+                        "gridding residual visibilities",
+                    )
+                };
                 guards.residual_grid_span = begin_imager_observation_span(
-                    ImagerObservedStageKind::Gridding,
-                    "gridding residual visibilities",
+                    stage_kind,
+                    label,
                     &[
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
@@ -3408,10 +3423,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ],
                     env_standard_mfs_grid_threads().unwrap_or(1),
                 );
-                (
-                    "gridding residual visibilities",
-                    env_standard_mfs_grid_threads().unwrap_or(1),
-                )
+                (label, env_standard_mfs_grid_threads().unwrap_or(1))
             }
             StandardMfsProgressPhase::ResidualGridEnd => {
                 guards.residual_grid = None;
@@ -43274,6 +43286,87 @@ mod tests {
                 .get(OBS_COUNTER_MINOR_ITERATIONS),
             Some(&25)
         );
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_progress_callback_reports_mosaic_residual_stage_for_mosaic_runs() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("mosaic-residual.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+        })
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/mosaic-observability.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/mosaic-observability-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--field"),
+            OsString::from("0,1"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse config");
+        assert!(standard_mfs_uses_mosaic_observability(&config));
+        let callback = standard_mfs_progress_callback(&config).expect("progress callback");
+
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::ResidualGridStart,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 1,
+            minor_iterations: 25,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 50,
+            peak_residual_jy_per_beam: Some(0.0025),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let source = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+            .expect("source stream");
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
+        let mosaic_residual_span = observability
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::MosaicResidual)
+            .expect("mosaic residual span");
+        assert_eq!(
+            mosaic_residual_span.resource_ids,
+            vec![
+                ImagerObservedResourceId::PlaneState,
+                ImagerObservedResourceId::VisibilityGrid
+            ]
+        );
+        assert_eq!(
+            mosaic_residual_span
+                .counters
+                .get(OBS_COUNTER_MINOR_ITERATIONS),
+            Some(&25)
+        );
+        assert!(observability.workers.iter().any(|worker| worker.state
+            == ImagerObservedWorkerState::RunningCpu
+            && worker.active_count > 0));
+
         drop(callback);
         drop(progress_guard);
     }
