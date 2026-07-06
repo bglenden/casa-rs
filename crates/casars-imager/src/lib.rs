@@ -41779,8 +41779,22 @@ mod tests {
             .iter()
             .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
             .expect("source stream");
-        assert_eq!(source.state, ImagerObservedResourceState::Retained);
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
         assert_eq!(source.lease_count, 0);
+        assert_eq!(
+            source
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.planned_bytes),
+            Some(3 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(
+            source
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.resident_bytes),
+            None
+        );
         let grid = observability
             .resources
             .iter()
