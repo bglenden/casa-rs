@@ -343,10 +343,13 @@ extension ImagerProgressSnapshot {
         if let sizeDetail = Self.observedResourceSizeDetail(resource.memory, ledgerEntry: ledgerEntry) {
             parts.append(sizeDetail)
         }
-        parts.append(contentsOf: observedQueueDetails(for: resource.id))
-        if parts.isEmpty, let owner = resource.owner, !owner.isEmpty {
-            parts.append(owner)
+        if let owner = resource.owner?.trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
+            parts.append("owner=\(owner)")
         }
+        if resource.leaseCount > 0 {
+            parts.append("leases \(resource.leaseCount)")
+        }
+        parts.append(contentsOf: observedQueueDetails(for: resource.id))
         return parts.isEmpty ? "observed" : parts.joined(separator: " / ")
     }
 
