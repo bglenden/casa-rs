@@ -343,10 +343,35 @@ extension ImagerProgressSnapshot {
         if let sizeDetail = Self.observedResourceSizeDetail(resource.memory, ledgerEntry: ledgerEntry) {
             parts.append(sizeDetail)
         }
+        parts.append(contentsOf: observedQueueDetails(for: resource.id))
         if parts.isEmpty, let owner = resource.owner, !owner.isEmpty {
             parts.append(owner)
         }
         return parts.isEmpty ? "observed" : parts.joined(separator: " / ")
+    }
+
+    private func observedQueueDetails(for resourceID: String) -> [String] {
+        guard let observability else { return [] }
+        return observability.queues
+            .filter { $0.resourceID == resourceID }
+            .prefix(2)
+            .map(Self.observedResourceQueueDetail)
+    }
+
+    private static func observedResourceQueueDetail(_ queue: ImagingObservedQueueSnapshot) -> String {
+        var parts = ["queue", normalizedObservedState(queue.state)]
+        if let len = queue.len, let capacity = queue.capacity {
+            parts.append("\(len)/\(capacity)")
+        } else if let len = queue.len {
+            parts.append("\(len)")
+        } else if let capacity = queue.capacity {
+            parts.append("cap \(capacity)")
+        }
+        if queue.blockedCount > 0 {
+            parts.append("\(queue.blockedCount) blocked")
+        }
+        parts.append("\(queue.producersActive ? "P" : "p")/\(queue.consumersActive ? "C" : "c")")
+        return parts.joined(separator: " ")
     }
 
     private static func observedResourceSizeDetail(
