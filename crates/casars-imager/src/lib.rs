@@ -43733,12 +43733,15 @@ mod tests {
             minor_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
             Some(&17)
         );
-        let cpu_worker = observability
+        let deconvolver_worker = observability
             .workers
             .iter()
-            .find(|worker| worker.id == "cpu-compute")
-            .expect("cpu worker");
-        assert_eq!(cpu_worker.span_id.as_deref(), Some(minor_span.id.as_str()));
+            .find(|worker| worker.id == "cpu-compute-deconvolver")
+            .expect("deconvolver cpu worker");
+        assert_eq!(
+            deconvolver_worker.span_id.as_deref(),
+            Some(minor_span.id.as_str())
+        );
 
         callback(StandardMfsProgressEvent {
             phase: StandardMfsProgressPhase::MinorCycleEnd,
