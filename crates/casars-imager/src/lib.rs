@@ -2504,7 +2504,7 @@ fn emit_imager_progress_spectral_stage(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn with_imager_progress_spectral_stage<T, F>(
+fn with_imager_progress_spectral_stage<T, E, F>(
     config: &CliConfig,
     stage: spectral_slab::SpectralEventStage,
     slab_id: Option<usize>,
@@ -2515,9 +2515,9 @@ fn with_imager_progress_spectral_stage<T, F>(
     ms_read: Option<ImagerProgressMsWindow>,
     force: bool,
     work: F,
-) -> Result<T, String>
+) -> Result<T, E>
 where
-    F: FnOnce() -> Result<T, String>,
+    F: FnOnce() -> Result<T, E>,
 {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return work();
@@ -2569,6 +2569,20 @@ where
         true,
     );
     result
+}
+
+fn single_plane_stream_pass_spectral_stage(
+    pass: SinglePlaneStreamPass,
+) -> spectral_slab::SpectralEventStage {
+    match pass {
+        SinglePlaneStreamPass::WeightingDensity => {
+            spectral_slab::SpectralEventStage::WeightingDensity
+        }
+        SinglePlaneStreamPass::InitialDirty => spectral_slab::SpectralEventStage::PsfDirty,
+        SinglePlaneStreamPass::ResidualRefresh => {
+            spectral_slab::SpectralEventStage::ResidualRefresh
+        }
+    }
 }
 
 fn imager_progress_memory_from_spectral_plan(
@@ -7921,28 +7935,47 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         let source_prepare_started = Instant::now();
         let progress_output_cube =
             progress_output_cube_from_config(config, slab.plane_start, slab.plane_end);
-        let shared_visibility_source = Arc::new(read_shared_columnar_cube_slab_source(
+        let progress_ms_window = imager_progress_ms_window_from_selection(
             ms,
-            &slab_source_config,
-            data_column,
-            true,
-            &selection,
             &table_values,
-            &ddid_info,
             &active_selected_rows,
-            &derived_engine,
             channel_read_range,
-            None,
-            source_strategy.row_block_rows,
-            source_prepare_started,
-            spectral_slab::ImagingPassKind::InitialDirty,
-            slab.slab_id,
+        );
+        let shared_visibility_source = Arc::new(with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::SourceRead,
+            Some(slab.slab_id),
             slab.plane_start,
             slab.plane_end,
             worker_count,
             "mosaic_multi_plane_stream",
-            &mut geometry_cache,
-            progress_output_cube.clone(),
+            progress_ms_window,
+            true,
+            || {
+                read_shared_columnar_cube_slab_source(
+                    ms,
+                    &slab_source_config,
+                    data_column,
+                    true,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    &active_selected_rows,
+                    &derived_engine,
+                    channel_read_range,
+                    None,
+                    source_strategy.row_block_rows,
+                    source_prepare_started,
+                    spectral_slab::ImagingPassKind::InitialDirty,
+                    slab.slab_id,
+                    slab.plane_start,
+                    slab.plane_end,
+                    worker_count,
+                    "mosaic_multi_plane_stream",
+                    &mut geometry_cache,
+                    progress_output_cube.clone(),
+                )
+            },
         )?);
         let mut shared_source_read_elapsed = shared_visibility_source.elapsed;
         get_ms_values_into_processing_buffer += shared_visibility_source
@@ -7978,28 +8011,47 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 None
             } else {
                 let density_prepare_started = Instant::now();
-                let density_source = Arc::new(read_shared_columnar_cube_slab_source(
+                let progress_ms_window = imager_progress_ms_window_from_selection(
                     ms,
-                    &slab_source_config,
-                    data_column,
-                    false,
-                    &selection,
                     &table_values,
-                    &ddid_info,
                     &active_selected_rows,
-                    &derived_engine,
                     channel_read_range,
-                    None,
-                    source_strategy.row_block_rows,
-                    density_prepare_started,
-                    spectral_slab::ImagingPassKind::WeightingDensity,
-                    slab.slab_id,
+                );
+                let density_source = Arc::new(with_imager_progress_spectral_stage(
+                    config,
+                    spectral_slab::SpectralEventStage::SourceRead,
+                    Some(slab.slab_id),
                     slab.plane_start,
                     slab.plane_end,
                     worker_count,
                     "mosaic_multi_plane_stream",
-                    &mut geometry_cache,
-                    progress_output_cube.clone(),
+                    progress_ms_window,
+                    true,
+                    || {
+                        read_shared_columnar_cube_slab_source(
+                            ms,
+                            &slab_source_config,
+                            data_column,
+                            false,
+                            &selection,
+                            &table_values,
+                            &ddid_info,
+                            &active_selected_rows,
+                            &derived_engine,
+                            channel_read_range,
+                            None,
+                            source_strategy.row_block_rows,
+                            density_prepare_started,
+                            spectral_slab::ImagingPassKind::WeightingDensity,
+                            slab.slab_id,
+                            slab.plane_start,
+                            slab.plane_end,
+                            worker_count,
+                            "mosaic_multi_plane_stream",
+                            &mut geometry_cache,
+                            progress_output_cube.clone(),
+                        )
+                    },
                 )?);
                 shared_source_read_elapsed += density_source.elapsed;
                 get_ms_values_into_processing_buffer += density_source
@@ -8064,42 +8116,53 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 payload: plane_index,
             })
             .collect::<Vec<_>>();
-        let (plane_results, plane_run_elapsed) =
-            run_owned_independent_imaging_planes(tasks, worker_count, |plane_index| {
-                let mut plane_config = slab_config_for_cube_planes(
-                    config,
-                    channel_start,
-                    plane_index,
-                    plane_index + 1,
-                )?;
-                if plane_config.imaging_prepare_workers.is_none() && worker_count > 1 {
-                    plane_config.imaging_prepare_workers = Some(1);
-                }
-                if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
-                    plane_config.standard_mfs_grid_threads = Some("1".to_string());
-                }
-                let products = run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
-                    ms,
-                    &plane_config,
-                    &plane_config,
-                    total_start,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &spectral_window,
-                    &polarization,
-                    Some(&derived_engine),
-                    Arc::clone(&shared_visibility_source),
-                    shared_density_source.as_ref().map(Arc::clone),
-                )?;
-                let stage_timings = products.result.diagnostics.stage_timings;
-                Ok((products, stage_timings))
-            })?;
+        let (plane_results, plane_run_elapsed) = with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::BackendExecution,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            "mosaic_multi_plane_stream",
+            None,
+            true,
+            || {
+                run_owned_independent_imaging_planes(tasks, worker_count, |plane_index| {
+                    let mut plane_config = slab_config_for_cube_planes(
+                        config,
+                        channel_start,
+                        plane_index,
+                        plane_index + 1,
+                    )?;
+                    if plane_config.imaging_prepare_workers.is_none() && worker_count > 1 {
+                        plane_config.imaging_prepare_workers = Some(1);
+                    }
+                    if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
+                        plane_config.standard_mfs_grid_threads = Some("1".to_string());
+                    }
+                    let products = run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
+                        ms,
+                        &plane_config,
+                        &plane_config,
+                        total_start,
+                        &selection,
+                        &table_values,
+                        &ddid_info,
+                        &spectral_window,
+                        &polarization,
+                        Some(&derived_engine),
+                        Arc::clone(&shared_visibility_source),
+                        shared_density_source.as_ref().map(Arc::clone),
+                    )?;
+                    let stage_timings = products.result.diagnostics.stage_timings;
+                    Ok((products, stage_timings))
+                })
+            },
+        )?;
         run_imaging_time += plane_run_elapsed;
         let mut slab_worker_sum = Duration::ZERO;
         let mut slab_worker_max = Duration::ZERO;
         for plane_result in plane_results {
-            let plane_started = Instant::now();
             let plane_index = plane_result.plane_index;
             let products = plane_result.result;
             slab_worker_sum += plane_result.worker_elapsed;
@@ -8129,8 +8192,22 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 .get_ms_values_into_processing_buffer;
             prepare_processing_buffer += products.prepare_stage_timings.prepare_processing_buffer;
             let write_started = Instant::now();
-            product_writers.write_plane(plane_index, products)?;
-            write_products_time += write_started.elapsed();
+            let publish_elapsed = with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::ProductWrite,
+                Some(slab.slab_id),
+                plane_index,
+                plane_index + 1,
+                1,
+                "mosaic_multi_plane_stream",
+                None,
+                true,
+                || {
+                    product_writers.write_plane(plane_index, products)?;
+                    Ok::<_, String>(write_started.elapsed())
+                },
+            )?;
+            write_products_time += publish_elapsed;
             eprintln!(
                 "mosaic_cube_slab_plane plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} publish_elapsed_ms={:.3}",
                 plane_index,
@@ -8138,7 +8215,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 plane_result.batch_task_count,
                 plane_result.worker_slot,
                 duration_ms(plane_result.worker_elapsed),
-                duration_ms(plane_started.elapsed()),
+                duration_ms(publish_elapsed),
             );
         }
         eprintln!(
@@ -8155,7 +8232,18 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         );
     }
     let finish_started = Instant::now();
-    product_writers.finish(config)?;
+    with_imager_progress_spectral_stage(
+        config,
+        spectral_slab::SpectralEventStage::ProductWrite,
+        None,
+        0,
+        nplanes,
+        1,
+        "mosaic_multi_plane_stream",
+        None,
+        true,
+        || product_writers.finish(config),
+    )?;
     write_products_time += finish_started.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
     let _ = selected_freq_ref;
@@ -8608,18 +8696,36 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         let block_accumulate_before = accumulate_timings;
         let block_started = Instant::now();
         let density_read_started = Instant::now();
-        let (density_block, _density_read_timings) = read_ms_imaging_density_essentials_block(
-            ms,
-            data_column,
+        let (density_block, _density_read_timings) = with_imager_progress_spectral_stage(
             config,
-            &selection,
-            &table_values,
-            &ddid_info,
-            Arc::clone(&density_channel_axes),
-            &geometry_columns,
-            row_chunk,
-            density_channel_read_range,
-            derived_engine.as_ref(),
+            spectral_slab::SpectralEventStage::SourceRead,
+            None,
+            0,
+            config.channel_count.unwrap_or(1).max(1),
+            1,
+            "mosaic_cube_bounded_stream",
+            imager_progress_ms_window_from_selection(
+                ms,
+                &table_values,
+                row_chunk,
+                Some(density_channel_read_range),
+            ),
+            true,
+            || {
+                read_ms_imaging_density_essentials_block(
+                    ms,
+                    data_column,
+                    config,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    Arc::clone(&density_channel_axes),
+                    &geometry_columns,
+                    row_chunk,
+                    density_channel_read_range,
+                    derived_engine.as_ref(),
+                )
+            },
         )?;
         prepare_stage_timings.get_ms_values_into_processing_buffer +=
             density_read_started.elapsed();
@@ -8679,23 +8785,36 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                 metadata_ranges,
             ));
         }
-        let block_samples = accumulate_mosaic_cube_briggs_direct_density_rows(
-            row_chunk,
-            &density_block.rows,
-            density_set.get_or_insert_with(|| {
-                CasaCubeBriggsDensityGridSet::new_from_direct(
-                    geometry,
+        let block_samples = with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::WeightingDensity,
+            None,
+            0,
+            config.channel_count.unwrap_or(1).max(1),
+            1,
+            "mosaic_cube_bounded_stream",
+            None,
+            true,
+            || {
+                accumulate_mosaic_cube_briggs_direct_density_rows(
+                    row_chunk,
+                    &density_block.rows,
+                    density_set.get_or_insert_with(|| {
+                        CasaCubeBriggsDensityGridSet::new_from_direct(
+                            geometry,
+                            direct_density_plan
+                                .as_ref()
+                                .expect("direct density plan initialized"),
+                        )
+                    }),
                     direct_density_plan
                         .as_ref()
                         .expect("direct density plan initialized"),
+                    cube_row_spectral_reusable_plan.as_deref(),
+                    derived_engine.as_ref(),
+                    &mut accumulate_timings,
                 )
-            }),
-            direct_density_plan
-                .as_ref()
-                .expect("direct density plan initialized"),
-            cube_row_spectral_reusable_plan.as_deref(),
-            derived_engine.as_ref(),
-            &mut accumulate_timings,
+            },
         )?;
         let (metadata_groups, metadata_ranges) = match compact_metadata {
             Some((_, metadata_groups, metadata_ranges)) => (metadata_groups, metadata_ranges),
@@ -8945,6 +9064,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                         .to_string(),
                 )
             })?;
+            let table_values_ref = &table_values;
             thread::scope(|scope| {
                 let (sender, receiver) = mpsc::sync_channel(1);
                 let producer = scope.spawn({
@@ -8959,19 +9079,37 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                         for (block_index, row_chunk) in
                             active_selected_rows.chunks(row_block_rows).enumerate()
                         {
-                            let block = prepare_mosaic_cube_direct_replay_block(
-                                ms,
-                                data_column,
-                                Arc::clone(&channel_axes),
-                                geometry_columns,
+                            let block = with_imager_progress_spectral_stage(
                                 config,
-                                selection,
-                                row_chunk,
-                                density_set,
-                                plan,
-                                reusable_plan,
-                                derived_engine,
-                                channel_read_range,
+                                spectral_slab::SpectralEventStage::SourceRead,
+                                None,
+                                0,
+                                config.channel_count.unwrap_or(1).max(1),
+                                1,
+                                "mosaic_cube_bounded_stream",
+                                imager_progress_ms_window_from_selection(
+                                    ms,
+                                    table_values_ref,
+                                    row_chunk,
+                                    channel_read_range,
+                                ),
+                                true,
+                                || {
+                                    prepare_mosaic_cube_direct_replay_block(
+                                        ms,
+                                        data_column,
+                                        Arc::clone(&channel_axes),
+                                        geometry_columns,
+                                        config,
+                                        selection,
+                                        row_chunk,
+                                        density_set,
+                                        plan,
+                                        reusable_plan,
+                                        derived_engine,
+                                        channel_read_range,
+                                    )
+                                },
                             );
                             if sender.send((block_index, block)).is_err() {
                                 break;
@@ -8989,7 +9127,19 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                     }
                     expected_block_index += 1;
                     let block = block.map_err(ImagingError::InvalidRequest)?;
-                    if consume_prepared_block(block)? {
+                    let stop = with_imager_progress_spectral_stage(
+                        config,
+                        single_plane_stream_pass_spectral_stage(pass),
+                        None,
+                        0,
+                        config.channel_count.unwrap_or(1).max(1),
+                        1,
+                        "mosaic_cube_bounded_stream",
+                        None,
+                        true,
+                        || consume_prepared_block(block),
+                    )?;
+                    if stop {
                         break;
                     }
                 }
@@ -42418,6 +42568,22 @@ mod tests {
             spectral_stage_observability(spectral_slab::SpectralEventStage::ProductWrite);
         assert_eq!(product_kind, ImagerObservedStageKind::ProductWrite);
         assert_eq!(product_resources, SPECTRAL_PRODUCT_RESOURCES);
+    }
+
+    #[test]
+    fn single_plane_stream_passes_map_to_spectral_observability_stages() {
+        assert_eq!(
+            single_plane_stream_pass_spectral_stage(SinglePlaneStreamPass::WeightingDensity),
+            spectral_slab::SpectralEventStage::WeightingDensity
+        );
+        assert_eq!(
+            single_plane_stream_pass_spectral_stage(SinglePlaneStreamPass::InitialDirty),
+            spectral_slab::SpectralEventStage::PsfDirty
+        );
+        assert_eq!(
+            single_plane_stream_pass_spectral_stage(SinglePlaneStreamPass::ResidualRefresh),
+            spectral_slab::SpectralEventStage::ResidualRefresh
+        );
     }
 
     #[test]
