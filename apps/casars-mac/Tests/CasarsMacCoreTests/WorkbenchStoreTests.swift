@@ -3110,6 +3110,28 @@ final class WorkbenchStoreTests: XCTestCase {
         ])
     }
 
+    func testImagerProgressDoesNotCarryForwardPreviousObservabilitySnapshot() throws {
+        var parser = ImagerProgressStderrParser()
+        let observedProgressJSON = #"{"schema_version":1,"sequence":7,"elapsed_ms":2000,"phase":"deconvolving","summary":"active observed resource","runtime":{"active_threads":6,"total_threads":8,"gpu_active":false,"backend":"observed"},"observability":{"schema_version":2,"resources":[{"id":"deconvolver","label":"Deconvolver","state":"active","lease_count":1,"active_threads":6,"gpu_active":false}]}}"#
+        let runtimeOnlyProgressJSON = #"{"schema_version":1,"sequence":8,"elapsed_ms":2100,"phase":"finished event without observability","summary":"no current observability","runtime":{"active_threads":0,"total_threads":8,"gpu_active":false,"backend":"runtime-only","active_resources":[]}}"#
+
+        let observedRecords = parser.append(imagerProgressStderrPrefix + observedProgressJSON + "\n", runID: "imager-no-carry", state: .running)
+        guard case .progress(let observedProgress) = observedRecords.first else {
+            return XCTFail("expected observed progress record")
+        }
+        XCTAssertEqual(observedProgress.resourceActivities.filter(\.isBusy).map(\.id), ["deconvolver"])
+        XCTAssertNotNil(observedProgress.observability)
+
+        let runtimeOnlyRecords = parser.append(imagerProgressStderrPrefix + runtimeOnlyProgressJSON + "\n", runID: "imager-no-carry", state: .running)
+        guard case .progress(let runtimeOnlyProgress) = runtimeOnlyRecords.first else {
+            return XCTFail("expected runtime-only progress record")
+        }
+        XCTAssertNil(runtimeOnlyProgress.observability)
+        XCTAssertEqual(runtimeOnlyProgress.resourceActivities, [])
+        XCTAssertNil(runtimeOnlyProgress.executionStateSummary)
+        XCTAssertFalse(runtimeOnlyProgress.sourceStreamIsActive)
+    }
+
     func testImagerProgressIgnoresRuntimeResourceOwnershipWhenNoSnapshotExists() throws {
         var parser = ImagerProgressStderrParser()
         let progressJSON = #"{"schema_version":1,"sequence":3,"elapsed_ms":1500,"phase":"reading_ms","summary":"resource ownership","ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"explicit test","active_resources":["visibility-grid","plane-state","product-scratch"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":4,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#

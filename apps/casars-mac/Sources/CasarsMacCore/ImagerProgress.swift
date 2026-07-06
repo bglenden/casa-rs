@@ -231,7 +231,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 backend: "unknown",
                 sampleCadence: "event stream"
             ),
-            observability: event.observability.map(ImagingObservabilitySnapshot.init(payload:)) ?? previous?.observability,
+            observability: event.observability.map(ImagingObservabilitySnapshot.init(payload:)),
             sampledAtLabel: Self.elapsedSecondsLabel(milliseconds: event.elapsedMs),
             sampledAtMilliseconds: event.elapsedMs,
             receivedAt: Date()
