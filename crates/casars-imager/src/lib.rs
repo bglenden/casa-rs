@@ -2632,6 +2632,29 @@ fn acquire_standard_mfs_replay_progress_resources() -> Option<ImagerProgressReso
     )
 }
 
+fn standard_mfs_minor_cycle_observation(
+    deconvolver: Deconvolver,
+) -> (ImagerObservedStageKind, &'static str) {
+    match deconvolver {
+        Deconvolver::Clark => (
+            ImagerObservedStageKind::ClarkMinorCycle,
+            "deconvolving Clark minor cycle",
+        ),
+        Deconvolver::Hogbom => (
+            ImagerObservedStageKind::Deconvolution,
+            "deconvolving Hogbom minor cycle",
+        ),
+        Deconvolver::Mtmfs => (
+            ImagerObservedStageKind::Deconvolution,
+            "deconvolving MT-MFS minor cycle",
+        ),
+        Deconvolver::Multiscale => (
+            ImagerObservedStageKind::Deconvolution,
+            "deconvolving multiscale minor cycle",
+        ),
+    }
+}
+
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
     initial_grid_span: Option<ImagerObservationSpanGuard>,
@@ -2686,9 +2709,10 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 ("dirty image grid complete", 0)
             }
             StandardMfsProgressPhase::MinorCycleStart => {
+                let (stage_kind, label) = standard_mfs_minor_cycle_observation(event.deconvolver);
                 guards.minor_cycle_span = begin_imager_observation_span(
-                    ImagerObservedStageKind::ClarkMinorCycle,
-                    "deconvolving minor cycle",
+                    stage_kind,
+                    label,
                     &[
                         ImagerObservedResourceId::Deconvolver,
                         ImagerObservedResourceId::PlaneState,
@@ -2702,15 +2726,12 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ],
                     env_standard_mfs_grid_threads().unwrap_or(1),
                 );
-                (
-                    "deconvolving minor cycle",
-                    env_standard_mfs_grid_threads().unwrap_or(1),
-                )
+                (label, env_standard_mfs_grid_threads().unwrap_or(1))
             }
-            StandardMfsProgressPhase::MinorCycleProgress => (
-                "deconvolving minor cycle",
-                env_standard_mfs_grid_threads().unwrap_or(1),
-            ),
+            StandardMfsProgressPhase::MinorCycleProgress => {
+                let (_, label) = standard_mfs_minor_cycle_observation(event.deconvolver);
+                (label, env_standard_mfs_grid_threads().unwrap_or(1))
+            }
             StandardMfsProgressPhase::MinorCycleEnd => {
                 guards.minor_cycle = None;
                 guards.minor_cycle_span = None;
@@ -41490,6 +41511,30 @@ mod tests {
             spectral_stage_observability(spectral_slab::SpectralEventStage::ProductWrite);
         assert_eq!(product_kind, ImagerObservedStageKind::ProductWrite);
         assert_eq!(product_resources, SPECTRAL_PRODUCT_RESOURCES);
+    }
+
+    #[test]
+    fn standard_mfs_minor_cycle_observability_uses_deconvolver_kind() {
+        assert_eq!(
+            standard_mfs_minor_cycle_observation(Deconvolver::Clark),
+            (
+                ImagerObservedStageKind::ClarkMinorCycle,
+                "deconvolving Clark minor cycle"
+            )
+        );
+        for (deconvolver, label) in [
+            (Deconvolver::Hogbom, "deconvolving Hogbom minor cycle"),
+            (Deconvolver::Mtmfs, "deconvolving MT-MFS minor cycle"),
+            (
+                Deconvolver::Multiscale,
+                "deconvolving multiscale minor cycle",
+            ),
+        ] {
+            assert_eq!(
+                standard_mfs_minor_cycle_observation(deconvolver),
+                (ImagerObservedStageKind::Deconvolution, label)
+            );
+        }
     }
 
     #[test]
