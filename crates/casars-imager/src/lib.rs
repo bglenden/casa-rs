@@ -12775,6 +12775,7 @@ where
                 "duplicate cube plane result for output plane {plane_start}"
             ));
         }
+        self.observe_queue(false);
         self.flush_ready(false, product_writer, aggregate)
     }
 
@@ -12827,6 +12828,7 @@ where
                 Ok::<usize, String>(acc.saturating_add(result.plane_count()?))
             })?;
             let group_result = R::merge_group(group_start, group)?;
+            self.observe_queue(true);
             let write_started = Instant::now();
             let bytes =
                 publish_multi_plane_group(group_start, group_result, product_writer, aggregate)?;
@@ -12834,8 +12836,37 @@ where
             self.stats.groups = self.stats.groups.saturating_add(1);
             self.stats.planes = self.stats.planes.saturating_add(group_planes);
             self.stats.bytes = self.stats.bytes.saturating_add(bytes);
+            self.observe_queue(false);
         }
         Ok(())
+    }
+
+    fn observe_queue(&self, consumers_active: bool) {
+        let pending_groups = self.pending.len();
+        let state = if consumers_active || pending_groups > 0 {
+            ImagerObservedQueueState::Active
+        } else {
+            ImagerObservedQueueState::Idle
+        };
+        set_imager_progress_queue_snapshots(
+            vec![ImagerObservedQueueSnapshot {
+                id: "cube-product-publisher".to_string(),
+                label: "Cube product publisher".to_string(),
+                state,
+                resource_id: Some(ImagerObservedResourceId::ProductScratch),
+                len: Some(pending_groups),
+                capacity: Some(self.max_batch_planes),
+                bytes: None,
+                producers_active: pending_groups > 0,
+                consumers_active,
+                blocked_count: 0,
+                confidence: ImagerObservedQueueConfidence::Measured,
+                note: Some(
+                    "measured pending plane groups waiting for ordered product writes".to_string(),
+                ),
+            }],
+            None,
+        );
     }
 
     fn next_flush_group(&self, force: bool) -> Result<Option<(usize, usize)>, String> {
@@ -54360,6 +54391,19 @@ deconvolver=mtmfs
         planes: usize,
     }
 
+    impl CubePlaneGroupResult for FakePlaneGroup {
+        fn plane_count(&self) -> Result<usize, String> {
+            Ok(self.planes)
+        }
+
+        fn merge_group(_plane_start: usize, group: Vec<Self>) -> Result<Self, String> {
+            Ok(Self {
+                bytes: group.iter().map(|result| result.bytes).sum::<usize>(),
+                planes: group.iter().map(|result| result.planes).sum::<usize>(),
+            })
+        }
+    }
+
     struct FakePlaneGroupWriter {
         writes: Vec<(usize, usize)>,
     }
@@ -54410,6 +54454,121 @@ deconvolver=mtmfs
         assert_eq!(aggregate.groups.len(), 1);
         assert_eq!(aggregate.groups[0].0, 4);
         assert_eq!(aggregate.groups[0].1.planes, 2);
+    }
+
+    #[test]
+    fn plane_group_publisher_reports_measured_product_queue() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress context starts");
+        let mut writer = FakePlaneGroupWriter { writes: Vec::new() };
+        let mut aggregate = FakePlaneGroupAggregate { groups: Vec::new() };
+        let mut publisher = OrderedCubeProductPublisher::new(0, 3);
+
+        publisher
+            .accept(
+                0,
+                FakePlaneGroup {
+                    bytes: 128,
+                    planes: 1,
+                },
+                &mut writer,
+                &mut aggregate,
+            )
+            .expect("first group accepted");
+        {
+            let context_guard = IMAGER_PROGRESS_CONTEXT
+                .lock()
+                .expect("progress context lock");
+            let context = context_guard.as_ref().expect("progress context");
+            let event = ImagerProgressEvent {
+                schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                sequence: 20,
+                elapsed_ms: 100,
+                phase: "queued-products".to_string(),
+                summary: "queued products".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: None,
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: Some(ImagerProgressRuntime {
+                    active_threads: 0,
+                    total_threads: 4,
+                    gpu_active: false,
+                    backend: "product publisher".to_string(),
+                    active_resources: Vec::new(),
+                    active_resource_threads: BTreeMap::new(),
+                    memory: context.memory.clone(),
+                }),
+                observability: None,
+            };
+            let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+            let queue = snapshot
+                .queues
+                .iter()
+                .find(|queue| queue.id == "cube-product-publisher")
+                .expect("product publisher queue");
+            assert_eq!(queue.state, ImagerObservedQueueState::Active);
+            assert_eq!(
+                queue.resource_id,
+                Some(ImagerObservedResourceId::ProductScratch)
+            );
+            assert_eq!(queue.len, Some(1));
+            assert_eq!(queue.capacity, Some(3));
+            assert!(queue.producers_active);
+            assert!(!queue.consumers_active);
+            assert_eq!(queue.confidence, ImagerObservedQueueConfidence::Measured);
+        }
+
+        publisher
+            .finish(&mut writer, &mut aggregate)
+            .expect("publisher finishes");
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 21,
+            elapsed_ms: 200,
+            phase: "products-written".to_string(),
+            summary: "products written".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 0,
+                total_threads: 4,
+                gpu_active: false,
+                backend: "product publisher".to_string(),
+                active_resources: Vec::new(),
+                active_resource_threads: BTreeMap::new(),
+                memory: context.memory.clone(),
+            }),
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let queue = snapshot
+            .queues
+            .iter()
+            .find(|queue| queue.id == "cube-product-publisher")
+            .expect("product publisher queue");
+        assert_eq!(queue.state, ImagerObservedQueueState::Idle);
+        assert_eq!(queue.len, Some(0));
+        assert!(!queue.producers_active);
+        assert!(!queue.consumers_active);
+        drop(context_guard);
+        drop(progress_guard);
     }
 
     #[test]
