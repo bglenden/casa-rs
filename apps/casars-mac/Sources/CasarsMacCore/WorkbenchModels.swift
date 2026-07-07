@@ -537,6 +537,39 @@ public struct TaskUIArgument: Codable, Equatable, Identifiable {
         case advanced
         case hiddenInTUI = "hidden_in_tui"
     }
+
+    public func defaultToggleValue(values: [String: String] = [:]) -> Bool {
+        guard let defaultValue = `default`?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !defaultValue.isEmpty else {
+            return false
+        }
+        if let literal = Self.boolLiteral(defaultValue) {
+            return literal
+        }
+        for clause in defaultValue.split(separator: ",") {
+            let parts = clause.split(separator: ":", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard parts.count == 2,
+                  values.values.contains(parts[0]),
+                  let literal = Self.boolLiteral(parts[1]) else {
+                continue
+            }
+            return literal
+        }
+        return false
+    }
+
+    private static func boolLiteral(_ value: String) -> Bool? {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return nil
+        }
+    }
 }
 
 public struct TaskUIArgumentParser: Codable, Equatable {

@@ -36,7 +36,7 @@ use thiserror::Error;
 use crate::schema::{SchemaError, TableSchema};
 use crate::table::{
     ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
-    SelectedArray2DCells,
+    SelectedArray1DCells, SelectedArray2DCells,
 };
 
 use self::data_type::CasacoreDataType;
@@ -72,6 +72,11 @@ struct SelectedArray2DChannelRead<'a> {
     selected_rows: &'a [usize],
     channel_start: usize,
     channel_count: usize,
+}
+
+struct SelectedArray1DRead<'a> {
+    column: &'a str,
+    selected_rows: &'a [usize],
 }
 
 fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> RecordValue {
@@ -1414,6 +1419,43 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn load_array_column_rows_1d_typed_with_row_hint(
+        &self,
+        table_path: &Path,
+        column: &str,
+        selected_rows: &[usize],
+        _row_hint: Option<u64>,
+    ) -> Result<SelectedArray1DCells, StorageError> {
+        if selected_rows.is_empty() {
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 1-D read for {column} requires at least one selected row"
+            )));
+        }
+
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !table_path.exists() {
+            return Err(StorageError::MissingPath(table_path.to_path_buf()));
+        }
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+
+        match read_table_dat_dispatch(&control_path)? {
+            TableDatResult::Plain(table_dat) => {
+                let request = SelectedArray1DRead {
+                    column,
+                    selected_rows,
+                };
+                self.load_plain_array_column_rows_1d_typed(table_path, &table_dat, request)
+            }
+            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                Err(StorageError::FormatMismatch(format!(
+                    "typed selected 1-D reads require a plain table for column '{column}'"
+                )))
+            }
+        }
+    }
+
     /// Load a PlainTable from table.dat contents and data files.
     ///
     /// Uses two-pass loading:
@@ -2621,6 +2663,84 @@ impl CompositeStorage {
             ),
             other => Err(StorageError::FormatMismatch(format!(
                 "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
+                request.column
+            ))),
+        }
+    }
+
+    fn load_plain_array_column_rows_1d_typed(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        request: SelectedArray1DRead<'_>,
+    ) -> Result<SelectedArray1DCells, StorageError> {
+        let column = request.column;
+        let desc_idx = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("array column '{column}' not found"))
+            })?;
+        let col_desc = &table_dat.table_desc.columns[desc_idx];
+        if !col_desc.is_array {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{column}' is not an array column"
+            )));
+        }
+
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 1-D reads do not support virtual columns in table containing '{column}'"
+            )));
+        }
+
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        let bound_cols: Vec<(usize, &_)> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            .collect();
+
+        match dm.type_name.as_str() {
+            "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
+                table_path,
+                dm,
+                &table_dat.table_desc.columns,
+                &bound_cols,
+                desc_idx,
+                request.selected_rows,
+            ),
+            other => Err(StorageError::FormatMismatch(format!(
+                "typed selected 1-D reads for column '{}' require TiledShapeStMan, found {other}",
                 request.column
             ))),
         }

@@ -8,7 +8,7 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::schema::{ColumnType, TableSchema};
 use crate::storage::{CompositeStorage, RequiredScalarColumnData, StorageProfiler};
-use crate::table::{SelectedArray2DCells, TableError};
+use crate::table::{SelectedArray1DCells, SelectedArray2DCells, TableError};
 
 type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
 type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
@@ -463,6 +463,43 @@ impl TableImpl {
                     row_indices.len(),
                     channel_start,
                     channel_count,
+                    values.row_count()
+                )),
+            );
+        }
+        Ok(values)
+    }
+
+    fn load_array_column_rows_1d_typed_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+    ) -> Result<SelectedArray1DCells, TableError> {
+        let mut profiler = StorageProfiler::start(format!(
+            "table_impl::load_array_column_rows_1d_typed_now path={} column={column}",
+            source.path.display()
+        ));
+        let storage = CompositeStorage;
+        let values = storage
+            .load_array_column_rows_1d_typed_with_row_hint(
+                &source.path,
+                column,
+                row_indices,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load typed selected 1-D rows for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "storage_load_complete",
+                Some(format!(
+                    "row_count_hint={} requested_rows={} values={}",
+                    source.row_count_hint,
+                    row_indices.len(),
                     values.row_count()
                 )),
             );
@@ -1194,6 +1231,30 @@ impl TableImpl {
             channel_start,
             channel_count,
         )
+    }
+
+    pub(crate) fn array_cells_1d_typed_uncached(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+    ) -> Result<SelectedArray1DCells, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads require a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads do not support pending array-cell overrides"
+            )));
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads require a lazy disk-backed table"
+            )));
+        };
+        Self::load_array_column_rows_1d_typed_now(source, column, row_indices)
     }
 
     pub(crate) fn row_mut(

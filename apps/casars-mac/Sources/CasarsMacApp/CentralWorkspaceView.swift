@@ -6731,10 +6731,15 @@ private struct ImagerProgressDashboard: View {
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                 ImagerProgressSection(
-                    title: snapshot.sourceStreamIsActive ? "MS Read Window" : "Last MS Read Window",
-                    subtitle: snapshot.measurementSetWindow.rangeLabel
+                    title: snapshot.sourceStreamIsActive ? "MS Read Window" : "Retained Source Slab",
+                    subtitle: snapshot.sourceStreamIsActive
+                        ? snapshot.measurementSetWindow.rangeLabel
+                        : "last read; \(snapshot.measurementSetWindow.rangeLabel)"
                 ) {
-                    MeasurementSetReadWindowView(window: snapshot.measurementSetWindow)
+                    MeasurementSetReadWindowView(
+                        window: snapshot.measurementSetWindow,
+                        isCurrentIO: snapshot.sourceStreamIsActive
+                    )
                 }
 
                 ImagerProgressSection(
@@ -6851,7 +6856,7 @@ private struct ImagerProgressStatusStrip: View {
                 accent: .cyan
             )
             ImagerProgressStatusChip(
-                title: snapshot.sourceStreamIsActive ? "MS rows" : "Last MS rows",
+                title: snapshot.sourceStreamIsActive ? "MS rows" : "Retained rows",
                 value: snapshot.measurementSetWindow.activeRowPercentLabel,
                 detail: "channels \(snapshot.measurementSetWindow.activeChannelPercentLabel)",
                 systemImage: "tablecells",
@@ -6954,6 +6959,7 @@ private struct ImagerProgressSection<Content: View>: View {
 
 private struct MeasurementSetReadWindowView: View {
     let window: MeasurementSetReadWindowProgress
+    let isCurrentIO: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -6993,8 +6999,17 @@ private struct MeasurementSetReadWindowView: View {
                     width: rect.width * CGFloat(max(0, window.channelEndFraction - window.channelStartFraction)),
                     height: rect.height * CGFloat(max(0, window.rowEndFraction - window.rowStartFraction))
                 )
-                context.fill(Path(selected), with: .color(Color.cyan.opacity(0.18)))
-                context.stroke(Path(selected), with: .color(.cyan), lineWidth: 2)
+                let selectedColor = isCurrentIO ? Color.cyan : Color.secondary
+                context.fill(Path(selected), with: .color(selectedColor.opacity(isCurrentIO ? 0.18 : 0.10)))
+                if isCurrentIO {
+                    context.stroke(Path(selected), with: .color(selectedColor), lineWidth: 2)
+                } else {
+                    context.stroke(
+                        Path(selected),
+                        with: .color(selectedColor.opacity(0.70)),
+                        style: StrokeStyle(lineWidth: 1.25, dash: [4, 3])
+                    )
+                }
             }
             .frame(height: 220)
             .overlay(alignment: .leading) {
@@ -7008,7 +7023,7 @@ private struct MeasurementSetReadWindowView: View {
             }
 
             HStack {
-                Text("Channels")
+                Text(isCurrentIO ? "Channels" : "Retained")
                     .workbenchFont(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -8144,7 +8159,7 @@ struct GenericTaskPanel: View {
     private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
         if argument.parser.kind == "toggle" {
             let current = genericTaskToggle(argument.id)
-            let defaultValue = argument.default == "true"
+            let defaultValue = argument.defaultToggleValue(values: store.state.genericTaskValues[activeTaskID] ?? [:])
             return current != defaultValue
         }
         let current = genericTaskValue(argument.id)
@@ -8160,7 +8175,7 @@ struct GenericTaskPanel: View {
 
     private func genericTaskToggle(_ argumentID: String) -> Bool {
         store.state.genericTaskToggles[activeTaskID]?[argumentID]
-            ?? (schema?.arguments.first { $0.id == argumentID }?.default == "true")
+            ?? (schema?.arguments.first { $0.id == argumentID }?.defaultToggleValue(values: store.state.genericTaskValues[activeTaskID] ?? [:]) ?? false)
     }
 
     @ViewBuilder
@@ -8246,7 +8261,7 @@ struct GenericTaskPanel: View {
             set: { store.setGenericTaskValue(taskID: taskID, argumentID: argument.id, value: $0) }
         )
         let toggle = Binding(
-            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? (argument.default == "true") },
+            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? argument.defaultToggleValue(values: store.state.genericTaskValues[taskID] ?? [:]) },
             set: { store.setGenericTaskToggle(taskID: taskID, argumentID: argument.id, value: $0) }
         )
         let label = displayLabel(for: argument)

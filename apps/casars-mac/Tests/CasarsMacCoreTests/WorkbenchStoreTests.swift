@@ -597,7 +597,8 @@ final class WorkbenchStoreTests: XCTestCase {
             "ms", "imagename", "imsize", "cell_arcsec", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "gridder", "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
+            "gridder", "standard_mfs_acceleration", "perchanweightdensity",
+            "restoringbeam", "niter", "nmajor", "gain",
             "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
             "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
@@ -656,6 +657,43 @@ final class WorkbenchStoreTests: XCTestCase {
             try ProcessGenericTaskClient.arguments(for: request),
             ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
         )
+    }
+
+    func testGenericTaskArgumentsEvaluateConditionalToggleDefaults() throws {
+        let schema = try makeImagerTaskUISchema()
+        let task = makeImagerTaskCatalogEntry()
+        let cubeRequest = GenericTaskRequest(
+            runID: "run-cube",
+            task: task,
+            schema: schema,
+            values: [
+                "ms": "/data/input.ms",
+                "imagename": "/tmp/out",
+                "imsize": "512",
+                "cell_arcsec": "1.0",
+                "specmode": "cube",
+                "deconvolver": "clark",
+                "weighting": "uniform",
+                "gridder": "mosaic"
+            ],
+            toggles: [:]
+        )
+        let cubeArguments = try ProcessGenericTaskClient.arguments(for: cubeRequest)
+        XCTAssertTrue(cubeArguments.contains("--perchanweightdensity"))
+        XCTAssertFalse(cubeArguments.contains("--no-perchanweightdensity"))
+
+        var cubedataValues = cubeRequest.values
+        cubedataValues["specmode"] = "cubedata"
+        let cubedataRequest = GenericTaskRequest(
+            runID: "run-cubedata",
+            task: task,
+            schema: schema,
+            values: cubedataValues,
+            toggles: [:]
+        )
+        let cubedataArguments = try ProcessGenericTaskClient.arguments(for: cubedataRequest)
+        XCTAssertTrue(cubedataArguments.contains("--no-perchanweightdensity"))
+        XCTAssertFalse(cubedataArguments.contains("--perchanweightdensity"))
     }
 
     func testGenericTaskArgumentsInvokeHiddenDefaultOptions() throws {
@@ -1661,6 +1699,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 "weighting": "briggsbwtaper",
                 "robust": "0.5",
                 "gridder": "wproject",
+                "standard_mfs_acceleration": "metal",
                 "restoringbeam": "common",
                 "niter": "1000",
                 "nmajor": "4",
@@ -1699,10 +1738,11 @@ final class WorkbenchStoreTests: XCTestCase {
             "--noisethreshold", "--sidelobethreshold", "--lownoisethreshold",
             "--minbeamfrac", "--negativethreshold", "--scales", "--smallscalebias",
             "--gridder", "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
-            "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
+            "--standard-mfs-acceleration", "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
         ] {
             XCTAssertTrue(arguments.contains(flag), "missing \(flag)")
         }
+        XCTAssertTrue(arguments.contains("metal"))
     }
 
     func testGenericMutatingTaskRequiresConfirmationBeforeStart() throws {
@@ -3098,6 +3138,40 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(executionState.queues.first { $0.id == "queue-cube-product-publisher" }?.detail, "active / product-scratch / measured / P/c")
     }
 
+    func testImagerProgressKeepsLastReadChunkWhenComputeEventCarriesSlabExtent() throws {
+        var parser = ImagerProgressStderrParser()
+        let readJSON = #"{"schema_version":1,"sequence":3,"elapsed_ms":100,"phase":"reading_ms","summary":"reading rows","ms_read":{"total_rows":1000,"total_channels":32,"row_start":100,"row_end":200,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":false,"backend":"source stream"}}"#
+        let computeJSON = #"{"schema_version":1,"sequence":4,"elapsed_ms":200,"phase":"backend_execution","summary":"backend execution for slab","ms_read":{"total_rows":1000,"total_channels":32,"row_start":0,"row_end":1000,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"metal"}}"#
+
+        _ = parser.append(imagerProgressStderrPrefix + readJSON + "\n", runID: "imager-read-window", state: .running)
+        let records = parser.append(imagerProgressStderrPrefix + computeJSON + "\n", runID: "imager-read-window", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertEqual(progress.measurementSetWindow.activeRowStart, 100)
+        XCTAssertEqual(progress.measurementSetWindow.activeRowEnd, 200)
+        XCTAssertEqual(progress.measurementSetWindow.activeChannelStart, 8)
+        XCTAssertEqual(progress.measurementSetWindow.activeChannelEnd, 16)
+    }
+
+    func testImagerProgressPreservesFullCubeExtentAcrossPerPlaneEvents() throws {
+        var parser = ImagerProgressStderrParser()
+        let fullCubeJSON = #"{"schema_version":1,"sequence":1,"elapsed_ms":100,"phase":"reading_ms","summary":"full cube extent","output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":7,"active_plane_end":14},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":false,"backend":"source"}}"#
+        let planeJSON = #"{"schema_version":1,"sequence":2,"elapsed_ms":200,"phase":"forming weighted mosaic groups","summary":"single plane event","output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":1,"active_plane_start":0,"active_plane_end":1},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":true,"backend":"metal minor cycle"}}"#
+
+        _ = parser.append(imagerProgressStderrPrefix + fullCubeJSON + "\n", runID: "imager-cube", state: .running)
+        let records = parser.append(imagerProgressStderrPrefix + planeJSON + "\n", runID: "imager-cube", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertEqual(progress.outputCube.zPlanes, 16)
+        XCTAssertEqual(progress.outputCube.activePlaneStart, 7)
+        XCTAssertEqual(progress.outputCube.activePlaneEnd, 14)
+        XCTAssertEqual(progress.outputCube.activeRangeLabel, "Freq planes 7-14 / 16 (7 planes)")
+    }
+
     func testImagerProgressPreservesObservedResourceStates() throws {
         var parser = ImagerProgressStderrParser()
         let progressJSON = #"{"schema_version":1,"sequence":6,"elapsed_ms":2000,"phase":"deconvolving and writing products","summary":"phase text mentions work that should not drive state","runtime":{"active_threads":8,"total_threads":8,"gpu_active":true,"backend":"observed-only"},"observability":{"schema_version":2,"resources":[{"id":"source-stream","label":"Source Stream","state":"retained","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"visibility-grid","label":"Grid/FFT","state":"blocked","lease_count":1,"active_threads":0,"gpu_active":false},{"id":"plane-state","label":"Plane State","state":"unknown","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"deconvolver","label":"Deconvolver","state":"active","lease_count":1,"active_threads":6,"gpu_active":true},{"id":"product-scratch","label":"Products","state":"stale","lease_count":0,"active_threads":0,"gpu_active":false}]}}"#
@@ -3378,6 +3452,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["niter"], "2048")
         XCTAssertEqual(values["threshold_jy"], "0.0")
         XCTAssertEqual(toggles["dirty_only"], false)
+        XCTAssertEqual(toggles["perchanweightdensity"], true)
         XCTAssertEqual(toggles["write_pb"], true)
         XCTAssertEqual(toggles["pbcor"], true)
     }
@@ -4349,9 +4424,31 @@ final class WorkbenchStoreTests: XCTestCase {
         lock.unlock()
         let arguments = try XCTUnwrap(result?.arguments)
         XCTAssertTrue(arguments.contains("--progress-jsonl"))
+        let progressFlagIndex = try XCTUnwrap(arguments.firstIndex(of: "--progress-jsonl"))
+        let progressPath = arguments[progressFlagIndex + 1]
+        let progressFilename = URL(fileURLWithPath: progressPath).lastPathComponent
+        XCTAssertTrue(progressFilename.hasPrefix("jsonl-progress-pid"), progressFilename)
+        XCTAssertTrue(progressFilename.hasSuffix("-imager-progress.jsonl"), progressFilename)
+        XCTAssertFalse(progressFilename == "jsonl-progress-imager-progress.jsonl")
         XCTAssertEqual(progress?.phase, "jsonl_transport")
         XCTAssertEqual(progress?.runtime.activeResourceIDs, ["visibility-grid"])
         XCTAssertEqual(result?.stderr, "ordinary stderr diagnostic")
+    }
+
+    func testImagerProgressTelemetryFilenameIsCollisionResistant() throws {
+        let first = ProcessGenericTaskClient.progressTelemetryFilename(
+            runID: "../imager 1",
+            processID: 123,
+            nonce: try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        )
+        let second = ProcessGenericTaskClient.progressTelemetryFilename(
+            runID: "../imager 1",
+            processID: 123,
+            nonce: try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        )
+
+        XCTAssertEqual(first, "imager-1-pid123-00000000-0000-0000-0000-000000000001-imager-progress.jsonl")
+        XCTAssertNotEqual(first, second)
     }
 
     func testGenericTaskClientFindsBundledAndReleaseHelpers() {
@@ -5131,6 +5228,7 @@ private func makeImagerTaskUISchema() throws -> TaskUISchema {
         {"id":"polarization","label":"Corr / Stokes","order":13,"parser":{"kind":"option","flags":["--corr"],"metavar":"PLANE","choices":["I","Q","U","V","XX","YY","RR","LL"]},"value_kind":"choice","required":false,"default":"I","help":"","group":"Context","advanced":true,"hidden_in_tui":false},
         {"id":"specmode","label":"Spectral Mode","order":20,"parser":{"kind":"option","flags":["--specmode"],"metavar":"MODE","choices":["mfs","cube","cubedata"]},"value_kind":"choice","required":true,"default":"mfs","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"interpolation","label":"Cube Interp","order":21,"parser":{"kind":"option","flags":["--interpolation"],"metavar":"MODE","choices":["nearest","linear","cubic"]},"value_kind":"choice","required":false,"default":null,"help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
+        {"id":"perchanweightdensity","label":"Per-Channel Density","order":23,"parser":{"kind":"toggle","true_flags":["--perchanweightdensity"],"false_flags":["--no-perchanweightdensity"]},"value_kind":"bool","required":false,"default":"cube:true,cubedata:false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
         {"id":"dirty_only","label":"Dirty Only","order":30,"parser":{"kind":"toggle","true_flags":["--dirty-only"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"niter","label":"Iterations","order":31,"parser":{"kind":"option","flags":["--niter"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":"0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"threshold_jy","label":"Threshold","order":32,"parser":{"kind":"option","flags":["--threshold-jy"],"metavar":"JY","choices":[]},"value_kind":"float","required":false,"default":"0.0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},

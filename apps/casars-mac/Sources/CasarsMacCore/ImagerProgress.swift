@@ -193,7 +193,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 basis: "no work estimate in progress event",
                 confidence: "unknown"
             ),
-            measurementSetWindow: event.msRead.map(MeasurementSetReadWindowProgress.init(payload:)) ?? previous?.measurementSetWindow ?? MeasurementSetReadWindowProgress(
+            measurementSetWindow: Self.measurementSetWindow(for: event, previous: previous) ?? MeasurementSetReadWindowProgress(
                 totalRows: 0,
                 totalChannels: 0,
                 activeRowStart: 0,
@@ -201,7 +201,7 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
                 activeChannelStart: 0,
                 activeChannelEnd: 0
             ),
-            outputCube: event.outputCube.map(OutputCubeProgress.init(payload:)) ?? previous?.outputCube ?? OutputCubeProgress(
+            outputCube: event.outputCube.map { OutputCubeProgress(payload: $0, previous: previous?.outputCube) } ?? previous?.outputCube ?? OutputCubeProgress(
                 xPixels: 1,
                 yPixels: 1,
                 zPlanes: 1,
@@ -236,6 +236,19 @@ public struct ImagerProgressSnapshot: Codable, Equatable {
             sampledAtMilliseconds: event.elapsedMs,
             receivedAt: Date()
         )
+    }
+
+    private static func measurementSetWindow(
+        for event: ImagerProgressEventPayload,
+        previous: ImagerProgressSnapshot?
+    ) -> MeasurementSetReadWindowProgress? {
+        guard let msRead = event.msRead else {
+            return previous?.measurementSetWindow
+        }
+        guard event.phase == "reading_ms" else {
+            return previous?.measurementSetWindow
+        }
+        return MeasurementSetReadWindowProgress(payload: msRead)
     }
 
     public func elapsedLabel(now: Date = Date()) -> String {
@@ -372,6 +385,9 @@ extension ImagerProgressSnapshot {
         }
         if queue.blockedCount > 0 {
             parts.append("\(queue.blockedCount) blocked")
+        }
+        if let reason = queue.blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            parts.append(reason)
         }
         parts.append("\(queue.producersActive ? "P" : "p")/\(queue.consumersActive ? "C" : "c")")
         return parts.joined(separator: " ")
@@ -1165,6 +1181,7 @@ public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
     public var producersActive: Bool
     public var consumersActive: Bool
     public var blockedCount: Int
+    public var blockedReason: String?
     public var confidence: String
     public var note: String?
 
@@ -1179,6 +1196,7 @@ public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
         producersActive: Bool,
         consumersActive: Bool,
         blockedCount: Int,
+        blockedReason: String? = nil,
         confidence: String,
         note: String?
     ) {
@@ -1192,6 +1210,7 @@ public struct ImagingObservedQueueSnapshot: Codable, Equatable, Identifiable {
         self.producersActive = producersActive
         self.consumersActive = consumersActive
         self.blockedCount = blockedCount
+        self.blockedReason = blockedReason
         self.confidence = confidence
         self.note = note
     }
@@ -1500,6 +1519,31 @@ extension OutputCubeProgress {
             zPlanes: payload.zPlanes,
             activePlaneStart: payload.activePlaneStart,
             activePlaneEnd: payload.activePlaneEnd
+        )
+    }
+
+    init(payload: ImagerProgressCubePayload, previous: OutputCubeProgress?) {
+        let incoming = OutputCubeProgress(payload: payload)
+        guard let previous,
+              previous.xPixels == incoming.xPixels,
+              previous.yPixels == incoming.yPixels else {
+            self = incoming
+            return
+        }
+
+        let zPlanes = max(previous.zPlanes, incoming.zPlanes)
+        let collapsedLocalPlane = incoming.zPlanes <= 1
+            && incoming.activePlaneStart == 0
+            && incoming.activePlaneEnd <= 1
+            && previous.zPlanes > incoming.zPlanes
+        let activePlaneStart = collapsedLocalPlane ? previous.activePlaneStart : incoming.activePlaneStart
+        let activePlaneEnd = collapsedLocalPlane ? previous.activePlaneEnd : incoming.activePlaneEnd
+        self.init(
+            xPixels: incoming.xPixels,
+            yPixels: incoming.yPixels,
+            zPlanes: zPlanes,
+            activePlaneStart: min(max(0, activePlaneStart), zPlanes),
+            activePlaneEnd: min(max(0, activePlaneEnd), zPlanes)
         )
     }
 }
@@ -2084,6 +2128,7 @@ struct ImagerObservedQueuePayload: Decodable, Equatable {
     var producersActive: Bool
     var consumersActive: Bool
     var blockedCount: Int
+    var blockedReason: String?
     var confidence: String
     var note: String?
 
@@ -2098,6 +2143,7 @@ struct ImagerObservedQueuePayload: Decodable, Equatable {
         case producersActive = "producers_active"
         case consumersActive = "consumers_active"
         case blockedCount = "blocked_count"
+        case blockedReason = "blocked_reason"
         case confidence
         case note
     }
@@ -2322,6 +2368,7 @@ extension ImagingObservedQueueSnapshot {
             producersActive: payload.producersActive,
             consumersActive: payload.consumersActive,
             blockedCount: payload.blockedCount,
+            blockedReason: payload.blockedReason,
             confidence: payload.confidence,
             note: payload.note
         )

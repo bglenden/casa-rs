@@ -276,6 +276,95 @@ impl<T> SelectedArray2D<T> {
     }
 }
 
+/// Typed selected 1-D array cells packed as `[row][axis0]`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectedArray1D<T> {
+    row_count: usize,
+    axis0_count: usize,
+    values: Vec<T>,
+}
+
+impl<T> SelectedArray1D<T> {
+    /// Create a packed selected-cell block.
+    pub fn new(row_count: usize, axis0_count: usize, values: Vec<T>) -> Self {
+        Self {
+            row_count,
+            axis0_count,
+            values,
+        }
+    }
+
+    /// Number of selected rows represented by this block.
+    pub fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Size of axis 0 in every selected 1-D cell.
+    pub fn axis0_count(&self) -> usize {
+        self.axis0_count
+    }
+
+    /// Borrow packed values laid out as `[row][axis0]`.
+    pub fn values(&self) -> &[T] {
+        &self.values
+    }
+
+    /// Consume the block and return packed values laid out as `[row][axis0]`.
+    pub fn into_values(self) -> Vec<T> {
+        self.values
+    }
+}
+
+/// Typed selected 1-D array cells for MS row-array primitive types.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelectedArray1DCells {
+    /// Boolean cells, packed as `[row][axis0]`.
+    Bool(SelectedArray1D<bool>),
+    /// 32-bit float cells, packed as `[row][axis0]`.
+    Float32(SelectedArray1D<f32>),
+    /// 64-bit float cells, packed as `[row][axis0]`.
+    Float64(SelectedArray1D<f64>),
+    /// 32-bit complex cells, packed as `[row][axis0]`.
+    Complex32(SelectedArray1D<Complex32>),
+    /// 64-bit complex cells, packed as `[row][axis0]`.
+    Complex64(SelectedArray1D<Complex64>),
+}
+
+impl SelectedArray1DCells {
+    /// Primitive type represented by this block.
+    pub fn primitive_type(&self) -> PrimitiveType {
+        match self {
+            Self::Bool(_) => PrimitiveType::Bool,
+            Self::Float32(_) => PrimitiveType::Float32,
+            Self::Float64(_) => PrimitiveType::Float64,
+            Self::Complex32(_) => PrimitiveType::Complex32,
+            Self::Complex64(_) => PrimitiveType::Complex64,
+        }
+    }
+
+    /// Number of selected rows represented by this block.
+    pub fn row_count(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.row_count(),
+            Self::Float32(values) => values.row_count(),
+            Self::Float64(values) => values.row_count(),
+            Self::Complex32(values) => values.row_count(),
+            Self::Complex64(values) => values.row_count(),
+        }
+    }
+
+    /// Size of axis 0 in every selected 1-D cell.
+    pub fn axis0_count(&self) -> usize {
+        match self {
+            Self::Bool(values) => values.axis0_count(),
+            Self::Float32(values) => values.axis0_count(),
+            Self::Float64(values) => values.axis0_count(),
+            Self::Complex32(values) => values.axis0_count(),
+            Self::Complex64(values) => values.axis0_count(),
+        }
+    }
+}
+
 /// Typed selected 2-D array cells for MS visibility-column primitive types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SelectedArray2DCells {

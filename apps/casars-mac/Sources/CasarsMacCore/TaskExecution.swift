@@ -482,7 +482,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 }
                 arguments.append(value)
             case "toggle":
-                let value = request.toggles[argument.id] ?? (argument.default == "true")
+                let value = request.toggles[argument.id] ?? argument.defaultToggleValue(values: request.values)
                 if value, let flag = argument.parser.trueFlags?.first {
                     arguments.append(flag)
                 } else if !value, let flag = argument.parser.falseFlags?.first {
@@ -532,9 +532,26 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         }
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         return rootURL
-            .appendingPathComponent("\(request.runID)-imager-progress.jsonl")
+            .appendingPathComponent(progressTelemetryFilename(runID: request.runID))
             .standardizedFileURL
             .path
+    }
+
+    static func progressTelemetryFilename(
+        runID: String,
+        processID: Int32 = ProcessInfo.processInfo.processIdentifier,
+        nonce: UUID = UUID()
+    ) -> String {
+        "\(sanitizedTelemetryPathComponent(runID))-pid\(processID)-\(nonce.uuidString)-imager-progress.jsonl"
+    }
+
+    private static func sanitizedTelemetryPathComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let sanitized = String(scalars).trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
+        return sanitized.isEmpty ? "run" : sanitized
     }
 
     private static func runProcess(

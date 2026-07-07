@@ -2760,6 +2760,15 @@ where
     let mut max_abs_w_lambda = 0.0f64;
     let mut dirty_projector_cache = MosaicProjectorCache::new();
     let mut residual_projector_cache = MosaicProjectorCache::new();
+    let streaming_metal_group_cache_enabled =
+        standard_mfs_metal_grouped_input_cache_enabled(execution_config.metal_grouped_input_cache)
+            && (mosaic_initial_dirty_metal_backend_enabled()
+                || mosaic_residual_metal_backend_enabled())
+            && !mosaic_trace_enabled()
+            && mosaic_cell_trace_targets().is_empty()
+            && !mosaic_grid_dump_enabled();
+    let mut streaming_metal_group_cache =
+        streaming_metal_group_cache_enabled.then(Vec::<MosaicStreamingMetalGroupCacheBlock>::new);
 
     let dirty_started = Instant::now();
     stream_weighted_mosaic_groups(
@@ -2790,6 +2799,18 @@ where
                 conv_sampling,
                 &mut dirty_projector_cache,
             )?;
+            let block_metal_cache = if streaming_metal_group_cache_enabled {
+                Some(prepare_mosaic_streaming_metal_group_cache_block(
+                    &request,
+                    &config,
+                    &gridder,
+                    &groups,
+                    conv_sampling,
+                    mosaic_parallel_threads.min(groups.len()).max(1),
+                )?)
+            } else {
+                None
+            };
             let parallel = compute_mosaic_dirty_parallel(
                 &request,
                 &config,
@@ -2797,9 +2818,16 @@ where
                 &groups,
                 conv_sampling,
                 mosaic_parallel_threads.min(groups.len()).max(1),
-                None,
+                block_metal_cache
+                    .as_ref()
+                    .map(|block| block.prepared.as_slice()),
                 Some(&dirty_projectors),
             )?;
+            if let (Some(cache_blocks), Some(block_cache)) =
+                (streaming_metal_group_cache.as_mut(), block_metal_cache)
+            {
+                cache_blocks.push(block_cache);
+            }
             add_complex64_grid(&mut psf_grid, &parallel.psf_grid);
             add_complex64_grid(&mut accumulated_residual_grid, &parallel.residual_grid);
             add_complex64_grid(&mut accumulated_mosaic_weight_grid, &parallel.weight_grid);
@@ -2915,6 +2943,7 @@ where
             stage_timings,
             execution_config.progress_callback.as_ref(),
             progress_context,
+            streaming_metal_group_cache.as_deref(),
         )
     };
     let clean_state = if clean_request.clean.niter > 0 {
@@ -3621,6 +3650,7 @@ fn compute_mosaic_residual_streaming<F>(
     stage_timings: &mut ImagingStageTimings,
     progress_callback: Option<&StandardMfsProgressCallback>,
     progress_context: Option<StandardMfsProgressContext>,
+    streaming_metal_group_cache: Option<&[MosaicStreamingMetalGroupCacheBlock]>,
 ) -> Result<Array2<f32>, ImagingError>
 where
     F: FnMut(
@@ -3661,6 +3691,7 @@ where
     let degrid_started = Instant::now();
     let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
+    let mut residual_block_index = 0usize;
     stream_weighted_mosaic_groups(
         request,
         config,
@@ -3671,6 +3702,10 @@ where
         progress_callback,
         progress_context,
         |groups| {
+            let cached_block = streaming_metal_group_cache
+                .and_then(|blocks| blocks.get(residual_block_index))
+                .filter(|block| block.matches_groups(&groups));
+            residual_block_index += 1;
             let residual_projectors = prepare_mosaic_residual_projectors(
                 request,
                 config,
@@ -3687,7 +3722,7 @@ where
                 conv_sampling,
                 model_grid.as_ref(),
                 mosaic_parallel_threads.min(groups.len()).max(1),
-                None,
+                cached_block.map(|block| block.prepared.as_slice()),
                 Some(&residual_projectors),
             )?;
             profile::log_parallel_stage(profile::ParallelStageProfile {
@@ -7779,6 +7814,58 @@ const MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES: usize = 10_000;
 const MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES: usize = 25_000;
 const MOSAIC_CPU_GROUPED_DIRTY_MIN_RAW_SAMPLES: usize = 10_000;
 
+fn mosaic_metal_group_cache_min_raw_samples() -> usize {
+    MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES.min(MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES)
+}
+
+fn mosaic_metal_group_cache_can_help(group: &MosaicPointingGroup) -> bool {
+    // Prepared samples are formed by aggregating raw samples, so the prepared
+    // count cannot exceed the raw group length. Groups smaller than the Metal
+    // thresholds can never use the cached Metal path; retaining them only burns
+    // CPU and resident memory.
+    group.batch.len() >= mosaic_metal_group_cache_min_raw_samples()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MosaicPointingGroupCacheSignature {
+    samples: usize,
+    frequency_hz: u64,
+    pointing_ra_rad: u64,
+    pointing_dec_rad: u64,
+    primary_beam_model: (u8, u64, u64),
+}
+
+impl MosaicPointingGroupCacheSignature {
+    fn from_group(group: &MosaicPointingGroup) -> Self {
+        Self {
+            samples: group.batch.len(),
+            frequency_hz: group.frequency_hz.to_bits(),
+            pointing_ra_rad: group.pointing_direction_rad[0].to_bits(),
+            pointing_dec_rad: group.pointing_direction_rad[1].to_bits(),
+            primary_beam_model: primary_beam_model_key(group.primary_beam_model),
+        }
+    }
+}
+
+struct MosaicStreamingMetalGroupCacheBlock {
+    signatures: Vec<MosaicPointingGroupCacheSignature>,
+    prepared: Vec<Option<MosaicMetalPreparedGroup>>,
+}
+
+impl MosaicStreamingMetalGroupCacheBlock {
+    fn matches_groups(&self, groups: &[MosaicPointingGroup]) -> bool {
+        self.signatures.len() == groups.len()
+            && self.prepared.len() == groups.len()
+            && self
+                .signatures
+                .iter()
+                .zip(groups)
+                .all(|(signature, group)| {
+                    *signature == MosaicPointingGroupCacheSignature::from_group(group)
+                })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct MosaicMetalGridStats {
     calls: usize,
@@ -9856,7 +9943,8 @@ fn prepare_mosaic_metal_group_cache(
                         request.geometry,
                         config.phase_center_direction_rad,
                         group.pointing_direction_rad,
-                    ) {
+                    ) || !mosaic_metal_group_cache_can_help(group)
+                    {
                         prepared.push((group_index, None));
                         continue;
                     }
@@ -9935,6 +10023,32 @@ fn prepare_mosaic_metal_group_cache(
         );
     }
     Ok(cache)
+}
+
+fn prepare_mosaic_streaming_metal_group_cache_block(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    thread_count: usize,
+) -> Result<MosaicStreamingMetalGroupCacheBlock, ImagingError> {
+    let signatures = groups
+        .iter()
+        .map(MosaicPointingGroupCacheSignature::from_group)
+        .collect::<Vec<_>>();
+    let prepared = prepare_mosaic_metal_group_cache(
+        request,
+        config,
+        gridder,
+        groups,
+        conv_sampling,
+        thread_count,
+    )?;
+    Ok(MosaicStreamingMetalGroupCacheBlock {
+        signatures,
+        prepared,
+    })
 }
 
 fn compute_mosaic_dirty_group_contribution_metal(
@@ -29835,6 +29949,90 @@ mod tests {
         assert_eq!(roundtrip.loc_y, 260);
         assert_eq!(roundtrip.min_ix, 3);
         assert_eq!(roundtrip.max_ix, 6);
+    }
+
+    #[test]
+    fn mosaic_metal_group_cache_skips_groups_below_metal_threshold() {
+        assert_eq!(
+            super::mosaic_metal_group_cache_min_raw_samples(),
+            super::MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES
+                .min(super::MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES)
+        );
+
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let mut below =
+            point_source_visibilities(&[(0.0, 0.0, 0.0)], 1.0e-3, [64, 64], (0.0, 0.0), 1.0);
+        let threshold = super::mosaic_metal_group_cache_min_raw_samples();
+        below.u_lambda.resize(threshold - 1, 0.0);
+        below.v_lambda.resize(threshold - 1, 0.0);
+        below.w_lambda.resize(threshold - 1, 0.0);
+        below
+            .visibility
+            .resize(threshold - 1, Complex32::new(1.0, 0.0));
+        below.weight.resize(threshold - 1, 1.0);
+        below.sumwt_factor.resize(threshold - 1, 1.0);
+        below.gridable.resize(threshold - 1, true);
+        let below_group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch: below,
+            sample_frequency_hz: Vec::new(),
+        };
+        assert!(!super::mosaic_metal_group_cache_can_help(&below_group));
+
+        let mut at_threshold = below_group;
+        at_threshold.batch.u_lambda.push(0.0);
+        at_threshold.batch.v_lambda.push(0.0);
+        at_threshold.batch.w_lambda.push(0.0);
+        at_threshold.batch.visibility.push(Complex32::new(1.0, 0.0));
+        at_threshold.batch.weight.push(1.0);
+        at_threshold.batch.sumwt_factor.push(1.0);
+        at_threshold.batch.gridable.push(true);
+        assert!(super::mosaic_metal_group_cache_can_help(&at_threshold));
+    }
+
+    #[test]
+    fn mosaic_streaming_metal_cache_block_matches_only_same_group_shape() {
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let batch =
+            point_source_visibilities(&[(0.0, 0.0, 0.0)], 1.0e-3, [64, 64], (0.0, 0.0), 1.0);
+        let group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch,
+            sample_frequency_hz: Vec::new(),
+        };
+        let cache = super::MosaicStreamingMetalGroupCacheBlock {
+            signatures: vec![super::MosaicPointingGroupCacheSignature::from_group(&group)],
+            prepared: vec![None],
+        };
+
+        assert!(cache.matches_groups(std::slice::from_ref(&group)));
+
+        let mut different_frequency = group.clone();
+        different_frequency.frequency_hz = 1.5e9;
+        assert!(!cache.matches_groups(&[different_frequency]));
+
+        let mut different_count = group;
+        different_count.batch.u_lambda.push(1.0);
+        different_count.batch.v_lambda.push(0.0);
+        different_count.batch.w_lambda.push(0.0);
+        different_count
+            .batch
+            .visibility
+            .push(Complex32::new(1.0, 0.0));
+        different_count.batch.weight.push(1.0);
+        different_count.batch.sumwt_factor.push(1.0);
+        different_count.batch.gridable.push(true);
+        assert!(!cache.matches_groups(&[different_count]));
     }
 
     #[test]
