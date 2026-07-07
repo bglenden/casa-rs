@@ -916,6 +916,24 @@ impl Table {
         )
     }
 
+    pub(crate) fn get_array_cells_1d_typed_uncached(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+    ) -> Result<SelectedArray1DCells, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        self.inner
+            .array_cells_1d_typed_uncached(row_indices, column)
+    }
+
     /// Returns owned scalar values for every row in `column`.
     ///
     /// Missing cells are returned as `None`.
@@ -1799,6 +1817,18 @@ impl<'a> TableColumn<'a> {
             channel_start,
             channel_count,
         )
+    }
+
+    /// Returns typed 1-D array cells for selected rows without populating the
+    /// table-level row cache.
+    ///
+    /// The returned values are packed as `[row][axis0]`.
+    pub fn array_cells_1d_typed_uncached(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<SelectedArray1DCells, TableError> {
+        self.table
+            .get_array_cells_1d_typed_uncached(&self.column, row_indices)
     }
 }
 

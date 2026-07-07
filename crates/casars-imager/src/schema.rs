@@ -319,6 +319,20 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 required: true,
                 advanced: false,
             }),
+            option_argument(OptionArgumentConfig {
+                id: "standard_mfs_acceleration",
+                label: "Standard MFS Acceleration",
+                order: 61,
+                flags: &["--standard-mfs-acceleration"],
+                metavar: "MODE",
+                value_kind: UiValueKind::Choice,
+                default: Some("auto"),
+                choices: &["auto", "cpu", "multi-cpu", "metal"],
+                help: "Backend policy for standard/MFS-compatible gridding stages",
+                group: "Stages",
+                required: false,
+                advanced: true,
+            }),
             toggle_argument(ToggleArgumentConfig {
                 id: "perchanweightdensity",
                 label: "Per-Channel Density",
@@ -877,8 +891,22 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 group: "Products",
                 advanced: false,
             }),
-            action_argument(53, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(54, "help", &["-h", "--help"], UiActionKind::Help),
+            option_argument(OptionArgumentConfig {
+                id: "progress_detail",
+                label: "Progress Detail",
+                order: 53,
+                flags: &["--progress-detail"],
+                metavar: "MODE",
+                value_kind: UiValueKind::Choice,
+                default: Some("basic"),
+                choices: &["basic", "diagnostic"],
+                help: "Progress telemetry detail level; diagnostic adds structured large-run timing evidence",
+                group: "Diagnostics",
+                required: false,
+                advanced: true,
+            }),
+            action_argument(54, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(55, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "imager-run-v1".to_string(),
@@ -1074,6 +1102,21 @@ mod tests {
         };
         assert!(flags.contains(&"--outlierfile".to_string()));
 
+        let standard_mfs_acceleration = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "standard_mfs_acceleration")
+            .expect("standard_mfs_acceleration argument");
+        assert_eq!(standard_mfs_acceleration.default.as_deref(), Some("auto"));
+        assert!(standard_mfs_acceleration.advanced);
+        let UiArgumentParser::Option { flags, choices, .. } = &standard_mfs_acceleration.parser
+        else {
+            panic!("standard_mfs_acceleration should use an option parser");
+        };
+        assert!(flags.contains(&"--standard-mfs-acceleration".to_string()));
+        assert!(choices.contains(&"metal".to_string()));
+        assert!(choices.contains(&"multi-cpu".to_string()));
+
         let polarization = schema
             .arguments
             .iter()
@@ -1105,5 +1148,6 @@ mod tests {
         assert_eq!(default_for("pblimit"), "0.2");
         assert_eq!(default_for("minor_cycle_length"), "1000");
         assert_eq!(default_for("minpsffraction"), "0.05");
+        assert_eq!(default_for("progress_detail"), "basic");
     }
 }

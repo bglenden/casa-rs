@@ -6731,10 +6731,15 @@ private struct ImagerProgressDashboard: View {
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                 ImagerProgressSection(
-                    title: snapshot.sourceStreamIsActive ? "MS Read Window" : "Last MS Read Window",
-                    subtitle: snapshot.measurementSetWindow.rangeLabel
+                    title: snapshot.sourceStreamIsActive ? "MS Read Window" : "Retained Source Slab",
+                    subtitle: snapshot.sourceStreamIsActive
+                        ? snapshot.measurementSetWindow.rangeLabel
+                        : "last read; \(snapshot.measurementSetWindow.rangeLabel)"
                 ) {
-                    MeasurementSetReadWindowView(window: snapshot.measurementSetWindow)
+                    MeasurementSetReadWindowView(
+                        window: snapshot.measurementSetWindow,
+                        isCurrentIO: snapshot.sourceStreamIsActive
+                    )
                 }
 
                 ImagerProgressSection(
@@ -6851,7 +6856,7 @@ private struct ImagerProgressStatusStrip: View {
                 accent: .cyan
             )
             ImagerProgressStatusChip(
-                title: snapshot.sourceStreamIsActive ? "MS rows" : "Last MS rows",
+                title: snapshot.sourceStreamIsActive ? "MS rows" : "Retained rows",
                 value: snapshot.measurementSetWindow.activeRowPercentLabel,
                 detail: "channels \(snapshot.measurementSetWindow.activeChannelPercentLabel)",
                 systemImage: "tablecells",
@@ -6954,6 +6959,7 @@ private struct ImagerProgressSection<Content: View>: View {
 
 private struct MeasurementSetReadWindowView: View {
     let window: MeasurementSetReadWindowProgress
+    let isCurrentIO: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -6993,8 +6999,17 @@ private struct MeasurementSetReadWindowView: View {
                     width: rect.width * CGFloat(max(0, window.channelEndFraction - window.channelStartFraction)),
                     height: rect.height * CGFloat(max(0, window.rowEndFraction - window.rowStartFraction))
                 )
-                context.fill(Path(selected), with: .color(Color.cyan.opacity(0.18)))
-                context.stroke(Path(selected), with: .color(.cyan), lineWidth: 2)
+                let selectedColor = isCurrentIO ? Color.cyan : Color.secondary
+                context.fill(Path(selected), with: .color(selectedColor.opacity(isCurrentIO ? 0.18 : 0.10)))
+                if isCurrentIO {
+                    context.stroke(Path(selected), with: .color(selectedColor), lineWidth: 2)
+                } else {
+                    context.stroke(
+                        Path(selected),
+                        with: .color(selectedColor.opacity(0.70)),
+                        style: StrokeStyle(lineWidth: 1.25, dash: [4, 3])
+                    )
+                }
             }
             .frame(height: 220)
             .overlay(alignment: .leading) {
@@ -7008,7 +7023,7 @@ private struct MeasurementSetReadWindowView: View {
             }
 
             HStack {
-                Text("Channels")
+                Text(isCurrentIO ? "Channels" : "Retained")
                     .workbenchFont(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -7472,8 +7487,12 @@ private struct ResourceActivityFlowView: View {
             .frame(height: canvasHeight)
 
             HStack(spacing: 12) {
-                Label("busy", systemImage: "circle")
+                Label("active", systemImage: "circle")
                     .foregroundStyle(Color.cyan)
+                Label("retained", systemImage: "internaldrive")
+                    .foregroundStyle(Color.blue)
+                Label("blocked", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(Color.yellow)
                 Label("active section", systemImage: "rectangle.inset.filled")
                     .foregroundStyle(Color.green)
                 Label("GPU", systemImage: "bolt.fill")
@@ -7507,10 +7526,10 @@ private struct ResourceActivityFlowView: View {
         context: inout GraphicsContext
     ) {
         let tint = color(for: resource)
-        let outline = resource.isBusy ? tint : Color.secondary.opacity(0.35)
-        let strokeStyle = StrokeStyle(lineWidth: resource.isBusy ? 2 : 1, dash: resource.isBusy ? [] : [4, 4])
+        let outline = outlineColor(for: resource, tint: tint)
+        let strokeStyle = strokeStyle(for: resource)
         let rowPath = Path(roundedRect: rect, cornerRadius: 6)
-        context.fill(rowPath, with: .color(tint.opacity(resource.isBusy ? 0.12 : 0.045)))
+        context.fill(rowPath, with: .color(tint.opacity(fillOpacity(for: resource))))
         context.stroke(rowPath, with: .color(outline), style: strokeStyle)
 
         let metricWidth: CGFloat = 78
@@ -7537,7 +7556,7 @@ private struct ResourceActivityFlowView: View {
             )
             context.fill(
                 Path(roundedRect: sectionRect, cornerRadius: 4),
-                with: .color(tint.opacity(resource.isBusy ? 0.42 : 0.20))
+                with: .color(tint.opacity(resource.isBusy ? 0.42 : resource.isRetained ? 0.24 : 0.16))
             )
         }
 
@@ -7558,7 +7577,7 @@ private struct ResourceActivityFlowView: View {
             anchor: .leading
         )
         context.draw(
-            Text("\(resource.observedState) / \(resource.detail)").font(.caption2).foregroundColor(.secondary),
+            Text("\(resource.state.rawValue) / \(resource.detail)").font(.caption2).foregroundColor(.secondary),
             at: CGPoint(x: rect.minX + 8, y: rect.midY + 8),
             anchor: .leading
         )
@@ -7620,6 +7639,51 @@ private struct ResourceActivityFlowView: View {
         head.move(to: end)
         head.addLine(to: CGPoint(x: end.x + 4, y: end.y - 4))
         context.stroke(head, with: .color(color), style: StrokeStyle(lineWidth: active ? 1.4 : 1, lineCap: .round))
+    }
+
+    private static func outlineColor(for resource: ImagingResourceActivity, tint: Color) -> Color {
+        if resource.isBusy {
+            return tint
+        }
+        if resource.isBlocked {
+            return .yellow.opacity(0.85)
+        }
+        if resource.isRetained {
+            return tint.opacity(0.62)
+        }
+        if resource.isStaleOrUnknown {
+            return .secondary.opacity(0.26)
+        }
+        return .secondary.opacity(0.35)
+    }
+
+    private static func strokeStyle(for resource: ImagingResourceActivity) -> StrokeStyle {
+        if resource.isBusy {
+            return StrokeStyle(lineWidth: 2)
+        }
+        if resource.isBlocked {
+            return StrokeStyle(lineWidth: 1.6, dash: [6, 3])
+        }
+        if resource.isRetained {
+            return StrokeStyle(lineWidth: 1.4)
+        }
+        if resource.isStaleOrUnknown {
+            return StrokeStyle(lineWidth: 1, dash: [2, 4])
+        }
+        return StrokeStyle(lineWidth: 1, dash: [4, 4])
+    }
+
+    private static func fillOpacity(for resource: ImagingResourceActivity) -> Double {
+        if resource.isBusy {
+            return 0.12
+        }
+        if resource.isBlocked {
+            return 0.09
+        }
+        if resource.isRetained {
+            return 0.07
+        }
+        return 0.045
     }
 
     private static func color(for resource: ImagingResourceActivity) -> Color {
@@ -8095,7 +8159,7 @@ struct GenericTaskPanel: View {
     private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
         if argument.parser.kind == "toggle" {
             let current = genericTaskToggle(argument.id)
-            let defaultValue = argument.default == "true"
+            let defaultValue = argument.defaultToggleValue(values: store.state.genericTaskValues[activeTaskID] ?? [:])
             return current != defaultValue
         }
         let current = genericTaskValue(argument.id)
@@ -8111,7 +8175,7 @@ struct GenericTaskPanel: View {
 
     private func genericTaskToggle(_ argumentID: String) -> Bool {
         store.state.genericTaskToggles[activeTaskID]?[argumentID]
-            ?? (schema?.arguments.first { $0.id == argumentID }?.default == "true")
+            ?? (schema?.arguments.first { $0.id == argumentID }?.defaultToggleValue(values: store.state.genericTaskValues[activeTaskID] ?? [:]) ?? false)
     }
 
     @ViewBuilder
@@ -8197,7 +8261,7 @@ struct GenericTaskPanel: View {
             set: { store.setGenericTaskValue(taskID: taskID, argumentID: argument.id, value: $0) }
         )
         let toggle = Binding(
-            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? (argument.default == "true") },
+            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? argument.defaultToggleValue(values: store.state.genericTaskValues[taskID] ?? [:]) },
             set: { store.setGenericTaskToggle(taskID: taskID, argumentID: argument.id, value: $0) }
         )
         let label = displayLabel(for: argument)

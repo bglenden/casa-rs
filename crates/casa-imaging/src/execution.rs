@@ -18,10 +18,12 @@ use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
 use crate::{
-    ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsPairCollapseTransform,
+    ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsObservabilityCallback,
+    StandardMfsObservabilityEvent, StandardMfsPairCollapseTransform,
     StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
-    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization, VisibilityBatch,
+    StandardMfsQueueProgress, StandardMfsQueueProgressConfidence, StandardMfsRoutedVisibilityRow,
+    StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
+    StandardMfsVisibilityPolarization, VisibilityBatch,
     gridder::{
         PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
         StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
@@ -2108,6 +2110,7 @@ pub(crate) struct StandardMfsTiledCpuExecutor<'a> {
     gridder: &'a StandardGridder,
     partition: StandardMfsFixedTilePartition,
     resident_tile_limit: usize,
+    observability_callback: Option<StandardMfsObservabilityCallback>,
 }
 
 /// Immutable summary of tiled standard-MFS residual refresh samples.
@@ -3029,10 +3032,19 @@ struct StandardMfsTileInboxShared {
     ready: Arc<(Mutex<StandardMfsTileInboxReadyState>, Condvar)>,
     ready_sample_min: usize,
     started_at: Instant,
+    stage: &'static str,
+    worker_capacity: usize,
+    observability_callback: Option<StandardMfsObservabilityCallback>,
 }
 
 impl StandardMfsTileInboxShared {
-    fn new(tile_count: usize, ready_sample_min: usize) -> Self {
+    fn new(
+        tile_count: usize,
+        ready_sample_min: usize,
+        stage: &'static str,
+        worker_capacity: usize,
+        observability_callback: Option<StandardMfsObservabilityCallback>,
+    ) -> Self {
         let started_at = Instant::now();
         Self {
             tiles: (0..tile_count)
@@ -3048,7 +3060,66 @@ impl StandardMfsTileInboxShared {
             )),
             ready_sample_min,
             started_at,
+            stage,
+            worker_capacity,
+            observability_callback,
         }
+    }
+
+    fn emit_observability(&self) {
+        let Some(callback) = self.observability_callback.as_ref() else {
+            return;
+        };
+        let (ready_lock, _) = &*self.ready;
+        let Ok(ready) = ready_lock.lock() else {
+            return;
+        };
+        let heap_len = ready.heap.len();
+        let active_tasks = ready.active_tasks;
+        let producer_active = ready.producer_active;
+        let current_queued_bytes = ready.stats.current_queued_bytes;
+        let queued_bytes_high_water = ready.stats.queued_bytes_high_water;
+        let blocked_count = ready
+            .stats
+            .wait_with_queued_bytes_events
+            .saturating_add(ready.stats.wait_with_producer_active_events);
+        drop(ready);
+
+        let mut queued_runs = 0usize;
+        let mut queued_bytes = 0usize;
+        let mut active_tile_queues = 0usize;
+        for tile in &self.tiles {
+            let Ok(queue) = tile.queue.lock() else {
+                return;
+            };
+            queued_runs = queued_runs.saturating_add(queue.runs.len());
+            queued_bytes = queued_bytes.saturating_add(queue.queued_bytes);
+            active_tile_queues = active_tile_queues.saturating_add(usize::from(queue.active));
+        }
+
+        let reserved_bytes = current_queued_bytes.max(queued_bytes);
+        callback(StandardMfsObservabilityEvent {
+            stage: self.stage.to_string(),
+            active_workers: active_tasks.max(active_tile_queues),
+            worker_capacity: self.worker_capacity,
+            queues: vec![StandardMfsQueueProgress {
+                id: format!("standard-mfs-tile-inbox-{}", self.stage),
+                label: format!("Tile inbox {}", self.stage),
+                len: Some(
+                    queued_runs
+                        .saturating_add(heap_len)
+                        .saturating_add(active_tasks),
+                ),
+                capacity: Some(self.worker_capacity.max(self.tiles.len())),
+                bytes: Some(reserved_bytes),
+                high_water_bytes: Some(queued_bytes_high_water.max(reserved_bytes)),
+                producers_active: producer_active,
+                consumers_active: active_tasks > 0 || active_tile_queues > 0,
+                blocked_count,
+                confidence: StandardMfsQueueProgressConfidence::Measured,
+                note: Some("measured from standard-MFS fixed-tile inbox scheduler".to_string()),
+            }],
+        });
     }
 
     fn queue_is_ready_for_workers(&self, queue: &StandardMfsTileInboxQueueState) -> bool {
@@ -3186,6 +3257,8 @@ impl StandardMfsTileInboxShared {
         if notify {
             cvar.notify_one();
         }
+        drop(ready);
+        self.emit_observability();
         Ok(())
     }
 
@@ -3365,6 +3438,7 @@ impl StandardMfsTileInboxShared {
             ready.stats.worker_samples += samples.len();
             ready.stats.worker_tap_visits += estimated_work;
             drop(ready);
+            self.emit_observability();
 
             return Ok(Some(StandardMfsDrainedTileWork {
                 tile_id: head.tile_id,
@@ -3458,6 +3532,8 @@ impl StandardMfsTileInboxShared {
             ready.push_ready_head(head);
         }
         cvar.notify_all();
+        drop(ready);
+        self.emit_observability();
         Ok(())
     }
 
@@ -3716,6 +3792,8 @@ impl<'a> StandardMfsTileRunAccumulator<'a> {
 fn run_standard_mfs_tile_inbox_scheduler<T, P, E>(
     partition: &StandardMfsFixedTilePartition,
     worker_count: usize,
+    stage: &'static str,
+    observability_callback: Option<&StandardMfsObservabilityCallback>,
     mut produce_runs: P,
     execute_work: E,
 ) -> Result<StandardMfsTileInboxSchedulerOutput<T>, ImagingError>
@@ -3735,6 +3813,9 @@ where
     let shared = Arc::new(StandardMfsTileInboxShared::new(
         partition.tile_count(),
         ready_sample_min,
+        stage,
+        worker_count,
+        observability_callback.cloned(),
     ));
     let mut all_outputs = Vec::<StandardMfsTileInboxTaskOutput<T>>::new();
     let mut all_worker_profiles = Vec::<StandardMfsTileWorkerProfile>::new();
@@ -3796,6 +3877,7 @@ where
                 ready.set_producer_active(true);
                 cvar.notify_all();
             }
+            shared.emit_observability();
             let mut producer = StandardMfsTileInboxProducer::new(shared_for_producer);
             let result = produce_runs(&mut |tile_id, run| producer.enqueue_run(tile_id, run));
             if let Err(error) = result {
@@ -3821,6 +3903,7 @@ where
             ready.update_activity(Instant::now());
             cvar.notify_all();
         }
+        shared.emit_observability();
 
         for handle in handles {
             let (mut outputs, worker_profile) = handle.join().map_err(|_| {
@@ -4917,6 +5000,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             gridder,
             partition,
             resident_tile_limit,
+            observability_callback: execution_config.observability_callback,
         })
     }
 
@@ -5954,6 +6038,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "dirty",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 replay_weighted_batches(&mut |batches| {
                     let started = Instant::now();
@@ -6012,6 +6098,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "planned_dirty",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 replay_weighted_samples(&mut |samples| {
                     let started = Instant::now();
@@ -6069,6 +6157,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "planned_run_dirty",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_weighted_runs(&mut |run_block| {
@@ -6133,6 +6223,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "routed_run_dirty",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |run_block| {
@@ -6198,6 +6290,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "routed_visibility_run_dirty",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |routed_run| {
@@ -6385,6 +6479,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "planned_psf",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 replay_weighted_samples(&mut |samples| {
                     let started = Instant::now();
@@ -6441,6 +6537,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "planned_run_psf",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_weighted_runs(&mut |run_block| {
@@ -6504,6 +6602,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "routed_run_psf",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |run_block| {
@@ -6568,6 +6668,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "routed_visibility_run_psf",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |routed_run| {
@@ -6739,6 +6841,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "psf",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 replay_weighted_batches(&mut |batches| {
                     let started = Instant::now();
@@ -8245,6 +8349,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "residual",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 replay_weighted_batches(&mut |batches| {
                     let started = Instant::now();
@@ -8304,6 +8410,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "planned_residual",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 replay_weighted_samples(&mut |samples| {
                     let started = Instant::now();
@@ -8362,6 +8470,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "planned_run_residual",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_weighted_runs(&mut |run_block| {
@@ -8427,6 +8537,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "routed_run_residual",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |run_block| {
@@ -8497,6 +8609,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let output = run_standard_mfs_tile_inbox_scheduler(
             &self.partition,
             worker_count,
+            "routed_visibility_run_residual",
+            self.observability_callback.as_ref(),
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |routed_run| {
@@ -19631,6 +19745,7 @@ mod tests {
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
+                observability_callback: None,
             },
         )
         .unwrap();
@@ -19647,6 +19762,7 @@ mod tests {
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
+                observability_callback: None,
             },
         )
         .unwrap();
@@ -19796,6 +19912,7 @@ mod tests {
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
+                observability_callback: None,
             },
         )
         .unwrap();
@@ -19831,9 +19948,17 @@ mod tests {
         let partition = StandardMfsFixedTilePartition::new([64, 64], [32, 32], 3).unwrap();
         let hot_tile = StandardMfsTileId(0);
         let cold_tile = StandardMfsTileId(3);
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_for_callback = std::sync::Arc::clone(&observed);
+        let observability_callback: crate::StandardMfsObservabilityCallback =
+            std::sync::Arc::new(move |event| {
+                observed_for_callback.lock().unwrap().push(event);
+            });
         let output = super::run_standard_mfs_tile_inbox_scheduler(
             &partition,
             2,
+            "test",
+            Some(&observability_callback),
             |enqueue| {
                 enqueue(hot_tile, test_tile_visibility_run(0, 3))?;
                 enqueue(hot_tile, test_tile_visibility_run(10, 4))?;
@@ -19870,11 +19995,22 @@ mod tests {
                 .iter()
                 .any(|task| task.tile_id == cold_tile)
         );
+        let observed = observed.lock().unwrap();
+        assert!(observed.len() >= 3);
+        assert!(
+            observed
+                .iter()
+                .any(|event| event.queues.iter().any(|queue| queue.confidence
+                    == crate::StandardMfsQueueProgressConfidence::Measured
+                    && queue.high_water_bytes.unwrap_or(0) > 0))
+        );
     }
 
     #[test]
     fn tile_inbox_producer_pending_retries_fifo_after_try_lock_miss() {
-        let shared = std::sync::Arc::new(super::StandardMfsTileInboxShared::new(1, 1));
+        let shared = std::sync::Arc::new(super::StandardMfsTileInboxShared::new(
+            1, 1, "test", 1, None,
+        ));
         let tile_id = StandardMfsTileId(0);
         let held = shared.tiles[tile_id.index()].queue.lock().unwrap();
         let mut producer = super::StandardMfsTileInboxProducer::new(std::sync::Arc::clone(&shared));
@@ -19945,6 +20081,7 @@ mod tests {
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
+                observability_callback: None,
             },
         )
         .unwrap();
@@ -20063,6 +20200,7 @@ mod tests {
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
+                observability_callback: None,
             },
         )
         .unwrap();
@@ -20258,6 +20396,7 @@ mod tests {
                 materialized_sample_plan_max_samples: None,
                 w_project_max_abs_w_lambda: None,
                 progress_callback: None,
+                observability_callback: None,
             },
         )
         .unwrap();

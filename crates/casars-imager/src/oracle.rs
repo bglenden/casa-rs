@@ -224,6 +224,9 @@ pub struct PreparedGeometryRowTrace {
     pub is_cross: bool,
     /// Raw row UVW in meters from the source MeasurementSet.
     pub raw_uvw_m: [f64; 3],
+    /// GridFT/CASA density-grid UVW in meters for the selected imaging phase
+    /// center.
+    pub gridft_density_uvw_m: [f64; 3],
     /// Reprojected imaging UVW in meters for the chosen phase center.
     pub imaging_uvw_m: [f64; 3],
     /// Frequency-scaled visibility phase-shift distance in meters.

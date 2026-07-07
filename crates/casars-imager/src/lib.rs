@@ -40,9 +40,11 @@ use casa_imaging::{
     StandardMfsCleanSession, StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyPlan,
     StandardMfsExecutionConfig, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
+    StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
     StandardMfsPairCollapseTransform, StandardMfsPlan, StandardMfsPlannedSampleBlock,
     StandardMfsPlannedSampleBuilder, StandardMfsProgressCallback, StandardMfsProgressEvent,
-    StandardMfsProgressPhase, StandardMfsRoutedGridSample, StandardMfsRoutedInputCachePrefill,
+    StandardMfsProgressPhase, StandardMfsQueueProgress, StandardMfsQueueProgressConfidence,
+    StandardMfsRoutedGridSample, StandardMfsRoutedInputCachePrefill,
     StandardMfsRoutedVisibilityBlock, StandardMfsStreamingWeightingPlan,
     StandardMfsVisibilityPolarization, StandardMfsVisibilityRow, UvTaperSize, VisibilityBatch,
     VisibilityBlockView, VisibilityMetadataBatch, VisibilitySampleRange, WProjectDiagnostics,
@@ -84,7 +86,7 @@ use casa_ms::{
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
-use casa_tables::{ColumnSchema, TiledFileIoStats};
+use casa_tables::{ColumnSchema, SelectedArray1DCells, TiledFileIoStats};
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -128,24 +130,27 @@ pub use oracle::{
 };
 pub use schema::command_schema;
 pub use task_contract::{
-    IMAGER_PROGRESS_EVENT_SCHEMA_VERSION, IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME,
-    IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
-    ImagerAutoMultiThresholdConfig, ImagerChannelRunResult, ImagerCleanMaskMode,
-    ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue,
-    ImagerCubeInterpolation, ImagerDeconvolver,
+    IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+    IMAGER_PROGRESS_STDERR_PREFIX, IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION,
+    ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerBackendDiagnostic,
+    ImagerChannelRunResult, ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCoreStageTimings,
+    ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
     ImagerMemoryLedgerSnapshot, ImagerObservabilityExtent, ImagerObservabilitySnapshot,
     ImagerObservabilitySpan, ImagerObservabilitySpanState, ImagerObservedMemoryConfidence,
     ImagerObservedMemoryEntry, ImagerObservedMemoryKind, ImagerObservedQueueConfidence,
-    ImagerObservedQueueSnapshot, ImagerObservedResource, ImagerObservedResourceId,
-    ImagerObservedResourceMemory, ImagerObservedResourceState, ImagerObservedStageKind,
-    ImagerObservedWorkerSnapshot, ImagerObservedWorkerState, ImagerPlaneSelection,
-    ImagerProgressCube, ImagerProgressDeconvolution, ImagerProgressEvent, ImagerProgressMemory,
+    ImagerObservedQueueSnapshot, ImagerObservedQueueState, ImagerObservedResource,
+    ImagerObservedResourceId, ImagerObservedResourceMemory, ImagerObservedResourceState,
+    ImagerObservedStageKind, ImagerObservedWorkerSnapshot, ImagerObservedWorkerState,
+    ImagerPlaneSelection, ImagerProductWriteDiagnostic, ImagerProgressCube,
+    ImagerProgressDeconvolution, ImagerProgressDetail, ImagerProgressDiagnostics,
+    ImagerProgressEvent, ImagerProgressMemory, ImagerProgressMemoryCategory,
     ImagerProgressMsWindow, ImagerProgressOptions, ImagerProgressRuntime, ImagerProgressUvCoverage,
     ImagerProgressUvPoint, ImagerProgressWork, ImagerProtocolInfo, ImagerRestoringBeamMode,
-    ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel,
-    ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper,
-    ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+    ImagerRunDiagnosticSummary, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
+    ImagerSaveModel, ImagerSourceReadDiagnostic, ImagerSpectralMode, ImagerStageDiagnosticSummary,
+    ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
+    ImagerWTermMode, ImagerWeighting,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -174,8 +179,9 @@ const OBS_COUNTER_SLAB_ID: &str = "slab_id";
 const OBS_COUNTER_ROW_BLOCK_ROWS: &str = "row_block_rows";
 const STANDARD_MFS_REPLAY_PROGRESS_RESOURCES: &[&str] =
     &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE];
-const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 1;
 const IMAGER_RECENT_SPAN_LIMIT: usize = 16;
+const IMAGER_OBSERVED_QUEUE_STALE_AFTER_MS: u64 = 1_000;
+const IMAGER_RECENT_DIAGNOSTIC_LIMIT: usize = 32;
 const SPECTRAL_SOURCE_RESOURCES: &[ImagerObservedResourceId] =
     &[ImagerObservedResourceId::SourceStream];
 const SPECTRAL_GRID_PLANE_RESOURCES: &[ImagerObservedResourceId] = &[
@@ -196,7 +202,15 @@ const PROGRESS_RESOURCE_ROWS: &[(ImagerObservedResourceId, &str)] = &[
     (ImagerObservedResourceId::PlaneState, "Plane State"),
     (ImagerObservedResourceId::Deconvolver, "Deconvolver"),
     (ImagerObservedResourceId::ProductScratch, "Products"),
+    (ImagerObservedResourceId::WorkerQueue, "Worker Queue"),
 ];
+
+fn imager_observed_resource_label(id: ImagerObservedResourceId) -> &'static str {
+    PROGRESS_RESOURCE_ROWS
+        .iter()
+        .find_map(|(resource_id, label)| (*resource_id == id).then_some(*label))
+        .unwrap_or("Resource")
+}
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
     "imsize",
@@ -242,31 +256,6 @@ fn imager_observed_resource_id(progress_id: &str) -> ImagerObservedResourceId {
         "gpu-staging" => ImagerObservedResourceId::GpuStaging,
         "process-runtime" => ImagerObservedResourceId::ProcessRuntime,
         _ => ImagerObservedResourceId::ProcessRuntime,
-    }
-}
-
-fn imager_observed_stage_kind(phase: &str) -> ImagerObservedStageKind {
-    let lower = phase.to_ascii_lowercase();
-    if lower.contains("source") || lower.contains("read") || lower.contains("prepare") {
-        ImagerObservedStageKind::SourceStream
-    } else if lower.contains("residual") || lower.contains("replay") {
-        ImagerObservedStageKind::ResidualRefresh
-    } else if lower.contains("clark") || lower.contains("minor") || lower.contains("clean") {
-        ImagerObservedStageKind::ClarkMinorCycle
-    } else if lower.contains("grid") {
-        ImagerObservedStageKind::Gridding
-    } else if lower.contains("fft") {
-        ImagerObservedStageKind::Fft
-    } else if lower.contains("mosaic") {
-        ImagerObservedStageKind::MosaicResidual
-    } else if lower.contains("write") || lower.contains("product") || lower.contains("flush") {
-        ImagerObservedStageKind::ProductWrite
-    } else if lower.contains("memory") {
-        ImagerObservedStageKind::MemoryPlanning
-    } else if lower.contains("start") || lower.contains("finish") || lower.contains("fail") {
-        ImagerObservedStageKind::Run
-    } else {
-        ImagerObservedStageKind::Unknown
     }
 }
 
@@ -655,30 +644,69 @@ struct ImagerProgressContext {
     next_span_sequence: u64,
     uv_coverage: BoundedUvCoverageAccumulator,
     uv_coverage_output_slab: Option<(usize, usize)>,
+    last_output_cube: Option<ImagerProgressCube>,
     last_active_runtime_backend: Option<String>,
     active_spans: BTreeMap<String, ImagerObservabilitySpan>,
+    active_span_started_at: BTreeMap<String, Instant>,
+    synthetic_span_ids: BTreeSet<String>,
     recent_spans: VecDeque<ImagerObservabilitySpan>,
     active_span_stack: Vec<String>,
     active_span_resource_counts: BTreeMap<String, BTreeMap<String, usize>>,
     active_resource_counts: BTreeMap<String, usize>,
     active_resource_thread_counts: BTreeMap<String, Vec<usize>>,
+    observed_queues: BTreeMap<String, ImagerProgressObservedQueue>,
+    worker_queue_high_water_bytes: usize,
     memory: Option<ImagerProgressMemory>,
-    memory_high_water: ImagerProgressMemoryHighWater,
+    diagnostics: ImagerDiagnosticAccumulator,
     telemetry_writer: Option<BufWriter<File>>,
 }
 
-#[derive(Debug, Clone, Default)]
-struct ImagerProgressMemoryHighWater {
-    source_stream_buffer_bytes: usize,
-    product_scratch_bytes: usize,
+#[derive(Clone)]
+struct ImagerProgressObservedQueue {
+    snapshot: ImagerObservedQueueSnapshot,
+    observed_at: Instant,
 }
 
-impl ImagerProgressMemoryHighWater {
-    fn observe(&mut self, memory: &ImagerProgressMemory) {
-        self.source_stream_buffer_bytes = self
-            .source_stream_buffer_bytes
-            .max(memory.source_stream_buffer_bytes);
-        self.product_scratch_bytes = self.product_scratch_bytes.max(memory.product_scratch_bytes);
+#[derive(Default)]
+struct ImagerDiagnosticAccumulator {
+    source_reads: VecDeque<ImagerSourceReadDiagnostic>,
+    product_writes: VecDeque<ImagerProductWriteDiagnostic>,
+    backend_decisions: VecDeque<ImagerBackendDiagnostic>,
+    stage_summaries: VecDeque<ImagerStageDiagnosticSummary>,
+    stage_totals_ns: BTreeMap<String, u128>,
+    source_read_bytes: u64,
+    source_read_elapsed_ns: u128,
+    product_write_bytes: u64,
+    product_write_elapsed_ns: u128,
+    resource_high_water_bytes: BTreeMap<String, usize>,
+    top_stall_reasons: BTreeMap<String, usize>,
+    run_summary: Option<ImagerRunDiagnosticSummary>,
+}
+
+impl ImagerDiagnosticAccumulator {
+    fn push_bounded<T>(queue: &mut VecDeque<T>, value: T) {
+        queue.push_front(value);
+        while queue.len() > IMAGER_RECENT_DIAGNOSTIC_LIMIT {
+            queue.pop_back();
+        }
+    }
+
+    fn snapshot(&self) -> ImagerProgressDiagnostics {
+        ImagerProgressDiagnostics {
+            source_reads: self.source_reads.iter().cloned().collect(),
+            product_writes: self.product_writes.iter().cloned().collect(),
+            backend_decisions: self.backend_decisions.iter().cloned().collect(),
+            stage_summaries: self.stage_summaries.iter().cloned().collect(),
+            run_summary: self.run_summary.clone(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.source_reads.is_empty()
+            && self.product_writes.is_empty()
+            && self.backend_decisions.is_empty()
+            && self.stage_summaries.is_empty()
+            && self.run_summary.is_none()
     }
 }
 
@@ -695,6 +723,13 @@ impl Drop for ImagerProgressGuard {
 
 struct ImagerObservationSpanGuard {
     span_id: String,
+    completion_state: ImagerObservabilitySpanState,
+}
+
+impl ImagerObservationSpanGuard {
+    fn mark_failed(&mut self) {
+        self.completion_state = ImagerObservabilitySpanState::Failed;
+    }
 }
 
 impl Drop for ImagerObservationSpanGuard {
@@ -708,27 +743,78 @@ impl Drop for ImagerObservationSpanGuard {
         let Some(context) = context.as_mut() else {
             return;
         };
-        if let Some(mut span) = context.active_spans.remove(&self.span_id) {
-            if let Some(resources) = context.active_span_resource_counts.get(&self.span_id) {
-                span.resource_ids = resources
-                    .keys()
-                    .map(|resource| imager_observed_resource_id(resource))
-                    .collect();
-            }
-            span.state = ImagerObservabilitySpanState::Complete;
-            span.elapsed_ms = Instant::now()
-                .duration_since(context.started_at)
-                .as_millis() as u64;
-            context.recent_spans.push_front(span);
-            while context.recent_spans.len() > IMAGER_RECENT_SPAN_LIMIT {
-                context.recent_spans.pop_back();
-            }
-        }
-        context.active_span_resource_counts.remove(&self.span_id);
-        context
-            .active_span_stack
-            .retain(|candidate| candidate != &self.span_id);
+        complete_imager_observation_span(context, &self.span_id, self.completion_state);
     }
+}
+
+fn complete_imager_observation_span(
+    context: &mut ImagerProgressContext,
+    span_id: &str,
+    completion_state: ImagerObservabilitySpanState,
+) {
+    let started_at = context.active_span_started_at.remove(span_id);
+    context.synthetic_span_ids.remove(span_id);
+    if let Some(mut span) = context.active_spans.remove(span_id) {
+        if let Some(resources) = context.active_span_resource_counts.get(span_id) {
+            span.resource_ids = resources
+                .keys()
+                .map(|resource| imager_observed_resource_id(resource))
+                .collect();
+        }
+        span.state = completion_state;
+        let now = Instant::now();
+        let end_ms = now.duration_since(context.started_at).as_millis() as u64;
+        let duration_ms = started_at
+            .map(|started_at| now.duration_since(started_at).as_millis() as u64)
+            .unwrap_or(0);
+        span.end_ms = Some(end_ms);
+        span.duration_ms = Some(duration_ms);
+        span.exclusive_duration_ms = Some(duration_ms);
+        span.elapsed_ms = duration_ms;
+        context.recent_spans.push_front(span);
+        while context.recent_spans.len() > IMAGER_RECENT_SPAN_LIMIT {
+            context.recent_spans.pop_back();
+        }
+    }
+    context.active_span_resource_counts.remove(span_id);
+    context
+        .active_span_stack
+        .retain(|candidate| candidate != span_id);
+}
+
+fn begin_synthetic_unobserved_imager_span(context: &mut ImagerProgressContext) -> String {
+    context.next_span_sequence = context.next_span_sequence.saturating_add(1);
+    let span_id = format!(
+        "{}-{}",
+        imager_observed_stage_kind_label(ImagerObservedStageKind::Unknown),
+        context.next_span_sequence
+    );
+    context
+        .active_span_started_at
+        .insert(span_id.clone(), Instant::now());
+    let start_ms = context.started_at.elapsed().as_millis() as u64;
+    context.synthetic_span_ids.insert(span_id.clone());
+    context.active_spans.insert(
+        span_id.clone(),
+        ImagerObservabilitySpan {
+            id: span_id.clone(),
+            name: "unobserved active resources".to_string(),
+            stage_kind: ImagerObservedStageKind::Unknown,
+            state: ImagerObservabilitySpanState::Running,
+            parent_id: None,
+            worker_id: None,
+            resource_ids: Vec::new(),
+            expected_resource_ids: Vec::new(),
+            extent: None,
+            counters: BTreeMap::new(),
+            start_ms: Some(start_ms),
+            end_ms: None,
+            duration_ms: Some(0),
+            exclusive_duration_ms: None,
+            elapsed_ms: 0,
+        },
+    );
+    span_id
 }
 
 fn begin_imager_observation_span(
@@ -751,6 +837,10 @@ fn begin_imager_observation_span(
         context.next_span_sequence
     );
     let parent_id = context.active_span_stack.last().cloned();
+    context
+        .active_span_started_at
+        .insert(span_id.clone(), Instant::now());
+    let start_ms = context.started_at.elapsed().as_millis() as u64;
     context.active_spans.insert(
         span_id.clone(),
         ImagerObservabilitySpan {
@@ -764,11 +854,18 @@ fn begin_imager_observation_span(
             expected_resource_ids: expected_resources.to_vec(),
             extent,
             counters: BTreeMap::new(),
+            start_ms: Some(start_ms),
+            end_ms: None,
+            duration_ms: Some(0),
+            exclusive_duration_ms: None,
             elapsed_ms: 0,
         },
     );
     context.active_span_stack.push(span_id.clone());
-    Some(ImagerObservationSpanGuard { span_id })
+    Some(ImagerObservationSpanGuard {
+        span_id,
+        completion_state: ImagerObservabilitySpanState::Complete,
+    })
 }
 
 fn observe_current_imager_span_counters(counters: impl IntoIterator<Item = (&'static str, u64)>) {
@@ -792,35 +889,108 @@ fn observe_current_imager_span_counters(counters: impl IntoIterator<Item = (&'st
     }
 }
 
-fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgressGuard> {
-    if !options.enabled {
-        return None;
+fn set_imager_progress_queue_snapshots(
+    queues: Vec<ImagerObservedQueueSnapshot>,
+    queue_high_water_bytes: Option<usize>,
+) {
+    if queues.is_empty() || !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
     }
-    let telemetry_writer = options.telemetry_jsonl_path.as_ref().and_then(|path| {
+    let live_queue_bytes = imager_optional_sum(queues.iter().map(|queue| queue.bytes));
+    let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+        return;
+    };
+    let Some(context) = context.as_mut() else {
+        return;
+    };
+    let high_water_bytes = live_queue_bytes.or(queue_high_water_bytes).map(|bytes| {
+        context.worker_queue_high_water_bytes = context
+            .worker_queue_high_water_bytes
+            .max(bytes)
+            .max(queue_high_water_bytes.unwrap_or(0));
+        context.worker_queue_high_water_bytes
+    });
+    if let Some(memory) = context.memory.as_mut() {
+        if live_queue_bytes.is_some() || high_water_bytes.is_some() {
+            let category = ImagerProgressMemoryCategory {
+                kind: ImagerObservedMemoryKind::WorkerQueue,
+                resource_id: Some(ImagerObservedResourceId::WorkerQueue),
+                planned_bytes: None,
+                tracked_live_bytes: live_queue_bytes,
+                high_water_bytes,
+                row_block_rows: None,
+                active_planes: None,
+                confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                note: Some("measured from standard-MFS scheduler queue telemetry".to_string()),
+            };
+            if let Some(existing) = memory
+                .categories
+                .iter_mut()
+                .find(|existing| existing.kind == ImagerObservedMemoryKind::WorkerQueue)
+            {
+                if existing.planned_bytes.is_none() {
+                    existing.planned_bytes = category.planned_bytes;
+                }
+                existing.tracked_live_bytes = category.tracked_live_bytes;
+                existing.high_water_bytes = category.high_water_bytes;
+                existing.resource_id = category.resource_id;
+                existing.confidence = category.confidence;
+                existing.note = category.note;
+            } else {
+                memory.categories.push(category);
+            }
+        }
+    }
+    let now = Instant::now();
+    for queue in queues {
+        context.observed_queues.insert(
+            queue.id.clone(),
+            ImagerProgressObservedQueue {
+                snapshot: queue,
+                observed_at: now,
+            },
+        );
+    }
+}
+
+fn begin_imager_progress(
+    options: &ImagerProgressOptions,
+) -> Result<Option<ImagerProgressGuard>, String> {
+    if !options.enabled {
+        return Ok(None);
+    }
+    let telemetry_writer = if let Some(path) = options.telemetry_jsonl_path.as_ref() {
         if let Some(parent) = path.parent() {
             if let Err(error) = fs::create_dir_all(parent) {
-                eprintln!("failed to create imager progress telemetry directory: {error}");
-                return None;
+                return Err(format!(
+                    "failed to create imager progress telemetry directory {}: {error}",
+                    parent.display()
+                ));
             }
         }
-        match OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)
-        {
-            Ok(file) => Some(BufWriter::new(file)),
-            Err(error) => {
-                eprintln!("failed to open imager progress telemetry JSONL: {error}");
-                None
-            }
-        }
-    });
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(path)
+                .map(BufWriter::new)
+                .map_err(|error| {
+                    format!(
+                        "failed to open imager progress telemetry JSONL {}: {error}",
+                        path.display()
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
     let normalized = ImagerProgressOptions {
         enabled: true,
         telemetry_jsonl_path: options.telemetry_jsonl_path.clone(),
         max_uv_points: options.max_uv_points.min(casa_ms::DEFAULT_MAX_PLOT_POINTS),
         min_interval_ms: options.min_interval_ms.max(50),
+        detail: options.detail,
     };
     let context = ImagerProgressContext {
         uv_coverage: BoundedUvCoverageAccumulator::new(normalized.max_uv_points),
@@ -831,23 +1001,78 @@ fn begin_imager_progress(options: &ImagerProgressOptions) -> Option<ImagerProgre
         next_span_sequence: 0,
         last_active_runtime_backend: None,
         uv_coverage_output_slab: None,
+        last_output_cube: None,
         active_spans: BTreeMap::new(),
+        active_span_started_at: BTreeMap::new(),
+        synthetic_span_ids: BTreeSet::new(),
         recent_spans: VecDeque::new(),
         active_span_stack: Vec::new(),
         active_span_resource_counts: BTreeMap::new(),
         active_resource_counts: BTreeMap::new(),
         active_resource_thread_counts: BTreeMap::new(),
+        observed_queues: BTreeMap::new(),
+        worker_queue_high_water_bytes: 0,
         memory: None,
-        memory_high_water: ImagerProgressMemoryHighWater::default(),
+        diagnostics: ImagerDiagnosticAccumulator::default(),
         telemetry_writer,
     };
     if let Ok(mut slot) = IMAGER_PROGRESS_CONTEXT.lock() {
         *slot = Some(context);
         IMAGER_PROGRESS_ACTIVE.store(true, Ordering::Relaxed);
-        Some(ImagerProgressGuard)
+        Ok(Some(ImagerProgressGuard))
     } else {
-        None
+        Ok(None)
     }
+}
+
+fn imager_memory_kind_default_resource(
+    kind: ImagerObservedMemoryKind,
+) -> Option<ImagerObservedResourceId> {
+    match kind {
+        ImagerObservedMemoryKind::SourceBuffer => Some(ImagerObservedResourceId::SourceStream),
+        ImagerObservedMemoryKind::RowVisibilityBuffer => None,
+        ImagerObservedMemoryKind::GridFftScratch => Some(ImagerObservedResourceId::VisibilityGrid),
+        ImagerObservedMemoryKind::PlaneState => Some(ImagerObservedResourceId::PlaneState),
+        ImagerObservedMemoryKind::DeconvolverScratch => Some(ImagerObservedResourceId::Deconvolver),
+        ImagerObservedMemoryKind::Products => Some(ImagerObservedResourceId::ProductScratch),
+        ImagerObservedMemoryKind::WorkerQueue => Some(ImagerObservedResourceId::WorkerQueue),
+        ImagerObservedMemoryKind::GpuStaging | ImagerObservedMemoryKind::GpuDevice => {
+            Some(ImagerObservedResourceId::GpuStaging)
+        }
+        ImagerObservedMemoryKind::ProcessBaseline
+        | ImagerObservedMemoryKind::AllocatorRuntime
+        | ImagerObservedMemoryKind::UntrackedResident => {
+            Some(ImagerObservedResourceId::ProcessRuntime)
+        }
+    }
+}
+
+fn imager_memory_category_resource_id(
+    category: &ImagerProgressMemoryCategory,
+) -> Option<ImagerObservedResourceId> {
+    category
+        .resource_id
+        .or_else(|| imager_memory_kind_default_resource(category.kind))
+}
+
+fn imager_memory_category_for_kind(
+    memory: &ImagerProgressMemory,
+    kind: ImagerObservedMemoryKind,
+) -> Option<&ImagerProgressMemoryCategory> {
+    memory
+        .categories
+        .iter()
+        .find(|category| category.kind == kind)
+}
+
+fn imager_optional_sum(values: impl IntoIterator<Item = Option<usize>>) -> Option<usize> {
+    let mut saw_value = false;
+    let mut total = 0usize;
+    for value in values.into_iter().flatten() {
+        saw_value = true;
+        total = total.saturating_add(value);
+    }
+    saw_value.then_some(total)
 }
 
 fn imager_observed_memory_for_resource(
@@ -855,36 +1080,68 @@ fn imager_observed_memory_for_resource(
     memory: Option<&ImagerProgressMemory>,
 ) -> Option<ImagerObservedResourceMemory> {
     let memory = memory?;
+    let categories = memory
+        .categories
+        .iter()
+        .filter(|category| imager_memory_category_resource_id(category) == Some(resource_id))
+        .collect::<Vec<_>>();
+    let category_planned_bytes =
+        imager_optional_sum(categories.iter().map(|category| category.planned_bytes));
+    let category_resident_bytes = imager_optional_sum(
+        categories
+            .iter()
+            .map(|category| category.tracked_live_bytes),
+    );
+    let category_row_block_rows = categories
+        .iter()
+        .find_map(|category| category.row_block_rows);
+    let category_active_planes = categories
+        .iter()
+        .find_map(|category| category.active_planes);
     match resource_id {
         ImagerObservedResourceId::SourceStream => Some(ImagerObservedResourceMemory {
-            resident_bytes: None,
-            planned_bytes: Some(memory.source_stream_buffer_bytes),
-            row_block_rows: Some(memory.row_block_rows),
+            resident_bytes: category_resident_bytes,
+            planned_bytes: category_planned_bytes.or(Some(memory.source_stream_buffer_bytes)),
+            row_block_rows: category_row_block_rows.or(Some(memory.row_block_rows)),
             active_planes: None,
         }),
         ImagerObservedResourceId::PlaneState => Some(ImagerObservedResourceMemory {
-            resident_bytes: None,
-            planned_bytes: None,
+            resident_bytes: category_resident_bytes,
+            planned_bytes: category_planned_bytes,
             row_block_rows: None,
-            active_planes: Some(memory.active_planes),
+            active_planes: category_active_planes.or(Some(memory.active_planes)),
         }),
         ImagerObservedResourceId::ProductScratch => Some(ImagerObservedResourceMemory {
-            resident_bytes: None,
-            planned_bytes: Some(memory.product_scratch_bytes),
+            resident_bytes: category_resident_bytes,
+            planned_bytes: category_planned_bytes.or(Some(memory.product_scratch_bytes)),
             row_block_rows: None,
             active_planes: None,
         }),
-        _ => None,
+        ImagerObservedResourceId::VisibilityGrid
+        | ImagerObservedResourceId::Deconvolver
+        | ImagerObservedResourceId::WorkerQueue
+        | ImagerObservedResourceId::GpuStaging
+        | ImagerObservedResourceId::ProcessRuntime => {
+            if category_planned_bytes.is_some()
+                || category_resident_bytes.is_some()
+                || category_row_block_rows.is_some()
+                || category_active_planes.is_some()
+            {
+                Some(ImagerObservedResourceMemory {
+                    resident_bytes: category_resident_bytes,
+                    planned_bytes: category_planned_bytes,
+                    row_block_rows: category_row_block_rows,
+                    active_planes: category_active_planes,
+                })
+            } else {
+                None
+            }
+        }
     }
 }
 
 fn imager_observed_resource_is_retained(memory: Option<&ImagerObservedResourceMemory>) -> bool {
-    memory.is_some_and(|memory| {
-        memory.resident_bytes.is_some_and(|bytes| bytes > 0)
-            || memory.planned_bytes.is_some_and(|bytes| bytes > 0)
-            || memory.active_planes.is_some_and(|planes| planes > 0)
-            || memory.row_block_rows.is_some_and(|rows| rows > 0)
-    })
+    memory.is_some_and(|memory| memory.resident_bytes.is_some_and(|bytes| bytes > 0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -920,11 +1177,42 @@ fn imager_memory_ledger_entry(
     }
 }
 
+fn imager_apply_memory_category(
+    entry: &mut ImagerObservedMemoryEntry,
+    category: &ImagerProgressMemoryCategory,
+) {
+    if entry.resource_id.is_none() {
+        entry.resource_id = imager_memory_category_resource_id(category);
+    }
+    if let Some(planned_bytes) = category.planned_bytes {
+        entry.planned_bytes = Some(planned_bytes);
+    }
+    if let Some(tracked_live_bytes) = category.tracked_live_bytes {
+        entry.tracked_live_bytes = Some(tracked_live_bytes);
+    }
+    if let Some(high_water_bytes) = category.high_water_bytes {
+        entry.high_water_bytes = Some(high_water_bytes);
+    }
+    if let Some(row_block_rows) = category.row_block_rows {
+        entry.row_block_rows = Some(row_block_rows);
+    }
+    if let Some(active_planes) = category.active_planes {
+        entry.active_planes = Some(active_planes);
+    }
+    if let Some(confidence) = category.confidence {
+        entry.confidence = confidence;
+    } else if category.tracked_live_bytes.is_some() || category.high_water_bytes.is_some() {
+        entry.confidence = ImagerObservedMemoryConfidence::Measured;
+    }
+    if let Some(note) = &category.note {
+        entry.note = Some(note.clone());
+    }
+}
+
 fn imager_memory_ledger_snapshot(
     memory: Option<&ImagerProgressMemory>,
     process_rss_bytes: Option<usize>,
     process_peak_rss_bytes: Option<usize>,
-    memory_high_water: Option<&ImagerProgressMemoryHighWater>,
 ) -> Option<ImagerMemoryLedgerSnapshot> {
     if memory.is_none() && process_rss_bytes.is_none() && process_peak_rss_bytes.is_none() {
         return None;
@@ -932,28 +1220,20 @@ fn imager_memory_ledger_snapshot(
 
     let mut entries = Vec::new();
     if let Some(memory) = memory {
-        let source_high_water = memory_high_water
-            .map(|high_water| high_water.source_stream_buffer_bytes)
-            .unwrap_or(memory.source_stream_buffer_bytes)
-            .max(memory.source_stream_buffer_bytes);
-        let product_high_water = memory_high_water
-            .map(|high_water| high_water.product_scratch_bytes)
-            .unwrap_or(memory.product_scratch_bytes)
-            .max(memory.product_scratch_bytes);
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::SourceBuffer,
             "Source stream",
             Some(ImagerObservedResourceId::SourceStream),
             Some(memory.source_stream_buffer_bytes),
-            Some(memory.source_stream_buffer_bytes),
-            Some(source_high_water),
+            None,
+            None,
             None,
             None,
             None,
             Some(memory.row_block_rows),
             None,
             ImagerObservedMemoryConfidence::Planned,
-            Some("planner-sized rolling source buffer"),
+            Some("planner-sized rolling source buffer; live bytes are not yet separately measured"),
         ));
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::RowVisibilityBuffer,
@@ -1020,15 +1300,15 @@ fn imager_memory_ledger_snapshot(
             "Products",
             Some(ImagerObservedResourceId::ProductScratch),
             Some(memory.product_scratch_bytes),
-            Some(memory.product_scratch_bytes),
-            Some(product_high_water),
+            None,
+            None,
             None,
             None,
             None,
             None,
             None,
             ImagerObservedMemoryConfidence::Planned,
-            Some("planner-sized product scratch"),
+            Some("planner-sized product scratch; live bytes are not yet separately measured"),
         ));
         entries.push(imager_memory_ledger_entry(
             ImagerObservedMemoryKind::WorkerQueue,
@@ -1074,6 +1354,46 @@ fn imager_memory_ledger_snapshot(
             None,
             ImagerObservedMemoryConfidence::Unknown,
             Some("device memory requires backend-specific sampling"),
+        ));
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::AllocatorRuntime,
+            "Allocator runtime",
+            Some(ImagerObservedResourceId::ProcessRuntime),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("allocator caches and runtime overhead are not yet separately sampled"),
+        ));
+        for entry in &mut entries {
+            if let Some(category) = imager_memory_category_for_kind(memory, entry.kind) {
+                imager_apply_memory_category(entry, category);
+            }
+        }
+    }
+    if !entries
+        .iter()
+        .any(|entry| entry.kind == ImagerObservedMemoryKind::AllocatorRuntime)
+    {
+        entries.push(imager_memory_ledger_entry(
+            ImagerObservedMemoryKind::AllocatorRuntime,
+            "Allocator runtime",
+            Some(ImagerObservedResourceId::ProcessRuntime),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ImagerObservedMemoryConfidence::Unknown,
+            Some("allocator caches and runtime overhead are not yet separately sampled"),
         ));
     }
 
@@ -1190,7 +1510,7 @@ fn imager_observed_worker_snapshots(
         }];
     };
     let total_threads = runtime.total_threads;
-    let active_threads = runtime
+    let reported_active_threads = runtime
         .active_threads
         .min(total_threads.max(runtime.active_threads));
     let source_threads = active_resource_threads
@@ -1203,8 +1523,7 @@ fn imager_observed_worker_snapshots(
                     .any(|id| id == PROGRESS_RESOURCE_SOURCE_STREAM),
             )
         })
-        .min(active_threads);
-    let non_io_threads = active_threads.saturating_sub(source_threads);
+        .min(total_threads.max(1));
     let primary_compute_progress_resource = active_resources
         .iter()
         .find(|id| id.as_str() != PROGRESS_RESOURCE_SOURCE_STREAM)
@@ -1217,7 +1536,27 @@ fn imager_observed_worker_snapshots(
     let source_span_id = active_resource_span_ids
         .get(PROGRESS_RESOURCE_SOURCE_STREAM)
         .cloned();
-    let resource_blocked = active_threads == 0 && !active_resources.is_empty();
+    let compute_thread_resources = active_resources
+        .iter()
+        .filter(|resource| resource.as_str() != PROGRESS_RESOURCE_SOURCE_STREAM)
+        .filter_map(|resource| {
+            active_resource_threads
+                .get(resource)
+                .copied()
+                .filter(|threads| *threads > 0)
+                .map(|threads| (resource.as_str(), threads))
+        })
+        .collect::<Vec<_>>();
+    let max_compute_threads = compute_thread_resources
+        .iter()
+        .map(|(_, threads)| *threads)
+        .max()
+        .unwrap_or(0);
+    let effective_active_threads = reported_active_threads
+        .max(source_threads.saturating_add(max_compute_threads))
+        .min(total_threads.max(reported_active_threads));
+    let fallback_non_io_threads = reported_active_threads.saturating_sub(source_threads);
+    let resource_blocked = effective_active_threads == 0 && !active_resources.is_empty();
     let mut workers = Vec::new();
     if source_threads > 0 {
         workers.push(ImagerObservedWorkerSnapshot {
@@ -1230,16 +1569,42 @@ fn imager_observed_worker_snapshots(
             capacity: Some(total_threads.max(source_threads)),
         });
     }
-    if non_io_threads > 0 {
+    if compute_thread_resources.is_empty() {
+        if fallback_non_io_threads > 0 {
+            workers.push(ImagerObservedWorkerSnapshot {
+                id: "cpu-compute".to_string(),
+                label: "CPU compute".to_string(),
+                state: ImagerObservedWorkerState::RunningCpu,
+                resource_id: primary_compute_resource,
+                span_id: primary_compute_span_id.clone(),
+                active_count: fallback_non_io_threads,
+                capacity: Some(total_threads.max(fallback_non_io_threads)),
+            });
+        }
+    } else if compute_thread_resources.len() == 1 {
+        let (resource, threads) = compute_thread_resources[0];
         workers.push(ImagerObservedWorkerSnapshot {
             id: "cpu-compute".to_string(),
             label: "CPU compute".to_string(),
             state: ImagerObservedWorkerState::RunningCpu,
-            resource_id: primary_compute_resource,
-            span_id: primary_compute_span_id.clone(),
-            active_count: non_io_threads,
-            capacity: Some(total_threads.max(non_io_threads)),
+            resource_id: Some(imager_observed_resource_id(resource)),
+            span_id: active_resource_span_ids.get(resource).cloned(),
+            active_count: threads,
+            capacity: Some(total_threads.max(threads)),
         });
+    } else {
+        for (resource, threads) in compute_thread_resources {
+            let resource_id = imager_observed_resource_id(resource);
+            workers.push(ImagerObservedWorkerSnapshot {
+                id: format!("cpu-compute-{resource}"),
+                label: format!("CPU {}", imager_observed_resource_label(resource_id)),
+                state: ImagerObservedWorkerState::RunningCpu,
+                resource_id: Some(resource_id),
+                span_id: active_resource_span_ids.get(resource).cloned(),
+                active_count: threads,
+                capacity: Some(total_threads.max(threads)),
+            });
+        }
     }
     if resource_blocked {
         workers.push(ImagerObservedWorkerSnapshot {
@@ -1259,11 +1624,11 @@ fn imager_observed_worker_snapshots(
             state: ImagerObservedWorkerState::GpuSubmit,
             resource_id: primary_compute_resource.or(Some(ImagerObservedResourceId::GpuStaging)),
             span_id: primary_compute_span_id,
-            active_count: usize::from(active_threads > 0),
+            active_count: usize::from(effective_active_threads > 0),
             capacity: Some(1),
         });
     }
-    let idle_threads = total_threads.saturating_sub(active_threads);
+    let idle_threads = total_threads.saturating_sub(effective_active_threads);
     if idle_threads > 0 || workers.is_empty() {
         workers.push(ImagerObservedWorkerSnapshot {
             id: "idle".to_string(),
@@ -1283,14 +1648,41 @@ fn imager_observed_worker_snapshots(
 }
 
 fn imager_observed_queue_snapshots(
+    context: &ImagerProgressContext,
     runtime: Option<&ImagerProgressRuntime>,
     memory: Option<&ImagerProgressMemory>,
     active_resources: &[String],
 ) -> Vec<ImagerObservedQueueSnapshot> {
+    let now = Instant::now();
     let source_active = active_resources
         .iter()
         .any(|id| id == PROGRESS_RESOURCE_SOURCE_STREAM);
     let compute_active = runtime.is_some_and(|runtime| runtime.active_threads > 0);
+    let measured_queues = context
+        .observed_queues
+        .values()
+        .map(|observed| {
+            let mut snapshot = observed.snapshot.clone();
+            if now.duration_since(observed.observed_at).as_millis()
+                > IMAGER_OBSERVED_QUEUE_STALE_AFTER_MS as u128
+            {
+                snapshot.state = ImagerObservedQueueState::Stale;
+                snapshot.producers_active = false;
+                snapshot.consumers_active = false;
+                snapshot.blocked_count = 0;
+                snapshot.note = Some(match snapshot.note.as_deref() {
+                    Some(note) if !note.is_empty() => {
+                        format!("{note}; stale measured queue observation")
+                    }
+                    _ => "stale measured queue observation".to_string(),
+                });
+            }
+            snapshot
+        })
+        .collect::<Vec<_>>();
+    let has_measured_worker_queue = measured_queues
+        .iter()
+        .any(|queue| queue.resource_id == Some(ImagerObservedResourceId::WorkerQueue));
     let dispatch_blocked = runtime.is_some_and(|runtime| {
         runtime.active_threads == 0
             && active_resources
@@ -1302,6 +1694,11 @@ fn imager_observed_queue_snapshots(
         queues.push(ImagerObservedQueueSnapshot {
             id: "source-row-block".to_string(),
             label: "Source row block".to_string(),
+            state: if source_active {
+                ImagerObservedQueueState::Active
+            } else {
+                ImagerObservedQueueState::Idle
+            },
             resource_id: Some(ImagerObservedResourceId::SourceStream),
             len: Some(usize::from(source_active)),
             capacity: Some(1),
@@ -1309,6 +1706,8 @@ fn imager_observed_queue_snapshots(
             producers_active: source_active,
             consumers_active: compute_active,
             blocked_count: 0,
+            blocked_reason: None,
+            idle_duration_ms: (!source_active).then_some(0),
             confidence: ImagerObservedQueueConfidence::Estimated,
             note: Some(
                 "derived from source-stream ownership until queue depth is instrumented"
@@ -1316,9 +1715,20 @@ fn imager_observed_queue_snapshots(
             ),
         });
     }
+    queues.extend(measured_queues);
+    if has_measured_worker_queue {
+        return queues;
+    }
     queues.push(ImagerObservedQueueSnapshot {
         id: "worker-dispatch".to_string(),
         label: "Worker dispatch".to_string(),
+        state: if dispatch_blocked {
+            ImagerObservedQueueState::Blocked
+        } else if compute_active {
+            ImagerObservedQueueState::Active
+        } else {
+            ImagerObservedQueueState::Unknown
+        },
         resource_id: Some(ImagerObservedResourceId::WorkerQueue),
         len: None,
         capacity: runtime.map(|runtime| runtime.total_threads),
@@ -1326,6 +1736,8 @@ fn imager_observed_queue_snapshots(
         producers_active: compute_active || dispatch_blocked,
         consumers_active: compute_active,
         blocked_count: usize::from(dispatch_blocked),
+        blocked_reason: dispatch_blocked.then(|| "no_active_compute_workers".to_string()),
+        idle_duration_ms: (!compute_active && !dispatch_blocked).then_some(0),
         confidence: if dispatch_blocked {
             ImagerObservedQueueConfidence::Estimated
         } else {
@@ -1380,7 +1792,12 @@ fn imager_observability_snapshot(
                     .runtime
                     .as_ref()
                     .is_some_and(|runtime| runtime.gpu_active && is_busy),
-                owner: is_busy.then(|| event.phase.clone()),
+                owner: is_busy.then(|| {
+                    active_resource_span_ids
+                        .get(progress_id)
+                        .cloned()
+                        .unwrap_or_else(|| "unobserved active resources".to_string())
+                }),
                 memory: resource_memory,
             }
         })
@@ -1388,9 +1805,9 @@ fn imager_observability_snapshot(
     let active_spans = if context.active_spans.is_empty() {
         (!active_resources.is_empty())
             .then(|| ImagerObservabilitySpan {
-                id: event.phase.clone(),
-                name: event.summary.clone(),
-                stage_kind: imager_observed_stage_kind(&event.phase),
+                id: "unobserved-active-resources".to_string(),
+                name: "unobserved active resources".to_string(),
+                stage_kind: ImagerObservedStageKind::Unknown,
                 state: ImagerObservabilitySpanState::Running,
                 parent_id: None,
                 worker_id: imager_worker_id_for_span_resources(
@@ -1417,11 +1834,16 @@ fn imager_observability_snapshot(
                     plane_end: event.output_cube.as_ref().map(|cube| cube.active_plane_end),
                 }),
                 counters: BTreeMap::new(),
+                start_ms: Some(event.elapsed_ms),
+                end_ms: None,
+                duration_ms: Some(0),
+                exclusive_duration_ms: None,
                 elapsed_ms: event.elapsed_ms,
             })
             .into_iter()
             .collect()
     } else {
+        let now = Instant::now();
         context
             .active_spans
             .values()
@@ -1441,7 +1863,12 @@ fn imager_observability_snapshot(
                     span.worker_id =
                         imager_worker_id_for_span_resources(&span.resource_ids).map(str::to_string);
                 }
-                span.elapsed_ms = event.elapsed_ms;
+                span.elapsed_ms = context
+                    .active_span_started_at
+                    .get(&span.id)
+                    .map(|started_at| now.duration_since(*started_at).as_millis() as u64)
+                    .unwrap_or(0);
+                span.duration_ms = Some(span.elapsed_ms);
                 span
             })
             .collect()
@@ -1459,7 +1886,6 @@ fn imager_observability_snapshot(
                 memory,
                 process_memory.current_rss_bytes,
                 process_memory.peak_rss_bytes,
-                Some(&context.memory_high_water),
             )
         },
         workers: imager_observed_worker_snapshots(
@@ -1468,8 +1894,377 @@ fn imager_observability_snapshot(
             active_resource_threads,
             &active_resource_span_ids,
         ),
-        queues: imager_observed_queue_snapshots(event.runtime.as_ref(), memory, active_resources),
+        queues: imager_observed_queue_snapshots(
+            context,
+            event.runtime.as_ref(),
+            memory,
+            active_resources,
+        ),
+        diagnostics: if context.options.detail == ImagerProgressDetail::Diagnostic
+            && !context.diagnostics.is_empty()
+        {
+            Some(context.diagnostics.snapshot())
+        } else {
+            None
+        },
     }
+}
+
+fn diagnostic_duration_ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn diagnostic_mb_per_s(bytes: u64, elapsed_ns: u64) -> f64 {
+    if elapsed_ns == 0 {
+        0.0
+    } else {
+        (bytes as f64 / 1_000_000.0) / (elapsed_ns as f64 / 1_000_000_000.0)
+    }
+}
+
+fn diagnostic_gb(bytes: u64) -> f64 {
+    bytes as f64 / 1_000_000_000.0
+}
+
+fn source_read_pass_purpose(pass_kind: &str) -> &'static str {
+    match pass_kind {
+        "initial_dirty" => "initial dirty input",
+        "weighting_density" => "weighting density input",
+        "residual_refresh" => "residual refresh input",
+        "product_write" => "product write input",
+        _ => "source input",
+    }
+}
+
+fn emit_imager_diagnostic_snapshot(phase: &str, summary: impl Into<String>) {
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase: phase.to_string(),
+            summary: summary.into(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: None,
+            observability: None,
+        },
+        true,
+    );
+}
+
+fn record_imager_source_read_diagnostic(mut diagnostic: ImagerSourceReadDiagnostic) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let emit_summary = {
+        let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+            return;
+        };
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        if context.options.detail != ImagerProgressDetail::Diagnostic {
+            return;
+        }
+        if diagnostic.mb_per_s == 0.0 {
+            diagnostic.mb_per_s = diagnostic_mb_per_s(
+                diagnostic.modeled_physical_read_bytes,
+                diagnostic.elapsed_ns,
+            );
+        }
+        let wall_elapsed_ns = diagnostic.wall_elapsed_ns.unwrap_or(diagnostic.elapsed_ns);
+        if diagnostic.logical_mb_per_s.is_none() {
+            diagnostic.logical_mb_per_s = Some(diagnostic_mb_per_s(
+                diagnostic.logical_output_bytes,
+                wall_elapsed_ns,
+            ));
+        }
+        if diagnostic.modeled_physical_wall_mb_per_s.is_none() {
+            diagnostic.modeled_physical_wall_mb_per_s = Some(diagnostic_mb_per_s(
+                diagnostic.modeled_physical_read_bytes,
+                wall_elapsed_ns,
+            ));
+        }
+        context.diagnostics.source_read_bytes = context
+            .diagnostics
+            .source_read_bytes
+            .saturating_add(diagnostic.modeled_physical_read_bytes);
+        context.diagnostics.source_read_elapsed_ns = context
+            .diagnostics
+            .source_read_elapsed_ns
+            .saturating_add(diagnostic.elapsed_ns as u128);
+        let summary = ImagerStageDiagnosticSummary {
+            stage_kind: ImagerObservedStageKind::SourceStream,
+            label: format!("source_read_for/{}", diagnostic.pass_kind),
+            slab_id: diagnostic.slab_id,
+            plane_start: diagnostic.plane_start,
+            plane_end: diagnostic.plane_end,
+            backend: "source_stream".to_string(),
+            worker_count: 1,
+            elapsed_ns: diagnostic.elapsed_ns,
+            exclusive_elapsed_ns: Some(diagnostic.elapsed_ns),
+            rows: Some(diagnostic.rows),
+            planes: diagnostic
+                .plane_start
+                .zip(diagnostic.plane_end)
+                .map(|(start, end)| end.saturating_sub(start)),
+            bytes_read: Some(diagnostic.modeled_physical_read_bytes),
+            bytes_written: None,
+            mb_per_s: Some(diagnostic.mb_per_s),
+        };
+        let pass_kind = diagnostic.pass_kind.clone();
+        let pass_purpose = source_read_pass_purpose(&pass_kind);
+        let mb_per_s = diagnostic.mb_per_s;
+        let logical_gb = diagnostic_gb(diagnostic.logical_output_bytes);
+        let physical_gb = diagnostic_gb(diagnostic.modeled_physical_read_bytes);
+        let wall_elapsed_s = wall_elapsed_ns as f64 / 1_000_000_000.0;
+        let logical_wall_mb_per_s = diagnostic.logical_mb_per_s.unwrap_or(0.0);
+        let physical_wall_mb_per_s = diagnostic.modeled_physical_wall_mb_per_s.unwrap_or(0.0);
+        record_imager_stage_diagnostic_locked(context, summary);
+        ImagerDiagnosticAccumulator::push_bounded(
+            &mut context.diagnostics.source_reads,
+            diagnostic,
+        );
+        Some(format!(
+            "diagnostic source read for {pass_purpose}: {logical_gb:.2} GB logical in {wall_elapsed_s:.1} s ({logical_wall_mb_per_s:.1} MB/s effective), {physical_gb:.2} GB modeled physical ({physical_wall_mb_per_s:.1} MB/s wall, {mb_per_s:.1} MB/s inner column)"
+        ))
+    };
+    if let Some(summary) = emit_summary {
+        emit_imager_diagnostic_snapshot("diagnostic/source_read", summary);
+    }
+}
+
+fn record_imager_product_write_diagnostic(mut diagnostic: ImagerProductWriteDiagnostic) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let emit_summary = {
+        let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+            return;
+        };
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        if context.options.detail != ImagerProgressDetail::Diagnostic {
+            return;
+        }
+        if diagnostic.mb_per_s == 0.0 {
+            diagnostic.mb_per_s =
+                diagnostic_mb_per_s(diagnostic.bytes_written, diagnostic.elapsed_ns);
+        }
+        context.diagnostics.product_write_bytes = context
+            .diagnostics
+            .product_write_bytes
+            .saturating_add(diagnostic.bytes_written);
+        context.diagnostics.product_write_elapsed_ns = context
+            .diagnostics
+            .product_write_elapsed_ns
+            .saturating_add(diagnostic.elapsed_ns as u128);
+        let summary = ImagerStageDiagnosticSummary {
+            stage_kind: ImagerObservedStageKind::ProductWrite,
+            label: format!("product_write/{}", diagnostic.artifact_kind),
+            slab_id: diagnostic.slab_id,
+            plane_start: Some(diagnostic.plane_start),
+            plane_end: Some(diagnostic.plane_end),
+            backend: "product_writer".to_string(),
+            worker_count: 1,
+            elapsed_ns: diagnostic.elapsed_ns,
+            exclusive_elapsed_ns: Some(diagnostic.elapsed_ns),
+            rows: None,
+            planes: Some(diagnostic.planes),
+            bytes_read: None,
+            bytes_written: Some(diagnostic.bytes_written),
+            mb_per_s: Some(diagnostic.mb_per_s),
+        };
+        let artifact_kind = diagnostic.artifact_kind.clone();
+        let mb_per_s = diagnostic.mb_per_s;
+        let bytes = diagnostic.bytes_written;
+        record_imager_stage_diagnostic_locked(context, summary);
+        ImagerDiagnosticAccumulator::push_bounded(
+            &mut context.diagnostics.product_writes,
+            diagnostic,
+        );
+        Some(format!(
+            "diagnostic product write {artifact_kind}: {bytes} bytes at {mb_per_s:.1} MB/s"
+        ))
+    };
+    if let Some(summary) = emit_summary {
+        emit_imager_diagnostic_snapshot("diagnostic/product_write", summary);
+    }
+}
+
+fn record_imager_backend_diagnostic(diagnostic: ImagerBackendDiagnostic) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let emit_summary = {
+        let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+            return;
+        };
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        if context.options.detail != ImagerProgressDetail::Diagnostic {
+            return;
+        }
+        if !diagnostic.gpu_selected && diagnostic.gpu_eligible {
+            *context
+                .diagnostics
+                .top_stall_reasons
+                .entry("gpu_eligible_not_selected".to_string())
+                .or_default() += 1;
+        }
+        let stage_kind = imager_observed_stage_kind_label(diagnostic.stage_kind).to_string();
+        let selected_backend = diagnostic.selected_backend.clone();
+        let gpu_selected = diagnostic.gpu_selected;
+        ImagerDiagnosticAccumulator::push_bounded(
+            &mut context.diagnostics.backend_decisions,
+            diagnostic,
+        );
+        Some(format!(
+            "diagnostic backend {stage_kind}: selected={selected_backend} gpu_selected={gpu_selected}"
+        ))
+    };
+    if let Some(summary) = emit_summary {
+        emit_imager_diagnostic_snapshot("diagnostic/backend", summary);
+    }
+}
+
+fn record_imager_stage_diagnostic(summary: ImagerStageDiagnosticSummary) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let emit_summary = {
+        let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+            return;
+        };
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        if context.options.detail != ImagerProgressDetail::Diagnostic {
+            return;
+        }
+        let label = summary.label.clone();
+        record_imager_stage_diagnostic_locked(context, summary);
+        Some(format!("diagnostic stage summary {label}"))
+    };
+    if let Some(summary) = emit_summary {
+        emit_imager_diagnostic_snapshot("diagnostic/stage", summary);
+    }
+}
+
+fn record_imager_stage_diagnostic_locked(
+    context: &mut ImagerProgressContext,
+    summary: ImagerStageDiagnosticSummary,
+) {
+    let label = summary.label.clone();
+    *context
+        .diagnostics
+        .stage_totals_ns
+        .entry(label)
+        .or_default() += summary.elapsed_ns as u128;
+    ImagerDiagnosticAccumulator::push_bounded(&mut context.diagnostics.stage_summaries, summary);
+}
+
+fn finalize_imager_run_diagnostics(summary: &RunSummary) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+        return;
+    };
+    let Some(context) = context.as_mut() else {
+        return;
+    };
+    if context.options.detail != ImagerProgressDetail::Diagnostic {
+        return;
+    }
+    let mut stage_totals_ms = BTreeMap::new();
+    for (label, ns) in &context.diagnostics.stage_totals_ns {
+        stage_totals_ms.insert(label.clone(), (*ns / 1_000_000) as u64);
+    }
+    let frontend = summary.frontend_timings;
+    for (label, duration) in [
+        (
+            "frontend/open_measurement_set",
+            frontend.open_measurement_set,
+        ),
+        ("frontend/prepare_plane_input", frontend.prepare_plane_input),
+        (
+            "frontend/get_ms_values_into_processing_buffer",
+            frontend.get_ms_values_into_processing_buffer,
+        ),
+        (
+            "frontend/prepare_processing_buffer",
+            frontend.prepare_processing_buffer,
+        ),
+        ("frontend/run_imaging", frontend.run_imaging),
+        ("frontend/write_products", frontend.write_products),
+        ("frontend/total", frontend.total),
+    ] {
+        stage_totals_ms
+            .entry(label.to_string())
+            .or_insert_with(|| duration.as_millis() as u64);
+    }
+    if let Some(memory) = context.memory.as_ref() {
+        for category in &memory.categories {
+            if let (Some(resource_id), Some(high_water_bytes)) =
+                (category.resource_id, category.high_water_bytes)
+            {
+                let key = resource_id.as_progress_id().to_string();
+                context
+                    .diagnostics
+                    .resource_high_water_bytes
+                    .entry(key)
+                    .and_modify(|existing| *existing = (*existing).max(high_water_bytes))
+                    .or_insert(high_water_bytes);
+            }
+        }
+    }
+    if context.worker_queue_high_water_bytes > 0 {
+        context
+            .diagnostics
+            .resource_high_water_bytes
+            .entry(
+                ImagerObservedResourceId::WorkerQueue
+                    .as_progress_id()
+                    .to_string(),
+            )
+            .and_modify(|existing| {
+                *existing = (*existing).max(context.worker_queue_high_water_bytes)
+            })
+            .or_insert(context.worker_queue_high_water_bytes);
+    }
+    let top_stall_reasons = context
+        .diagnostics
+        .top_stall_reasons
+        .iter()
+        .map(|(reason, count)| format!("{reason}:{count}"))
+        .collect::<Vec<_>>();
+    context.diagnostics.run_summary = Some(ImagerRunDiagnosticSummary {
+        total_wall_ms: frontend.total.as_millis() as u64,
+        stage_totals_ms,
+        source_read_bytes: context.diagnostics.source_read_bytes,
+        source_read_mb_per_s: (context.diagnostics.source_read_elapsed_ns > 0).then(|| {
+            diagnostic_mb_per_s(
+                context.diagnostics.source_read_bytes,
+                u64::try_from(context.diagnostics.source_read_elapsed_ns).unwrap_or(u64::MAX),
+            )
+        }),
+        product_write_bytes: context.diagnostics.product_write_bytes,
+        product_write_mb_per_s: (context.diagnostics.product_write_elapsed_ns > 0).then(|| {
+            diagnostic_mb_per_s(
+                context.diagnostics.product_write_bytes,
+                u64::try_from(context.diagnostics.product_write_elapsed_ns).unwrap_or(u64::MAX),
+            )
+        }),
+        resource_high_water_bytes: context.diagnostics.resource_high_water_bytes.clone(),
+        top_stall_reasons,
+    });
 }
 
 fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
@@ -1560,6 +2355,7 @@ fn emit_imager_progress_event(mut event: ImagerProgressEvent, force: bool) {
                 }
             }
         }
+        stabilize_imager_progress_output_cube(&mut event, context);
         if event.observability.is_none() {
             event.observability = Some(imager_observability_snapshot(
                 &event,
@@ -1645,6 +2441,13 @@ impl Drop for ImagerProgressResourceGuard {
                     }
                     if resource_counts.is_empty() {
                         context.active_span_resource_counts.remove(owner_span_id);
+                        if context.synthetic_span_ids.contains(owner_span_id) {
+                            complete_imager_observation_span(
+                                context,
+                                owner_span_id,
+                                ImagerObservabilitySpanState::Complete,
+                            );
+                        }
                     }
                 }
             }
@@ -1678,7 +2481,11 @@ fn acquire_imager_progress_resources_with_threads(
         return None;
     };
     let context = context.as_mut()?;
-    let owner_span_id = context.active_span_stack.last().cloned();
+    let owner_span_id = context
+        .active_span_stack
+        .last()
+        .cloned()
+        .or_else(|| Some(begin_synthetic_unobserved_imager_span(context)));
     for resource in resources {
         let resource = (*resource).to_string();
         *context
@@ -1731,11 +2538,27 @@ fn imager_progress_resource_is_active(resource: &str) -> bool {
 struct ImagerProductWriteObservationGuard {
     _span: Option<ImagerObservationSpanGuard>,
     _resources: Option<ImagerProgressResourceGuard>,
+    _memory: Option<ImagerProgressMemoryCategoryLiveGuard>,
 }
 
 struct ImagerSourceStreamObservationGuard {
     _span: Option<ImagerObservationSpanGuard>,
     _resources: Option<ImagerProgressResourceGuard>,
+}
+
+struct ImagerProgressMemoryCategoryLiveGuard {
+    kind: ImagerObservedMemoryKind,
+}
+
+impl Drop for ImagerProgressMemoryCategoryLiveGuard {
+    fn drop(&mut self) {
+        set_imager_progress_memory_category_live(
+            self.kind,
+            None,
+            None,
+            "measured category is not currently live",
+        );
+    }
 }
 
 fn begin_imager_progress_source_stream_observation(
@@ -1791,12 +2614,20 @@ fn begin_imager_progress_source_stream_observation(
     })
 }
 
-fn begin_imager_progress_product_write_observation(
+fn begin_imager_progress_product_write_observation_with_bytes(
     output_planes: usize,
+    product_bytes: Option<usize>,
 ) -> Option<ImagerProductWriteObservationGuard> {
     if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
         return None;
     }
+    let memory = product_bytes.filter(|bytes| *bytes > 0).and_then(|bytes| {
+        begin_imager_progress_memory_category_live(
+            ImagerObservedMemoryKind::Products,
+            bytes,
+            "measured product bytes being written",
+        )
+    });
     let span = begin_imager_observation_span(
         ImagerObservedStageKind::ProductWrite,
         format!("writing outputs: {} output plane(s)", output_planes.max(1)),
@@ -1821,6 +2652,7 @@ fn begin_imager_progress_product_write_observation(
     (span.is_some() || resources.is_some()).then_some(ImagerProductWriteObservationGuard {
         _span: span,
         _resources: resources,
+        _memory: memory,
     })
 }
 
@@ -1830,7 +2662,6 @@ fn set_imager_progress_memory(memory: ImagerProgressMemory) {
     }
     if let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() {
         if let Some(context) = context.as_mut() {
-            context.memory_high_water.observe(&memory);
             context.memory = Some(memory);
         }
     }
@@ -1844,6 +2675,93 @@ fn imager_progress_memory() -> Option<ImagerProgressMemory> {
         .lock()
         .ok()
         .and_then(|context| context.as_ref().and_then(|context| context.memory.clone()))
+}
+
+fn set_imager_progress_memory_category_live(
+    kind: ImagerObservedMemoryKind,
+    tracked_live_bytes: Option<usize>,
+    high_water_bytes: Option<usize>,
+    note: &'static str,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(mut context) = IMAGER_PROGRESS_CONTEXT.lock() else {
+        return;
+    };
+    let Some(context) = context.as_mut() else {
+        return;
+    };
+    let Some(memory) = context.memory.as_mut() else {
+        return;
+    };
+    if let Some(existing) = memory
+        .categories
+        .iter_mut()
+        .find(|existing| existing.kind == kind)
+    {
+        existing.tracked_live_bytes = tracked_live_bytes;
+        if let Some(high_water_bytes) = high_water_bytes {
+            existing.high_water_bytes =
+                Some(existing.high_water_bytes.unwrap_or(0).max(high_water_bytes));
+        }
+        existing.resource_id = existing
+            .resource_id
+            .or_else(|| imager_memory_kind_default_resource(kind));
+        existing.confidence = Some(ImagerObservedMemoryConfidence::Measured);
+        existing.note = Some(note.to_string());
+    } else {
+        memory.categories.push(ImagerProgressMemoryCategory {
+            kind,
+            resource_id: imager_memory_kind_default_resource(kind),
+            planned_bytes: None,
+            tracked_live_bytes,
+            high_water_bytes,
+            row_block_rows: None,
+            active_planes: None,
+            confidence: Some(ImagerObservedMemoryConfidence::Measured),
+            note: Some(note.to_string()),
+        });
+    }
+}
+
+fn begin_imager_progress_memory_category_live(
+    kind: ImagerObservedMemoryKind,
+    tracked_live_bytes: usize,
+    note: &'static str,
+) -> Option<ImagerProgressMemoryCategoryLiveGuard> {
+    if tracked_live_bytes == 0 || !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    set_imager_progress_memory_category_live(
+        kind,
+        Some(tracked_live_bytes),
+        Some(tracked_live_bytes),
+        note,
+    );
+    Some(ImagerProgressMemoryCategoryLiveGuard { kind })
+}
+
+fn imager_planned_memory_category(
+    kind: ImagerObservedMemoryKind,
+    planned_bytes: usize,
+    row_block_rows: Option<usize>,
+    active_planes: Option<usize>,
+    note: &'static str,
+) -> Option<ImagerProgressMemoryCategory> {
+    (planned_bytes > 0 || row_block_rows.is_some() || active_planes.is_some()).then_some(
+        ImagerProgressMemoryCategory {
+            kind,
+            resource_id: imager_memory_kind_default_resource(kind),
+            planned_bytes: (planned_bytes > 0).then_some(planned_bytes),
+            tracked_live_bytes: None,
+            high_water_bytes: None,
+            row_block_rows,
+            active_planes,
+            confidence: Some(ImagerObservedMemoryConfidence::Planned),
+            note: Some(note.to_string()),
+        },
+    )
 }
 
 fn observe_imager_progress_uv_batch(batch: &VisibilityBatch) {
@@ -1964,6 +2882,29 @@ fn progress_output_cube_from_config(
     }
 }
 
+fn stabilize_imager_progress_output_cube(
+    event: &mut ImagerProgressEvent,
+    context: &mut ImagerProgressContext,
+) {
+    let Some(cube) = event.output_cube.as_mut() else {
+        return;
+    };
+    if let Some(previous) = context.last_output_cube.as_ref() {
+        let same_xy = previous.x_pixels == cube.x_pixels && previous.y_pixels == cube.y_pixels;
+        let collapsed_local_plane =
+            cube.z_planes <= 1 && cube.active_plane_start == 0 && cube.active_plane_end <= 1;
+        if same_xy && previous.z_planes > cube.z_planes && collapsed_local_plane {
+            cube.z_planes = previous.z_planes;
+            cube.active_plane_start = previous.active_plane_start.min(cube.z_planes);
+            cube.active_plane_end = previous
+                .active_plane_end
+                .min(cube.z_planes)
+                .max(cube.active_plane_start);
+        }
+    }
+    context.last_output_cube = Some(cube.clone());
+}
+
 fn progress_runtime_from_config(
     config: &CliConfig,
     active_threads: usize,
@@ -1983,6 +2924,15 @@ fn progress_resource_thread_counts(
         .iter()
         .map(|resource| ((*resource).to_string(), active_threads))
         .collect()
+}
+
+fn progress_compute_backend_label(
+    selected_backend: Option<PerPlaneExecutionBackend>,
+    fallback_backend: &str,
+) -> &str {
+    selected_backend
+        .map(PerPlaneExecutionBackend::label)
+        .unwrap_or(fallback_backend)
 }
 
 fn progress_runtime_from_config_with_resources(
@@ -2050,10 +3000,12 @@ fn progress_runtime_for_resource_scope(
     let total_threads = thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1);
+    let backend_lower = backend.to_ascii_lowercase();
+    let gpu_backend = backend_lower.contains("metal") || backend_lower.contains("gpu");
     ImagerProgressRuntime {
         active_threads: active_threads.min(total_threads.max(active_threads)),
         total_threads: total_threads.max(active_threads),
-        gpu_active: false,
+        gpu_active: active_threads > 0 && gpu_backend,
         backend: backend.to_string(),
         active_resources: active_resources
             .iter()
@@ -2110,6 +3062,130 @@ fn spectral_stage_observability(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn spectral_stage_extent(
+    ms_read: Option<&ImagerProgressMsWindow>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+) -> ImagerObservabilityExtent {
+    ImagerObservabilityExtent {
+        row_start: ms_read.map(|window| window.row_start),
+        row_end: ms_read.map(|window| window.row_end),
+        channel_start: ms_read.map(|window| window.channel_start),
+        channel_end: ms_read.map(|window| window.channel_end),
+        plane_start: Some(active_plane_start),
+        plane_end: Some(active_plane_end),
+    }
+}
+
+fn spectral_stage_span_name(
+    stage: spectral_slab::SpectralEventStage,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+) -> String {
+    match slab_id {
+        Some(slab_id) => format!(
+            "{} slab {slab_id} planes {active_plane_start}..{active_plane_end}",
+            stage.as_str()
+        ),
+        None => format!(
+            "{} planes {active_plane_start}..{active_plane_end}",
+            stage.as_str()
+        ),
+    }
+}
+
+fn observe_spectral_stage_counters(
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    ms_read: Option<&ImagerProgressMsWindow>,
+) {
+    let mut counters = vec![
+        (
+            OBS_COUNTER_ACTIVE_PLANES,
+            active_plane_end.saturating_sub(active_plane_start) as u64,
+        ),
+        (OBS_COUNTER_ACTIVE_THREADS, active_threads as u64),
+    ];
+    if let Some(slab_id) = slab_id {
+        counters.push((OBS_COUNTER_SLAB_ID, slab_id as u64));
+    }
+    if let Some(window) = ms_read {
+        counters.push((
+            OBS_COUNTER_ROW_BLOCK_ROWS,
+            window.row_end.saturating_sub(window.row_start) as u64,
+        ));
+    }
+    observe_current_imager_span_counters(counters);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_imager_progress_spectral_stage_event(
+    config: &CliConfig,
+    stage: spectral_slab::SpectralEventStage,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    backend: &str,
+    ms_read: Option<ImagerProgressMsWindow>,
+    active: bool,
+    force: bool,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let (_, resources) = spectral_stage_observability(stage);
+    let span_name = spectral_stage_span_name(stage, slab_id, active_plane_start, active_plane_end);
+    let active_resource_ids = if active {
+        resources
+            .iter()
+            .map(|resource| resource.as_progress_id())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let runtime_threads = if active { active_threads } else { 0 };
+    let phase = if active {
+        stage.as_str().to_string()
+    } else {
+        format!("{} complete", stage.as_str())
+    };
+    let summary = if active {
+        span_name
+    } else {
+        format!("{span_name} complete")
+    };
+    emit_imager_progress_event(
+        ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 0,
+            elapsed_ms: 0,
+            phase,
+            summary,
+            work: Some(progress_work_from_config(config, active_plane_start, 0)),
+            ms_read,
+            output_cube: Some(progress_output_cube_from_config(
+                config,
+                active_plane_start,
+                active_plane_end,
+            )),
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(progress_runtime_for_resource_scope(
+                runtime_threads,
+                backend,
+                &active_resource_ids,
+            )),
+            observability: None,
+        },
+        force,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_imager_progress_spectral_stage(
     config: &CliConfig,
     stage: spectral_slab::SpectralEventStage,
@@ -2125,80 +3201,356 @@ fn emit_imager_progress_spectral_stage(
         return;
     }
     let (stage_kind, resources) = spectral_stage_observability(stage);
-    let extent = ImagerObservabilityExtent {
-        row_start: ms_read.as_ref().map(|window| window.row_start),
-        row_end: ms_read.as_ref().map(|window| window.row_end),
-        channel_start: ms_read.as_ref().map(|window| window.channel_start),
-        channel_end: ms_read.as_ref().map(|window| window.channel_end),
-        plane_start: Some(active_plane_start),
-        plane_end: Some(active_plane_end),
-    };
-    let span_name = match slab_id {
-        Some(slab_id) => format!(
-            "{} slab {slab_id} planes {active_plane_start}..{active_plane_end}",
-            stage.as_str()
-        ),
-        None => format!(
-            "{} planes {active_plane_start}..{active_plane_end}",
-            stage.as_str()
-        ),
-    };
-    let _span_guard =
-        begin_imager_observation_span(stage_kind, span_name.clone(), resources, Some(extent));
-    let mut counters = vec![
-        (
-            OBS_COUNTER_ACTIVE_PLANES,
-            active_plane_end.saturating_sub(active_plane_start) as u64,
-        ),
-        (OBS_COUNTER_ACTIVE_THREADS, active_threads as u64),
-    ];
-    if let Some(slab_id) = slab_id {
-        counters.push((OBS_COUNTER_SLAB_ID, slab_id as u64));
-    }
-    if let Some(window) = ms_read.as_ref() {
-        counters.push((
-            OBS_COUNTER_ROW_BLOCK_ROWS,
-            window.row_end.saturating_sub(window.row_start) as u64,
-        ));
-    }
-    observe_current_imager_span_counters(counters);
+    let extent = spectral_stage_extent(ms_read.as_ref(), active_plane_start, active_plane_end);
+    let span_name = spectral_stage_span_name(stage, slab_id, active_plane_start, active_plane_end);
+    let _span_guard = begin_imager_observation_span(stage_kind, span_name, resources, Some(extent));
+    observe_spectral_stage_counters(
+        slab_id,
+        active_plane_start,
+        active_plane_end,
+        active_threads,
+        ms_read.as_ref(),
+    );
     let _resource_guard =
         acquire_imager_progress_resource_ids_with_threads(resources, active_threads);
-    let active_resource_ids = resources
-        .iter()
-        .map(|resource| resource.as_progress_id())
-        .collect::<Vec<_>>();
-    emit_imager_progress_event(
-        ImagerProgressEvent {
-            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
-            sequence: 0,
-            elapsed_ms: 0,
-            phase: stage.as_str().to_string(),
-            summary: span_name,
-            work: Some(progress_work_from_config(config, active_plane_start, 0)),
-            ms_read,
-            output_cube: Some(progress_output_cube_from_config(
-                config,
-                active_plane_start,
-                active_plane_end,
-            )),
-            uv_coverage: None,
-            deconvolution: None,
-            runtime: Some(progress_runtime_for_resource_scope(
-                active_threads,
-                backend,
-                &active_resource_ids,
-            )),
-            observability: None,
-        },
+    emit_imager_progress_spectral_stage_event(
+        config,
+        stage,
+        slab_id,
+        active_plane_start,
+        active_plane_end,
+        active_threads,
+        backend,
+        ms_read,
+        true,
         force,
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn with_imager_progress_spectral_stage<T, E, F>(
+    config: &CliConfig,
+    stage: spectral_slab::SpectralEventStage,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    backend: &str,
+    ms_read: Option<ImagerProgressMsWindow>,
+    force: bool,
+    work: F,
+) -> Result<T, E>
+where
+    F: FnOnce() -> Result<T, E>,
+{
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return work();
+    }
+    let (stage_kind, resources) = spectral_stage_observability(stage);
+    let extent = spectral_stage_extent(ms_read.as_ref(), active_plane_start, active_plane_end);
+    let span_name = spectral_stage_span_name(stage, slab_id, active_plane_start, active_plane_end);
+    let mut span_guard =
+        begin_imager_observation_span(stage_kind, span_name, resources, Some(extent));
+    observe_spectral_stage_counters(
+        slab_id,
+        active_plane_start,
+        active_plane_end,
+        active_threads,
+        ms_read.as_ref(),
+    );
+    let resource_guard =
+        acquire_imager_progress_resource_ids_with_threads(resources, active_threads);
+    emit_imager_progress_spectral_stage_event(
+        config,
+        stage,
+        slab_id,
+        active_plane_start,
+        active_plane_end,
+        active_threads,
+        backend,
+        ms_read.clone(),
+        true,
+        force,
+    );
+    let stage_started = Instant::now();
+    let result = work();
+    let stage_elapsed = stage_started.elapsed();
+    if result.is_err() {
+        if let Some(span_guard) = span_guard.as_mut() {
+            span_guard.mark_failed();
+        }
+    }
+    let stage_elapsed_ns = diagnostic_duration_ns(stage_elapsed);
+    record_imager_stage_diagnostic(ImagerStageDiagnosticSummary {
+        stage_kind,
+        label: stage.as_str().to_string(),
+        slab_id,
+        plane_start: Some(active_plane_start),
+        plane_end: Some(active_plane_end),
+        backend: backend.to_string(),
+        worker_count: active_threads,
+        elapsed_ns: stage_elapsed_ns,
+        exclusive_elapsed_ns: Some(stage_elapsed_ns),
+        rows: ms_read
+            .as_ref()
+            .map(|window| window.row_end.saturating_sub(window.row_start)),
+        planes: Some(active_plane_end.saturating_sub(active_plane_start)),
+        bytes_read: None,
+        bytes_written: None,
+        mb_per_s: None,
+    });
+    if stage == spectral_slab::SpectralEventStage::ProductWrite {
+        let planes = active_plane_end.saturating_sub(active_plane_start).max(1);
+        let estimated_bytes = config
+            .imsize
+            .saturating_mul(config.imsize)
+            .saturating_mul(planes)
+            .saturating_mul(std::mem::size_of::<f32>())
+            .saturating_mul(2) as u64;
+        record_imager_product_write_diagnostic(ImagerProductWriteDiagnostic {
+            artifact_kind: stage.as_str().to_string(),
+            slab_id,
+            plane_start: active_plane_start,
+            plane_end: active_plane_end,
+            planes,
+            bytes_written: estimated_bytes,
+            elapsed_ns: stage_elapsed_ns,
+            mb_per_s: diagnostic_mb_per_s(estimated_bytes, stage_elapsed_ns),
+        });
+    }
+    drop(resource_guard);
+    drop(span_guard);
+    emit_imager_progress_spectral_stage_event(
+        config,
+        stage,
+        slab_id,
+        active_plane_start,
+        active_plane_end,
+        active_threads,
+        backend,
+        ms_read,
+        false,
+        true,
+    );
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_completed_spectral_stage_diagnostic(
+    stage: spectral_slab::SpectralEventStage,
+    label: impl Into<String>,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    backend: &str,
+    elapsed: Duration,
+    rows: Option<usize>,
+    bytes_read: Option<u64>,
+    bytes_written: Option<u64>,
+) {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    let (stage_kind, _) = spectral_stage_observability(stage);
+    let elapsed_ns = diagnostic_duration_ns(elapsed);
+    let throughput_bytes = bytes_read.or(bytes_written);
+    record_imager_stage_diagnostic(ImagerStageDiagnosticSummary {
+        stage_kind,
+        label: label.into(),
+        slab_id,
+        plane_start: Some(active_plane_start),
+        plane_end: Some(active_plane_end),
+        backend: backend.to_string(),
+        worker_count: active_threads,
+        elapsed_ns,
+        exclusive_elapsed_ns: Some(elapsed_ns),
+        rows,
+        planes: Some(active_plane_end.saturating_sub(active_plane_start)),
+        bytes_read,
+        bytes_written,
+        mb_per_s: throughput_bytes.map(|bytes| diagnostic_mb_per_s(bytes, elapsed_ns)),
+    });
+}
+
+fn spectral_stage_diagnostic_label(
+    prefix: &str,
+    stage: spectral_slab::SpectralEventStage,
+) -> String {
+    format!("{prefix}/{}", stage.as_str())
+}
+
+fn backend_spectral_stage_timing_breakdown(
+    timings: ImagingStageTimings,
+) -> [(spectral_slab::SpectralEventStage, Duration); 5] {
+    let psf_dirty_elapsed = timings
+        .psf_grid
+        .saturating_add(timings.psf_fft)
+        .saturating_add(timings.psf_normalize)
+        .saturating_add(timings.residual_degrid_grid)
+        .saturating_add(timings.residual_fft)
+        .saturating_add(timings.residual_normalize);
+    let minor_diagnostics_elapsed = timings
+        .clean_cycle_setup
+        .saturating_add(timings.deconvolver_setup);
+    let minor_update_elapsed = timings
+        .minor_cycle
+        .saturating_add(timings.minor_cycle_solve);
+    let residual_refresh_elapsed = timings
+        .major_cycle_refresh
+        .saturating_add(timings.residual_refresh_overhead)
+        .saturating_add(timings.model_fft)
+        .saturating_add(timings.multiscale_scale_refresh);
+    [
+        (
+            spectral_slab::SpectralEventStage::WeightingDensity,
+            timings.weighting,
+        ),
+        (
+            spectral_slab::SpectralEventStage::PsfDirty,
+            psf_dirty_elapsed,
+        ),
+        (
+            spectral_slab::SpectralEventStage::MinorCycleDiagnostics,
+            minor_diagnostics_elapsed,
+        ),
+        (
+            spectral_slab::SpectralEventStage::MinorCycleUpdate,
+            minor_update_elapsed,
+        ),
+        (
+            spectral_slab::SpectralEventStage::ResidualRefresh,
+            residual_refresh_elapsed,
+        ),
+    ]
+}
+
+fn record_completed_backend_stage_timing_breakdown(
+    timings: ImagingStageTimings,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    backend: &str,
+) {
+    record_completed_backend_stage_timing_breakdown_with_prefix(
+        timings,
+        "backend_execution",
+        slab_id,
+        active_plane_start,
+        active_plane_end,
+        active_threads,
+        backend,
+    );
+}
+
+fn record_completed_backend_stage_timing_breakdown_with_prefix(
+    timings: ImagingStageTimings,
+    label_prefix: &str,
+    slab_id: Option<usize>,
+    active_plane_start: usize,
+    active_plane_end: usize,
+    active_threads: usize,
+    backend: &str,
+) {
+    for (stage, elapsed) in backend_spectral_stage_timing_breakdown(timings) {
+        record_completed_spectral_stage_diagnostic(
+            stage,
+            spectral_stage_diagnostic_label(label_prefix, stage),
+            slab_id,
+            active_plane_start,
+            active_plane_end,
+            active_threads,
+            backend,
+            elapsed,
+            None,
+            None,
+            None,
+        );
+    }
+}
+
+fn single_plane_stream_pass_spectral_stage(
+    pass: SinglePlaneStreamPass,
+) -> spectral_slab::SpectralEventStage {
+    match pass {
+        SinglePlaneStreamPass::WeightingDensity => {
+            spectral_slab::SpectralEventStage::WeightingDensity
+        }
+        SinglePlaneStreamPass::InitialDirty => spectral_slab::SpectralEventStage::PsfDirty,
+        SinglePlaneStreamPass::ResidualRefresh => {
+            spectral_slab::SpectralEventStage::ResidualRefresh
+        }
+    }
 }
 
 fn imager_progress_memory_from_spectral_plan(
     memory_plan: &spectral_slab::SpectralMemoryPlan,
     memory_target_source: &'static str,
 ) -> ImagerProgressMemory {
+    let active_plane_count = memory_plan.active_planes.max(1);
+    let mut categories = Vec::new();
+    categories.extend(
+        [
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::SourceBuffer,
+                memory_plan.source_stream_buffer_bytes,
+                Some(memory_plan.row_block_rows),
+                None,
+                "spectral planner source stream buffer target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::RowVisibilityBuffer,
+                memory_plan
+                    .prepared_visibility_staging_bytes
+                    .saturating_add(memory_plan.live_prepared_visibility_bytes)
+                    .saturating_add(memory_plan.live_bucket_bytes)
+                    .saturating_add(memory_plan.visibility_cache_bytes),
+                Some(memory_plan.row_block_rows),
+                None,
+                "spectral planner prepared visibility and cache target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GridFftScratch,
+                memory_plan
+                    .visibility_staging_bytes_per_plane
+                    .saturating_mul(active_plane_count),
+                None,
+                Some(active_plane_count),
+                "spectral planner gridding and FFT staging target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::PlaneState,
+                memory_plan.resident_plane_state_bytes,
+                None,
+                Some(active_plane_count),
+                "spectral planner resident plane-state target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::Products,
+                memory_plan.product_scratch_bytes,
+                None,
+                Some(memory_plan.product_batch_planes.max(1)),
+                "spectral planner product scratch target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::WorkerQueue,
+                memory_plan.worker_staging_bytes,
+                None,
+                None,
+                "spectral planner worker staging target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GpuStaging,
+                memory_plan.gpu_staging_bytes,
+                None,
+                None,
+                "spectral planner GPU staging target",
+            ),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     ImagerProgressMemory {
         memory_target_bytes: memory_plan.memory_target_bytes,
         planned_active_bytes: memory_plan.planned_active_bytes,
@@ -2207,6 +3559,7 @@ fn imager_progress_memory_from_spectral_plan(
         active_planes: memory_plan.active_planes,
         row_block_rows: memory_plan.row_block_rows,
         memory_target_source: Some(memory_target_source.to_string()),
+        categories,
     }
 }
 
@@ -2214,14 +3567,80 @@ fn imager_progress_memory_from_standard_mfs_plan(
     memory_plan: &StandardMfsMemoryPlan,
     active_planes: usize,
 ) -> ImagerProgressMemory {
+    let active_planes = active_planes.max(1);
+    let mut categories = Vec::new();
+    categories.extend(
+        [
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::SourceBuffer,
+                memory_plan.source_stream_buffer_bytes,
+                Some(memory_plan.row_block_rows),
+                None,
+                "standard-MFS planner source stream buffer target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::RowVisibilityBuffer,
+                memory_plan
+                    .live_row_block_bytes
+                    .saturating_add(memory_plan.live_bucket_bytes)
+                    .saturating_add(memory_plan.visibility_row_cache_overhead_bytes)
+                    .saturating_add(memory_plan.prepare_buffer_bytes),
+                Some(memory_plan.row_block_rows),
+                None,
+                "standard-MFS planner row visibility and prepare buffer target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GridFftScratch,
+                memory_plan
+                    .image_working_set_bytes
+                    .saturating_add(memory_plan.weighting_density_bytes)
+                    .saturating_add(memory_plan.gridded_visibility_bytes)
+                    .saturating_add(memory_plan.global_grid_bytes)
+                    .saturating_add(memory_plan.tile_cell_bin_bytes)
+                    .saturating_add(memory_plan.resident_tile_buffer_bytes),
+                None,
+                Some(active_planes),
+                "standard-MFS planner grid, FFT, and weighting scratch target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::Products,
+                memory_plan.output_image_bytes,
+                None,
+                Some(active_planes),
+                "standard-MFS planner output product target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::WorkerQueue,
+                memory_plan
+                    .queued_task_bytes
+                    .saturating_add(memory_plan.worker_staging_bytes),
+                None,
+                None,
+                "standard-MFS planner worker queue and staging target",
+            ),
+            imager_planned_memory_category(
+                ImagerObservedMemoryKind::GpuStaging,
+                memory_plan
+                    .gpu_staging_bytes
+                    .saturating_add(memory_plan.metal_grouped_input_cache_bytes)
+                    .saturating_add(memory_plan.routed_replay_cache_bytes),
+                None,
+                None,
+                "standard-MFS planner GPU and replay staging target",
+            ),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     ImagerProgressMemory {
         memory_target_bytes: memory_plan.memory_target_bytes,
         planned_active_bytes: memory_plan.planned_active_bytes,
         source_stream_buffer_bytes: memory_plan.source_stream_buffer_bytes,
         product_scratch_bytes: memory_plan.output_image_bytes,
-        active_planes: active_planes.max(1),
+        active_planes,
         row_block_rows: memory_plan.row_block_rows,
         memory_target_source: Some(memory_plan.memory_target_source.to_string()),
+        categories,
     }
 }
 
@@ -2305,6 +3724,42 @@ fn emit_imager_progress_run_started(request: &ImagerRunTaskRequest) {
         },
         true,
     );
+}
+
+fn begin_imager_progress_run_observation(
+    request: &ImagerRunTaskRequest,
+) -> Option<ImagerObservationSpanGuard> {
+    let config = request.to_cli_config().ok()?;
+    let output_planes = if config.spectral_mode.is_cube_like() {
+        config.channel_count.unwrap_or(1).max(1) as u64
+    } else {
+        1
+    };
+    let span = begin_imager_observation_span(
+        ImagerObservedStageKind::Run,
+        "imager run",
+        &[
+            ImagerObservedResourceId::SourceStream,
+            ImagerObservedResourceId::VisibilityGrid,
+            ImagerObservedResourceId::PlaneState,
+            ImagerObservedResourceId::Deconvolver,
+            ImagerObservedResourceId::ProductScratch,
+            ImagerObservedResourceId::WorkerQueue,
+        ],
+        Some(ImagerObservabilityExtent {
+            row_start: None,
+            row_end: None,
+            channel_start: None,
+            channel_end: None,
+            plane_start: Some(0),
+            plane_end: Some(output_planes as usize),
+        }),
+    );
+    observe_current_imager_span_counters([
+        (OBS_COUNTER_OUTPUT_PLANES, output_planes),
+        (OBS_COUNTER_MINOR_ITERATION_LIMIT, config.niter as u64),
+    ]);
+    span
 }
 
 fn emit_imager_progress_ms_window(
@@ -2632,6 +4087,50 @@ fn acquire_standard_mfs_replay_progress_resources() -> Option<ImagerProgressReso
     )
 }
 
+fn standard_mfs_minor_cycle_observation(
+    deconvolver: Deconvolver,
+) -> (ImagerObservedStageKind, &'static str) {
+    match deconvolver {
+        Deconvolver::Clark => (
+            ImagerObservedStageKind::ClarkMinorCycle,
+            "deconvolving Clark minor cycle",
+        ),
+        Deconvolver::Hogbom => (
+            ImagerObservedStageKind::Deconvolution,
+            "deconvolving Hogbom minor cycle",
+        ),
+        Deconvolver::Mtmfs => (
+            ImagerObservedStageKind::Deconvolution,
+            "deconvolving MT-MFS minor cycle",
+        ),
+        Deconvolver::Multiscale => (
+            ImagerObservedStageKind::Deconvolution,
+            "deconvolving multiscale minor cycle",
+        ),
+    }
+}
+
+fn standard_mfs_uses_mosaic_observability(config: &CliConfig) -> bool {
+    can_plan_mosaic_mfs_acceleration(config, 1)
+}
+
+fn standard_mfs_observability_extent(config: &CliConfig) -> ImagerObservabilityExtent {
+    let output_cube = progress_output_cube_from_config(config, 0, 1);
+    let channel_start = config.channel_start;
+    let channel_end = match (config.channel_start, config.channel_count) {
+        (Some(start), Some(count)) if count > 0 => Some(start.saturating_add(count)),
+        _ => None,
+    };
+    ImagerObservabilityExtent {
+        row_start: None,
+        row_end: None,
+        channel_start,
+        channel_end,
+        plane_start: Some(output_cube.active_plane_start),
+        plane_end: Some(output_cube.active_plane_end),
+    }
+}
+
 #[derive(Default)]
 struct StandardMfsProgressResourceGuards {
     initial_grid_span: Option<ImagerObservationSpanGuard>,
@@ -2645,6 +4144,93 @@ struct StandardMfsProgressResourceGuards {
     fft: Option<ImagerProgressResourceGuard>,
     weighted_mosaic_span: Option<ImagerObservationSpanGuard>,
     weighted_mosaic: Option<ImagerProgressResourceGuard>,
+}
+
+fn imager_queue_confidence_from_standard_mfs(
+    confidence: StandardMfsQueueProgressConfidence,
+) -> ImagerObservedQueueConfidence {
+    match confidence {
+        StandardMfsQueueProgressConfidence::Measured => ImagerObservedQueueConfidence::Measured,
+        StandardMfsQueueProgressConfidence::Unknown => ImagerObservedQueueConfidence::Unknown,
+    }
+}
+
+fn imager_queue_snapshot_from_standard_mfs(
+    queue: &StandardMfsQueueProgress,
+) -> ImagerObservedQueueSnapshot {
+    let state = if queue.blocked_count > 0 {
+        ImagerObservedQueueState::Blocked
+    } else if queue.producers_active || queue.consumers_active {
+        ImagerObservedQueueState::Active
+    } else if queue.len == Some(0) {
+        ImagerObservedQueueState::Idle
+    } else {
+        ImagerObservedQueueState::Unknown
+    };
+    ImagerObservedQueueSnapshot {
+        id: queue.id.clone(),
+        label: queue.label.clone(),
+        state,
+        resource_id: Some(ImagerObservedResourceId::WorkerQueue),
+        len: queue.len,
+        capacity: queue.capacity,
+        bytes: queue.bytes,
+        producers_active: queue.producers_active,
+        consumers_active: queue.consumers_active,
+        blocked_count: queue.blocked_count,
+        blocked_reason: (queue.blocked_count > 0).then(|| "standard_mfs_queue_blocked".to_string()),
+        idle_duration_ms: (state == ImagerObservedQueueState::Idle).then_some(0),
+        confidence: imager_queue_confidence_from_standard_mfs(queue.confidence),
+        note: queue.note.clone(),
+    }
+}
+
+fn standard_mfs_observability_callback(
+    config: &CliConfig,
+) -> Option<StandardMfsObservabilityCallback> {
+    if !IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed) {
+        return None;
+    }
+    let config = config.clone();
+    Some(Arc::new(move |event: StandardMfsObservabilityEvent| {
+        let queue_high_water_bytes =
+            imager_optional_sum(event.queues.iter().map(|queue| queue.high_water_bytes));
+        let queues = event
+            .queues
+            .iter()
+            .map(imager_queue_snapshot_from_standard_mfs)
+            .collect::<Vec<_>>();
+        set_imager_progress_queue_snapshots(queues, queue_high_water_bytes);
+        let resource_guard = acquire_imager_progress_resource_ids_with_threads(
+            &[ImagerObservedResourceId::WorkerQueue],
+            event.active_workers,
+        );
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: format!("standard MFS {} scheduler", event.stage),
+                summary: format!(
+                    "standard MFS {} scheduler: {} active worker(s)",
+                    event.stage, event.active_workers
+                ),
+                work: Some(progress_work_from_config(&config, 0, 0)),
+                ms_read: None,
+                output_cube: Some(progress_output_cube_from_config(&config, 0, 1)),
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: Some(progress_runtime_for_resource_scope(
+                    event.active_workers,
+                    "standard-MFS tile scheduler",
+                    &[ImagerObservedResourceId::WorkerQueue.as_progress_id()],
+                )),
+                observability: None,
+            },
+            false,
+        );
+        drop(resource_guard);
+    }))
 }
 
 fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgressCallback> {
@@ -2666,7 +4252,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.initial_grid = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -2686,14 +4272,15 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 ("dirty image grid complete", 0)
             }
             StandardMfsProgressPhase::MinorCycleStart => {
+                let (stage_kind, label) = standard_mfs_minor_cycle_observation(event.deconvolver);
                 guards.minor_cycle_span = begin_imager_observation_span(
-                    ImagerObservedStageKind::ClarkMinorCycle,
-                    "deconvolving minor cycle",
+                    stage_kind,
+                    label,
                     &[
                         ImagerObservedResourceId::Deconvolver,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.minor_cycle = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -2702,10 +4289,11 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ],
                     env_standard_mfs_grid_threads().unwrap_or(1),
                 );
-                (
-                    "deconvolving minor cycle",
-                    env_standard_mfs_grid_threads().unwrap_or(1),
-                )
+                (label, env_standard_mfs_grid_threads().unwrap_or(1))
+            }
+            StandardMfsProgressPhase::MinorCycleProgress => {
+                let (_, label) = standard_mfs_minor_cycle_observation(event.deconvolver);
+                (label, env_standard_mfs_grid_threads().unwrap_or(1))
             }
             StandardMfsProgressPhase::MinorCycleEnd => {
                 guards.minor_cycle = None;
@@ -2717,7 +4305,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ImagerObservedStageKind::ResidualRefresh,
                     "refreshing residual",
                     &[],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 ("refreshing residual", 0)
             }
@@ -2726,14 +4314,25 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                 ("residual refresh complete", 0)
             }
             StandardMfsProgressPhase::ResidualGridStart => {
+                let (stage_kind, label) = if standard_mfs_uses_mosaic_observability(&config) {
+                    (
+                        ImagerObservedStageKind::MosaicResidual,
+                        "computing mosaic residual",
+                    )
+                } else {
+                    (
+                        ImagerObservedStageKind::Gridding,
+                        "gridding residual visibilities",
+                    )
+                };
                 guards.residual_grid_span = begin_imager_observation_span(
-                    ImagerObservedStageKind::Gridding,
-                    "gridding residual visibilities",
+                    stage_kind,
+                    label,
                     &[
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.residual_grid = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -2742,10 +4341,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ],
                     env_standard_mfs_grid_threads().unwrap_or(1),
                 );
-                (
-                    "gridding residual visibilities",
-                    env_standard_mfs_grid_threads().unwrap_or(1),
-                )
+                (label, env_standard_mfs_grid_threads().unwrap_or(1))
             }
             StandardMfsProgressPhase::ResidualGridEnd => {
                 guards.residual_grid = None;
@@ -2760,7 +4356,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                         ImagerObservedResourceId::VisibilityGrid,
                         ImagerObservedResourceId::PlaneState,
                     ],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.fft = acquire_imager_progress_resource_ids_with_threads(
                     &[
@@ -2784,7 +4380,7 @@ fn standard_mfs_progress_callback(config: &CliConfig) -> Option<StandardMfsProgr
                     ImagerObservedStageKind::WeightedMosaic,
                     "forming weighted mosaic groups",
                     &[ImagerObservedResourceId::VisibilityGrid],
-                    None,
+                    Some(standard_mfs_observability_extent(&config)),
                 );
                 guards.weighted_mosaic = acquire_imager_progress_resource_ids_with_threads(
                     &[ImagerObservedResourceId::VisibilityGrid],
@@ -2876,6 +4472,7 @@ fn emit_imager_progress_run_finished(request: &ImagerRunTaskRequest, summary: &R
                 .last()
                 .map(|channel| channel.final_residual_peak_jy_per_beam * 1000.0)
         });
+    finalize_imager_run_diagnostics(summary);
     emit_imager_progress_event(
         ImagerProgressEvent {
             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -3667,24 +5264,39 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     }
 
     let (progress_jsonl_path, filtered_args) = extract_string_option(&args, "--progress-jsonl")?;
+    let (progress_detail, filtered_args) =
+        extract_string_option(&filtered_args, "--progress-detail")?;
+    let progress_detail = progress_detail
+        .as_deref()
+        .map(str::parse::<ImagerProgressDetail>)
+        .transpose()?;
     let (json_run, filtered_args) = extract_string_option(&filtered_args, "--json-run")?;
     if let Some(source) = json_run {
         let request = ImagerTaskRequest::read_from_source(&source)?;
         let progress_options = match &request {
             ImagerTaskRequest::Run(request) => request.progress.clone(),
         };
-        let progress_options = if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
+        let progress_options = if progress_jsonl_path.is_some() || progress_detail.is_some() {
             let mut options = progress_options.unwrap_or_else(|| ImagerProgressOptions {
                 enabled: true,
                 ..Default::default()
             });
-            options.enabled = true;
-            options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
+            if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
+                options.enabled = true;
+                options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
+            }
+            if let Some(progress_detail) = progress_detail {
+                options.enabled = true;
+                options.detail = progress_detail;
+            }
             Some(options)
         } else {
             progress_options
         };
-        let _progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
+        let _progress_guard = match progress_options.as_ref() {
+            Some(options) => begin_imager_progress(options)?,
+            None => None,
+        };
         let result = execute_json_task_request_with_progress(&request)?;
         println!(
             "{}",
@@ -3714,6 +5326,9 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
                 .parse()
                 .map_err(|error| format!("parse --progress-min-interval-ms: {error}"))?;
         }
+        if let Some(progress_detail) = progress_detail {
+            options.detail = progress_detail;
+        }
         Some(options)
     } else {
         progress_jsonl_path
@@ -3721,12 +5336,16 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
             .map(|progress_jsonl_path| ImagerProgressOptions {
                 enabled: true,
                 telemetry_jsonl_path: Some(PathBuf::from(progress_jsonl_path)),
+                detail: progress_detail.unwrap_or_default(),
                 ..Default::default()
             })
     };
     let progress_options = progress_options.map(|mut options| {
         if let Some(progress_jsonl_path) = progress_jsonl_path.as_ref() {
             options.telemetry_jsonl_path = Some(PathBuf::from(progress_jsonl_path));
+        }
+        if let Some(progress_detail) = progress_detail {
+            options.detail = progress_detail;
         }
         options
     });
@@ -3760,20 +5379,31 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
     }
     let request = ImagerRunTaskRequest::from_cli_config(&config);
     let cli_started_at = Instant::now();
-    let progress_guard = progress_options.as_ref().and_then(begin_imager_progress);
+    let progress_guard = match progress_options.as_ref() {
+        Some(options) => begin_imager_progress(options)?,
+        None => None,
+    };
     let progress_active = progress_guard.is_some();
+    let mut run_span = progress_active
+        .then(|| begin_imager_progress_run_observation(&request))
+        .flatten();
     if progress_active {
         emit_imager_progress_run_started(&request);
     }
     let summary = match run_from_request(&request) {
         Ok(summary) => {
             if progress_active {
+                drop(run_span.take());
                 emit_imager_progress_run_finished(&request, &summary);
             }
             summary
         }
         Err(error) => {
             if progress_active {
+                if let Some(run_span) = run_span.as_mut() {
+                    run_span.mark_failed();
+                }
+                drop(run_span.take());
                 emit_imager_progress_event(
                     ImagerProgressEvent {
                         schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -3910,7 +5540,7 @@ fn extract_string_option(
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n",
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical imager task JSON schema\n  --protocol-info          Emit the imager task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON ImagerTaskRequest from SOURCE or - for stdin\n  --progress-jsonl PATH    Write low-rate progress telemetry to newline-delimited JSON side channel\n  --progress true|false    Emit low-rate launcher progress telemetry on stderr\n  --progress-detail MODE   Set progress detail: basic or diagnostic\n",
         schema.render_help()
     )
 }
@@ -5088,9 +6718,11 @@ fn execute_json_task_request_with_progress(
 ) -> Result<ImagerTaskResult, String> {
     match request {
         ImagerTaskRequest::Run(run_request) => {
+            let mut run_span = begin_imager_progress_run_observation(run_request);
             emit_imager_progress_run_started(run_request);
             match run_from_request(run_request) {
                 Ok(summary) => {
+                    drop(run_span.take());
                     emit_imager_progress_run_finished(run_request, &summary);
                     Ok(ImagerTaskResult::Run(ImagerRunTaskResult::from_run(
                         run_request.clone(),
@@ -5098,6 +6730,10 @@ fn execute_json_task_request_with_progress(
                     )))
                 }
                 Err(error) => {
+                    if let Some(run_span) = run_span.as_mut() {
+                        run_span.mark_failed();
+                    }
+                    drop(run_span.take());
                     emit_imager_progress_event(
                         ImagerProgressEvent {
                             schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
@@ -5589,7 +7225,7 @@ fn cube_per_plane_runtime_config(
         && eligibility.selected_backend == PerPlaneExecutionBackend::Wave3MetalGrouped
     {
         plane_config.standard_mfs_residual_backend = Some("cpu".to_string());
-        plane_config.standard_mfs_initial_dirty_backend = Some("cpu".to_string());
+        plane_config.standard_mfs_initial_dirty_backend = Some("metal-row-run-grouped".to_string());
     }
     plane_config
 }
@@ -5772,6 +7408,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
     prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
     let source_block = read_columnar_prepared_source(
@@ -5804,6 +7441,7 @@ fn prepare_mfs_mosaic_source_row_block_plane(
         prepare_started_at,
         prepare_stage_timings,
         accumulate_timings,
+        cube_row_spectral_reusable_plan,
     )
 }
 
@@ -5821,6 +7459,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     _prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<PlaneInput, String> {
     let stage_started_at = Instant::now();
     let finish = if mosaic_cube_one_channel_can_use_single_plane_stream(config) {
@@ -5847,7 +7486,7 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
             standard_mfs_table_values: None,
             cube_context,
             finish,
-            cube_row_spectral_reusable_plan: None,
+            cube_row_spectral_reusable_plan,
             build_cube_briggs_density_samples: true,
             build_cube_mosaic_metadata: true,
         },
@@ -6467,6 +8106,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
+        None,
     )?;
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
@@ -6531,6 +8171,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                     prepare_started_at,
                     &mut prepare_stage_timings,
                     &mut accumulate_timings,
+                    None,
                 )
                 .map_err(ImagingError::InvalidRequest)?;
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
@@ -6612,6 +8253,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
     derived_engine: Option<&MsCalEngine>,
     shared_visibility_source: Arc<SharedColumnarCubeSlabSource>,
     shared_density_source: Option<Arc<SharedColumnarCubeSlabSource>>,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
 ) -> Result<MosaicSinglePlaneStreamProducts, String> {
     let geometry = ImageGeometry {
         image_shape: [read_config.imsize, read_config.imsize],
@@ -6646,13 +8288,6 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
 
     let prepare_started_at = Instant::now();
     let flag_row = selection.flag_row.as_slice();
-    let metadata_source = shared_density_source
-        .as_deref()
-        .unwrap_or(shared_visibility_source.as_ref());
-    let first_block = metadata_source
-        .blocks
-        .first()
-        .ok_or_else(|| "shared mosaic cube source contains no row blocks".to_string())?;
     let source_rows = shared_visibility_source
         .blocks
         .iter()
@@ -6674,19 +8309,18 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
 
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let mut accumulate_timings = AccumulateRowTimings::default();
-    let first_plane = prepare_mfs_mosaic_source_row_block_plane_from_source(
+    let first_plane = prepare_mfs_mosaic_single_plane_stream_metadata_from_tables(
         ms,
         read_config,
-        selection,
-        ddid_info,
-        spectral_window,
-        polarization,
-        flag_row,
-        first_block,
-        derived_engine,
-        prepare_started_at,
-        &mut prepare_stage_timings,
-        &mut accumulate_timings,
+        MosaicSinglePlaneStreamMetadataInput {
+            selection,
+            ddid_info,
+            spectral_window,
+            polarization,
+            table_values,
+            derived_engine,
+            cube_row_spectral_reusable_plan: cube_row_spectral_reusable_plan.clone(),
+        },
     )?;
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
@@ -6695,7 +8329,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
     let request = ImagingRequest {
         geometry,
         visibility_batches: Vec::new(),
-        gridder_mode: first_plane.gridder_mode.clone(),
+        gridder_mode: mosaic_stream_request_gridder_mode(&first_plane.gridder_mode)?,
         plane_stokes: first_plane.plane_stokes,
         weighting: read_config.weighting,
         reffreq_hz: first_plane.reffreq_hz,
@@ -6754,6 +8388,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     prepare_started_at,
                     &mut prepare_stage_timings,
                     &mut accumulate_timings,
+                    cube_row_spectral_reusable_plan.clone(),
                 )
                 .map_err(ImagingError::InvalidRequest)?;
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
@@ -6821,6 +8456,93 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
     })
 }
 
+struct MosaicSinglePlaneStreamMetadataInput<'a> {
+    selection: &'a SelectedRowsContext,
+    ddid_info: &'a [Option<(usize, usize)>],
+    spectral_window: &'a casa_ms::subtables::spectral_window::MsSpectralWindow<'a>,
+    polarization: &'a casa_ms::subtables::polarization::MsPolarization<'a>,
+    table_values: &'a PreparedSelectionTableValues,
+    derived_engine: Option<&'a MsCalEngine>,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
+}
+
+fn prepare_mfs_mosaic_single_plane_stream_metadata_from_tables(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    input: MosaicSinglePlaneStreamMetadataInput<'_>,
+) -> Result<PlaneInput, String> {
+    let MosaicSinglePlaneStreamMetadataInput {
+        selection,
+        ddid_info,
+        spectral_window,
+        polarization,
+        table_values,
+        derived_engine,
+        cube_row_spectral_reusable_plan,
+    } = input;
+    if !mosaic_cube_one_channel_can_use_single_plane_stream(config) {
+        return Err(
+            "internal error: shared mosaic stream metadata requires one-channel mosaic cube config"
+                .to_string(),
+        );
+    }
+    let cube_context = cube_setup_context_for_selection(selection, derived_engine)?;
+    let mut prepared = new_source_row_block_prepared_selection(
+        config,
+        selection,
+        ddid_info,
+        spectral_window,
+        polarization,
+        None,
+        Some(cube_context),
+        SourceRowBlockFinish::Cube,
+        cube_row_spectral_reusable_plan,
+        true,
+        true,
+    )?;
+    prepared.reserve_standard_mfs_row_block(0);
+    let cube = match prepared.finish_cube_without_trace(ms)? {
+        PreparedInput::Cube(cube)
+            if mosaic_cube_one_channel_can_use_single_plane_stream(config) =>
+        {
+            cube
+        }
+        PreparedInput::Cube(_) => {
+            return Err(
+                "internal error: shared mosaic stream metadata produced non-one-channel cube input"
+                    .to_string(),
+            );
+        }
+        PreparedInput::Mfs(_) => {
+            return Err(
+                "internal error: shared mosaic stream metadata produced MFS input".to_string(),
+            );
+        }
+    };
+    let mut plane = one_channel_mosaic_cube_metadata_plane(&cube)?;
+    if let GridderMode::Mosaic(mosaic) = &mut plane.gridder_mode {
+        if mosaic.grouped_metadata_batches.is_empty() && mosaic.metadata_batches.is_empty() {
+            let primary_beam_model = infer_primary_beam_model_for_antennas(
+                ms,
+                selection
+                    .selected_rows
+                    .iter()
+                    .flat_map(|row| [row.antenna1_id, row.antenna2_id]),
+            )?;
+            mosaic.primary_beam_model = primary_beam_model;
+        }
+    }
+    let cube_metadata = single_plane_cube_coordinate_metadata(config, &plane, table_values)?;
+    if let Some(channel_frequencies_hz) = cube_metadata.channel_frequencies_hz.as_ref()
+        && let Some(&frequency_hz) = channel_frequencies_hz.first()
+    {
+        plane.reffreq_hz = frequency_hz;
+        plane.selected_frequency_range_hz = [frequency_hz, frequency_hz];
+        plane.sample_frequency_range_hz = Some([frequency_hz, frequency_hz]);
+    }
+    Ok(plane)
+}
+
 fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     ms: &MeasurementSet,
     read_config: &CliConfig,
@@ -6885,8 +8607,9 @@ fn run_mfs_mosaic_from_single_plane_stream_open_ms_with_output_config(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(output_config, &run_result, true);
     write_products(
@@ -7157,6 +8880,15 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     if active_selected_rows.is_empty() {
         return Err("selection resolved to no active mosaic cube rows".to_string());
     }
+    let cube_row_spectral_reusable_plan = build_mosaic_cube_row_spectral_reusable_plan(
+        config,
+        &selection,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+        &active_selected_rows,
+        Some(&derived_engine),
+    )?;
     let metadata = collect_cube_slab_run_metadata(
         config,
         channel_start,
@@ -7255,30 +8987,49 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         let source_prepare_started = Instant::now();
         let progress_output_cube =
             progress_output_cube_from_config(config, slab.plane_start, slab.plane_end);
-        let shared_visibility_source = Arc::new(read_shared_columnar_cube_slab_source(
+        let progress_ms_window = imager_progress_ms_window_from_selection(
             ms,
-            &slab_source_config,
-            data_column,
-            true,
-            &selection,
             &table_values,
-            &ddid_info,
             &active_selected_rows,
-            &derived_engine,
             channel_read_range,
-            None,
-            source_strategy.row_block_rows,
-            source_prepare_started,
-            spectral_slab::ImagingPassKind::InitialDirty,
-            slab.slab_id,
+        );
+        let shared_visibility_source = Arc::new(with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::SourceRead,
+            Some(slab.slab_id),
             slab.plane_start,
             slab.plane_end,
             worker_count,
             "mosaic_multi_plane_stream",
-            &mut geometry_cache,
-            progress_output_cube.clone(),
+            progress_ms_window,
+            true,
+            || {
+                read_shared_columnar_cube_slab_source(
+                    ms,
+                    &slab_source_config,
+                    data_column,
+                    true,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    &active_selected_rows,
+                    &derived_engine,
+                    channel_read_range,
+                    None,
+                    source_strategy.row_block_rows,
+                    source_prepare_started,
+                    spectral_slab::ImagingPassKind::InitialDirty,
+                    slab.slab_id,
+                    slab.plane_start,
+                    slab.plane_end,
+                    worker_count,
+                    "mosaic_multi_plane_stream",
+                    &mut geometry_cache,
+                    progress_output_cube.clone(),
+                )
+            },
         )?);
-        let mut shared_source_read_elapsed = shared_visibility_source.elapsed;
+        let shared_source_read_elapsed = shared_visibility_source.elapsed;
         get_ms_values_into_processing_buffer += shared_visibility_source
             .stage_timings
             .get_ms_values_into_processing_buffer;
@@ -7307,40 +9058,7 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 "sampling_uv_coverage",
             );
         }
-        let shared_density_source =
-            if matches!(slab_source_config.weighting, WeightingMode::Natural) {
-                None
-            } else {
-                let density_prepare_started = Instant::now();
-                let density_source = Arc::new(read_shared_columnar_cube_slab_source(
-                    ms,
-                    &slab_source_config,
-                    data_column,
-                    false,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &active_selected_rows,
-                    &derived_engine,
-                    channel_read_range,
-                    None,
-                    source_strategy.row_block_rows,
-                    density_prepare_started,
-                    spectral_slab::ImagingPassKind::WeightingDensity,
-                    slab.slab_id,
-                    slab.plane_start,
-                    slab.plane_end,
-                    worker_count,
-                    "mosaic_multi_plane_stream",
-                    &mut geometry_cache,
-                    progress_output_cube.clone(),
-                )?);
-                shared_source_read_elapsed += density_source.elapsed;
-                get_ms_values_into_processing_buffer += density_source
-                    .stage_timings
-                    .get_ms_values_into_processing_buffer;
-                Some(density_source)
-            };
+        let shared_density_source: Option<Arc<SharedColumnarCubeSlabSource>> = None;
         prepare_plane_input += shared_source_read_elapsed;
         if standard_mfs_profile_detail_enabled() {
             let density_blocks = shared_density_source
@@ -7386,6 +9104,39 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             slab_output_planes,
             worker_count,
         );
+        let backend_eligibility =
+            plan_cube_per_plane_execution(&slab_runtime_config, slab_output_planes, worker_count);
+        record_imager_backend_diagnostic(ImagerBackendDiagnostic {
+            stage_kind: ImagerObservedStageKind::Gridding,
+            requested_backend: standard_mfs_acceleration_policy_label(
+                slab_runtime_config.standard_mfs_acceleration,
+            )
+            .to_string(),
+            selected_backend: backend_eligibility.selected_backend.label().to_string(),
+            gpu_eligible: backend_eligibility.metal_eligible,
+            gpu_selected: backend_eligibility.selected_backend
+                == PerPlaneExecutionBackend::Wave3MetalGrouped,
+            gpu_device_available: backend_eligibility.metal_device_available,
+            gpu_device_name: None,
+            rejection_reasons: backend_eligibility
+                .fallback_reasons
+                .iter()
+                .map(|reason| (*reason).to_string())
+                .collect(),
+            cpu_fallback_reason: (backend_eligibility.selected_backend
+                != PerPlaneExecutionBackend::Wave3MetalGrouped)
+                .then(|| {
+                    if backend_eligibility.fallback_reasons.is_empty() {
+                        "policy_selected_cpu".to_string()
+                    } else {
+                        backend_eligibility.fallback_reasons.join(",")
+                    }
+                }),
+            host_bytes: None,
+            device_bytes: None,
+            command_buffer_ns: None,
+            kernel_ns: None,
+        });
         let _slab_runtime_plan = apply_standard_mfs_runtime_plan_with_backend_command_target(
             &slab_runtime_config,
             false,
@@ -7398,42 +9149,73 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 payload: plane_index,
             })
             .collect::<Vec<_>>();
-        let (plane_results, plane_run_elapsed) =
-            run_owned_independent_imaging_planes(tasks, worker_count, |plane_index| {
-                let mut plane_config = slab_config_for_cube_planes(
-                    config,
-                    channel_start,
-                    plane_index,
-                    plane_index + 1,
-                )?;
-                if plane_config.imaging_prepare_workers.is_none() && worker_count > 1 {
-                    plane_config.imaging_prepare_workers = Some(1);
-                }
-                if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
-                    plane_config.standard_mfs_grid_threads = Some("1".to_string());
-                }
-                let products = run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
-                    ms,
-                    &plane_config,
-                    &plane_config,
-                    total_start,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &spectral_window,
-                    &polarization,
-                    Some(&derived_engine),
-                    Arc::clone(&shared_visibility_source),
-                    shared_density_source.as_ref().map(Arc::clone),
-                )?;
-                let stage_timings = products.result.diagnostics.stage_timings;
-                Ok((products, stage_timings))
-            })?;
+        let (plane_results, plane_run_elapsed) = with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::BackendExecution,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            backend_eligibility.selected_backend.label(),
+            None,
+            true,
+            || {
+                run_owned_independent_imaging_planes(tasks, worker_count, |plane_index| {
+                    let mut plane_config = slab_config_for_cube_planes(
+                        config,
+                        channel_start,
+                        plane_index,
+                        plane_index + 1,
+                    )?;
+                    if plane_config.imaging_prepare_workers.is_none() && worker_count > 1 {
+                        plane_config.imaging_prepare_workers = Some(1);
+                    }
+                    if plane_config.standard_mfs_grid_threads.is_none() && worker_count > 1 {
+                        plane_config.standard_mfs_grid_threads = Some("1".to_string());
+                    }
+                    let plane_channel_read_range =
+                        selected_channel_read_range_for_cube_source_row_blocks(
+                            &plane_config,
+                            &table_values,
+                            &selection,
+                            Some(&derived_engine),
+                        )?;
+                    let plane_source_channel_indices = source_channel_indices_for_read_range(
+                        &table_values,
+                        plane_channel_read_range,
+                    );
+                    let plane_reusable_plan =
+                        cube_row_spectral_reusable_plan.as_ref().and_then(|plan| {
+                            plan.local_output_view(plane_index, &plane_source_channel_indices)
+                        });
+                    let products = run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
+                        ms,
+                        &plane_config,
+                        &plane_config,
+                        total_start,
+                        &selection,
+                        &table_values,
+                        &ddid_info,
+                        &spectral_window,
+                        &polarization,
+                        Some(&derived_engine),
+                        Arc::clone(&shared_visibility_source),
+                        shared_density_source.as_ref().map(Arc::clone),
+                        plane_reusable_plan,
+                    )?;
+                    let stage_timings = products.result.diagnostics.stage_timings;
+                    Ok((products, stage_timings))
+                })
+            },
+        )?;
         run_imaging_time += plane_run_elapsed;
         let mut slab_worker_sum = Duration::ZERO;
         let mut slab_worker_max = Duration::ZERO;
+        let mut slab_stage_timings = ImagingStageTimings::default();
+        let mut slab_stage_wall_timings = ImagingStageTimings::default();
+        let mut slab_product_write_elapsed = Duration::ZERO;
+        let mut slab_product_bytes = 0u64;
         for plane_result in plane_results {
-            let plane_started = Instant::now();
             let plane_index = plane_result.plane_index;
             let products = plane_result.result;
             slab_worker_sum += plane_result.worker_elapsed;
@@ -7446,6 +9228,11 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             major_cycles = major_cycles.saturating_add(diagnostics.major_cycles);
             minor_iterations = minor_iterations.saturating_add(diagnostics.minor_iterations);
             add_imaging_stage_timings(&mut stage_timings, diagnostics.stage_timings);
+            add_imaging_stage_timings(&mut slab_stage_timings, diagnostics.stage_timings);
+            max_backend_relevant_imaging_stage_timings(
+                &mut slab_stage_wall_timings,
+                diagnostics.stage_timings,
+            );
             channel_summaries.push(ChannelRunSummary {
                 channel_index: plane_index,
                 major_cycles: diagnostics.major_cycles,
@@ -7463,8 +9250,51 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 .get_ms_values_into_processing_buffer;
             prepare_processing_buffer += products.prepare_stage_timings.prepare_processing_buffer;
             let write_started = Instant::now();
-            product_writers.write_plane(plane_index, products)?;
-            write_products_time += write_started.elapsed();
+            let product_stats_before = product_writers.cube.write_stats();
+            let publish_elapsed = with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::ProductWrite,
+                Some(slab.slab_id),
+                plane_index,
+                plane_index + 1,
+                1,
+                "mosaic_multi_plane_stream",
+                None,
+                true,
+                || {
+                    product_writers.write_plane(plane_index, products)?;
+                    Ok::<_, String>(write_started.elapsed())
+                },
+            )?;
+            let product_stats = product_writers
+                .cube
+                .write_stats()
+                .delta_since(product_stats_before);
+            let mosaic_side_products = 1usize
+                + usize::from(config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0)
+                + usize::from(config.pbcor);
+            let mosaic_side_bytes = config
+                .imsize
+                .saturating_mul(config.imsize)
+                .saturating_mul(std::mem::size_of::<f32>())
+                .saturating_mul(mosaic_side_products);
+            let product_bytes = product_stats
+                .estimated_bytes
+                .saturating_add(mosaic_side_bytes) as u64;
+            let product_elapsed_ns = diagnostic_duration_ns(publish_elapsed);
+            record_imager_product_write_diagnostic(ImagerProductWriteDiagnostic {
+                artifact_kind: "mosaic_cube_plane".to_string(),
+                slab_id: Some(slab.slab_id),
+                plane_start: plane_index,
+                plane_end: plane_index + 1,
+                planes: 1,
+                bytes_written: product_bytes,
+                elapsed_ns: product_elapsed_ns,
+                mb_per_s: diagnostic_mb_per_s(product_bytes, product_elapsed_ns),
+            });
+            write_products_time += publish_elapsed;
+            slab_product_write_elapsed += publish_elapsed;
+            slab_product_bytes = slab_product_bytes.saturating_add(product_bytes);
             eprintln!(
                 "mosaic_cube_slab_plane plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} publish_elapsed_ms={:.3}",
                 plane_index,
@@ -7472,9 +9302,39 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                 plane_result.batch_task_count,
                 plane_result.worker_slot,
                 duration_ms(plane_result.worker_elapsed),
-                duration_ms(plane_started.elapsed()),
+                duration_ms(publish_elapsed),
             );
         }
+        record_completed_backend_stage_timing_breakdown(
+            slab_stage_wall_timings,
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            backend_eligibility.selected_backend.label(),
+        );
+        record_completed_backend_stage_timing_breakdown_with_prefix(
+            slab_stage_timings,
+            "backend_worker_sum",
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            worker_count,
+            backend_eligibility.selected_backend.label(),
+        );
+        record_completed_spectral_stage_diagnostic(
+            spectral_slab::SpectralEventStage::PlaneStateStore,
+            "product_write/plane_state_store",
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            1,
+            "mosaic_multi_plane_stream",
+            slab_product_write_elapsed,
+            None,
+            None,
+            Some(slab_product_bytes),
+        );
         eprintln!(
             "mosaic_cube_slab_executor_summary slab_id={} plane_start={} plane_end={} worker_count={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} product_write_ms={:.3} residency=ordered_plane_results",
             slab.slab_id,
@@ -7489,7 +9349,18 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
         );
     }
     let finish_started = Instant::now();
-    product_writers.finish(config)?;
+    with_imager_progress_spectral_stage(
+        config,
+        spectral_slab::SpectralEventStage::ProductWrite,
+        None,
+        0,
+        nplanes,
+        1,
+        "mosaic_multi_plane_stream",
+        None,
+        true,
+        || product_writers.finish(config),
+    )?;
     write_products_time += finish_started.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
     let _ = selected_freq_ref;
@@ -7942,18 +9813,36 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
         let block_accumulate_before = accumulate_timings;
         let block_started = Instant::now();
         let density_read_started = Instant::now();
-        let (density_block, _density_read_timings) = read_ms_imaging_density_essentials_block(
-            ms,
-            data_column,
+        let (density_block, _density_read_timings) = with_imager_progress_spectral_stage(
             config,
-            &selection,
-            &table_values,
-            &ddid_info,
-            Arc::clone(&density_channel_axes),
-            &geometry_columns,
-            row_chunk,
-            density_channel_read_range,
-            derived_engine.as_ref(),
+            spectral_slab::SpectralEventStage::SourceRead,
+            None,
+            0,
+            config.channel_count.unwrap_or(1).max(1),
+            1,
+            "mosaic_cube_bounded_stream",
+            imager_progress_ms_window_from_selection(
+                ms,
+                &table_values,
+                row_chunk,
+                Some(density_channel_read_range),
+            ),
+            true,
+            || {
+                read_ms_imaging_density_essentials_block(
+                    ms,
+                    data_column,
+                    config,
+                    &selection,
+                    &table_values,
+                    &ddid_info,
+                    Arc::clone(&density_channel_axes),
+                    &geometry_columns,
+                    row_chunk,
+                    density_channel_read_range,
+                    derived_engine.as_ref(),
+                )
+            },
         )?;
         prepare_stage_timings.get_ms_values_into_processing_buffer +=
             density_read_started.elapsed();
@@ -8013,23 +9902,36 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                 metadata_ranges,
             ));
         }
-        let block_samples = accumulate_mosaic_cube_briggs_direct_density_rows(
-            row_chunk,
-            &density_block.rows,
-            density_set.get_or_insert_with(|| {
-                CasaCubeBriggsDensityGridSet::new_from_direct(
-                    geometry,
+        let block_samples = with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::WeightingDensity,
+            None,
+            0,
+            config.channel_count.unwrap_or(1).max(1),
+            1,
+            "mosaic_cube_bounded_stream",
+            None,
+            true,
+            || {
+                accumulate_mosaic_cube_briggs_direct_density_rows(
+                    row_chunk,
+                    &density_block.rows,
+                    density_set.get_or_insert_with(|| {
+                        CasaCubeBriggsDensityGridSet::new_from_direct(
+                            geometry,
+                            direct_density_plan
+                                .as_ref()
+                                .expect("direct density plan initialized"),
+                        )
+                    }),
                     direct_density_plan
                         .as_ref()
                         .expect("direct density plan initialized"),
+                    cube_row_spectral_reusable_plan.as_deref(),
+                    derived_engine.as_ref(),
+                    &mut accumulate_timings,
                 )
-            }),
-            direct_density_plan
-                .as_ref()
-                .expect("direct density plan initialized"),
-            cube_row_spectral_reusable_plan.as_deref(),
-            derived_engine.as_ref(),
-            &mut accumulate_timings,
+            },
         )?;
         let (metadata_groups, metadata_ranges) = match compact_metadata {
             Some((_, metadata_groups, metadata_ranges)) => (metadata_groups, metadata_ranges),
@@ -8279,6 +10181,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                         .to_string(),
                 )
             })?;
+            let table_values_ref = &table_values;
             thread::scope(|scope| {
                 let (sender, receiver) = mpsc::sync_channel(1);
                 let producer = scope.spawn({
@@ -8293,19 +10196,37 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                         for (block_index, row_chunk) in
                             active_selected_rows.chunks(row_block_rows).enumerate()
                         {
-                            let block = prepare_mosaic_cube_direct_replay_block(
-                                ms,
-                                data_column,
-                                Arc::clone(&channel_axes),
-                                geometry_columns,
+                            let block = with_imager_progress_spectral_stage(
                                 config,
-                                selection,
-                                row_chunk,
-                                density_set,
-                                plan,
-                                reusable_plan,
-                                derived_engine,
-                                channel_read_range,
+                                spectral_slab::SpectralEventStage::SourceRead,
+                                None,
+                                0,
+                                config.channel_count.unwrap_or(1).max(1),
+                                1,
+                                "mosaic_cube_bounded_stream",
+                                imager_progress_ms_window_from_selection(
+                                    ms,
+                                    table_values_ref,
+                                    row_chunk,
+                                    channel_read_range,
+                                ),
+                                true,
+                                || {
+                                    prepare_mosaic_cube_direct_replay_block(
+                                        ms,
+                                        data_column,
+                                        Arc::clone(&channel_axes),
+                                        geometry_columns,
+                                        config,
+                                        selection,
+                                        row_chunk,
+                                        density_set,
+                                        plan,
+                                        reusable_plan,
+                                        derived_engine,
+                                        channel_read_range,
+                                    )
+                                },
                             );
                             if sender.send((block_index, block)).is_err() {
                                 break;
@@ -8323,7 +10244,19 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                     }
                     expected_block_index += 1;
                     let block = block.map_err(ImagingError::InvalidRequest)?;
-                    if consume_prepared_block(block)? {
+                    let stop = with_imager_progress_spectral_stage(
+                        config,
+                        single_plane_stream_pass_spectral_stage(pass),
+                        None,
+                        0,
+                        config.channel_count.unwrap_or(1).max(1),
+                        1,
+                        "mosaic_cube_bounded_stream",
+                        None,
+                        true,
+                        || consume_prepared_block(block),
+                    )?;
+                    if stop {
                         break;
                     }
                 }
@@ -8389,8 +10322,9 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
@@ -9385,8 +11319,9 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
@@ -9737,8 +11672,9 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(
@@ -9974,6 +11910,8 @@ fn run_standard_spectral_cube_slab_from_open_ms(
     ));
     let _cube_per_plane_runtime_plan =
         apply_cube_per_plane_runtime_plan(config, nplanes, memory_plan.worker_count);
+    let progress_compute_backend =
+        progress_compute_backend_label(progress_selected_backend, memory_plan.backend);
     let mut plane_execution_config = standard_mfs_execution_config(config);
     plane_execution_config.metal_grouped_input_cache =
         backend_residency.metal_grouped_input_cache_enabled;
@@ -10236,28 +12174,47 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 Some(&derived_engine),
             )?);
             let prepare_started_at = Instant::now();
-            let shared_source = Arc::new(read_shared_columnar_cube_slab_source(
+            let progress_ms_window = imager_progress_ms_window_from_selection(
                 ms,
-                &slab_config,
-                data_column,
-                true,
-                &selection,
                 &table_values,
-                &ddid_info,
                 &active_selected_rows,
-                &derived_engine,
                 channel_read_range,
-                Some(&direct_spectral_plan),
-                memory_plan.row_block_rows,
-                prepare_started_at,
-                spectral_slab::ImagingPassKind::InitialDirty,
-                slab.slab_id,
+            );
+            let shared_source = Arc::new(with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::SourceRead,
+                Some(slab.slab_id),
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
                 memory_plan.backend,
-                &mut geometry_cache,
-                progress_output_cube_from_config(config, slab.plane_start, slab.plane_end),
+                progress_ms_window,
+                true,
+                || {
+                    read_shared_columnar_cube_slab_source(
+                        ms,
+                        &slab_config,
+                        data_column,
+                        true,
+                        &selection,
+                        &table_values,
+                        &ddid_info,
+                        &active_selected_rows,
+                        &derived_engine,
+                        channel_read_range,
+                        Some(&direct_spectral_plan),
+                        memory_plan.row_block_rows,
+                        prepare_started_at,
+                        spectral_slab::ImagingPassKind::InitialDirty,
+                        slab.slab_id,
+                        slab.plane_start,
+                        slab.plane_end,
+                        memory_plan.worker_count,
+                        memory_plan.backend,
+                        &mut geometry_cache,
+                        progress_output_cube_from_config(config, slab.plane_start, slab.plane_end),
+                    )
+                },
             )?);
             source_read_elapsed += shared_source.elapsed;
             modeled_read_bytes = modeled_read_bytes.saturating_add(
@@ -10292,23 +12249,35 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     "sampling_uv_coverage",
                 );
             }
-            let (slab_planes, _, slab_prepare_elapsed) =
-                prepare_independent_shared_cube_slab_resident_clean_planes(
-                    config,
-                    geometry,
-                    clean,
-                    slab.plane_start,
-                    slab.plane_end,
-                    channel_start,
-                    slab_channel_frequencies_hz,
-                    channel_read_range.map_or(0, |range| range.start),
-                    Arc::clone(&direct_spectral_plan),
-                    &table_values.corr_types,
-                    plane_execution_config.clone(),
-                    memory_plan.worker_count,
-                    progress_selected_backend,
-                    Arc::clone(&shared_source),
-                )?;
+            let (slab_planes, _, slab_prepare_elapsed) = with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::RowBlockPreparation,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                memory_plan.worker_count,
+                progress_compute_backend,
+                None,
+                true,
+                || {
+                    prepare_independent_shared_cube_slab_resident_clean_planes(
+                        config,
+                        geometry,
+                        clean,
+                        slab.plane_start,
+                        slab.plane_end,
+                        channel_start,
+                        slab_channel_frequencies_hz,
+                        channel_read_range.map_or(0, |range| range.start),
+                        Arc::clone(&direct_spectral_plan),
+                        &table_values.corr_types,
+                        plane_execution_config.clone(),
+                        memory_plan.worker_count,
+                        progress_selected_backend,
+                        Arc::clone(&shared_source),
+                    )
+                },
+            )?;
             prepare_elapsed += slab_prepare_elapsed;
             let clean_control_started_at = Instant::now();
             prepared_planes = prepared_planes.saturating_add(slab_planes.len());
@@ -10335,20 +12304,35 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             max_pending_candidate_planes =
                 max_pending_candidate_planes.max(pending_candidate_planes.len());
             clean_control_elapsed += clean_control_started_at.elapsed();
-            let slab_execution_stats = process_resident_clean_plane_states(
+            let slab_execution_stats = with_imager_progress_spectral_stage(
                 config,
-                ready_to_skip,
+                spectral_slab::SpectralEventStage::MinorCycleUpdate,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
                 memory_plan.worker_count,
-                plane_execution_config.clone(),
-                cube_cycle_threshold,
-                progress_selected_backend,
+                progress_selected_backend
+                    .map(|backend| backend.label())
+                    .unwrap_or(memory_plan.backend),
+                None,
                 true,
-                &mut product_publisher,
-                &mut product_writers,
-                &mut aggregate,
-                &mut resident_stage_timings,
-                &mut skipped_minor_cycle_planes,
-                &mut cleaned_planes,
+                || {
+                    process_resident_clean_plane_states(
+                        config,
+                        ready_to_skip,
+                        memory_plan.worker_count,
+                        plane_execution_config.clone(),
+                        cube_cycle_threshold,
+                        progress_selected_backend,
+                        true,
+                        &mut product_publisher,
+                        &mut product_writers,
+                        &mut aggregate,
+                        &mut resident_stage_timings,
+                        &mut skipped_minor_cycle_planes,
+                        &mut cleaned_planes,
+                    )
+                },
             )?;
             add_independent_streaming_executor_stats(
                 &mut plane_execution_stats,
@@ -10361,20 +12345,35 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 "resident cube clean prepared {prepared_planes} planes, expected {nplanes}"
             ));
         }
-        let final_execution_stats = process_resident_clean_plane_states(
+        let final_execution_stats = with_imager_progress_spectral_stage(
             config,
-            pending_candidate_planes,
+            spectral_slab::SpectralEventStage::MinorCycleUpdate,
+            None,
+            0,
+            nplanes,
             memory_plan.worker_count,
-            plane_execution_config.clone(),
-            cube_cycle_threshold,
-            progress_selected_backend,
-            false,
-            &mut product_publisher,
-            &mut product_writers,
-            &mut aggregate,
-            &mut resident_stage_timings,
-            &mut skipped_minor_cycle_planes,
-            &mut cleaned_planes,
+            progress_selected_backend
+                .map(|backend| backend.label())
+                .unwrap_or(memory_plan.backend),
+            None,
+            true,
+            || {
+                process_resident_clean_plane_states(
+                    config,
+                    pending_candidate_planes,
+                    memory_plan.worker_count,
+                    plane_execution_config.clone(),
+                    cube_cycle_threshold,
+                    progress_selected_backend,
+                    false,
+                    &mut product_publisher,
+                    &mut product_writers,
+                    &mut aggregate,
+                    &mut resident_stage_timings,
+                    &mut skipped_minor_cycle_planes,
+                    &mut cleaned_planes,
+                )
+            },
         )?;
         add_independent_streaming_executor_stats(&mut plane_execution_stats, final_execution_stats);
         eprintln!(
@@ -10392,7 +12391,18 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             logical_visibility_bytes,
         );
         add_imaging_stage_timings(&mut aggregate.stage_timings, resident_stage_timings);
-        let publish_stats = product_publisher.finish(&mut product_writers, &mut aggregate)?;
+        let publish_stats = with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::ProductWrite,
+            None,
+            0,
+            nplanes,
+            1,
+            memory_plan.backend,
+            None,
+            true,
+            || product_publisher.finish(&mut product_writers, &mut aggregate),
+        )?;
         product_write_elapsed += publish_stats.write_elapsed;
         product_bytes += publish_stats.bytes;
         let product_stats = product_writers
@@ -10443,10 +12453,43 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     .log_line(geometry_cache.enabled, geometry_cache_started_at.elapsed())
             );
         }
+        record_completed_backend_stage_timing_breakdown_with_prefix(
+            resident_stage_timings,
+            "backend_worker_sum",
+            None,
+            0,
+            nplanes,
+            memory_plan.worker_count,
+            progress_compute_backend,
+        );
+        record_completed_spectral_stage_diagnostic(
+            spectral_slab::SpectralEventStage::PlaneStateStore,
+            "product_write/plane_state_store",
+            None,
+            0,
+            nplanes,
+            1,
+            memory_plan.backend,
+            product_write_elapsed,
+            None,
+            None,
+            Some(product_bytes as u64),
+        );
         prepare_plane_input_time += source_read_elapsed;
         run_imaging_time += prepare_elapsed + plane_execution_stats.elapsed + clean_control_elapsed;
         let stage_start = Instant::now();
-        product_writers.finish(config)?;
+        with_imager_progress_spectral_stage(
+            config,
+            spectral_slab::SpectralEventStage::ProductWrite,
+            None,
+            0,
+            nplanes,
+            1,
+            memory_plan.backend,
+            None,
+            true,
+            || product_writers.finish(config),
+        )?;
         let write_products_time =
             product_write_time + product_write_elapsed + stage_start.elapsed();
         maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
@@ -10592,28 +12635,47 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             } else {
                 None
             };
-            let shared_source = read_shared_columnar_cube_slab_source(
+            let progress_ms_window = imager_progress_ms_window_from_selection(
                 ms,
-                &slab_config,
-                data_column,
-                true,
-                &selection,
                 &table_values,
-                &ddid_info,
                 &active_selected_rows,
-                &derived_engine,
                 channel_read_range,
-                direct_spectral_plan.as_ref().map(Arc::as_ref),
-                memory_plan.row_block_rows,
-                prepare_started_at,
-                spectral_slab::ImagingPassKind::InitialDirty,
-                slab.slab_id,
+            );
+            let shared_source = with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::SourceRead,
+                Some(slab.slab_id),
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
                 memory_plan.backend,
-                &mut geometry_cache,
-                progress_output_cube_from_config(config, slab.plane_start, slab.plane_end),
+                progress_ms_window,
+                true,
+                || {
+                    read_shared_columnar_cube_slab_source(
+                        ms,
+                        &slab_config,
+                        data_column,
+                        true,
+                        &selection,
+                        &table_values,
+                        &ddid_info,
+                        &active_selected_rows,
+                        &derived_engine,
+                        channel_read_range,
+                        direct_spectral_plan.as_ref().map(Arc::as_ref),
+                        memory_plan.row_block_rows,
+                        prepare_started_at,
+                        spectral_slab::ImagingPassKind::InitialDirty,
+                        slab.slab_id,
+                        slab.plane_start,
+                        slab.plane_end,
+                        memory_plan.worker_count,
+                        memory_plan.backend,
+                        &mut geometry_cache,
+                        progress_output_cube_from_config(config, slab.plane_start, slab.plane_end),
+                    )
+                },
             )?;
             let source_read_elapsed = shared_source.elapsed;
             prepare_plane_input_time += source_read_elapsed;
@@ -10732,24 +12794,37 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 ),
                 true,
             );
-            let outcome = run_independent_shared_cube_slab_planes(
+            let outcome = with_imager_progress_spectral_stage(
                 config,
-                geometry,
-                clean,
+                spectral_slab::SpectralEventStage::BackendExecution,
+                Some(slab.slab_id),
                 slab.plane_start,
                 slab.plane_end,
-                channel_start,
-                slab_channel_frequencies_hz,
-                channel_read_range.map_or(0, |range| range.start),
-                direct_contiguous_channel_map,
-                direct_spectral_plan.as_deref(),
-                &table_values.corr_types,
-                plane_execution_config.clone(),
                 memory_plan.worker_count,
-                memory_plan.product_batch_planes,
-                shared_source,
-                &mut product_writers,
-                &mut aggregate,
+                progress_compute_backend,
+                None,
+                true,
+                || {
+                    run_independent_shared_cube_slab_planes(
+                        config,
+                        geometry,
+                        clean,
+                        slab.plane_start,
+                        slab.plane_end,
+                        channel_start,
+                        slab_channel_frequencies_hz,
+                        channel_read_range.map_or(0, |range| range.start),
+                        direct_contiguous_channel_map,
+                        direct_spectral_plan.as_deref(),
+                        &table_values.corr_types,
+                        plane_execution_config.clone(),
+                        memory_plan.worker_count,
+                        memory_plan.product_batch_planes,
+                        shared_source,
+                        &mut product_writers,
+                        &mut aggregate,
+                    )
+                },
             )?;
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
@@ -10775,7 +12850,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     bytes_read: None,
                     bytes_written: None,
                     worker_count: Some(memory_plan.worker_count),
-                    backend: memory_plan.backend,
+                    backend: progress_compute_backend,
                     elapsed_ms: Some(duration_ms(outcome.slab_prepare_elapsed) as u64),
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
@@ -10788,7 +12863,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
-                memory_plan.backend,
+                progress_compute_backend,
                 None,
                 true,
             );
@@ -10805,7 +12880,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     bytes_read: None,
                     bytes_written: None,
                     worker_count: Some(memory_plan.worker_count),
-                    backend: memory_plan.backend,
+                    backend: progress_compute_backend,
                     elapsed_ms: Some(duration_ms(outcome.slab_prepare_elapsed) as u64),
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
@@ -10818,7 +12893,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
-                memory_plan.backend,
+                progress_compute_backend,
                 None,
                 true,
             );
@@ -10864,6 +12939,15 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             .saturating_add(slab_outcome.stage_timings.residual_refresh_overhead)
             .saturating_add(slab_outcome.stage_timings.model_fft)
             .saturating_add(slab_outcome.stage_timings.multiscale_scale_refresh);
+        record_completed_backend_stage_timing_breakdown_with_prefix(
+            slab_outcome.stage_timings,
+            "backend_worker_sum",
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            memory_plan.worker_count,
+            progress_compute_backend,
+        );
         eprintln!(
             "{}",
             spectral_slab::SpectralObservabilityEvent {
@@ -10877,7 +12961,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 bytes_read: Some(slab_bytes_read),
                 bytes_written: None,
                 worker_count: Some(memory_plan.worker_count),
-                backend: memory_plan.backend,
+                backend: progress_compute_backend,
                 elapsed_ms: Some(duration_ms(weighting_elapsed) as u64),
                 estimated_resident_bytes: Some(slab_resident_bytes),
             }
@@ -10890,7 +12974,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             slab.plane_start,
             slab.plane_end,
             memory_plan.worker_count,
-            memory_plan.backend,
+            progress_compute_backend,
             None,
             true,
         );
@@ -10908,7 +12992,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     bytes_read: None,
                     bytes_written: None,
                     worker_count: Some(memory_plan.worker_count),
-                    backend: memory_plan.backend,
+                    backend: progress_compute_backend,
                     elapsed_ms: Some(duration_ms(minor_diagnostics_elapsed) as u64),
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
@@ -10921,7 +13005,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
-                memory_plan.backend,
+                progress_compute_backend,
                 None,
                 true,
             );
@@ -10938,7 +13022,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     bytes_read: None,
                     bytes_written: None,
                     worker_count: Some(memory_plan.worker_count),
-                    backend: memory_plan.backend,
+                    backend: progress_compute_backend,
                     elapsed_ms: Some(duration_ms(minor_update_elapsed) as u64),
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
@@ -10951,7 +13035,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
-                memory_plan.backend,
+                progress_compute_backend,
                 None,
                 true,
             );
@@ -10968,7 +13052,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                     bytes_read: Some(slab_bytes_read),
                     bytes_written: None,
                     worker_count: Some(memory_plan.worker_count),
-                    backend: memory_plan.backend,
+                    backend: progress_compute_backend,
                     elapsed_ms: Some(duration_ms(residual_refresh_elapsed) as u64),
                     estimated_resident_bytes: Some(slab_resident_bytes),
                 }
@@ -10981,7 +13065,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 slab.plane_start,
                 slab.plane_end,
                 memory_plan.worker_count,
-                memory_plan.backend,
+                progress_compute_backend,
                 None,
                 true,
             );
@@ -10999,7 +13083,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 bytes_read: Some(slab_bytes_read),
                 bytes_written: None,
                 worker_count: Some(memory_plan.worker_count),
-                backend: memory_plan.backend,
+                backend: progress_compute_backend,
                 elapsed_ms: Some(duration_ms(psf_dirty_elapsed) as u64),
                 estimated_resident_bytes: Some(slab_resident_bytes),
             }
@@ -11012,7 +13096,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             slab.plane_start,
             slab.plane_end,
             memory_plan.worker_count,
-            memory_plan.backend,
+            progress_compute_backend,
             None,
             true,
         );
@@ -11029,7 +13113,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
                 bytes_read: None,
                 bytes_written: None,
                 worker_count: Some(memory_plan.worker_count),
-                backend: memory_plan.backend,
+                backend: progress_compute_backend,
                 elapsed_ms: Some(duration_ms(slab_outcome.run_elapsed) as u64),
                 estimated_resident_bytes: Some(slab_resident_bytes),
             }
@@ -11042,11 +13126,24 @@ fn run_standard_spectral_cube_slab_from_open_ms(
             slab.plane_start,
             slab.plane_end,
             memory_plan.worker_count,
-            memory_plan.backend,
+            progress_compute_backend,
             None,
             true,
         );
         product_write_time += slab_outcome.product_write_elapsed;
+        record_completed_spectral_stage_diagnostic(
+            spectral_slab::SpectralEventStage::PlaneStateStore,
+            "product_write/plane_state_store",
+            Some(slab.slab_id),
+            slab.plane_start,
+            slab.plane_end,
+            1,
+            memory_plan.backend,
+            slab_outcome.product_write_elapsed,
+            None,
+            None,
+            Some(slab_outcome.product_bytes as u64),
+        );
         memory_logger.log(
             config,
             &memory_plan,
@@ -11688,6 +13785,11 @@ where
     A: MultiPlaneDiagnosticsAggregator<R>,
 {
     let product_bytes = product_writer.estimated_plane_group_product_bytes(&result);
+    let _memory_guard = begin_imager_progress_memory_category_live(
+        ImagerObservedMemoryKind::Products,
+        product_bytes,
+        "measured cube product group bytes being written",
+    );
     product_writer.write_plane_group(plane_start, &result)?;
     aggregate.add_plane_group(plane_start, result)?;
     Ok(product_bytes)
@@ -11737,6 +13839,7 @@ where
                 "duplicate cube plane result for output plane {plane_start}"
             ));
         }
+        self.observe_queue(false);
         self.flush_ready(false, product_writer, aggregate)
     }
 
@@ -11789,6 +13892,7 @@ where
                 Ok::<usize, String>(acc.saturating_add(result.plane_count()?))
             })?;
             let group_result = R::merge_group(group_start, group)?;
+            self.observe_queue(true);
             let write_started = Instant::now();
             let bytes =
                 publish_multi_plane_group(group_start, group_result, product_writer, aggregate)?;
@@ -11796,8 +13900,39 @@ where
             self.stats.groups = self.stats.groups.saturating_add(1);
             self.stats.planes = self.stats.planes.saturating_add(group_planes);
             self.stats.bytes = self.stats.bytes.saturating_add(bytes);
+            self.observe_queue(false);
         }
         Ok(())
+    }
+
+    fn observe_queue(&self, consumers_active: bool) {
+        let pending_groups = self.pending.len();
+        let state = if consumers_active || pending_groups > 0 {
+            ImagerObservedQueueState::Active
+        } else {
+            ImagerObservedQueueState::Idle
+        };
+        set_imager_progress_queue_snapshots(
+            vec![ImagerObservedQueueSnapshot {
+                id: "cube-product-publisher".to_string(),
+                label: "Cube product publisher".to_string(),
+                state,
+                resource_id: Some(ImagerObservedResourceId::ProductScratch),
+                len: Some(pending_groups),
+                capacity: Some(self.max_batch_planes),
+                bytes: None,
+                producers_active: pending_groups > 0,
+                consumers_active,
+                blocked_count: 0,
+                blocked_reason: None,
+                idle_duration_ms: (state == ImagerObservedQueueState::Idle).then_some(0),
+                confidence: ImagerObservedQueueConfidence::Measured,
+                note: Some(
+                    "measured pending plane groups waiting for ordered product writes".to_string(),
+                ),
+            }],
+            None,
+        );
     }
 
     fn next_flush_group(&self, force: bool) -> Result<Option<(usize, usize)>, String> {
@@ -13644,11 +15779,24 @@ fn process_resident_clean_plane_states(
                 selected_backend,
                 phase,
             );
-            product_publisher.accept(
+            with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::ProductWrite,
+                None,
                 plane_result.plane_index,
-                plane_result.result.cube_result,
-                product_writers,
-                aggregate,
+                plane_result.plane_index.saturating_add(1),
+                1,
+                "product writer",
+                None,
+                true,
+                || {
+                    product_publisher.accept(
+                        plane_result.plane_index,
+                        plane_result.result.cube_result,
+                        product_writers,
+                        aggregate,
+                    )
+                },
             )?;
             Ok(())
         },
@@ -14158,11 +16306,24 @@ fn run_independent_shared_cube_slab_planes(
                         imaging_stage_timing_detail(plane_result.stage_timings),
                     );
                 }
-                product_publisher.accept(
+                with_imager_progress_spectral_stage(
+                    config,
+                    spectral_slab::SpectralEventStage::ProductWrite,
+                    None,
                     plane_result.plane_index,
-                    plane_result.result.cube_result,
-                    product_writers,
-                    aggregate,
+                    plane_result.plane_index.saturating_add(1),
+                    1,
+                    "product writer",
+                    None,
+                    true,
+                    || {
+                        product_publisher.accept(
+                            plane_result.plane_index,
+                            plane_result.result.cube_result,
+                            product_writers,
+                            aggregate,
+                        )
+                    },
                 )?;
                 Ok(())
             },
@@ -15840,6 +18001,31 @@ fn add_imaging_stage_timings(total: &mut ImagingStageTimings, part: ImagingStage
     total.total += part.total;
 }
 
+fn max_backend_relevant_imaging_stage_timings(
+    total: &mut ImagingStageTimings,
+    part: ImagingStageTimings,
+) {
+    total.weighting = total.weighting.max(part.weighting);
+    total.psf_grid = total.psf_grid.max(part.psf_grid);
+    total.psf_fft = total.psf_fft.max(part.psf_fft);
+    total.psf_normalize = total.psf_normalize.max(part.psf_normalize);
+    total.residual_degrid_grid = total.residual_degrid_grid.max(part.residual_degrid_grid);
+    total.residual_fft = total.residual_fft.max(part.residual_fft);
+    total.residual_normalize = total.residual_normalize.max(part.residual_normalize);
+    total.clean_cycle_setup = total.clean_cycle_setup.max(part.clean_cycle_setup);
+    total.deconvolver_setup = total.deconvolver_setup.max(part.deconvolver_setup);
+    total.minor_cycle = total.minor_cycle.max(part.minor_cycle);
+    total.minor_cycle_solve = total.minor_cycle_solve.max(part.minor_cycle_solve);
+    total.major_cycle_refresh = total.major_cycle_refresh.max(part.major_cycle_refresh);
+    total.residual_refresh_overhead = total
+        .residual_refresh_overhead
+        .max(part.residual_refresh_overhead);
+    total.model_fft = total.model_fft.max(part.model_fft);
+    total.multiscale_scale_refresh = total
+        .multiscale_scale_refresh
+        .max(part.multiscale_scale_refresh);
+}
+
 fn estimated_mtmfs_visibility_cache_bytes(
     visibility_batches: &[VisibilityBatch],
     sample_frequency_batches_hz: &[Vec<f64>],
@@ -16194,8 +18380,9 @@ fn run_mtmfs_from_bounded_stream_open_ms(
     );
 
     let stage_start = Instant::now();
-    let product_guard = begin_imager_progress_product_write_observation(
+    let product_guard = begin_imager_progress_product_write_observation_with_bytes(
         run_result.channel_frequencies_hz().len().max(1),
+        Some(run_result.estimated_product_payload_bytes()),
     );
     emit_imager_progress_product_write(config, &run_result, true);
     write_products(config, &coords, &run_result, None, None)?;
@@ -16416,8 +18603,9 @@ fn run_joint_outlier_clean_from_configs(
             None
         };
         let field_run_products = RunProducts::Mfs(result.clone());
-        let product_guard = begin_imager_progress_product_write_observation(
+        let product_guard = begin_imager_progress_product_write_observation_with_bytes(
             field_run_products.channel_frequencies_hz().len().max(1),
+            Some(field_run_products.estimated_product_payload_bytes()),
         );
         emit_imager_progress_product_write(&field.config, &field_run_products, true);
         write_products(
@@ -17702,6 +19890,18 @@ fn standard_mfs_profile_block_detail_enabled() -> bool {
         standard_mfs_profile_detail_enabled()
             && env_flag_enabled("CASA_RS_STANDARD_MFS_PROFILE_BLOCK_DETAIL")
     });
+    *ENABLED
+}
+
+fn trace_cube_grid_interp_enabled() -> bool {
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| env_flag_enabled("CASA_RS_TRACE_CUBE_GRID_INTERP"));
+    *ENABLED
+}
+
+fn trace_rust_weighting_enabled() -> bool {
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| env_flag_enabled("CASA_RS_TRACE_RUST_WEIGHTING"));
     *ENABLED
 }
 
@@ -19908,7 +22108,17 @@ fn build_mosaic_cube_row_spectral_reusable_plan(
     active_selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
 ) -> Result<Option<Arc<CubeRowSpectralReusablePlan>>, String> {
-    if !mosaic_cube_one_channel_can_use_single_plane_stream(config) {
+    if !matches!(config.spectral_mode, SpectralMode::Cube)
+        || !matches!(config.cube_axis.interpolation, CubeInterpolation::Nearest)
+        || !matches!(
+            config.cube_axis.start,
+            None | Some(CubeAxisValue::Channel(_))
+        )
+        || !matches!(
+            config.cube_axis.width,
+            None | Some(CubeAxisValue::Channel(_))
+        )
+    {
         return Ok(None);
     }
     let started_at = Instant::now();
@@ -19942,6 +22152,18 @@ fn build_mosaic_cube_row_spectral_reusable_plan(
         keys.insert((row_time_mjd_sec.to_bits(), row.field_id));
     }
     let keys = keys.into_iter().collect::<Vec<_>>();
+    let key_limit = env_usize("CASA_RS_MOSAIC_CUBE_REUSABLE_PLAN_MAX_KEYS")
+        .filter(|value| *value > 0)
+        .unwrap_or(2_000_000);
+    if keys.len() > key_limit {
+        eprintln!(
+            "mosaic_cube_reusable_plan_skip reason=too_many_time_field_keys entries={} limit={} active_rows={} cache_scope=per_plane",
+            keys.len(),
+            key_limit,
+            active_selected_rows.len(),
+        );
+        return Ok(None);
+    }
 
     let use_visibility_grid_assignments =
         prepared.casa_cube_grid_interpolation || prepared.cube_visibility_grid_assignments;
@@ -22196,7 +24418,63 @@ struct CubeRunProducts {
     rest_frequency_hz: Option<f64>,
 }
 
+fn array_payload_bytes<T>(array: &Array4<T>) -> usize {
+    array.len().saturating_mul(std::mem::size_of::<T>())
+}
+
 impl RunProducts {
+    fn estimated_product_payload_bytes(&self) -> usize {
+        match self {
+            Self::Mfs(result) => array_payload_bytes(&result.psf)
+                .saturating_add(array_payload_bytes(&result.residual))
+                .saturating_add(array_payload_bytes(&result.model))
+                .saturating_add(array_payload_bytes(&result.image))
+                .saturating_add(array_payload_bytes(&result.sumwt)),
+            Self::Mtmfs(products) => {
+                let result = &products.result;
+                result
+                    .psf_terms
+                    .iter()
+                    .chain(result.residual_terms.iter())
+                    .chain(result.model_terms.iter())
+                    .chain(result.image_terms.iter())
+                    .chain(result.sumwt_terms.iter())
+                    .map(array_payload_bytes)
+                    .sum::<usize>()
+                    .saturating_add(result.alpha.as_ref().map(array_payload_bytes).unwrap_or(0))
+                    .saturating_add(
+                        result
+                            .alpha_error
+                            .as_ref()
+                            .map(array_payload_bytes)
+                            .unwrap_or(0),
+                    )
+            }
+            Self::Cube(products) => {
+                let result = &products.result;
+                array_payload_bytes(&result.psf)
+                    .saturating_add(array_payload_bytes(&result.residual))
+                    .saturating_add(array_payload_bytes(&result.model))
+                    .saturating_add(array_payload_bytes(&result.image))
+                    .saturating_add(array_payload_bytes(&result.sumwt))
+                    .saturating_add(
+                        result
+                            .clean_mask
+                            .as_ref()
+                            .map(array_payload_bytes)
+                            .unwrap_or(0),
+                    )
+                    .saturating_add(
+                        products
+                            .mosaic_weight
+                            .as_ref()
+                            .map(array_payload_bytes)
+                            .unwrap_or(0),
+                    )
+            }
+        }
+    }
+
     fn plane_stokes(&self) -> PlaneStokes {
         match self {
             Self::Mfs(result) => result.compatibility.plane_stokes,
@@ -22321,17 +24599,17 @@ fn trace_casa_cube_briggs_row(row: Option<usize>) -> bool {
     let Some(row) = row else {
         return false;
     };
-    match std::env::var("CASA_RS_TRACE_CUBE_BRIGGS_ROW") {
-        Ok(value) if value == "all" => true,
-        Ok(value) => value
-            .split([',', ';', ' ', '\n', '\t'])
-            .filter_map(|part| part.trim().parse::<usize>().ok())
-            .any(|target| target == row),
-        Err(_) => matches!(
-            row,
-            31 | 36 | 44 | 46 | 50 | 53 | 74 | 1675 | 1680 | 1688 | 1690 | 1694 | 1697
-        ),
-    }
+    static FILTER: OnceLock<TraceRowFilter> = OnceLock::new();
+    FILTER
+        .get_or_init(|| {
+            TraceRowFilter::from_env_with_default_rows(
+                "CASA_RS_TRACE_CUBE_BRIGGS_ROW",
+                &[
+                    31, 36, 44, 46, 50, 53, 74, 1675, 1680, 1688, 1690, 1694, 1697,
+                ],
+            )
+        })
+        .contains(row)
 }
 
 fn trace_m100_row(row: usize) -> bool {
@@ -22349,6 +24627,10 @@ enum TraceRowFilter {
 
 impl TraceRowFilter {
     fn from_env(name: &str) -> Self {
+        Self::from_env_with_default_rows(name, &[])
+    }
+
+    fn from_env_with_default_rows(name: &str, default_rows: &[usize]) -> Self {
         match std::env::var(name) {
             Ok(value) if value == "all" => Self::All,
             Ok(value) => {
@@ -22362,7 +24644,8 @@ impl TraceRowFilter {
                     Self::Rows(rows)
                 }
             }
-            Err(_) => Self::Disabled,
+            Err(_) if default_rows.is_empty() => Self::Disabled,
+            Err(_) => Self::Rows(default_rows.to_vec()),
         }
     }
 
@@ -23886,9 +26169,65 @@ impl MsImagingEssentialsReadTimings {
 
 #[derive(Debug)]
 struct VisibilitySourceGeometryColumns {
-    selected_uvw: SelectedMainArrayColumn,
+    selected_uvw: SelectedMainUvwColumn,
     pointing_ids: Option<Vec<Option<i32>>>,
     timings: MsImagingEssentialsReadTimings,
+}
+
+#[derive(Debug, Clone)]
+struct SelectedMainUvwColumn {
+    values: Vec<f64>,
+}
+
+impl SelectedMainUvwColumn {
+    fn get(&self, row_slot: usize, row_index: usize) -> Result<[f64; 3], String> {
+        let offset = row_slot
+            .checked_mul(3)
+            .ok_or_else(|| "UVW row offset overflowed".to_string())?;
+        let slice = self.values.get(offset..offset + 3).ok_or_else(|| {
+            format!("UVW row {row_index} at selected slot {row_slot} is out of bounds")
+        })?;
+        Ok([slice[0], slice[1], slice[2]])
+    }
+}
+
+fn read_selected_main_uvw_column(
+    ms: &MeasurementSet,
+    row_indices: &[usize],
+) -> Result<SelectedMainUvwColumn, String> {
+    if let Ok(cells) = ms
+        .main_table()
+        .column_accessor("UVW")
+        .and_then(|column| column.array_cells_1d_typed_uncached(row_indices))
+    {
+        let primitive = cells.primitive_type();
+        if primitive != PrimitiveType::Float64 {
+            return Err(format!(
+                "UVW must be Float64 for imaging, found {primitive:?}"
+            ));
+        }
+        let SelectedArray1DCells::Float64(values) = cells else {
+            return Err(format!(
+                "UVW must be Float64 for imaging, found {primitive:?}"
+            ));
+        };
+        if values.axis0_count() != 3 {
+            return Err(format!(
+                "UVW typed selected rows must have axis length 3, found {}",
+                values.axis0_count()
+            ));
+        }
+        return Ok(SelectedMainUvwColumn {
+            values: values.into_values(),
+        });
+    }
+
+    let selected = SelectedMainArrayColumn::load(ms, "UVW", row_indices)?;
+    let mut values = Vec::with_capacity(row_indices.len().saturating_mul(3));
+    for (row_slot, &row_index) in row_indices.iter().enumerate() {
+        values.extend_from_slice(&extract_uvw_from_array(selected.get(row_slot)?, row_index)?);
+    }
+    Ok(SelectedMainUvwColumn { values })
 }
 
 fn read_visibility_source_geometry_columns(
@@ -23897,7 +26236,7 @@ fn read_visibility_source_geometry_columns(
     selected_row_indices: &[usize],
 ) -> Result<VisibilitySourceGeometryColumns, String> {
     let started = Instant::now();
-    let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", selected_row_indices)?;
+    let selected_uvw = read_selected_main_uvw_column(ms, selected_row_indices)?;
     let uvw_elapsed = started.elapsed();
 
     let pointing_started = Instant::now();
@@ -24407,6 +26746,7 @@ struct PreparedGeometryRow {
     antenna2_id: i32,
     is_cross: bool,
     raw_uvw_m: [f64; 3],
+    gridft_density_uvw_m: [f64; 3],
     transform: RowImagingTransform,
 }
 
@@ -24430,6 +26770,7 @@ impl PreparedGeometryRow {
             antenna2_id: self.antenna2_id,
             is_cross: self.is_cross,
             raw_uvw_m: self.raw_uvw_m,
+            gridft_density_uvw_m: self.gridft_density_uvw_m,
             imaging_uvw_m: self.transform.uvw_m,
             phase_shift_m: self.transform.phase_shift_m,
             field_phase_center_direction_rad: self.field_phase_center_direction_rad,
@@ -24500,12 +26841,7 @@ impl ColumnarPreparedSource {
 
     fn weights(&self, row_slot: usize) -> Result<WeightRow<'_>, String> {
         let corr_count = self.visibility.corr_count;
-        let weights = match self
-            .visibility
-            .weights
-            .as_ref()
-            .ok_or_else(|| "columnar visibility source requires WEIGHT".to_string())?
-        {
+        let weights = self.visibility.weights.as_ref().map(|values| match values {
             VisibilityFloatSamples::Float32(values) => FloatRow1d::Float32Columnar {
                 values,
                 row_slot,
@@ -24516,7 +26852,7 @@ impl ColumnarPreparedSource {
                 row_slot,
                 corr_count,
             },
-        };
+        });
         let spectrum = self
             .visibility
             .weight_spectrum
@@ -24539,6 +26875,11 @@ impl ColumnarPreparedSource {
                     channel_origin: self.visibility.channel_start,
                 },
             });
+        if weights.is_none() && spectrum.is_none() {
+            return Err(
+                "columnar visibility source requires WEIGHT or WEIGHT_SPECTRUM".to_string(),
+            );
+        }
         Ok(WeightRow { weights, spectrum })
     }
 
@@ -25017,26 +27358,20 @@ fn build_prepared_geometry_rows_from_selected_uvw(
     columns: &PreparedGeometryColumnCache,
     derived_engine: Option<&MsCalEngine>,
     reprojection_mode: UvwReprojectionMode,
-    selected_uvw: &SelectedMainArrayColumn,
+    selected_uvw: &SelectedMainUvwColumn,
     pointing_ids: Option<&[Option<i32>]>,
     geometry_started_at: Instant,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
     let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
+    let mut field_transform_cache =
+        BTreeMap::<usize, Option<CachedPreparedGeometryTransform>>::new();
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
         let antenna1_id = selected_row.antenna1_id;
         let antenna2_id = selected_row.antenna2_id;
         let is_cross = antenna1_id != antenna2_id;
-        let raw_uvw_m = extract_uvw_from_array(selected_uvw.get(row_slot)?, row)?;
-        let transform = row_imaging_transform(
-            row,
-            selected_row.field_id,
-            phase_center,
-            raw_uvw_m,
-            derived_engine,
-            reprojection_mode,
-        )?;
+        let raw_uvw_m = selected_uvw.get(row_slot, row)?;
         let row_phase_center =
             if let Some(angles_rad) = field_phase_centers.get(&selected_row.field_id) {
                 *angles_rad
@@ -25053,6 +27388,38 @@ fn build_prepared_geometry_rows_from_selected_uvw(
                 field_phase_centers.insert(selected_row.field_id, angles_rad);
                 angles_rad
             };
+        let cached_transform =
+            if let Some(cached) = field_transform_cache.get(&selected_row.field_id) {
+                *cached
+            } else {
+                let computed = cached_prepared_geometry_transform_for_field(
+                    selected_row.field_id,
+                    row_phase_center,
+                    phase_center,
+                    derived_engine,
+                    reprojection_mode,
+                );
+                field_transform_cache.insert(selected_row.field_id, computed);
+                computed
+            };
+        let (transform, gridft_density_uvw_m) = if let Some(cached) = cached_transform {
+            (
+                cached.apply_imaging(raw_uvw_m),
+                cached.apply_density(raw_uvw_m),
+            )
+        } else {
+            (
+                row_imaging_transform(
+                    row,
+                    selected_row.field_id,
+                    phase_center,
+                    raw_uvw_m,
+                    derived_engine,
+                    reprojection_mode,
+                )?,
+                gridft_density_uvw_m(raw_uvw_m, row_phase_center, phase_center.angles_rad),
+            )
+        };
         let antenna1_pointing = match (
             columns.pointing_resolver.as_ref(),
             selected_row.time_mjd_seconds,
@@ -25115,6 +27482,7 @@ fn build_prepared_geometry_rows_from_selected_uvw(
             antenna2_id,
             is_cross,
             raw_uvw_m,
+            gridft_density_uvw_m,
             transform,
         });
     }
@@ -27377,7 +29745,7 @@ fn read_shared_columnar_cube_slab_source(
     derived_engine: &MsCalEngine,
     channel_read_range: Option<SelectedChannelReadRange>,
     spectral_plan: Option<&CubeRowSpectralReusablePlan>,
-    _row_block_rows: usize,
+    planned_row_block_rows: usize,
     prepare_started_at: Instant,
     pass_kind: spectral_slab::ImagingPassKind,
     slab_id: usize,
@@ -27405,7 +29773,10 @@ fn read_shared_columnar_cube_slab_source(
     let mut rows_done = 0usize;
     let mut logical_output_bytes = 0u64;
     let mut modeled_physical_read_bytes = 0u64;
-    let row_block_rows = active_selected_rows.len().max(1);
+    let mut source_fill_elapsed_ns = 0u128;
+    let row_block_rows = planned_row_block_rows
+        .max(1)
+        .min(active_selected_rows.len().max(1));
     let selected_channel_count =
         source_stream_selected_channel_count(table_values, channel_read_range);
 
@@ -27494,6 +29865,8 @@ fn read_shared_columnar_cube_slab_source(
             logical_output_bytes.saturating_add(columnar_source.fill_report.logical_output_bytes);
         modeled_physical_read_bytes = modeled_physical_read_bytes
             .saturating_add(columnar_source.fill_report.modeled_physical_read_bytes);
+        source_fill_elapsed_ns =
+            source_fill_elapsed_ns.saturating_add(columnar_source.fill_report.timings.total_ns);
         rows_done += row_chunk.len();
 
         if frontend_progress_enabled() {
@@ -27544,11 +29917,55 @@ fn read_shared_columnar_cube_slab_source(
         );
     }
 
+    let elapsed = started.elapsed();
+    let elapsed_ns = u64::try_from(source_fill_elapsed_ns)
+        .unwrap_or(u64::MAX)
+        .max(1);
+    let wall_elapsed_ns = diagnostic_duration_ns(elapsed).max(1);
+    let channel_fields = source_channel_read_range_log_fields(table_values, channel_read_range);
+    let mut column_ids = vec![
+        "UVW".to_string(),
+        "ANTENNA1".to_string(),
+        "ANTENNA2".to_string(),
+        "TIME".to_string(),
+        "FLAG".to_string(),
+        "WEIGHT".to_string(),
+        "WEIGHT_SPECTRUM".to_string(),
+    ];
+    if include_data {
+        column_ids.push(canonical_data_column_name(data_column_kind).to_string());
+    }
+    record_imager_source_read_diagnostic(ImagerSourceReadDiagnostic {
+        pass_kind: pass_kind.as_str().to_string(),
+        slab_id: Some(slab_id),
+        plane_start: Some(plane_start),
+        plane_end: Some(plane_end),
+        rows: active_selected_rows.len(),
+        row_block_rows,
+        channel_start: Some(channel_fields.start),
+        channel_end: Some(channel_fields.end_exclusive),
+        source_channels: selected_channel_count,
+        logical_output_bytes,
+        modeled_physical_read_bytes,
+        wall_elapsed_ns: Some(wall_elapsed_ns),
+        logical_mb_per_s: Some(diagnostic_mb_per_s(logical_output_bytes, wall_elapsed_ns)),
+        modeled_physical_wall_mb_per_s: Some(diagnostic_mb_per_s(
+            modeled_physical_read_bytes,
+            wall_elapsed_ns,
+        )),
+        bytes_requested: Some(modeled_physical_read_bytes),
+        bytes_read: Some(modeled_physical_read_bytes),
+        column_ids,
+        data_column: canonical_data_column_name(data_column_kind).to_string(),
+        elapsed_ns,
+        mb_per_s: diagnostic_mb_per_s(modeled_physical_read_bytes, elapsed_ns),
+    });
+
     Ok(SharedColumnarCubeSlabSource {
         blocks,
         stage_timings,
         read_timings: combined_read_timings,
-        elapsed: started.elapsed(),
+        elapsed,
         logical_output_bytes,
         modeled_physical_read_bytes,
     })
@@ -28432,6 +30849,16 @@ fn source_stream_selected_channel_count(
         .max(1)
 }
 
+fn source_channel_indices_for_read_range(
+    table_values: &PreparedSelectionTableValues,
+    channel_read_range: Option<SelectedChannelReadRange>,
+) -> Vec<usize> {
+    match channel_read_range {
+        Some(range) => (range.start..range.end_exclusive()).collect(),
+        None => (0..table_values.spw_freqs_hz.len()).collect(),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SourceChannelReadRangeLogFields {
     start: usize,
@@ -28949,10 +31376,9 @@ fn estimate_standard_mfs_max_abs_w_lambda_from_geometry(
                 &selected_row_indices,
             )?;
             for (row_slot, selected_row) in row_chunk.iter().enumerate() {
-                let raw_uvw_m = extract_uvw_from_array(
-                    geometry.selected_uvw.get(row_slot)?,
-                    selected_row.row_index,
-                )?;
+                let raw_uvw_m = geometry
+                    .selected_uvw
+                    .get(row_slot, selected_row.row_index)?;
                 let max_frequency_hz = max_selected_frequency_hz * frequency_scale_bound;
                 let w_lambda = raw_uvw_m[2] * max_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                 if w_lambda.is_finite() {
@@ -29564,6 +31990,7 @@ fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConf
         .map(|value| value.min(2))
         .unwrap_or(1);
     execution.progress_callback = standard_mfs_progress_callback(config);
+    execution.observability_callback = standard_mfs_observability_callback(config);
     execution
 }
 
@@ -29992,7 +32419,7 @@ impl CubeOneChannelBriggsStreamingPlan {
             .enumerate()
             .map(|(plane, density)| {
                 let f2 = casa_cube_briggs_f2(self.weighting, density);
-                if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some() {
+                if trace_rust_weighting_enabled() {
                     let density_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
                     let density_max = density.iter().copied().fold(0.0f32, f32::max);
                     let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
@@ -31603,6 +34030,40 @@ impl CubeRowSpectralReusablePlan {
         self.source_frequencies.len()
     }
 
+    fn local_output_view(
+        &self,
+        output_channel: usize,
+        local_source_channel_indices: &[usize],
+    ) -> Option<Arc<Self>> {
+        let output_frequency_hz = *self.output_channel_frequencies_hz.get(output_channel)?;
+        let remap = CubeSourceChannelSlotRemap::new(
+            self.source_channel_indices.as_ref(),
+            local_source_channel_indices,
+        );
+        let mut local_spectral = HashMap::with_capacity(self.spectral.len());
+        for (cache_key, contributions) in &self.spectral {
+            local_spectral.insert(
+                *cache_key,
+                Arc::new(localize_cube_row_spectral_contributions(
+                    contributions,
+                    output_channel,
+                    &remap,
+                )),
+            );
+        }
+        Some(Arc::new(Self {
+            spectral: local_spectral,
+            source_frequencies: self.source_frequencies.clone(),
+            grid_assignment_indices: HashMap::new(),
+            shared_spectral_binding: None,
+            source_channel_indices: Arc::from(
+                local_source_channel_indices.to_vec().into_boxed_slice(),
+            ),
+            output_channel_frequencies_hz: Arc::from(vec![output_frequency_hz].into_boxed_slice()),
+            use_visibility_grid_assignments: self.use_visibility_grid_assignments,
+        }))
+    }
+
     fn assignment_for_output<'a>(
         &self,
         binding: &'a CubeSpectralBinding,
@@ -31642,6 +34103,164 @@ impl CubeRowSpectralReusablePlan {
     }
 }
 
+struct CubeSourceChannelSlotRemap {
+    local_slot_by_full_slot: Vec<Option<usize>>,
+    full_slot_by_local_slot: Vec<Option<usize>>,
+}
+
+impl CubeSourceChannelSlotRemap {
+    fn new(full_source_channel_indices: &[usize], local_source_channel_indices: &[usize]) -> Self {
+        let local_by_channel = local_source_channel_indices
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(local_slot, source_channel)| (source_channel, local_slot))
+            .collect::<HashMap<_, _>>();
+        let full_by_channel = full_source_channel_indices
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(full_slot, source_channel)| (source_channel, full_slot))
+            .collect::<HashMap<_, _>>();
+        let local_slot_by_full_slot = full_source_channel_indices
+            .iter()
+            .map(|source_channel| local_by_channel.get(source_channel).copied())
+            .collect();
+        let full_slot_by_local_slot = local_source_channel_indices
+            .iter()
+            .map(|source_channel| full_by_channel.get(source_channel).copied())
+            .collect();
+        Self {
+            local_slot_by_full_slot,
+            full_slot_by_local_slot,
+        }
+    }
+
+    fn local_slot_for_full_slot(&self, full_slot: usize) -> Option<usize> {
+        self.local_slot_by_full_slot
+            .get(full_slot)
+            .copied()
+            .flatten()
+    }
+
+    fn full_slot_for_local_slot(&self, local_slot: usize) -> Option<usize> {
+        self.full_slot_by_local_slot
+            .get(local_slot)
+            .copied()
+            .flatten()
+    }
+
+    fn local_source_len(&self) -> usize {
+        self.full_slot_by_local_slot.len()
+    }
+}
+
+fn localize_cube_channel_contributions(
+    contributions: &[CubeChannelContribution],
+    remap: &CubeSourceChannelSlotRemap,
+) -> Vec<CubeChannelContribution> {
+    contributions
+        .iter()
+        .filter_map(|contribution| {
+            remap
+                .local_slot_for_full_slot(contribution.source_channel)
+                .map(|source_channel| CubeChannelContribution {
+                    source_channel,
+                    source_frequency_hz: contribution.source_frequency_hz,
+                    factor: contribution.factor,
+                })
+        })
+        .collect()
+}
+
+fn localize_cube_row_spectral_contributions(
+    contributions: &CubeRowSpectralContributions,
+    output_channel: usize,
+    remap: &CubeSourceChannelSlotRemap,
+) -> CubeRowSpectralContributions {
+    let localize_model_contribution = |contribution: &CubeChannelContribution| {
+        (contribution.source_channel == output_channel).then_some(CubeChannelContribution {
+            source_channel: 0,
+            source_frequency_hz: contribution.source_frequency_hz,
+            factor: contribution.factor,
+        })
+    };
+    CubeRowSpectralContributions {
+        output_channel_contributions: vec![
+            contributions
+                .output_channel_contributions
+                .get(output_channel)
+                .map(|channel_contributions| {
+                    localize_cube_channel_contributions(channel_contributions, remap)
+                })
+                .unwrap_or_default(),
+        ],
+        source_channel_output_map: (0..remap.local_source_len())
+            .map(|local_slot| {
+                remap
+                    .full_slot_for_local_slot(local_slot)
+                    .and_then(|full_slot| contributions.source_channel_output_map.get(full_slot))
+                    .copied()
+                    .flatten()
+                    .filter(|channel| *channel == output_channel)
+                    .map(|_| 0)
+            })
+            .collect(),
+        padded_source_channel_output_map: (0..remap.local_source_len())
+            .map(|local_slot| {
+                remap
+                    .full_slot_for_local_slot(local_slot)
+                    .and_then(|full_slot| {
+                        contributions
+                            .padded_source_channel_output_map
+                            .get(full_slot)
+                    })
+                    .copied()
+                    .flatten()
+                    .filter(|channel| *channel == output_channel)
+                    .map(|_| 0)
+            })
+            .collect(),
+        padded_grid_channel_contributions: contributions
+            .padded_grid_channel_contributions
+            .iter()
+            .filter(|grid| grid.output_channel == output_channel)
+            .map(|grid| CubeGridChannelContributions {
+                output_channel: 0,
+                grid_frequency_hz: grid.grid_frequency_hz,
+                contributions: localize_cube_channel_contributions(&grid.contributions, remap),
+            })
+            .collect(),
+        grid_channel_contributions: contributions
+            .grid_channel_contributions
+            .iter()
+            .filter(|grid| grid.output_channel == output_channel)
+            .map(|grid| CubeGridChannelContributions {
+                output_channel: 0,
+                grid_frequency_hz: grid.grid_frequency_hz,
+                contributions: localize_cube_channel_contributions(&grid.contributions, remap),
+            })
+            .collect(),
+        source_channel_model_contributions: (0..remap.local_source_len())
+            .map(|local_slot| {
+                match remap
+                    .full_slot_for_local_slot(local_slot)
+                    .and_then(|full_slot| {
+                        contributions
+                            .source_channel_model_contributions
+                            .get(full_slot)
+                    }) {
+                    Some(model_contributions) => model_contributions
+                        .iter()
+                        .filter_map(localize_model_contribution)
+                        .collect(),
+                    None => Vec::new(),
+                }
+            })
+            .collect(),
+    }
+}
+
 fn cube_grid_assignment_index_by_output(
     contributions: &CubeRowSpectralContributions,
     output_channel_count: usize,
@@ -31670,6 +34289,72 @@ struct CubeSetupContext<'a> {
 struct RowImagingTransform {
     uvw_m: [f64; 3],
     phase_shift_m: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CachedRowImagingTransform {
+    Identity,
+    Standard {
+        uvrot: [[f64; 3]; 3],
+        phrot: [f64; 3],
+    },
+    Mosaic {
+        uvrot: [[f64; 3]; 3],
+        phrot: [f64; 3],
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedPreparedGeometryTransform {
+    imaging: CachedRowImagingTransform,
+    density_rot: [[f64; 3]; 3],
+}
+
+impl CachedPreparedGeometryTransform {
+    fn apply_imaging(self, raw_uvw_m: [f64; 3]) -> RowImagingTransform {
+        match self.imaging {
+            CachedRowImagingTransform::Identity => RowImagingTransform {
+                uvw_m: raw_uvw_m,
+                phase_shift_m: 0.0,
+            },
+            CachedRowImagingTransform::Standard { uvrot, phrot } => {
+                let uvw_m = row_vec3_mul_mat3(raw_uvw_m, uvrot);
+                RowImagingTransform {
+                    uvw_m,
+                    phase_shift_m: phrot[0] * uvw_m[0] + phrot[1] * uvw_m[1] + phrot[2] * uvw_m[2],
+                }
+            }
+            CachedRowImagingTransform::Mosaic { uvrot, phrot } => {
+                let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+                let casa_output_uvw_m = [
+                    casa_input_uvw_m[0] * uvrot[0][0] + casa_input_uvw_m[1] * uvrot[1][0],
+                    casa_input_uvw_m[1] * uvrot[1][1] + casa_input_uvw_m[0] * uvrot[0][1],
+                    casa_input_uvw_m[0] * uvrot[0][2]
+                        + casa_input_uvw_m[1] * uvrot[1][2]
+                        + casa_input_uvw_m[2] * uvrot[2][2],
+                ];
+                RowImagingTransform {
+                    uvw_m: [
+                        -casa_output_uvw_m[0],
+                        -casa_output_uvw_m[1],
+                        casa_output_uvw_m[2],
+                    ],
+                    phase_shift_m: phrot[0] * casa_output_uvw_m[0]
+                        + phrot[1] * casa_output_uvw_m[1],
+                }
+            }
+        }
+    }
+
+    fn apply_density(self, raw_uvw_m: [f64; 3]) -> [f64; 3] {
+        let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+        let casa_output_uvw_m = row_vec3_mul_mat3(casa_input_uvw_m, self.density_rot);
+        [
+            -casa_output_uvw_m[0],
+            -casa_output_uvw_m[1],
+            casa_output_uvw_m[2],
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31866,6 +34551,46 @@ fn row_imaging_transform(
     })
 }
 
+fn cached_prepared_geometry_transform_for_field(
+    row_field_id: usize,
+    row_phase_center_rad: [f64; 2],
+    phase_center: &PhaseCenter,
+    derived_engine: Option<&MsCalEngine>,
+    reprojection_mode: UvwReprojectionMode,
+) -> Option<CachedPreparedGeometryTransform> {
+    let density_rot = gridft_uvw_rotation_matrix(row_phase_center_rad, phase_center.angles_rad);
+    if phase_center.field_id == Some(row_field_id) {
+        return Some(CachedPreparedGeometryTransform {
+            imaging: CachedRowImagingTransform::Identity,
+            density_rot,
+        });
+    }
+    if phase_center.reference != DirectionRef::J2000 || derived_engine.is_none() {
+        return None;
+    }
+    let target_phase_center_rad = phase_center.angles_rad;
+    let imaging = match reprojection_mode {
+        UvwReprojectionMode::Standard => CachedRowImagingTransform::Standard {
+            uvrot: gridft_uvw_rotation_matrix(target_phase_center_rad, row_phase_center_rad),
+            phrot: uvw_phase_rotation_vector_from_angles(
+                target_phase_center_rad,
+                row_phase_center_rad,
+            ),
+        },
+        UvwReprojectionMode::Mosaic => CachedRowImagingTransform::Mosaic {
+            uvrot: gridft_uvw_rotation_matrix(row_phase_center_rad, target_phase_center_rad),
+            phrot: uvw_phase_rotation_vector_from_angles(
+                row_phase_center_rad,
+                target_phase_center_rad,
+            ),
+        },
+    };
+    Some(CachedPreparedGeometryTransform {
+        imaging,
+        density_rot,
+    })
+}
+
 fn reproject_row_uvw_m(
     row: usize,
     raw_uvw_m: [f64; 3],
@@ -31917,6 +34642,34 @@ fn reproject_row_uvw_to_phase_center(
     result.map_err(|error| format!("reproject UVW row {row} to explicit phase center: {error}"))
 }
 
+fn direction_cosines_from_angles(direction_rad: [f64; 2]) -> [f64; 3] {
+    let [ra, dec] = direction_rad;
+    let (sin_ra, cos_ra) = ra.sin_cos();
+    let (sin_dec, cos_dec) = dec.sin_cos();
+    [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec]
+}
+
+fn uvw_phase_rotation_vector_from_angles(
+    source_direction_rad: [f64; 2],
+    target_direction_rad: [f64; 2],
+) -> [f64; 3] {
+    let [target_ra, target_dec] = target_direction_rad;
+    let rot3 = gridft_euler_rotation(&[
+        (std::f64::consts::FRAC_PI_2 - target_dec, GridftAxis::X),
+        (-(target_ra - std::f64::consts::FRAC_PI_2), GridftAxis::Z),
+    ]);
+    let target_cosines = direction_cosines_from_angles(target_direction_rad);
+    let source_cosines = direction_cosines_from_angles(source_direction_rad);
+    mat3_mul_vec3(
+        rot3,
+        [
+            target_cosines[0] - source_cosines[0],
+            target_cosines[1] - source_cosines[1],
+            target_cosines[2] - source_cosines[2],
+        ],
+    )
+}
+
 fn gridft_density_uvw_m(
     raw_uvw_m: [f64; 3],
     source_direction_rad: [f64; 2],
@@ -31954,6 +34707,14 @@ fn row_vec3_mul_mat3(row: [f64; 3], matrix: [[f64; 3]; 3]) -> [f64; 3] {
         row[0] * matrix[0][0] + row[1] * matrix[1][0] + row[2] * matrix[2][0],
         row[0] * matrix[0][1] + row[1] * matrix[1][1] + row[2] * matrix[2][1],
         row[0] * matrix[0][2] + row[1] * matrix[1][2] + row[2] * matrix[2][2],
+    ]
+}
+
+fn mat3_mul_vec3(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    [
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
+        matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2],
     ]
 }
 
@@ -32465,7 +35226,7 @@ impl PreparedSelection {
             let cube_visibility_grid_assignments = cube_spectral_setup
                 .as_ref()
                 .is_some_and(|setup| matches!(setup.interpolation, CubeInterpolation::Nearest));
-            if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some() {
+            if trace_cube_grid_interp_enabled() {
                 eprintln!(
                     "CASA_RS_TRACE_CUBE_GRID_INTERP prepared_selection spw_id={spw_id} source_channels={} output_channels={} casa_grid_interp={} visibility_grid_assignments={}",
                     source_channel_selection.indices.len(),
@@ -32836,33 +35597,40 @@ impl PreparedSelection {
         timings: &mut AccumulateRowTimings,
     ) -> Result<(), String> {
         timings.rows_seen += 1;
+        let collect_detail_timings = standard_mfs_profile_block_detail_enabled();
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
-        let stage_started_at = Instant::now();
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         if source_block.flag_row_value(flag_row, row_slot, row)? {
-            timings.flag_row += stage_started_at.elapsed();
+            if let Some(started) = stage_started_at {
+                timings.flag_row += started.elapsed();
+            }
             timings.rows_flagged += 1;
             return Ok(());
         }
-        timings.flag_row += stage_started_at.elapsed();
-        let stage_started_at = Instant::now();
+        if let Some(started) = stage_started_at {
+            timings.flag_row += started.elapsed();
+        }
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         let flags_2d = source_block
             .flags_2d(row_slot)
             .map_err(|error| format!("read FLAG row {row}: {error}"))?;
-        timings.flag_column += stage_started_at.elapsed();
-        let stage_started_at = Instant::now();
+        if let Some(started) = stage_started_at {
+            timings.flag_column += started.elapsed();
+        }
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         let weights = source_block
             .weights(row_slot)
             .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
-        timings.weight_column += stage_started_at.elapsed();
-        timings.weight_spectrum += Duration::ZERO;
+        if let Some(started) = stage_started_at {
+            timings.weight_column += started.elapsed();
+        }
 
-        let adapt_started_at = Instant::now();
+        let adapt_started_at = collect_detail_timings.then(Instant::now);
         let antenna1_id = geometry_row.antenna1_id;
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
         let transform = geometry_row.transform;
-        let raw_uvw_m = geometry_row.raw_uvw_m;
         let uvw_m = transform.uvw_m;
         let baseline_pointing_direction_rad = combine_pointing_direction_rad(
             geometry_row.antenna1_pointing.angles_rad,
@@ -32887,11 +35655,7 @@ impl PreparedSelection {
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
         let use_cube_visibility_grid_assignments =
             use_casa_cube_grid_interpolation || self.cube_visibility_grid_assignments;
-        let casa_cube_briggs_density_uvw_m = gridft_density_uvw_m(
-            raw_uvw_m,
-            geometry_row.field_phase_center_direction_rad,
-            self.phase_center.angles_rad,
-        );
+        let casa_cube_briggs_density_uvw_m = geometry_row.gridft_density_uvw_m;
         let cube_row_spectral_contributions = if matches!(
             &self.state,
             PreparedState::ExplicitCube { .. }
@@ -33381,7 +36145,9 @@ impl PreparedSelection {
                 );
             }
         }
-        timings.adapt_samples += adapt_started_at.elapsed();
+        if let Some(started) = adapt_started_at {
+            timings.adapt_samples += started.elapsed();
+        }
         Ok(())
     }
 
@@ -33400,35 +36166,44 @@ impl PreparedSelection {
         timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
-        let stage_started_at = Instant::now();
+        let collect_detail_timings = standard_mfs_profile_block_detail_enabled();
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         if source_block.flag_row_value(flag_row, row_slot, row)? {
-            timings.flag_row += stage_started_at.elapsed();
+            if let Some(started) = stage_started_at {
+                timings.flag_row += started.elapsed();
+            }
             timings.rows_flagged += 1;
             return Ok(());
         }
-        timings.flag_row += stage_started_at.elapsed();
-        let stage_started_at = Instant::now();
+        if let Some(started) = stage_started_at {
+            timings.flag_row += started.elapsed();
+        }
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         let data_2d = source_block
             .data_2d(row_slot)
             .map_err(|error| format!("read data row {row}: {error}"))?;
-        timings.data_column += stage_started_at.elapsed();
-        let stage_started_at = Instant::now();
+        if let Some(started) = stage_started_at {
+            timings.data_column += started.elapsed();
+        }
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         let flags_2d = source_block
             .flags_2d(row_slot)
             .map_err(|error| format!("read FLAG row {row}: {error}"))?;
-        timings.flag_column += stage_started_at.elapsed();
-        let stage_started_at = Instant::now();
+        if let Some(started) = stage_started_at {
+            timings.flag_column += started.elapsed();
+        }
+        let stage_started_at = collect_detail_timings.then(Instant::now);
         let weights = source_block
             .weights(row_slot)
             .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
-        timings.weight_column += stage_started_at.elapsed();
-        timings.weight_spectrum += Duration::ZERO;
-        let adapt_started_at = Instant::now();
+        if let Some(started) = stage_started_at {
+            timings.weight_column += started.elapsed();
+        }
+        let adapt_started_at = collect_detail_timings.then(Instant::now);
         let profile_cube_detail = standard_mfs_profile_block_detail_enabled();
         let antenna1_id = geometry_row.antenna1_id;
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
-        let raw_uvw_m = geometry_row.raw_uvw_m;
         let transform = geometry_row.transform;
         let uvw_m = transform.uvw_m;
         let baseline_pointing_direction_rad = combine_pointing_direction_rad(
@@ -33476,7 +36251,7 @@ impl PreparedSelection {
                         )
                         .map_err(|error| error.to_string())?,
                 );
-                if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some() {
+                if trace_cube_grid_interp_enabled() {
                     let nonempty_output = computed
                         .output_channel_contributions
                         .iter()
@@ -33573,9 +36348,7 @@ impl PreparedSelection {
             cube_row_source_frequencies_for_interpolation
                 .as_deref()
                 .map(Vec::as_slice);
-        if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some()
-            && trace_m100_row(selected_row.row_index)
-        {
+        if trace_cube_grid_interp_enabled() && trace_m100_row(selected_row.row_index) {
             if let Some(frequencies) = cube_row_source_frequencies_for_interpolation {
                 let start = frequencies.len().min(6);
                 let end = frequencies.len().min(20);
@@ -33629,15 +36402,10 @@ impl PreparedSelection {
             .map(|setup| setup.output_channel_frequencies_hz.as_slice());
         let spw_frequencies_hz = self.spw_frequencies_hz.as_slice();
         let spw_widths_hz = self.spw_widths_hz.as_slice();
-        let casa_cube_briggs_density_uvw_m = gridft_density_uvw_m(
-            raw_uvw_m,
-            geometry_row.field_phase_center_direction_rad,
-            self.phase_center.angles_rad,
-        );
+        let raw_uvw_m = geometry_row.raw_uvw_m;
+        let casa_cube_briggs_density_uvw_m = geometry_row.gridft_density_uvw_m;
         let casa_cube_briggs_lookup_uvw_m = raw_uvw_m;
-        if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some()
-            && trace_casa_cube_briggs_row(Some(row))
-        {
+        if trace_rust_weighting_enabled() && trace_casa_cube_briggs_row(Some(row)) {
             let mosaic_transform = (self.phase_center.field_id.is_none())
                 .then(|| {
                     reproject_row_uvw_to_phase_center(
@@ -33775,7 +36543,7 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitCube { channel_samples },
             ) => {
-                if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some() {
+                if trace_cube_grid_interp_enabled() {
                     eprintln!(
                         "CASA_RS_TRACE_CUBE_GRID_INTERP branch=explicit_cube corr={corr_index} outputs={} source_slots={}",
                         channel_batches.len(),
@@ -33880,7 +36648,7 @@ impl PreparedSelection {
                     let output_channel = assignment.output_channel;
                     let output_frequency_hz = assignment.frequency_hz;
                     let contributions = assignment.contributions;
-                    if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some() {
+                    if trace_cube_grid_interp_enabled() {
                         eprintln!(
                             "CASA_RS_TRACE_CUBE_GRID_INTERP explicit_assignment output={output_channel} freq={output_frequency_hz} contributions={contributions:?}"
                         );
@@ -34912,7 +37680,9 @@ impl PreparedSelection {
                 );
             }
         }
-        timings.adapt_samples += adapt_started_at.elapsed();
+        if let Some(started) = adapt_started_at {
+            timings.adapt_samples += started.elapsed();
+        }
         Ok(())
     }
 
@@ -39524,7 +42294,7 @@ impl<'a> FloatRow2d<'a> {
 }
 
 struct WeightRow<'a> {
-    weights: FloatRow1d<'a>,
+    weights: Option<FloatRow1d<'a>>,
     spectrum: Option<FloatRow2d<'a>>,
 }
 
@@ -39536,6 +42306,8 @@ impl<'a> WeightRow<'a> {
             return Ok((weight, WeightSourceKind::WeightSpectrum));
         }
         self.weights
+            .as_ref()
+            .ok_or_else(|| "WEIGHT missing and WEIGHT_SPECTRUM did not cover sample".to_string())?
             .get(corr, "WEIGHT")
             .map(|weight| (weight, WeightSourceKind::Weight))
     }
@@ -39547,6 +42319,8 @@ impl<'a> WeightRow<'a> {
             return Ok((weight, WeightSourceKind::WeightSpectrum));
         }
         self.weights
+            .as_ref()
+            .ok_or_else(|| "WEIGHT missing and WEIGHT_SPECTRUM did not cover sample".to_string())?
             .get(corr, "WEIGHT")
             .map(|weight| (weight, WeightSourceKind::Weight))
     }
@@ -39555,7 +42329,11 @@ impl<'a> WeightRow<'a> {
         if self.spectrum.is_some() {
             return Ok(None);
         }
-        self.weights.get(corr, "WEIGHT").map(Some)
+        self.weights
+            .as_ref()
+            .ok_or_else(|| "WEIGHT missing for channel-invariant weight".to_string())?
+            .get(corr, "WEIGHT")
+            .map(Some)
     }
 
     fn channel_invariant_pair_weights(
@@ -39566,9 +42344,13 @@ impl<'a> WeightRow<'a> {
         if self.spectrum.is_some() {
             return Ok(None);
         }
+        let weights = self
+            .weights
+            .as_ref()
+            .ok_or_else(|| "WEIGHT missing for channel-invariant pair weights".to_string())?;
         Ok(Some((
-            self.weights.get(first_corr, "WEIGHT")?,
-            self.weights.get(second_corr, "WEIGHT")?,
+            weights.get(first_corr, "WEIGHT")?,
+            weights.get(second_corr, "WEIGHT")?,
         )))
     }
 }
@@ -39905,6 +42687,36 @@ fn interpolate_explicit_cube_output_weight_only(
     contributions: &[CubeChannelContribution],
     nearest_weight: bool,
 ) -> Result<Option<ExplicitCubeOutputWeight>, String> {
+    if let [contribution] = contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&channel_index) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        if flags.get(corr_index, channel_index)? {
+            return Ok(None);
+        }
+        let (source_weight, _) = weights.get(corr_index, channel_index)?;
+        let weight = if nearest_weight {
+            source_weight
+        } else {
+            source_weight * contribution.factor
+        };
+        let sumwt_factor = if nearest_weight {
+            1.0
+        } else {
+            contribution.factor
+        };
+        if !(weight.is_finite() && weight > 0.0) {
+            return Ok(None);
+        }
+        return Ok(Some(ExplicitCubeOutputWeight {
+            weight,
+            sumwt_factor,
+        }));
+    }
+
     let mut weight = 0.0f32;
     let mut sumwt_factor = 0.0f32;
     let mut nearest_weight_candidate = None::<(f32, f32)>;
@@ -39969,6 +42781,57 @@ fn interpolate_explicit_cube_output_sample_from_rows(
     contributions: &[CubeChannelContribution],
     nearest_weight: bool,
 ) -> Result<Option<ExplicitCubeOutputSample>, String> {
+    if let [contribution] = contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&channel_index) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let local_channel = data.local_channel(channel_index)?;
+        if flags.get_local(corr_index, local_channel, channel_index)? {
+            return Ok(None);
+        }
+        let source_visibility = data.get_local(corr_index, local_channel, channel_index)?;
+        let (source_weight, source_weight_source) = weights.get_local(corr_index, local_channel)?;
+        if !(source_visibility.re.is_finite()
+            && source_visibility.im.is_finite()
+            && source_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        let visibility = phase_rotate_visibility(
+            source_visibility * contribution.factor,
+            phase_shift_m,
+            interpolation_frequency_hz,
+        );
+        let weight = if nearest_weight {
+            source_weight
+        } else {
+            source_weight * contribution.factor
+        };
+        let sumwt_factor = if nearest_weight {
+            1.0
+        } else {
+            contribution.factor
+        };
+        if !(visibility.re.is_finite()
+            && visibility.im.is_finite()
+            && weight.is_finite()
+            && weight > 0.0
+            && sumwt_factor.is_finite()
+            && sumwt_factor > 0.0)
+        {
+            return Ok(None);
+        }
+        return Ok(Some(ExplicitCubeOutputSample {
+            visibility,
+            weight,
+            weight_source: source_weight_source,
+            sumwt_factor,
+        }));
+    }
+
     let mut visibility = Complex32::new(0.0, 0.0);
     let mut weight = 0.0f32;
     let mut weight_source = None::<WeightSourceKind>;
@@ -40070,6 +42933,41 @@ fn interpolate_paired_cube_output_weight_only(
     contributions: &[CubeChannelContribution],
     nearest_weight: bool,
 ) -> Result<Option<PairedCubeOutputWeight>, String> {
+    if let [contribution] = contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&channel_index) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        if flags.get(pair.0, channel_index)? || flags.get(pair.1, channel_index)? {
+            return Ok(None);
+        }
+        let (source_first_weight, _) = weights.get(pair.0, channel_index)?;
+        let (source_second_weight, _) = weights.get(pair.1, channel_index)?;
+        let first_weight = if nearest_weight {
+            source_first_weight
+        } else {
+            source_first_weight * contribution.factor
+        };
+        let second_weight = if nearest_weight {
+            source_second_weight
+        } else {
+            source_second_weight * contribution.factor
+        };
+        if !(first_weight.is_finite()
+            && first_weight > 0.0
+            && second_weight.is_finite()
+            && second_weight > 0.0)
+        {
+            return Ok(None);
+        }
+        return Ok(Some(PairedCubeOutputWeight {
+            first_weight,
+            second_weight,
+        }));
+    }
+
     let mut first_weight = 0.0f32;
     let mut second_weight = 0.0f32;
     let mut nearest_weight_candidate = None::<(f32, f32, f32)>;
@@ -40371,6 +43269,75 @@ fn interpolate_paired_cube_output_sample_from_rows(
     contributions: &[CubeChannelContribution],
     nearest_weight: bool,
 ) -> Result<Option<PairedCubeOutputSample>, String> {
+    if let [contribution] = contributions {
+        if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
+            return Ok(None);
+        }
+        let Some(&channel_index) = source_channel_indices.get(contribution.source_channel) else {
+            return Ok(None);
+        };
+        let local_channel = data.local_channel(channel_index)?;
+        if flags.get_local(pair.0, local_channel, channel_index)?
+            || flags.get_local(pair.1, local_channel, channel_index)?
+        {
+            return Ok(None);
+        }
+        let source_first_visibility = data.get_local(pair.0, local_channel, channel_index)?;
+        let source_second_visibility = data.get_local(pair.1, local_channel, channel_index)?;
+        let (source_first_weight, source_first_weight_source) =
+            weights.get_local(pair.0, local_channel)?;
+        let (source_second_weight, source_second_weight_source) =
+            weights.get_local(pair.1, local_channel)?;
+        if !(source_first_visibility.re.is_finite()
+            && source_first_visibility.im.is_finite()
+            && source_second_visibility.re.is_finite()
+            && source_second_visibility.im.is_finite()
+            && source_first_weight.is_finite()
+            && source_second_weight.is_finite())
+        {
+            return Ok(None);
+        }
+        let first_visibility = phase_rotate_visibility(
+            source_first_visibility * contribution.factor,
+            phase_shift_m,
+            interpolation_frequency_hz,
+        );
+        let second_visibility = phase_rotate_visibility(
+            source_second_visibility * contribution.factor,
+            phase_shift_m,
+            interpolation_frequency_hz,
+        );
+        let first_weight = if nearest_weight {
+            source_first_weight
+        } else {
+            source_first_weight * contribution.factor
+        };
+        let second_weight = if nearest_weight {
+            source_second_weight
+        } else {
+            source_second_weight * contribution.factor
+        };
+        if !(first_visibility.re.is_finite()
+            && first_visibility.im.is_finite()
+            && second_visibility.re.is_finite()
+            && second_visibility.im.is_finite()
+            && first_weight.is_finite()
+            && first_weight > 0.0
+            && second_weight.is_finite()
+            && second_weight > 0.0)
+        {
+            return Ok(None);
+        }
+        return Ok(Some(PairedCubeOutputSample {
+            first_visibility,
+            second_visibility,
+            first_weight,
+            second_weight,
+            first_weight_source: source_first_weight_source,
+            second_weight_source: source_second_weight_source,
+        }));
+    }
+
     let mut first_visibility = Complex32::new(0.0, 0.0);
     let mut second_visibility = Complex32::new(0.0, 0.0);
     let mut first_weight = 0.0f32;
@@ -40959,6 +43926,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
 
         {
@@ -41018,7 +43986,9 @@ mod tests {
             telemetry_jsonl_path: Some(telemetry_path.clone()),
             max_uv_points: 1024,
             min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
 
         emit_imager_progress_event(
@@ -41069,6 +44039,118 @@ mod tests {
     }
 
     #[test]
+    fn imager_progress_jsonl_keeps_global_cube_extent_after_local_plane_event() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("cube.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: 0,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: "backend_execution".to_string(),
+                summary: "backend_execution slab 1 planes 7..14".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: Some(ImagerProgressCube {
+                    x_pixels: 1280,
+                    y_pixels: 1280,
+                    z_planes: 16,
+                    active_plane_start: 7,
+                    active_plane_end: 14,
+                }),
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: None,
+                observability: None,
+            },
+            true,
+        );
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: 0,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: "weighted mosaic groups complete".to_string(),
+                summary: "weighted mosaic groups complete: planes 0..1".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: Some(ImagerProgressCube {
+                    x_pixels: 1280,
+                    y_pixels: 1280,
+                    z_planes: 1,
+                    active_plane_start: 0,
+                    active_plane_end: 1,
+                }),
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: None,
+                observability: None,
+            },
+            true,
+        );
+        drop(progress_guard);
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let events = text
+            .lines()
+            .map(|line| serde_json::from_str::<ImagerProgressEvent>(line).expect("progress event"))
+            .collect::<Vec<_>>();
+        let cube = events
+            .last()
+            .and_then(|event| event.output_cube.as_ref())
+            .expect("last event cube");
+        assert_eq!(cube.z_planes, 16);
+        assert_eq!(cube.active_plane_start, 7);
+        assert_eq!(cube.active_plane_end, 14);
+    }
+
+    #[test]
+    fn imager_progress_jsonl_transport_setup_errors_instead_of_stderr_fallback() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let not_a_directory = temp.path().join("not-a-directory");
+        fs::write(&not_a_directory, "not a directory").expect("write parent file");
+        let telemetry_path = not_a_directory.join("imager.jsonl");
+
+        let error = match begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
+        }) {
+            Ok(_) => panic!("invalid JSONL side channel should be an error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.contains("failed to create imager progress telemetry directory"),
+            "{error}"
+        );
+        assert!(
+            error.contains(&not_a_directory.display().to_string()),
+            "{error}"
+        );
+        assert!(!IMAGER_PROGRESS_ACTIVE.load(Ordering::Relaxed));
+        assert!(!telemetry_path.exists());
+    }
+
+    #[test]
     fn imager_observability_snapshot_reports_leases_workers_and_known_memory() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
@@ -41079,6 +44161,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024 * 1024 * 1024,
@@ -41088,6 +44171,7 @@ mod tests {
             active_planes: 4,
             row_block_rows: 292_000,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         let resource_guard = acquire_imager_progress_resources_with_threads(
             &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE],
@@ -41168,9 +44252,25 @@ mod tests {
             snapshot
                 .workers
                 .iter()
-                .find(|worker| worker.id == "cpu-compute")
-                .map(|worker| (worker.state, worker.active_count)),
-            Some((ImagerObservedWorkerState::RunningCpu, 4))
+                .find(|worker| worker.id == "cpu-compute-visibility-grid")
+                .map(|worker| (worker.state, worker.active_count, worker.resource_id)),
+            Some((
+                ImagerObservedWorkerState::RunningCpu,
+                4,
+                Some(ImagerObservedResourceId::VisibilityGrid)
+            ))
+        );
+        assert_eq!(
+            snapshot
+                .workers
+                .iter()
+                .find(|worker| worker.id == "cpu-compute-plane-state")
+                .map(|worker| (worker.state, worker.active_count, worker.resource_id)),
+            Some((
+                ImagerObservedWorkerState::RunningCpu,
+                4,
+                Some(ImagerObservedResourceId::PlaneState)
+            ))
         );
         assert_eq!(
             snapshot
@@ -41211,7 +44311,7 @@ mod tests {
             .iter()
             .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
             .expect("source stream row");
-        assert_eq!(source.state, ImagerObservedResourceState::Retained);
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
         assert_eq!(
             source
                 .memory
@@ -41246,6 +44346,36 @@ mod tests {
     }
 
     #[test]
+    fn progress_runtime_for_resource_scope_marks_metal_backend_gpu_active() {
+        let runtime = progress_runtime_for_resource_scope(
+            4,
+            "auto / metal-row-run-grouped",
+            &[PROGRESS_RESOURCE_GRID, PROGRESS_RESOURCE_PLANE_STATE],
+        );
+
+        assert!(runtime.gpu_active);
+        assert_eq!(
+            runtime.active_resource_threads.get(PROGRESS_RESOURCE_GRID),
+            Some(&4)
+        );
+    }
+
+    #[test]
+    fn progress_compute_backend_label_prefers_selected_plane_backend() {
+        assert_eq!(
+            progress_compute_backend_label(
+                Some(PerPlaneExecutionBackend::Wave3MetalGrouped),
+                "mosaic_multi_plane_stream"
+            ),
+            "wave3_metal_grouped"
+        );
+        assert_eq!(
+            progress_compute_backend_label(None, "mosaic_multi_plane_stream"),
+            "mosaic_multi_plane_stream"
+        );
+    }
+
+    #[test]
     fn imager_memory_ledger_separates_tracked_planned_and_untracked_rss() {
         let memory = ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -41255,15 +44385,15 @@ mod tests {
             active_planes: 2,
             row_block_rows: 128,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         };
-        let ledger =
-            imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024), None)
-                .expect("ledger");
+        let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
+            .expect("ledger");
         assert_eq!(ledger.planned_total_bytes, 8 * 1024);
-        assert_eq!(ledger.tracked_live_total_bytes, 8 * 1024);
-        assert_eq!(ledger.tracked_high_water_total_bytes, 8 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 0);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 0);
         assert_eq!(ledger.process_rss_bytes, Some(20 * 1024));
-        assert_eq!(ledger.untracked_resident_bytes, Some(12 * 1024));
+        assert_eq!(ledger.untracked_resident_bytes, Some(20 * 1024));
         let source = ledger
             .entries
             .iter()
@@ -41274,7 +44404,9 @@ mod tests {
             Some(ImagerObservedResourceId::SourceStream)
         );
         assert_eq!(source.row_block_rows, Some(128));
-        assert_eq!(source.high_water_bytes, Some(3 * 1024));
+        assert_eq!(source.planned_bytes, Some(3 * 1024));
+        assert_eq!(source.tracked_live_bytes, None);
+        assert_eq!(source.high_water_bytes, None);
         assert_eq!(source.confidence, ImagerObservedMemoryConfidence::Planned);
         let plane = ledger
             .entries
@@ -41289,15 +44421,156 @@ mod tests {
             .iter()
             .find(|entry| entry.kind == ImagerObservedMemoryKind::UntrackedResident)
             .expect("untracked rss");
-        assert_eq!(untracked.untracked_bytes, Some(12 * 1024));
+        assert_eq!(untracked.untracked_bytes, Some(20 * 1024));
         assert_eq!(
             untracked.confidence,
             ImagerObservedMemoryConfidence::Estimated
         );
+        let allocator = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::AllocatorRuntime)
+            .expect("allocator runtime gap");
+        assert_eq!(
+            allocator.resource_id,
+            Some(ImagerObservedResourceId::ProcessRuntime)
+        );
+        assert_eq!(allocator.tracked_live_bytes, None);
+        assert_eq!(
+            allocator.confidence,
+            ImagerObservedMemoryConfidence::Unknown
+        );
     }
 
     #[test]
-    fn imager_memory_ledger_preserves_high_water_across_smaller_updates() {
+    fn imager_memory_ledger_uses_tracked_categories_without_plan_promotion() {
+        let memory = ImagerProgressMemory {
+            memory_target_bytes: 32 * 1024,
+            planned_active_bytes: 18 * 1024,
+            source_stream_buffer_bytes: 3 * 1024,
+            product_scratch_bytes: 5 * 1024,
+            active_planes: 2,
+            row_block_rows: 128,
+            memory_target_source: Some("test".to_string()),
+            categories: vec![
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::SourceBuffer,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(1024),
+                    high_water_bytes: Some(2 * 1024),
+                    row_block_rows: Some(64),
+                    active_planes: None,
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: Some("sampled source buffer residency".to_string()),
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::GridFftScratch,
+                    resource_id: None,
+                    planned_bytes: Some(7 * 1024),
+                    tracked_live_bytes: Some(4 * 1024),
+                    high_water_bytes: Some(6 * 1024),
+                    row_block_rows: None,
+                    active_planes: None,
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: Some("sampled FFT scratch".to_string()),
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::PlaneState,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(2 * 1024),
+                    high_water_bytes: Some(3 * 1024),
+                    row_block_rows: None,
+                    active_planes: Some(2),
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: None,
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::DeconvolverScratch,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(1024),
+                    high_water_bytes: Some(1024),
+                    row_block_rows: None,
+                    active_planes: None,
+                    confidence: None,
+                    note: None,
+                },
+                ImagerProgressMemoryCategory {
+                    kind: ImagerObservedMemoryKind::AllocatorRuntime,
+                    resource_id: None,
+                    planned_bytes: None,
+                    tracked_live_bytes: Some(3 * 1024),
+                    high_water_bytes: Some(4 * 1024),
+                    row_block_rows: None,
+                    active_planes: None,
+                    confidence: Some(ImagerObservedMemoryConfidence::Measured),
+                    note: Some("malloc zone sampler".to_string()),
+                },
+            ],
+        };
+
+        let ledger = imager_memory_ledger_snapshot(Some(&memory), Some(20 * 1024), Some(24 * 1024))
+            .expect("ledger");
+        assert_eq!(ledger.planned_total_bytes, 15 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 11 * 1024);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 16 * 1024);
+        assert_eq!(ledger.untracked_resident_bytes, Some(9 * 1024));
+
+        let source = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
+            .expect("source");
+        assert_eq!(source.planned_bytes, Some(3 * 1024));
+        assert_eq!(source.tracked_live_bytes, Some(1024));
+        assert_eq!(source.high_water_bytes, Some(2 * 1024));
+        assert_eq!(source.row_block_rows, Some(64));
+
+        let grid = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::GridFftScratch)
+            .expect("grid");
+        assert_eq!(
+            grid.resource_id,
+            Some(ImagerObservedResourceId::VisibilityGrid)
+        );
+        assert_eq!(grid.planned_bytes, Some(7 * 1024));
+        assert_eq!(grid.tracked_live_bytes, Some(4 * 1024));
+        assert_eq!(grid.confidence, ImagerObservedMemoryConfidence::Measured);
+
+        let grid_resource = imager_observed_memory_for_resource(
+            ImagerObservedResourceId::VisibilityGrid,
+            Some(&memory),
+        )
+        .expect("grid resource memory");
+        assert_eq!(grid_resource.resident_bytes, Some(4 * 1024));
+        assert_eq!(grid_resource.planned_bytes, Some(7 * 1024));
+
+        let deconvolver_resource = imager_observed_memory_for_resource(
+            ImagerObservedResourceId::Deconvolver,
+            Some(&memory),
+        )
+        .expect("deconvolver resource memory");
+        assert_eq!(deconvolver_resource.resident_bytes, Some(1024));
+        assert_eq!(deconvolver_resource.planned_bytes, None);
+        let allocator = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::AllocatorRuntime)
+            .expect("allocator");
+        assert_eq!(allocator.tracked_live_bytes, Some(3 * 1024));
+        assert_eq!(allocator.high_water_bytes, Some(4 * 1024));
+        assert_eq!(
+            allocator.confidence,
+            ImagerObservedMemoryConfidence::Measured
+        );
+    }
+
+    #[test]
+    fn imager_memory_ledger_does_not_promote_plan_updates_to_live_high_water() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
             .expect("progress test lock");
@@ -41307,6 +44580,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -41316,6 +44590,7 @@ mod tests {
             active_planes: 4,
             row_block_rows: 256,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024,
@@ -41325,6 +44600,7 @@ mod tests {
             active_planes: 1,
             row_block_rows: 128,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         let context_guard = IMAGER_PROGRESS_CONTEXT
             .lock()
@@ -41354,15 +44630,16 @@ mod tests {
         };
         let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
         let ledger = snapshot.memory_ledger.as_ref().expect("memory ledger");
-        assert_eq!(ledger.tracked_live_total_bytes, 5 * 1024);
-        assert_eq!(ledger.tracked_high_water_total_bytes, 10 * 1024);
+        assert_eq!(ledger.planned_total_bytes, 5 * 1024);
+        assert_eq!(ledger.tracked_live_total_bytes, 0);
+        assert_eq!(ledger.tracked_high_water_total_bytes, 0);
         assert_eq!(
             ledger
                 .entries
                 .iter()
                 .find(|entry| entry.kind == ImagerObservedMemoryKind::SourceBuffer)
                 .and_then(|entry| entry.high_water_bytes),
-            Some(4 * 1024)
+            None
         );
         assert_eq!(
             ledger
@@ -41370,7 +44647,7 @@ mod tests {
                 .iter()
                 .find(|entry| entry.kind == ImagerObservedMemoryKind::Products)
                 .and_then(|entry| entry.high_water_bytes),
-            Some(6 * 1024)
+            None
         );
         drop(context_guard);
         drop(progress_guard);
@@ -41387,6 +44664,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let resource_guard = acquire_imager_progress_resource_ids_with_threads(
             &[ImagerObservedResourceId::VisibilityGrid],
@@ -41426,6 +44704,23 @@ mod tests {
         };
         let snapshot =
             imager_observability_snapshot(&event, context, &active_resources, &BTreeMap::new());
+        let grid = snapshot
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::VisibilityGrid)
+            .expect("grid resource");
+        let unknown_span = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Unknown)
+            .expect("synthetic unknown span");
+        let unknown_span_id = unknown_span.id.clone();
+        assert_eq!(grid.owner.as_deref(), Some(unknown_span_id.as_str()));
+        assert_eq!(unknown_span.name, "unobserved active resources");
+        assert_eq!(
+            unknown_span.resource_ids,
+            vec![ImagerObservedResourceId::VisibilityGrid]
+        );
         assert_eq!(
             snapshot
                 .workers
@@ -41460,7 +44755,112 @@ mod tests {
         );
         drop(context_guard);
         drop(resource_guard);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        assert!(context.active_resource_counts.is_empty());
+        assert!(context.active_span_resource_counts.is_empty());
+        assert!(context.active_spans.is_empty());
+        assert!(context.synthetic_span_ids.is_empty());
+        let completed_unknown = context
+            .recent_spans
+            .front()
+            .expect("completed synthetic unknown span");
+        assert_eq!(completed_unknown.id, unknown_span_id);
+        assert_eq!(
+            completed_unknown.stage_kind,
+            ImagerObservedStageKind::Unknown
+        );
+        assert_eq!(
+            completed_unknown.resource_ids,
+            vec![ImagerObservedResourceId::VisibilityGrid]
+        );
+        drop(context_guard);
         drop(progress_guard);
+    }
+
+    #[test]
+    fn imager_worker_snapshots_preserve_per_resource_thread_counts() {
+        let active_resources = vec![
+            PROGRESS_RESOURCE_SOURCE_STREAM.to_string(),
+            PROGRESS_RESOURCE_GRID.to_string(),
+            PROGRESS_RESOURCE_PLANE_STATE.to_string(),
+        ];
+        let active_resource_threads = BTreeMap::from([
+            (PROGRESS_RESOURCE_SOURCE_STREAM.to_string(), 1),
+            (PROGRESS_RESOURCE_GRID.to_string(), 4),
+            (PROGRESS_RESOURCE_PLANE_STATE.to_string(), 4),
+        ]);
+        let active_resource_span_ids = BTreeMap::from([
+            (
+                PROGRESS_RESOURCE_SOURCE_STREAM.to_string(),
+                "source-span".to_string(),
+            ),
+            (PROGRESS_RESOURCE_GRID.to_string(), "grid-span".to_string()),
+            (
+                PROGRESS_RESOURCE_PLANE_STATE.to_string(),
+                "plane-span".to_string(),
+            ),
+        ]);
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 14,
+            elapsed_ms: 2000,
+            phase: "reading_and_computing".to_string(),
+            summary: "source read overlaps compute resources".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 1,
+                total_threads: 8,
+                gpu_active: false,
+                backend: "overlap".to_string(),
+                active_resources: active_resources.clone(),
+                active_resource_threads: active_resource_threads.clone(),
+                memory: None,
+            }),
+            observability: None,
+        };
+
+        let workers = imager_observed_worker_snapshots(
+            &event,
+            &active_resources,
+            &active_resource_threads,
+            &active_resource_span_ids,
+        );
+
+        assert_eq!(
+            workers
+                .iter()
+                .find(|worker| worker.id == "source-io")
+                .map(|worker| (worker.state, worker.active_count, worker.span_id.as_deref())),
+            Some((ImagerObservedWorkerState::RunningIo, 1, Some("source-span")))
+        );
+        assert_eq!(
+            workers
+                .iter()
+                .find(|worker| worker.id == "cpu-compute-visibility-grid")
+                .map(|worker| (worker.state, worker.active_count, worker.span_id.as_deref())),
+            Some((ImagerObservedWorkerState::RunningCpu, 4, Some("grid-span")))
+        );
+        assert_eq!(
+            workers
+                .iter()
+                .find(|worker| worker.id == "cpu-compute-plane-state")
+                .map(|worker| (worker.state, worker.active_count, worker.span_id.as_deref())),
+            Some((ImagerObservedWorkerState::RunningCpu, 4, Some("plane-span")))
+        );
+        assert_eq!(
+            workers
+                .iter()
+                .find(|worker| worker.id == "idle")
+                .map(|worker| worker.active_count),
+            Some(3)
+        );
     }
 
     #[test]
@@ -41489,6 +44889,46 @@ mod tests {
     }
 
     #[test]
+    fn single_plane_stream_passes_map_to_spectral_observability_stages() {
+        assert_eq!(
+            single_plane_stream_pass_spectral_stage(SinglePlaneStreamPass::WeightingDensity),
+            spectral_slab::SpectralEventStage::WeightingDensity
+        );
+        assert_eq!(
+            single_plane_stream_pass_spectral_stage(SinglePlaneStreamPass::InitialDirty),
+            spectral_slab::SpectralEventStage::PsfDirty
+        );
+        assert_eq!(
+            single_plane_stream_pass_spectral_stage(SinglePlaneStreamPass::ResidualRefresh),
+            spectral_slab::SpectralEventStage::ResidualRefresh
+        );
+    }
+
+    #[test]
+    fn standard_mfs_minor_cycle_observability_uses_deconvolver_kind() {
+        assert_eq!(
+            standard_mfs_minor_cycle_observation(Deconvolver::Clark),
+            (
+                ImagerObservedStageKind::ClarkMinorCycle,
+                "deconvolving Clark minor cycle"
+            )
+        );
+        for (deconvolver, label) in [
+            (Deconvolver::Hogbom, "deconvolving Hogbom minor cycle"),
+            (Deconvolver::Mtmfs, "deconvolving MT-MFS minor cycle"),
+            (
+                Deconvolver::Multiscale,
+                "deconvolving multiscale minor cycle",
+            ),
+        ] {
+            assert_eq!(
+                standard_mfs_minor_cycle_observation(deconvolver),
+                (ImagerObservedStageKind::Deconvolution, label)
+            );
+        }
+    }
+
+    #[test]
     fn spectral_source_read_progress_reports_row_block_counter() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
@@ -41500,7 +44940,9 @@ mod tests {
             telemetry_jsonl_path: Some(telemetry_path.clone()),
             max_uv_points: 1024,
             min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -41578,6 +45020,490 @@ mod tests {
     }
 
     #[test]
+    fn scoped_spectral_stage_keeps_resource_active_until_work_finishes() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp
+            .path()
+            .join("progress")
+            .join("scoped-spectral-stage.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/scoped-spectral.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/scoped-spectral-image"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse config");
+        let ms_window = ImagerProgressMsWindow {
+            total_rows: 2048,
+            total_channels: 16,
+            row_start: 100,
+            row_end: 356,
+            channel_start: 2,
+            channel_end: 6,
+        };
+
+        let result = with_imager_progress_spectral_stage(
+            &config,
+            spectral_slab::SpectralEventStage::SourceRead,
+            Some(4),
+            2,
+            6,
+            1,
+            "source stream",
+            Some(ms_window),
+            true,
+            || {
+                let context_guard = IMAGER_PROGRESS_CONTEXT
+                    .lock()
+                    .expect("progress context lock");
+                let context = context_guard.as_ref().expect("progress context");
+                let active_resources = context
+                    .active_resource_counts
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let active_resource_threads = context
+                    .active_resource_thread_counts
+                    .iter()
+                    .filter_map(|(resource, counts)| {
+                        counts
+                            .iter()
+                            .copied()
+                            .max()
+                            .map(|threads| (resource.clone(), threads))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                let event = ImagerProgressEvent {
+                    schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                    sequence: 12,
+                    elapsed_ms: 900,
+                    phase: "inside-scoped-source-read".to_string(),
+                    summary: "inside scoped source read".to_string(),
+                    work: None,
+                    ms_read: None,
+                    output_cube: None,
+                    uv_coverage: None,
+                    deconvolution: None,
+                    runtime: Some(ImagerProgressRuntime {
+                        active_threads: 1,
+                        total_threads: 4,
+                        gpu_active: false,
+                        backend: "source stream".to_string(),
+                        active_resources: active_resources.clone(),
+                        active_resource_threads: active_resource_threads.clone(),
+                        memory: None,
+                    }),
+                    observability: None,
+                };
+                let snapshot = imager_observability_snapshot(
+                    &event,
+                    context,
+                    &active_resources,
+                    &active_resource_threads,
+                );
+                let source = snapshot
+                    .resources
+                    .iter()
+                    .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+                    .expect("source stream resource");
+                assert_eq!(source.state, ImagerObservedResourceState::Active);
+                assert_eq!(source.lease_count, 1);
+                assert_eq!(source.active_threads, 1);
+                let span = snapshot
+                    .active_spans
+                    .iter()
+                    .find(|span| span.stage_kind == ImagerObservedStageKind::SourceStream)
+                    .expect("source span");
+                assert_eq!(span.state, ImagerObservabilitySpanState::Running);
+                assert_eq!(
+                    span.resource_ids,
+                    vec![ImagerObservedResourceId::SourceStream]
+                );
+                assert_eq!(span.counters.get(OBS_COUNTER_ACTIVE_PLANES), Some(&4));
+                assert_eq!(span.counters.get(OBS_COUNTER_ROW_BLOCK_ROWS), Some(&256));
+                Ok::<_, String>(42)
+            },
+        )
+        .expect("scoped work succeeds");
+        assert_eq!(result, 42);
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let source = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+            .expect("source stream resource");
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
+        assert_eq!(source.lease_count, 0);
+        assert!(observability.recent_spans.iter().any(|span| span.stage_kind
+            == ImagerObservedStageKind::SourceStream
+            && span.state == ImagerObservabilitySpanState::Complete));
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn run_observation_span_parents_child_stages_until_completion() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/run-span.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/run-span-image"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("25"),
+        ])
+        .expect("parse config");
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        let run_span = begin_imager_progress_run_observation(&request).expect("run span starts");
+        let child_span = begin_imager_observation_span(
+            ImagerObservedStageKind::Gridding,
+            "child gridding",
+            &[ImagerObservedResourceId::VisibilityGrid],
+            None,
+        )
+        .expect("child span starts");
+
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 13,
+            elapsed_ms: 1000,
+            phase: "inside-run".to_string(),
+            summary: "inside run".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: None,
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let run = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Run)
+            .expect("run span");
+        let child = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::Gridding)
+            .expect("child span");
+        assert_eq!(child.parent_id.as_deref(), Some(run.id.as_str()));
+        assert_eq!(
+            run.expected_resource_ids,
+            vec![
+                ImagerObservedResourceId::SourceStream,
+                ImagerObservedResourceId::VisibilityGrid,
+                ImagerObservedResourceId::PlaneState,
+                ImagerObservedResourceId::Deconvolver,
+                ImagerObservedResourceId::ProductScratch,
+                ImagerObservedResourceId::WorkerQueue,
+            ]
+        );
+        assert_eq!(run.counters.get(OBS_COUNTER_OUTPUT_PLANES), Some(&8));
+        assert_eq!(
+            run.counters.get(OBS_COUNTER_MINOR_ITERATION_LIMIT),
+            Some(&25)
+        );
+        drop(context_guard);
+
+        drop(child_span);
+        drop(run_span);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        assert!(context.active_spans.is_empty());
+        assert!(
+            context
+                .recent_spans
+                .iter()
+                .any(|span| span.stage_kind == ImagerObservedStageKind::Run
+                    && span.state == ImagerObservabilitySpanState::Complete)
+        );
+        drop(context_guard);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn imager_observation_spans_report_span_local_elapsed_time() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/span-elapsed.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/span-elapsed-image"),
+            OsString::from("--specmode"),
+            OsString::from("cube"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("25"),
+        ])
+        .expect("parse config");
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        let run_span = begin_imager_progress_run_observation(&request).expect("run span");
+        let child_span = begin_imager_observation_span(
+            ImagerObservedStageKind::Gridding,
+            "grid",
+            &[ImagerObservedResourceId::VisibilityGrid],
+            None,
+        )
+        .expect("child span");
+        let child_span_id = child_span.span_id.clone();
+        {
+            let mut context_guard = IMAGER_PROGRESS_CONTEXT
+                .lock()
+                .expect("progress context lock");
+            let context = context_guard.as_mut().expect("progress context");
+            let now = Instant::now();
+            context
+                .active_span_started_at
+                .insert(run_span.span_id.clone(), now - Duration::from_millis(5_000));
+            context.active_span_started_at.insert(
+                child_span.span_id.clone(),
+                now - Duration::from_millis(1_500),
+            );
+        }
+
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 10,
+            elapsed_ms: 99_000,
+            phase: "inside-run".to_string(),
+            summary: "inside run".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: None,
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let run = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.id == run_span.span_id)
+            .expect("run span");
+        let child = snapshot
+            .active_spans
+            .iter()
+            .find(|span| span.id == child_span.span_id)
+            .expect("child span");
+        assert!(
+            (4_900..10_000).contains(&run.elapsed_ms),
+            "run span elapsed should be local duration, got {}",
+            run.elapsed_ms
+        );
+        assert!(
+            (1_400..5_000).contains(&child.elapsed_ms),
+            "child span elapsed should be local duration, got {}",
+            child.elapsed_ms
+        );
+        assert_ne!(run.elapsed_ms, event.elapsed_ms);
+        assert_ne!(child.elapsed_ms, event.elapsed_ms);
+        drop(context_guard);
+
+        drop(child_span);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let completed_child = context
+            .recent_spans
+            .front()
+            .expect("completed child span should be recent");
+        assert_eq!(completed_child.id, child_span_id);
+        assert!(
+            (1_400..5_000).contains(&completed_child.elapsed_ms),
+            "completed child elapsed should stay span-local, got {}",
+            completed_child.elapsed_ms
+        );
+        drop(context_guard);
+        drop(run_span);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_minor_cycle_progress_keeps_deconvolver_active() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("minor-cycle.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 0,
+            detail: ImagerProgressDetail::Basic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/minor-cycle.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/minor-cycle-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+            OsString::from("--deconvolver"),
+            OsString::from("clark"),
+        ])
+        .expect("parse config");
+        let callback = standard_mfs_progress_callback(&config).expect("progress callback");
+
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::MinorCycleStart,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 2,
+            minor_iterations: 10,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 40,
+            peak_residual_jy_per_beam: Some(0.004),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::MinorCycleProgress,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 2,
+            minor_iterations: 17,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 40,
+            peak_residual_jy_per_beam: Some(0.003),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let runtime = event.runtime.as_ref().expect("runtime");
+        assert!(
+            runtime
+                .active_resources
+                .contains(&PROGRESS_RESOURCE_DECONVOLVER.to_string())
+        );
+        let observability = event.observability.as_ref().expect("observability");
+        let deconvolver = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::Deconvolver)
+            .expect("deconvolver resource");
+        assert_eq!(deconvolver.state, ImagerObservedResourceState::Active);
+        assert!(deconvolver.active_threads > 0);
+        let minor_span = observability
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::ClarkMinorCycle)
+            .expect("minor-cycle span");
+        assert_eq!(
+            minor_span.resource_ids,
+            vec![
+                ImagerObservedResourceId::Deconvolver,
+                ImagerObservedResourceId::PlaneState
+            ]
+        );
+        assert_eq!(minor_span.counters.get(OBS_COUNTER_MAJOR_CYCLE), Some(&2));
+        assert_eq!(
+            minor_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
+            Some(&17)
+        );
+        let deconvolver_worker = observability
+            .workers
+            .iter()
+            .find(|worker| worker.id == "cpu-compute-deconvolver")
+            .expect("deconvolver cpu worker");
+        assert_eq!(
+            deconvolver_worker.span_id.as_deref(),
+            Some(minor_span.id.as_str())
+        );
+
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::MinorCycleEnd,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 2,
+            minor_iterations: 17,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 40,
+            peak_residual_jy_per_beam: Some(0.003),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
     fn standard_mfs_progress_callback_reports_compute_active_without_source_stream() {
         let _test_lock = IMAGER_PROGRESS_TEST_LOCK
             .lock()
@@ -41589,7 +45515,9 @@ mod tests {
             telemetry_jsonl_path: Some(telemetry_path.clone()),
             max_uv_points: 1024,
             min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         set_imager_progress_memory(ImagerProgressMemory {
             memory_target_bytes: 16 * 1024 * 1024 * 1024,
@@ -41599,6 +45527,7 @@ mod tests {
             active_planes: 1,
             row_block_rows: 292_000,
             memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
         });
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -41609,6 +45538,10 @@ mod tests {
             OsString::from("64"),
             OsString::from("--cell-arcsec"),
             OsString::from("1.0"),
+            OsString::from("--channel-start"),
+            OsString::from("4"),
+            OsString::from("--channel-count"),
+            OsString::from("8"),
             OsString::from("--niter"),
             OsString::from("100"),
         ])
@@ -41653,8 +45586,22 @@ mod tests {
             .iter()
             .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
             .expect("source stream");
-        assert_eq!(source.state, ImagerObservedResourceState::Retained);
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
         assert_eq!(source.lease_count, 0);
+        assert_eq!(
+            source
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.planned_bytes),
+            Some(3 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(
+            source
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.resident_bytes),
+            None
+        );
         let grid = observability
             .resources
             .iter()
@@ -41680,6 +45627,11 @@ mod tests {
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
+        let residual_grid_extent = residual_grid_span.extent.as_ref().expect("extent");
+        assert_eq!(residual_grid_extent.channel_start, Some(4));
+        assert_eq!(residual_grid_extent.channel_end, Some(12));
+        assert_eq!(residual_grid_extent.plane_start, Some(0));
+        assert_eq!(residual_grid_extent.plane_end, Some(1));
         assert_eq!(
             residual_grid_span.counters.get(OBS_COUNTER_MAJOR_CYCLE),
             Some(&1)
@@ -41742,6 +45694,11 @@ mod tests {
                 ImagerObservedResourceId::VisibilityGrid
             ]
         );
+        let fft_extent = fft_span.extent.as_ref().expect("extent");
+        assert_eq!(fft_extent.channel_start, Some(4));
+        assert_eq!(fft_extent.channel_end, Some(12));
+        assert_eq!(fft_extent.plane_start, Some(0));
+        assert_eq!(fft_extent.plane_end, Some(1));
         assert_eq!(fft_span.counters.get(OBS_COUNTER_MAJOR_CYCLE), Some(&1));
         assert_eq!(
             fft_span.counters.get(OBS_COUNTER_MINOR_ITERATIONS),
@@ -41773,12 +45730,380 @@ mod tests {
             weighted_mosaic_span.resource_ids,
             vec![ImagerObservedResourceId::VisibilityGrid]
         );
+        let weighted_mosaic_extent = weighted_mosaic_span.extent.as_ref().expect("extent");
+        assert_eq!(weighted_mosaic_extent.channel_start, Some(4));
+        assert_eq!(weighted_mosaic_extent.channel_end, Some(12));
+        assert_eq!(weighted_mosaic_extent.plane_start, Some(0));
+        assert_eq!(weighted_mosaic_extent.plane_end, Some(1));
         assert_eq!(
             weighted_mosaic_span
                 .counters
                 .get(OBS_COUNTER_MINOR_ITERATIONS),
             Some(&25)
         );
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_progress_callback_reports_mosaic_residual_stage_for_mosaic_runs() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp.path().join("progress").join("mosaic-residual.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/mosaic-observability.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/mosaic-observability-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--field"),
+            OsString::from("0,1"),
+            OsString::from("--niter"),
+            OsString::from("100"),
+        ])
+        .expect("parse config");
+        assert!(standard_mfs_uses_mosaic_observability(&config));
+        let callback = standard_mfs_progress_callback(&config).expect("progress callback");
+
+        callback(StandardMfsProgressEvent {
+            phase: StandardMfsProgressPhase::ResidualGridStart,
+            deconvolver: Deconvolver::Clark,
+            minor_cycle_backend: StandardMfsMinorCycleBackend::Cpu,
+            major_cycle: 1,
+            minor_iterations: 25,
+            minor_iteration_limit: 100,
+            cycle_iteration_limit: 50,
+            peak_residual_jy_per_beam: Some(0.0025),
+            cycle_threshold_jy_per_beam: Some(0.001),
+        });
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let source = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::SourceStream)
+            .expect("source stream");
+        assert_eq!(source.state, ImagerObservedResourceState::Idle);
+        let mosaic_residual_span = observability
+            .active_spans
+            .iter()
+            .find(|span| span.stage_kind == ImagerObservedStageKind::MosaicResidual)
+            .expect("mosaic residual span");
+        assert_eq!(
+            mosaic_residual_span.resource_ids,
+            vec![
+                ImagerObservedResourceId::PlaneState,
+                ImagerObservedResourceId::VisibilityGrid
+            ]
+        );
+        assert_eq!(
+            mosaic_residual_span
+                .counters
+                .get(OBS_COUNTER_MINOR_ITERATIONS),
+            Some(&25)
+        );
+        assert!(observability.workers.iter().any(|worker| worker.state
+            == ImagerObservedWorkerState::RunningCpu
+            && worker.active_count > 0));
+
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn standard_mfs_scheduler_observability_reports_measured_worker_queue() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp
+            .path()
+            .join("progress")
+            .join("standard-mfs-queues.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            detail: ImagerProgressDetail::Basic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 8 * 1024,
+            source_stream_buffer_bytes: 2 * 1024,
+            product_scratch_bytes: 1024,
+            active_planes: 1,
+            row_block_rows: 128,
+            memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
+        });
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/observability.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/observability-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse config");
+        let callback =
+            standard_mfs_observability_callback(&config).expect("observability callback");
+
+        callback(StandardMfsObservabilityEvent {
+            stage: "residual".to_string(),
+            active_workers: 2,
+            worker_capacity: 4,
+            queues: vec![StandardMfsQueueProgress {
+                id: "standard-mfs-tile-inbox-residual".to_string(),
+                label: "Tile inbox residual".to_string(),
+                len: Some(3),
+                capacity: Some(8),
+                bytes: Some(4096),
+                high_water_bytes: Some(8192),
+                producers_active: true,
+                consumers_active: true,
+                blocked_count: 1,
+                confidence: StandardMfsQueueProgressConfidence::Measured,
+                note: Some("test measured queue".to_string()),
+            }],
+        });
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let observability = event.observability.as_ref().expect("observability");
+        let queue = observability
+            .queues
+            .iter()
+            .find(|queue| queue.id == "standard-mfs-tile-inbox-residual")
+            .expect("measured scheduler queue");
+        assert_eq!(queue.confidence, ImagerObservedQueueConfidence::Measured);
+        assert_eq!(queue.state, ImagerObservedQueueState::Blocked);
+        assert_eq!(queue.len, Some(3));
+        assert_eq!(queue.bytes, Some(4096));
+        assert!(queue.producers_active);
+        assert!(queue.consumers_active);
+        assert_eq!(queue.blocked_count, 1);
+        assert!(
+            !observability
+                .queues
+                .iter()
+                .any(|queue| queue.id == "worker-dispatch")
+        );
+        let worker_queue = observability
+            .resources
+            .iter()
+            .find(|resource| resource.id == ImagerObservedResourceId::WorkerQueue)
+            .expect("worker queue resource");
+        assert_eq!(worker_queue.state, ImagerObservedResourceState::Active);
+        assert_eq!(worker_queue.active_threads, 2);
+        let ledger = observability.memory_ledger.as_ref().expect("memory ledger");
+        let worker_entry = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::WorkerQueue)
+            .expect("worker queue memory entry");
+        assert_eq!(
+            worker_entry.confidence,
+            ImagerObservedMemoryConfidence::Measured
+        );
+        assert_eq!(worker_entry.tracked_live_bytes, Some(4096));
+        assert_eq!(worker_entry.high_water_bytes, Some(8192));
+
+        drop(callback);
+        drop(progress_guard);
+    }
+
+    #[test]
+    fn measured_worker_queue_survives_throttling_and_ages_to_stale() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let temp = tempdir().expect("temp dir");
+        let telemetry_path = temp
+            .path()
+            .join("progress")
+            .join("standard-mfs-queue-stale.jsonl");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 10_000,
+            detail: ImagerProgressDetail::Basic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("/tmp/observability.ms"),
+            OsString::from("--imagename"),
+            OsString::from("/tmp/observability-image"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+        ])
+        .expect("parse config");
+        let callback =
+            standard_mfs_observability_callback(&config).expect("observability callback");
+
+        callback(StandardMfsObservabilityEvent {
+            stage: "residual".to_string(),
+            active_workers: 1,
+            worker_capacity: 4,
+            queues: vec![StandardMfsQueueProgress {
+                id: "standard-mfs-tile-inbox-residual".to_string(),
+                label: "Tile inbox residual".to_string(),
+                len: Some(1),
+                capacity: Some(8),
+                bytes: Some(2048),
+                high_water_bytes: Some(2048),
+                producers_active: true,
+                consumers_active: true,
+                blocked_count: 0,
+                confidence: StandardMfsQueueProgressConfidence::Measured,
+                note: Some("first measured queue".to_string()),
+            }],
+        });
+
+        callback(StandardMfsObservabilityEvent {
+            stage: "residual".to_string(),
+            active_workers: 3,
+            worker_capacity: 4,
+            queues: vec![StandardMfsQueueProgress {
+                id: "standard-mfs-tile-inbox-residual".to_string(),
+                label: "Tile inbox residual".to_string(),
+                len: Some(4),
+                capacity: Some(8),
+                bytes: Some(6144),
+                high_water_bytes: Some(8192),
+                producers_active: true,
+                consumers_active: true,
+                blocked_count: 0,
+                confidence: StandardMfsQueueProgressConfidence::Measured,
+                note: Some("second measured queue".to_string()),
+            }],
+        });
+
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: "forced queue snapshot".to_string(),
+                summary: "forced queue snapshot".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: None,
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: None,
+                observability: None,
+            },
+            true,
+        );
+
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse progress event");
+        let queue = event
+            .observability
+            .as_ref()
+            .expect("observability")
+            .queues
+            .iter()
+            .find(|queue| queue.id == "standard-mfs-tile-inbox-residual")
+            .expect("measured queue after throttled callback");
+        assert_eq!(queue.state, ImagerObservedQueueState::Active);
+        assert_eq!(queue.len, Some(4));
+        assert_eq!(queue.bytes, Some(6144));
+        assert!(
+            !event
+                .observability
+                .as_ref()
+                .expect("observability")
+                .queues
+                .iter()
+                .any(|queue| queue.id == "worker-dispatch")
+        );
+
+        {
+            let mut context = IMAGER_PROGRESS_CONTEXT
+                .lock()
+                .expect("progress context lock");
+            let observed = context
+                .as_mut()
+                .expect("progress context")
+                .observed_queues
+                .get_mut("standard-mfs-tile-inbox-residual")
+                .expect("observed queue");
+            observed.observed_at =
+                Instant::now() - Duration::from_millis(IMAGER_OBSERVED_QUEUE_STALE_AFTER_MS + 1);
+        }
+        emit_imager_progress_event(
+            ImagerProgressEvent {
+                schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                sequence: 0,
+                elapsed_ms: 0,
+                phase: "forced stale queue snapshot".to_string(),
+                summary: "forced stale queue snapshot".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: None,
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: None,
+                observability: None,
+            },
+            true,
+        );
+        let text = fs::read_to_string(&telemetry_path).expect("read progress jsonl");
+        let event: ImagerProgressEvent =
+            serde_json::from_str(text.lines().last().expect("progress event"))
+                .expect("parse stale progress event");
+        let stale_queue = event
+            .observability
+            .as_ref()
+            .expect("observability")
+            .queues
+            .iter()
+            .find(|queue| queue.id == "standard-mfs-tile-inbox-residual")
+            .expect("stale measured queue");
+        assert_eq!(stale_queue.state, ImagerObservedQueueState::Stale);
+        assert!(!stale_queue.producers_active);
+        assert!(!stale_queue.consumers_active);
+        assert_eq!(stale_queue.blocked_count, 0);
+        assert!(
+            stale_queue
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("stale measured queue observation"))
+        );
+
         drop(callback);
         drop(progress_guard);
     }
@@ -41794,9 +46119,21 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
+        set_imager_progress_memory(ImagerProgressMemory {
+            memory_target_bytes: 16 * 1024,
+            planned_active_bytes: 8 * 1024,
+            source_stream_buffer_bytes: 1024,
+            product_scratch_bytes: 6 * 1024,
+            active_planes: 3,
+            row_block_rows: 64,
+            memory_target_source: Some("test".to_string()),
+            categories: Vec::new(),
+        });
         let product_guard =
-            begin_imager_progress_product_write_observation(3).expect("product write observed");
+            begin_imager_progress_product_write_observation_with_bytes(3, Some(4 * 1024))
+                .expect("product write observed");
         let context_guard = IMAGER_PROGRESS_CONTEXT
             .lock()
             .expect("progress context lock");
@@ -41852,6 +46189,32 @@ mod tests {
             .expect("product resource");
         assert_eq!(product.state, ImagerObservedResourceState::Active);
         assert_eq!(product.lease_count, 1);
+        assert_eq!(
+            product
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.resident_bytes),
+            Some(4 * 1024)
+        );
+        assert_eq!(
+            product
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.planned_bytes),
+            Some(6 * 1024)
+        );
+        let ledger = snapshot.memory_ledger.as_ref().expect("memory ledger");
+        let product_entry = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ImagerObservedMemoryKind::Products)
+            .expect("product memory entry");
+        assert_eq!(product_entry.tracked_live_bytes, Some(4 * 1024));
+        assert_eq!(product_entry.high_water_bytes, Some(4 * 1024));
+        assert_eq!(
+            product_entry.confidence,
+            ImagerObservedMemoryConfidence::Measured
+        );
         let span = snapshot
             .active_spans
             .iter()
@@ -41868,6 +46231,19 @@ mod tests {
         assert_eq!(span.counters.get(OBS_COUNTER_OUTPUT_PLANES), Some(&3));
         drop(context_guard);
         drop(product_guard);
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let memory = context.memory.as_ref().expect("memory");
+        let product_category = memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::Products)
+            .expect("product category");
+        assert_eq!(product_category.tracked_live_bytes, None);
+        assert_eq!(product_category.high_water_bytes, Some(4 * 1024));
+        drop(context_guard);
         drop(progress_guard);
     }
 
@@ -41882,6 +46258,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let rows = vec![
             SelectedMainRow {
@@ -42013,6 +46390,7 @@ mod tests {
             min_interval_ms: 50,
             ..Default::default()
         })
+        .expect("progress setup succeeds")
         .expect("progress context starts");
         let parent_span = begin_imager_observation_span(
             ImagerObservedStageKind::ResidualRefresh,
@@ -42346,6 +46724,7 @@ mod tests {
             antenna2_id,
             is_cross: antenna2_id != 0,
             raw_uvw_m,
+            gridft_density_uvw_m: raw_uvw_m,
             transform: RowImagingTransform {
                 uvw_m: [999.0, 999.0, 0.0],
                 phase_shift_m: 0.0,
@@ -43085,7 +47464,7 @@ mod tests {
             );
             assert_eq!(
                 plane_config.standard_mfs_initial_dirty_backend.as_deref(),
-                Some("cpu")
+                Some("metal-row-run-grouped")
             );
             assert_eq!(
                 execution_config.minor_cycle_backend,
@@ -44680,7 +49059,10 @@ mod tests {
             "SelectedMain",
             "ArrayColumn::load_2d_channel_range_uncached"
         );
-        let allowed_functions = ["read_visibility_source_geometry_columns"];
+        let allowed_functions = [
+            "read_visibility_source_geometry_columns",
+            "read_selected_main_uvw_column",
+        ];
         let mut current_fn = String::new();
         for (line_index, line) in source.lines().enumerate() {
             let trimmed = line.trim_start();
@@ -44770,6 +49152,47 @@ mod tests {
         assert_eq!(progress_memory.active_planes, 3);
         assert_eq!(progress_memory.row_block_rows, plan.row_block_rows);
         assert_eq!(progress_memory.memory_target_source.as_deref(), Some("env"));
+        let source_category = progress_memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::SourceBuffer)
+            .expect("source category");
+        assert_eq!(
+            source_category.planned_bytes,
+            Some(plan.source_stream_buffer_bytes)
+        );
+        assert_eq!(source_category.row_block_rows, Some(plan.row_block_rows));
+        assert_eq!(
+            source_category.confidence,
+            Some(ImagerObservedMemoryConfidence::Planned)
+        );
+        let grid_category = progress_memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::GridFftScratch)
+            .expect("grid category");
+        assert_eq!(
+            grid_category.resource_id,
+            Some(ImagerObservedResourceId::VisibilityGrid)
+        );
+        assert_eq!(grid_category.active_planes, Some(3));
+        assert!(grid_category.planned_bytes.unwrap_or(0) > 0);
+        assert_eq!(grid_category.tracked_live_bytes, None);
+        let products_category = progress_memory
+            .categories
+            .iter()
+            .find(|category| category.kind == ImagerObservedMemoryKind::Products)
+            .expect("products category");
+        assert_eq!(
+            products_category.planned_bytes,
+            (plan.output_image_bytes > 0).then_some(plan.output_image_bytes)
+        );
+        assert!(
+            progress_memory
+                .categories
+                .iter()
+                .all(|category| category.tracked_live_bytes.is_none())
+        );
     }
 
     #[test]
@@ -47654,6 +52077,182 @@ mod tests {
     }
 
     #[test]
+    fn reusable_spectral_plan_local_output_view_remaps_global_channel() {
+        let cache_key = (123_u64, 2_usize);
+        let contributions = Arc::new(CubeRowSpectralContributions {
+            output_channel_contributions: vec![
+                Vec::new(),
+                vec![CubeChannelContribution {
+                    source_channel: 4,
+                    source_frequency_hz: 1.4e9,
+                    factor: 1.0,
+                }],
+            ],
+            source_channel_output_map: vec![None, Some(0), None, None, Some(1)],
+            padded_source_channel_output_map: vec![None, Some(3), None, None, Some(1)],
+            padded_grid_channel_contributions: vec![
+                CubeGridChannelContributions {
+                    output_channel: 0,
+                    grid_frequency_hz: 1.3e9,
+                    contributions: Vec::new(),
+                },
+                CubeGridChannelContributions {
+                    output_channel: 1,
+                    grid_frequency_hz: 1.4e9,
+                    contributions: vec![CubeChannelContribution {
+                        source_channel: 4,
+                        source_frequency_hz: 1.4e9,
+                        factor: 1.0,
+                    }],
+                },
+            ],
+            grid_channel_contributions: vec![CubeGridChannelContributions {
+                output_channel: 1,
+                grid_frequency_hz: 1.4e9,
+                contributions: Vec::new(),
+            }],
+            source_channel_model_contributions: vec![
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    CubeChannelContribution {
+                        source_channel: 1,
+                        source_frequency_hz: 1.4e9,
+                        factor: 0.75,
+                    },
+                    CubeChannelContribution {
+                        source_channel: 0,
+                        source_frequency_hz: 1.3e9,
+                        factor: 0.25,
+                    },
+                ],
+            ],
+        });
+        let mut spectral = HashMap::new();
+        spectral.insert(cache_key, contributions);
+        let plan = CubeRowSpectralReusablePlan {
+            spectral,
+            source_frequencies: HashMap::new(),
+            grid_assignment_indices: HashMap::new(),
+            shared_spectral_binding: None,
+            source_channel_indices: Arc::from(vec![0_usize, 1, 2, 3, 4].into_boxed_slice()),
+            output_channel_frequencies_hz: Arc::from(vec![1.3e9, 1.4e9].into_boxed_slice()),
+            use_visibility_grid_assignments: true,
+        };
+
+        let local = plan.local_output_view(1, &[4]).expect("local output view");
+        let local_contributions = local.spectral(&cache_key).expect("localized row");
+
+        assert_eq!(local.output_channel_frequencies_hz.as_ref(), &[1.4e9]);
+        assert_eq!(local.source_channel_indices.as_ref(), &[4]);
+        assert_eq!(local_contributions.output_channel_contributions.len(), 1);
+        assert_eq!(
+            local_contributions.output_channel_contributions[0],
+            vec![CubeChannelContribution {
+                source_channel: 0,
+                source_frequency_hz: 1.4e9,
+                factor: 1.0,
+            }]
+        );
+        assert_eq!(local_contributions.source_channel_output_map, vec![Some(0)]);
+        assert_eq!(
+            local_contributions
+                .grid_channel_contributions
+                .first()
+                .map(|grid| grid.output_channel),
+            Some(0)
+        );
+        assert_eq!(
+            local_contributions.source_channel_model_contributions[0],
+            vec![CubeChannelContribution {
+                source_channel: 0,
+                source_frequency_hz: 1.4e9,
+                factor: 0.75,
+            }]
+        );
+        let model_contributions = combine_model_channel_contributions(
+            &local_contributions.output_channel_contributions[0],
+            &local_contributions.source_channel_model_contributions,
+        );
+        assert_eq!(
+            model_contributions,
+            vec![CubeModelChannelContribution {
+                model_channel_index: 0,
+                factor: 0.75,
+            }]
+        );
+    }
+
+    #[test]
+    fn reusable_spectral_plan_local_output_view_remaps_shifted_source_slots() {
+        let cache_key = (456_u64, 3_usize);
+        let contributions = Arc::new(CubeRowSpectralContributions {
+            output_channel_contributions: vec![
+                Vec::new(),
+                vec![CubeChannelContribution {
+                    source_channel: 2,
+                    source_frequency_hz: 1.6e9,
+                    factor: 1.0,
+                }],
+            ],
+            source_channel_output_map: vec![None, Some(0), Some(1)],
+            padded_source_channel_output_map: vec![None, Some(0), Some(1)],
+            padded_grid_channel_contributions: Vec::new(),
+            grid_channel_contributions: vec![CubeGridChannelContributions {
+                output_channel: 1,
+                grid_frequency_hz: 1.6e9,
+                contributions: vec![CubeChannelContribution {
+                    source_channel: 2,
+                    source_frequency_hz: 1.6e9,
+                    factor: 1.0,
+                }],
+            }],
+            source_channel_model_contributions: vec![Vec::new(), Vec::new(), Vec::new()],
+        });
+        let mut spectral = HashMap::new();
+        spectral.insert(cache_key, contributions);
+        let plan = CubeRowSpectralReusablePlan {
+            spectral,
+            source_frequencies: HashMap::new(),
+            grid_assignment_indices: HashMap::new(),
+            shared_spectral_binding: None,
+            source_channel_indices: Arc::from(vec![4_usize, 5, 6].into_boxed_slice()),
+            output_channel_frequencies_hz: Arc::from(vec![1.5e9, 1.6e9].into_boxed_slice()),
+            use_visibility_grid_assignments: true,
+        };
+
+        let local = plan
+            .local_output_view(1, &[5, 6])
+            .expect("local output view");
+        let local_contributions = local.spectral(&cache_key).expect("localized row");
+
+        assert_eq!(local.source_channel_indices.as_ref(), &[5, 6]);
+        assert_eq!(
+            local_contributions.output_channel_contributions[0],
+            vec![CubeChannelContribution {
+                source_channel: 1,
+                source_frequency_hz: 1.6e9,
+                factor: 1.0,
+            }]
+        );
+        assert_eq!(
+            local_contributions.source_channel_output_map,
+            vec![None, Some(0)]
+        );
+        assert_eq!(local_contributions.grid_channel_contributions.len(), 1);
+        assert_eq!(
+            local_contributions.grid_channel_contributions[0].contributions,
+            vec![CubeChannelContribution {
+                source_channel: 1,
+                source_frequency_hz: 1.6e9,
+                factor: 1.0,
+            }]
+        );
+    }
+
+    #[test]
     fn cli_parses_wproject_wterm_mode() {
         let config = CliConfig::parse([
             OsString::from("--ms"),
@@ -48343,6 +52942,7 @@ mod tests {
         assert!(help.contains("--json-schema"));
         assert!(help.contains("--protocol-info"));
         assert!(help.contains("--json-run <SOURCE>"));
+        assert!(help.contains("--progress-jsonl PATH"));
         assert!(help.contains("--progress true|false"));
     }
 
@@ -49028,11 +53628,11 @@ deconvolver=mtmfs
             channel_origin: 0,
         };
         let weights = WeightRow {
-            weights: FloatRow1d::Float32Columnar {
+            weights: Some(FloatRow1d::Float32Columnar {
                 values: &weight_values,
                 row_slot: 0,
                 corr_count: 1,
-            },
+            }),
             spectrum: None,
         };
         let contributions = vec![
@@ -49089,11 +53689,11 @@ deconvolver=mtmfs
             channel_origin: 0,
         };
         let weights = WeightRow {
-            weights: FloatRow1d::Float32Columnar {
+            weights: Some(FloatRow1d::Float32Columnar {
                 values: &weight_values,
                 row_slot: 0,
                 corr_count: 1,
-            },
+            }),
             spectrum: Some(FloatRow2d::Float32Columnar {
                 values: &weight_spectrum_values,
                 row_slot: 0,
@@ -49133,6 +53733,119 @@ deconvolver=mtmfs
         assert!((sample.visibility.im - 5.0).abs() < 1.0e-6);
         assert!((sample.weight - 8.0).abs() < 1.0e-6);
         assert!((sample.sumwt_factor - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn explicit_cube_single_contribution_fast_path_preserves_nearest_weight() {
+        let data_values = [Complex32::new(8.0, -2.0)];
+        let flag_values = [false];
+        let weight_values = [3.0f32];
+        let data = ComplexRow2d::Complex32Columnar {
+            values: &data_values,
+            row_slot: 0,
+            row_count: 1,
+            corr_count: 1,
+            channels: 1,
+            channel_origin: 4,
+        };
+        let flags = BoolRow2d::Columnar {
+            values: &flag_values,
+            row_slot: 0,
+            row_count: 1,
+            corr_count: 1,
+            channels: 1,
+            channel_origin: 4,
+        };
+        let weights = WeightRow {
+            weights: Some(FloatRow1d::Float32Columnar {
+                values: &weight_values,
+                row_slot: 0,
+                corr_count: 1,
+            }),
+            spectrum: None,
+        };
+        let contributions = [CubeChannelContribution {
+            source_channel: 0,
+            source_frequency_hz: 1.4e9,
+            factor: 0.25,
+        }];
+
+        let sample = interpolate_explicit_cube_output_sample_from_rows(
+            &data,
+            &flags,
+            &weights,
+            0,
+            &[4],
+            0.0,
+            1.4e9,
+            &contributions,
+            true,
+        )
+        .unwrap()
+        .expect("expected single-contribution sample");
+
+        assert!((sample.visibility.re - 2.0).abs() < 1.0e-6);
+        assert!((sample.visibility.im + 0.5).abs() < 1.0e-6);
+        assert!((sample.weight - 3.0).abs() < 1.0e-6);
+        assert_eq!(sample.weight_source, WeightSourceKind::Weight);
+        assert_eq!(sample.sumwt_factor, 1.0);
+    }
+
+    #[test]
+    fn paired_cube_single_contribution_fast_path_scales_visibility_and_weight() {
+        let data_values = [Complex32::new(2.0, 1.0), Complex32::new(6.0, -3.0)];
+        let flag_values = [false, false];
+        let weight_values = [4.0f32, 10.0];
+        let data = ComplexRow2d::Complex32Columnar {
+            values: &data_values,
+            row_slot: 0,
+            row_count: 1,
+            corr_count: 2,
+            channels: 1,
+            channel_origin: 7,
+        };
+        let flags = BoolRow2d::Columnar {
+            values: &flag_values,
+            row_slot: 0,
+            row_count: 1,
+            corr_count: 2,
+            channels: 1,
+            channel_origin: 7,
+        };
+        let weights = WeightRow {
+            weights: Some(FloatRow1d::Float32Columnar {
+                values: &weight_values,
+                row_slot: 0,
+                corr_count: 2,
+            }),
+            spectrum: None,
+        };
+        let contributions = [CubeChannelContribution {
+            source_channel: 0,
+            source_frequency_hz: 1.4e9,
+            factor: 0.5,
+        }];
+
+        let sample = interpolate_paired_cube_output_sample_from_rows(
+            &data,
+            &flags,
+            &weights,
+            (0, 1),
+            &[7],
+            0.0,
+            1.4e9,
+            &contributions,
+            false,
+        )
+        .unwrap()
+        .expect("expected single-contribution paired sample");
+
+        assert!((sample.first_visibility.re - 1.0).abs() < 1.0e-6);
+        assert!((sample.first_visibility.im - 0.5).abs() < 1.0e-6);
+        assert!((sample.second_visibility.re - 3.0).abs() < 1.0e-6);
+        assert!((sample.second_visibility.im + 1.5).abs() < 1.0e-6);
+        assert!((sample.first_weight - 2.0).abs() < 1.0e-6);
+        assert!((sample.second_weight - 5.0).abs() < 1.0e-6);
     }
 
     #[test]
@@ -52065,8 +56778,76 @@ deconvolver=mtmfs
         }
     }
 
+    fn assert_diagnostic_progress_jsonl_contains_large_ms_debug_facts(path: &Path) {
+        let text = fs::read_to_string(path).expect("read diagnostic progress jsonl");
+        let events = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<ImagerProgressEvent>(line).expect("progress event"))
+            .collect::<Vec<_>>();
+        assert!(!events.is_empty(), "expected diagnostic progress events");
+
+        let diagnostics = events
+            .iter()
+            .filter_map(|event| event.observability.as_ref())
+            .filter_map(|observability| observability.diagnostics.as_ref())
+            .collect::<Vec<_>>();
+        assert!(!diagnostics.is_empty(), "expected diagnostic payloads");
+        assert!(
+            diagnostics.iter().any(|diagnostics| diagnostics
+                .source_reads
+                .iter()
+                .any(|read| read.modeled_physical_read_bytes > 0 && read.mb_per_s > 0.0)),
+            "expected source-read diagnostic rate"
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostics| diagnostics
+                .product_writes
+                .iter()
+                .any(|write| write.bytes_written > 0 && write.mb_per_s >= 0.0)),
+            "expected product-write diagnostic"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostics| !diagnostics.backend_decisions.is_empty()),
+            "expected backend eligibility diagnostic"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostics| diagnostics
+                    .run_summary
+                    .as_ref()
+                    .is_some_and(|summary| summary.total_wall_ms > 0
+                        && !summary.stage_totals_ms.is_empty()
+                        && summary.source_read_bytes > 0)),
+            "expected final diagnostic run summary"
+        );
+        let final_summary = diagnostics
+            .iter()
+            .filter_map(|diagnostics| diagnostics.run_summary.as_ref())
+            .next_back()
+            .expect("final diagnostic run summary");
+        for label in [
+            "backend_execution/weighting_density",
+            "backend_execution/psf_dirty",
+            "backend_execution/minor_cycle_update",
+            "backend_execution/residual_refresh",
+            "product_write/plane_state_store",
+        ] {
+            assert!(
+                final_summary.stage_totals_ms.contains_key(label),
+                "expected backend substage total {label}"
+            );
+        }
+    }
+
     #[test]
     fn mosaic_cube_clean_multi_channel_writes_model_and_pb_aware_products() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
         let _forced_spectral_slab = {
             let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
             EnvGuard::unset("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES")
@@ -52074,6 +56855,7 @@ deconvolver=mtmfs
         let tmp = tempdir().unwrap();
         let ms_path = tmp.path().join("tiny_mosaic_cube_clean.ms");
         let image_prefix = tmp.path().join("tiny_mosaic_cube_clean_image");
+        let telemetry_path = tmp.path().join("tiny_mosaic_cube_clean_progress.jsonl");
         let mut ms = MeasurementSet::create(
             &ms_path,
             MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
@@ -52195,7 +56977,22 @@ deconvolver=mtmfs
             write_preview_pngs: false,
         };
 
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            telemetry_jsonl_path: Some(telemetry_path.clone()),
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            detail: ImagerProgressDetail::Diagnostic,
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
         let summary = run_from_config(&config).unwrap();
+        emit_imager_progress_run_finished(
+            &ImagerRunTaskRequest::from_cli_config(&config),
+            &summary,
+        );
+        drop(progress_guard);
+        assert_diagnostic_progress_jsonl_contains_large_ms_debug_facts(&telemetry_path);
         assert!(summary.gridded_samples > 0);
         assert_eq!(summary.channel_summaries.len(), 2);
         for suffix in [
@@ -52248,6 +57045,19 @@ deconvolver=mtmfs
         planes: usize,
     }
 
+    impl CubePlaneGroupResult for FakePlaneGroup {
+        fn plane_count(&self) -> Result<usize, String> {
+            Ok(self.planes)
+        }
+
+        fn merge_group(_plane_start: usize, group: Vec<Self>) -> Result<Self, String> {
+            Ok(Self {
+                bytes: group.iter().map(|result| result.bytes).sum::<usize>(),
+                planes: group.iter().map(|result| result.planes).sum::<usize>(),
+            })
+        }
+    }
+
     struct FakePlaneGroupWriter {
         writes: Vec<(usize, usize)>,
     }
@@ -52298,6 +57108,122 @@ deconvolver=mtmfs
         assert_eq!(aggregate.groups.len(), 1);
         assert_eq!(aggregate.groups[0].0, 4);
         assert_eq!(aggregate.groups[0].1.planes, 2);
+    }
+
+    #[test]
+    fn plane_group_publisher_reports_measured_product_queue() {
+        let _test_lock = IMAGER_PROGRESS_TEST_LOCK
+            .lock()
+            .expect("progress test lock");
+        let progress_guard = begin_imager_progress(&ImagerProgressOptions {
+            enabled: true,
+            max_uv_points: 1024,
+            min_interval_ms: 50,
+            ..Default::default()
+        })
+        .expect("progress setup succeeds")
+        .expect("progress context starts");
+        let mut writer = FakePlaneGroupWriter { writes: Vec::new() };
+        let mut aggregate = FakePlaneGroupAggregate { groups: Vec::new() };
+        let mut publisher = OrderedCubeProductPublisher::new(0, 3);
+
+        publisher
+            .accept(
+                0,
+                FakePlaneGroup {
+                    bytes: 128,
+                    planes: 1,
+                },
+                &mut writer,
+                &mut aggregate,
+            )
+            .expect("first group accepted");
+        {
+            let context_guard = IMAGER_PROGRESS_CONTEXT
+                .lock()
+                .expect("progress context lock");
+            let context = context_guard.as_ref().expect("progress context");
+            let event = ImagerProgressEvent {
+                schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+                sequence: 20,
+                elapsed_ms: 100,
+                phase: "queued-products".to_string(),
+                summary: "queued products".to_string(),
+                work: None,
+                ms_read: None,
+                output_cube: None,
+                uv_coverage: None,
+                deconvolution: None,
+                runtime: Some(ImagerProgressRuntime {
+                    active_threads: 0,
+                    total_threads: 4,
+                    gpu_active: false,
+                    backend: "product publisher".to_string(),
+                    active_resources: Vec::new(),
+                    active_resource_threads: BTreeMap::new(),
+                    memory: context.memory.clone(),
+                }),
+                observability: None,
+            };
+            let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+            let queue = snapshot
+                .queues
+                .iter()
+                .find(|queue| queue.id == "cube-product-publisher")
+                .expect("product publisher queue");
+            assert_eq!(queue.state, ImagerObservedQueueState::Active);
+            assert_eq!(
+                queue.resource_id,
+                Some(ImagerObservedResourceId::ProductScratch)
+            );
+            assert_eq!(queue.len, Some(1));
+            assert_eq!(queue.capacity, Some(3));
+            assert!(queue.producers_active);
+            assert!(!queue.consumers_active);
+            assert_eq!(queue.confidence, ImagerObservedQueueConfidence::Measured);
+        }
+
+        publisher
+            .finish(&mut writer, &mut aggregate)
+            .expect("publisher finishes");
+        let context_guard = IMAGER_PROGRESS_CONTEXT
+            .lock()
+            .expect("progress context lock");
+        let context = context_guard.as_ref().expect("progress context");
+        let event = ImagerProgressEvent {
+            schema_version: IMAGER_PROGRESS_EVENT_SCHEMA_VERSION,
+            sequence: 21,
+            elapsed_ms: 200,
+            phase: "products-written".to_string(),
+            summary: "products written".to_string(),
+            work: None,
+            ms_read: None,
+            output_cube: None,
+            uv_coverage: None,
+            deconvolution: None,
+            runtime: Some(ImagerProgressRuntime {
+                active_threads: 0,
+                total_threads: 4,
+                gpu_active: false,
+                backend: "product publisher".to_string(),
+                active_resources: Vec::new(),
+                active_resource_threads: BTreeMap::new(),
+                memory: context.memory.clone(),
+            }),
+            observability: None,
+        };
+        let snapshot = imager_observability_snapshot(&event, context, &[], &BTreeMap::new());
+        let queue = snapshot
+            .queues
+            .iter()
+            .find(|queue| queue.id == "cube-product-publisher")
+            .expect("product publisher queue");
+        assert_eq!(queue.state, ImagerObservedQueueState::Idle);
+        assert_eq!(queue.len, Some(0));
+        assert!(!queue.producers_active);
+        assert!(!queue.consumers_active);
+        drop(context_guard);
+        drop(progress_guard);
     }
 
     #[test]
@@ -53701,7 +58627,7 @@ deconvolver=mtmfs
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
             standard_mfs_tile_anchor: None,

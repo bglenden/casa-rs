@@ -1028,6 +1028,8 @@ pub enum StandardMfsProgressPhase {
     InitialGridEnd,
     /// A minor-cycle deconvolver pass is about to start.
     MinorCycleStart,
+    /// A minor-cycle deconvolver pass is still running and has made bounded progress.
+    MinorCycleProgress,
     /// A minor-cycle deconvolver pass has finished.
     MinorCycleEnd,
     /// The controller is about to refresh residuals from the current model.
@@ -1074,6 +1076,59 @@ pub struct StandardMfsProgressEvent {
 /// Callback used by frontends to observe standard-MFS controller progress.
 pub type StandardMfsProgressCallback =
     Arc<dyn Fn(StandardMfsProgressEvent) + Send + Sync + 'static>;
+
+/// Confidence class for standard-MFS scheduler queue telemetry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandardMfsQueueProgressConfidence {
+    /// Queue length and byte counters came from the scheduler state.
+    Measured,
+    /// Queue exists conceptually, but live counters are not available.
+    Unknown,
+}
+
+/// Coarse standard-MFS queue snapshot emitted by execution schedulers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StandardMfsQueueProgress {
+    /// Stable queue id within the standard-MFS execution model.
+    pub id: String,
+    /// Human-readable queue label.
+    pub label: String,
+    /// Current queue depth when known.
+    pub len: Option<usize>,
+    /// Queue capacity or worker capacity when known.
+    pub capacity: Option<usize>,
+    /// Currently queued or reserved bytes when known.
+    pub bytes: Option<usize>,
+    /// Highest queued or reserved bytes observed by this scheduler.
+    pub high_water_bytes: Option<usize>,
+    /// Whether a producer is currently filling this queue.
+    pub producers_active: bool,
+    /// Whether workers are currently consuming this queue.
+    pub consumers_active: bool,
+    /// Number of blocked producers or consumers observed by the scheduler.
+    pub blocked_count: usize,
+    /// Confidence class for this snapshot.
+    pub confidence: StandardMfsQueueProgressConfidence,
+    /// Short note explaining the queue observation.
+    pub note: Option<String>,
+}
+
+/// Coarse standard-MFS execution-state snapshot emitted by shared schedulers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StandardMfsObservabilityEvent {
+    /// Stable stage label such as `dirty`, `psf`, or `residual`.
+    pub stage: String,
+    /// Active worker count at the time of the snapshot.
+    pub active_workers: usize,
+    /// Planned worker capacity at the time of the snapshot.
+    pub worker_capacity: usize,
+    /// Queue snapshots reported by this scheduler.
+    pub queues: Vec<StandardMfsQueueProgress>,
+}
+
+/// Callback used by frontends to observe scheduler/resource state.
+pub type StandardMfsObservabilityCallback =
+    Arc<dyn Fn(StandardMfsObservabilityEvent) + Send + Sync + 'static>;
 
 /// Runtime execution knobs for standard-MFS backends.
 ///
@@ -1132,6 +1187,12 @@ pub struct StandardMfsExecutionConfig {
     /// The callback is intentionally outside the per-component hot loop. It is
     /// suitable for user-interface phase state, not detailed profiling.
     pub progress_callback: Option<StandardMfsProgressCallback>,
+    /// Optional observability callback fired by execution schedulers.
+    ///
+    /// This reports bounded aggregate scheduler facts such as queue depth,
+    /// queued bytes, worker activity, and backpressure. It must not emit
+    /// per-visibility records.
+    pub observability_callback: Option<StandardMfsObservabilityCallback>,
 }
 
 impl fmt::Debug for StandardMfsExecutionConfig {
@@ -1163,6 +1224,10 @@ impl fmt::Debug for StandardMfsExecutionConfig {
                 &self.w_project_max_abs_w_lambda,
             )
             .field("progress_callback", &self.progress_callback.is_some())
+            .field(
+                "observability_callback",
+                &self.observability_callback.is_some(),
+            )
             .finish()
     }
 }
@@ -2695,6 +2760,15 @@ where
     let mut max_abs_w_lambda = 0.0f64;
     let mut dirty_projector_cache = MosaicProjectorCache::new();
     let mut residual_projector_cache = MosaicProjectorCache::new();
+    let streaming_metal_group_cache_enabled =
+        standard_mfs_metal_grouped_input_cache_enabled(execution_config.metal_grouped_input_cache)
+            && (mosaic_initial_dirty_metal_backend_enabled()
+                || mosaic_residual_metal_backend_enabled())
+            && !mosaic_trace_enabled()
+            && mosaic_cell_trace_targets().is_empty()
+            && !mosaic_grid_dump_enabled();
+    let mut streaming_metal_group_cache =
+        streaming_metal_group_cache_enabled.then(Vec::<MosaicStreamingMetalGroupCacheBlock>::new);
 
     let dirty_started = Instant::now();
     stream_weighted_mosaic_groups(
@@ -2725,6 +2799,18 @@ where
                 conv_sampling,
                 &mut dirty_projector_cache,
             )?;
+            let block_metal_cache = if streaming_metal_group_cache_enabled {
+                Some(prepare_mosaic_streaming_metal_group_cache_block(
+                    &request,
+                    &config,
+                    &gridder,
+                    &groups,
+                    conv_sampling,
+                    mosaic_parallel_threads.min(groups.len()).max(1),
+                )?)
+            } else {
+                None
+            };
             let parallel = compute_mosaic_dirty_parallel(
                 &request,
                 &config,
@@ -2732,9 +2818,16 @@ where
                 &groups,
                 conv_sampling,
                 mosaic_parallel_threads.min(groups.len()).max(1),
-                None,
+                block_metal_cache
+                    .as_ref()
+                    .map(|block| block.prepared.as_slice()),
                 Some(&dirty_projectors),
             )?;
+            if let (Some(cache_blocks), Some(block_cache)) =
+                (streaming_metal_group_cache.as_mut(), block_metal_cache)
+            {
+                cache_blocks.push(block_cache);
+            }
             add_complex64_grid(&mut psf_grid, &parallel.psf_grid);
             add_complex64_grid(&mut accumulated_residual_grid, &parallel.residual_grid);
             add_complex64_grid(&mut accumulated_mosaic_weight_grid, &parallel.weight_grid);
@@ -2850,6 +2943,7 @@ where
             stage_timings,
             execution_config.progress_callback.as_ref(),
             progress_context,
+            streaming_metal_group_cache.as_deref(),
         )
     };
     let clean_state = if clean_request.clean.niter > 0 {
@@ -3556,6 +3650,7 @@ fn compute_mosaic_residual_streaming<F>(
     stage_timings: &mut ImagingStageTimings,
     progress_callback: Option<&StandardMfsProgressCallback>,
     progress_context: Option<StandardMfsProgressContext>,
+    streaming_metal_group_cache: Option<&[MosaicStreamingMetalGroupCacheBlock]>,
 ) -> Result<Array2<f32>, ImagingError>
 where
     F: FnMut(
@@ -3596,6 +3691,7 @@ where
     let degrid_started = Instant::now();
     let mut accumulated_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
+    let mut residual_block_index = 0usize;
     stream_weighted_mosaic_groups(
         request,
         config,
@@ -3606,6 +3702,10 @@ where
         progress_callback,
         progress_context,
         |groups| {
+            let cached_block = streaming_metal_group_cache
+                .and_then(|blocks| blocks.get(residual_block_index))
+                .filter(|block| block.matches_groups(&groups));
+            residual_block_index += 1;
             let residual_projectors = prepare_mosaic_residual_projectors(
                 request,
                 config,
@@ -3622,7 +3722,7 @@ where
                 conv_sampling,
                 model_grid.as_ref(),
                 mosaic_parallel_threads.min(groups.len()).max(1),
-                None,
+                cached_block.map(|block| block.prepared.as_slice()),
                 Some(&residual_projectors),
             )?;
             profile::log_parallel_stage(profile::ParallelStageProfile {
@@ -7714,6 +7814,58 @@ const MOSAIC_GROUPED_RESIDUAL_MIN_RAW_SAMPLES: usize = 10_000;
 const MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES: usize = 25_000;
 const MOSAIC_CPU_GROUPED_DIRTY_MIN_RAW_SAMPLES: usize = 10_000;
 
+fn mosaic_metal_group_cache_min_raw_samples() -> usize {
+    MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES.min(MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES)
+}
+
+fn mosaic_metal_group_cache_can_help(group: &MosaicPointingGroup) -> bool {
+    // Prepared samples are formed by aggregating raw samples, so the prepared
+    // count cannot exceed the raw group length. Groups smaller than the Metal
+    // thresholds can never use the cached Metal path; retaining them only burns
+    // CPU and resident memory.
+    group.batch.len() >= mosaic_metal_group_cache_min_raw_samples()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MosaicPointingGroupCacheSignature {
+    samples: usize,
+    frequency_hz: u64,
+    pointing_ra_rad: u64,
+    pointing_dec_rad: u64,
+    primary_beam_model: (u8, u64, u64),
+}
+
+impl MosaicPointingGroupCacheSignature {
+    fn from_group(group: &MosaicPointingGroup) -> Self {
+        Self {
+            samples: group.batch.len(),
+            frequency_hz: group.frequency_hz.to_bits(),
+            pointing_ra_rad: group.pointing_direction_rad[0].to_bits(),
+            pointing_dec_rad: group.pointing_direction_rad[1].to_bits(),
+            primary_beam_model: primary_beam_model_key(group.primary_beam_model),
+        }
+    }
+}
+
+struct MosaicStreamingMetalGroupCacheBlock {
+    signatures: Vec<MosaicPointingGroupCacheSignature>,
+    prepared: Vec<Option<MosaicMetalPreparedGroup>>,
+}
+
+impl MosaicStreamingMetalGroupCacheBlock {
+    fn matches_groups(&self, groups: &[MosaicPointingGroup]) -> bool {
+        self.signatures.len() == groups.len()
+            && self.prepared.len() == groups.len()
+            && self
+                .signatures
+                .iter()
+                .zip(groups)
+                .all(|(signature, group)| {
+                    *signature == MosaicPointingGroupCacheSignature::from_group(group)
+                })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct MosaicMetalGridStats {
     calls: usize,
@@ -9791,7 +9943,8 @@ fn prepare_mosaic_metal_group_cache(
                         request.geometry,
                         config.phase_center_direction_rad,
                         group.pointing_direction_rad,
-                    ) {
+                    ) || !mosaic_metal_group_cache_can_help(group)
+                    {
                         prepared.push((group_index, None));
                         continue;
                     }
@@ -9870,6 +10023,32 @@ fn prepare_mosaic_metal_group_cache(
         );
     }
     Ok(cache)
+}
+
+fn prepare_mosaic_streaming_metal_group_cache_block(
+    request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    groups: &[MosaicPointingGroup],
+    conv_sampling: usize,
+    thread_count: usize,
+) -> Result<MosaicStreamingMetalGroupCacheBlock, ImagingError> {
+    let signatures = groups
+        .iter()
+        .map(MosaicPointingGroupCacheSignature::from_group)
+        .collect::<Vec<_>>();
+    let prepared = prepare_mosaic_metal_group_cache(
+        request,
+        config,
+        gridder,
+        groups,
+        conv_sampling,
+        thread_count,
+    )?;
+    Ok(MosaicStreamingMetalGroupCacheBlock {
+        signatures,
+        prepared,
+    })
 }
 
 fn compute_mosaic_dirty_group_contribution_metal(
@@ -13998,6 +14177,73 @@ fn emit_standard_mfs_controller_progress(
     }
 }
 
+struct StandardMfsMinorCycleProgressReporter<'a> {
+    progress_callback: Option<&'a StandardMfsProgressCallback>,
+    request: &'a ImagingRequest,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    major_cycle: usize,
+    start_reported_iteration: usize,
+    cycle_iteration_limit: usize,
+    cycle_threshold_jy_per_beam: f32,
+    last_reported_updates: usize,
+    last_emit_at: Instant,
+}
+
+impl<'a> StandardMfsMinorCycleProgressReporter<'a> {
+    const MIN_EMIT_INTERVAL: Duration = Duration::from_millis(250);
+
+    fn new(
+        progress_callback: Option<&'a StandardMfsProgressCallback>,
+        request: &'a ImagingRequest,
+        minor_cycle_backend: StandardMfsMinorCycleBackend,
+        major_cycle: usize,
+        start_reported_iteration: usize,
+        cycle_iteration_limit: usize,
+        cycle_threshold_jy_per_beam: f32,
+    ) -> Self {
+        Self {
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            major_cycle,
+            start_reported_iteration,
+            cycle_iteration_limit,
+            cycle_threshold_jy_per_beam,
+            last_reported_updates: 0,
+            last_emit_at: Instant::now() - Self::MIN_EMIT_INTERVAL,
+        }
+    }
+
+    fn emit(&mut self, completed_cycle_updates: usize, peak_residual_jy_per_beam: Option<f32>) {
+        if self.progress_callback.is_none()
+            || completed_cycle_updates == 0
+            || completed_cycle_updates == self.last_reported_updates
+        {
+            return;
+        }
+        let now = Instant::now();
+        if completed_cycle_updates < self.cycle_iteration_limit
+            && now.duration_since(self.last_emit_at) < Self::MIN_EMIT_INTERVAL
+        {
+            return;
+        }
+        self.last_reported_updates = completed_cycle_updates;
+        self.last_emit_at = now;
+        emit_standard_mfs_controller_progress(
+            self.progress_callback,
+            self.request,
+            self.minor_cycle_backend,
+            StandardMfsProgressPhase::MinorCycleProgress,
+            self.major_cycle,
+            self.start_reported_iteration
+                .saturating_add(completed_cycle_updates),
+            self.cycle_iteration_limit,
+            peak_residual_jy_per_beam,
+            Some(self.cycle_threshold_jy_per_beam),
+        );
+    }
+}
+
 fn run_with_standard_mfs_initial_grid_progress<T>(
     progress_callback: Option<&StandardMfsProgressCallback>,
     request: &ImagingRequest,
@@ -15519,7 +15765,16 @@ fn run_hogbom_cotton_schwab(
             Some(cycle_peak),
             Some(cycle_threshold_jy_per_beam),
         );
-        let outcome = run_hogbom_minor_cycle(
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+        );
+        let outcome = run_hogbom_minor_cycle_with_progress(
             request,
             psf_state,
             model,
@@ -15529,6 +15784,7 @@ fn run_hogbom_cotton_schwab(
             cycle_nsigma_threshold_jy_per_beam,
             minor_cycle_backend,
             stage_timings,
+            &mut minor_progress,
         )?;
         let reported_after_outcome =
             reported_minor_iterations.saturating_add(outcome.reported_updates);
@@ -15704,6 +15960,7 @@ fn run_hogbom_cotton_schwab(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn run_hogbom_minor_cycle(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -15715,8 +15972,44 @@ fn run_hogbom_minor_cycle(
     minor_cycle_backend: StandardMfsMinorCycleBackend,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        request,
+        minor_cycle_backend,
+        0,
+        0,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_with_progress(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        minor_cycle_backend,
+        stage_timings,
+        &mut minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hogbom_minor_cycle_with_progress(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    minor_cycle_backend: StandardMfsMinorCycleBackend,
+    stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     match minor_cycle_backend {
-        StandardMfsMinorCycleBackend::Cpu => Ok(run_hogbom_minor_cycle_cpu(
+        StandardMfsMinorCycleBackend::Cpu => Ok(run_hogbom_minor_cycle_cpu_with_progress(
             request,
             psf_state,
             model,
@@ -15725,8 +16018,9 @@ fn run_hogbom_minor_cycle(
             cycle_threshold_jy_per_beam,
             nsigma_threshold_jy_per_beam,
             stage_timings,
+            minor_progress,
         )),
-        StandardMfsMinorCycleBackend::Metal => run_hogbom_minor_cycle_metal(
+        StandardMfsMinorCycleBackend::Metal => run_hogbom_minor_cycle_metal_with_progress(
             request,
             psf_state,
             model,
@@ -15735,11 +16029,13 @@ fn run_hogbom_minor_cycle(
             cycle_threshold_jy_per_beam,
             nsigma_threshold_jy_per_beam,
             stage_timings,
+            minor_progress,
         ),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn run_hogbom_minor_cycle_cpu(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -15749,6 +16045,40 @@ fn run_hogbom_minor_cycle_cpu(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
+) -> HogbomMinorCycleOutcome {
+    let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        request,
+        StandardMfsMinorCycleBackend::Cpu,
+        0,
+        0,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_cpu_with_progress(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        stage_timings,
+        &mut minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hogbom_minor_cycle_cpu_with_progress(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> HogbomMinorCycleOutcome {
     let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
@@ -15799,6 +16129,7 @@ fn run_hogbom_minor_cycle_cpu(
         subtract_updates = subtract_updates.saturating_add(1);
         cycle_component_updates += 1;
         updated_model = true;
+        minor_progress.emit(cycle_component_updates, Some(peak_abs));
         if collect_profile && cycle_component_updates % 100 == 0 {
             eprintln!(
                 "standard_mfs_hogbom_minor_cycle_progress updates={} budget={} image_pixels={} peak_searches={} subtract_updates={} peak_scan_estimated_bytes={} peak_search_ms={:.3} subtract_ms={:.3} elapsed_ms={:.3}",
@@ -15945,7 +16276,7 @@ fn array2_max_abs_diff_with_first(
 
 #[allow(clippy::too_many_arguments)]
 #[cfg(any(not(target_os = "macos"), coverage))]
-fn run_hogbom_minor_cycle_metal(
+fn run_hogbom_minor_cycle_metal_with_progress(
     _request: &ImagingRequest,
     _psf_state: &PsfState,
     _model: &mut Array2<f32>,
@@ -15954,6 +16285,7 @@ fn run_hogbom_minor_cycle_metal(
     _cycle_threshold_jy_per_beam: f32,
     _nsigma_threshold_jy_per_beam: f32,
     _stage_timings: &mut ImagingStageTimings,
+    _minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     Err(ImagingError::Unsupported(
         "Hogbom minor-cycle backend 'metal' requires macOS Metal".to_string(),
@@ -15961,7 +16293,7 @@ fn run_hogbom_minor_cycle_metal(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(all(target_os = "macos", not(coverage)))]
+#[cfg(all(test, target_os = "macos", not(coverage)))]
 fn run_hogbom_minor_cycle_metal(
     request: &ImagingRequest,
     psf_state: &PsfState,
@@ -15971,6 +16303,41 @@ fn run_hogbom_minor_cycle_metal(
     cycle_threshold_jy_per_beam: f32,
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
+) -> Result<HogbomMinorCycleOutcome, ImagingError> {
+    let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+        None,
+        request,
+        StandardMfsMinorCycleBackend::Metal,
+        0,
+        0,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+    );
+    run_hogbom_minor_cycle_metal_with_progress(
+        request,
+        psf_state,
+        model,
+        residual,
+        cycle_reported_niter,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+        stage_timings,
+        &mut minor_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn run_hogbom_minor_cycle_metal_with_progress(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    model: &mut Array2<f32>,
+    residual: &mut Array2<f32>,
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     use std::{mem, slice};
 
@@ -16192,6 +16559,7 @@ fn run_hogbom_minor_cycle_metal(
     let last_peak_abs = cycle_state.peak.abs_value;
     let last_peak_value = cycle_state.peak.value;
     let last_peak_index = cycle_state.peak.flat_index;
+    minor_progress.emit(cycle_component_updates, Some(last_peak_abs));
 
     let readback_started = Instant::now();
     let residual_slice = unsafe {
@@ -18058,6 +18426,7 @@ fn run_clark_minor_cycle(
     psf_patch: &ClarkPsfPatch,
     minor_cycle_backend: StandardMfsMinorCycleBackend,
     stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     match minor_cycle_backend {
         StandardMfsMinorCycleBackend::Cpu => Ok(run_clark_minor_cycle_cpu(
@@ -18070,6 +18439,7 @@ fn run_clark_minor_cycle(
             nsigma_threshold_jy_per_beam,
             psf_patch,
             stage_timings,
+            minor_progress,
         )),
         StandardMfsMinorCycleBackend::Metal => run_clark_minor_cycle_metal(
             request,
@@ -18081,6 +18451,7 @@ fn run_clark_minor_cycle(
             nsigma_threshold_jy_per_beam,
             psf_patch,
             stage_timings,
+            minor_progress,
         ),
     }
 }
@@ -18096,6 +18467,7 @@ fn run_clark_minor_cycle_cpu(
     nsigma_threshold_jy_per_beam: f32,
     psf_patch: &ClarkPsfPatch,
     stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> HogbomMinorCycleOutcome {
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
@@ -18254,6 +18626,7 @@ fn run_clark_minor_cycle_cpu(
             updated_model = true;
             fmn += fac / cycle_component_updates as f32;
             iter_flux_limit = (flux_limit * fmn).max(cycle_threshold_jy_per_beam);
+            minor_progress.emit(cycle_component_updates, Some(peak_abs));
         }
 
         approximate_peak = peak_clark_active_pixel(&active_pixels)
@@ -18323,6 +18696,7 @@ fn run_clark_minor_cycle_metal(
     _nsigma_threshold_jy_per_beam: f32,
     _psf_patch: &ClarkPsfPatch,
     _stage_timings: &mut ImagingStageTimings,
+    _minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     Err(ImagingError::Unsupported(
         "Clark minor-cycle backend 'metal' requires macOS Metal".to_string(),
@@ -18341,6 +18715,7 @@ fn run_clark_minor_cycle_metal(
     nsigma_threshold_jy_per_beam: f32,
     psf_patch: &ClarkPsfPatch,
     stage_timings: &mut ImagingStageTimings,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<HogbomMinorCycleOutcome, ImagingError> {
     use std::slice;
 
@@ -18525,6 +18900,7 @@ fn run_clark_minor_cycle_metal(
             flux_limit,
             selection_limit,
             fac,
+            minor_progress,
         )?;
         command_kernel_elapsed += subcycle_result.command_timing.kernel_elapsed;
         command_wall_elapsed += subcycle_started.elapsed();
@@ -18679,6 +19055,7 @@ fn clark_metal_run_active_subcycle(
     flux_limit: f32,
     iter_flux_limit: f32,
     fac: f32,
+    minor_progress: &mut StandardMfsMinorCycleProgressReporter<'_>,
 ) -> Result<ClarkMetalSubcycleResult, ImagingError> {
     use std::slice;
 
@@ -19006,6 +19383,12 @@ fn clark_metal_run_active_subcycle(
             .first()
             .expect("one Clark Metal state")
         };
+        minor_progress.emit(
+            cycle_update_start.saturating_add(usize::try_from(final_state.updates).map_err(
+                |_| ImagingError::InvalidRequest("Clark Metal update count overflowed".to_string()),
+            )?),
+            Some(final_state.peak.abs_value),
+        );
         candidate_ready = true;
     }
 
@@ -19338,6 +19721,15 @@ fn run_clark_cotton_schwab(
             Some(cycle_peak),
             Some(final_cycle_threshold_jy_per_beam),
         );
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            major_cycles,
+            start_reported_iteration,
+            casa_step_reported_niter,
+            final_cycle_threshold_jy_per_beam,
+        );
         let outcome = run_clark_minor_cycle(
             request,
             model,
@@ -19349,6 +19741,7 @@ fn run_clark_cotton_schwab(
             &psf_patch,
             minor_cycle_backend,
             stage_timings,
+            &mut minor_progress,
         )?;
         let reported_after_outcome =
             reported_minor_iterations.saturating_add(outcome.reported_updates);
@@ -19624,6 +20017,15 @@ fn run_multiscale_cotton_schwab(
             Some(cycle_peak),
             Some(final_cycle_threshold_jy_per_beam),
         );
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            progress_callback,
+            request,
+            minor_cycle_backend,
+            major_cycles,
+            start_reported_iteration,
+            cycle_reported_niter,
+            final_cycle_threshold_jy_per_beam,
+        );
         let minor_started = Instant::now();
         while cycle_component_updates < cycle_reported_niter {
             let candidate_started = Instant::now();
@@ -19714,6 +20116,7 @@ fn run_multiscale_cotton_schwab(
             cycle_component_updates += 1;
             minor_iterations += 1;
             updated_model = true;
+            minor_progress.emit(cycle_component_updates, Some(component_abs));
         }
         let minor_elapsed = minor_started.elapsed();
         stage_timings.minor_cycle += minor_elapsed;
@@ -28962,33 +29365,34 @@ mod tests {
         PrimaryBeamWeightSample, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
         StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-        StandardMfsMinorCycleBackend, StandardMfsModelPredictor, StandardMfsPlan,
-        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsProgressCallback,
-        StandardMfsProgressContext, StandardMfsProgressPhase, StandardMfsWeightedSample,
-        VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample,
-        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
-        add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
-        build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
-        build_image_spectral_coordinate, build_multiscale_scale_masks,
-        casa_multiscale_divergence_stop_reason, clean_cycle_threshold, clean_mask_image_product,
-        clean_mask_pixel_count, collapse_primary_beam_weight_samples,
-        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
-        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        extract_mfs_plane_product, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
-        mfs_image_product_peak_abs_masked, minor_cycle_stop_reason,
-        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_primary_beam_product_from_weight_product, mosaic_projector_sampling,
-        normalized_weighted_primary_beam_product, parse_standard_mfs_backend_selection,
-        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
-        peak_location_masked_in_window, phase_rotate_visibility,
+        StandardMfsMinorCycleBackend, StandardMfsMinorCycleProgressReporter,
+        StandardMfsModelPredictor, StandardMfsPlan, StandardMfsPlannedSampleBuilder,
+        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+        StandardMfsProgressCallback, StandardMfsProgressContext, StandardMfsProgressPhase,
+        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
+        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
+        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
+        build_image_coordinate_system, build_image_spectral_coordinate,
+        build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
+        clean_cycle_threshold, clean_mask_image_product, clean_mask_pixel_count,
+        collapse_primary_beam_weight_samples, compute_dirty_psf_and_residual_standard, compute_psf,
+        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
+        dirty_clean_config, extract_mfs_plane_product, kernel_nonzero_support,
+        make_multiscale_kernel, mean_stddev, mfs_image_product_peak_abs_masked,
+        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
+        mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
+        mosaic_projector_sampling, normalized_weighted_primary_beam_product,
+        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
+        peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_correct_alpha_product, primary_beam_correct_image_product,
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
         primary_beam_support_mask_product, primary_beam_voltage_pattern_for_offsets,
         run_clark_cotton_schwab, run_clark_minor_cycle, run_hogbom_minor_cycle,
-        run_hogbom_plane_minor_cycle, run_imaging, run_imaging_owned,
-        run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_plan,
+        run_hogbom_minor_cycle_with_progress, run_hogbom_plane_minor_cycle, run_imaging,
+        run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
+        run_standard_mfs_plan,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -29545,6 +29949,90 @@ mod tests {
         assert_eq!(roundtrip.loc_y, 260);
         assert_eq!(roundtrip.min_ix, 3);
         assert_eq!(roundtrip.max_ix, 6);
+    }
+
+    #[test]
+    fn mosaic_metal_group_cache_skips_groups_below_metal_threshold() {
+        assert_eq!(
+            super::mosaic_metal_group_cache_min_raw_samples(),
+            super::MOSAIC_METAL_INITIAL_DIRTY_MIN_PREPARED_SAMPLES
+                .min(super::MOSAIC_METAL_RESIDUAL_MIN_PREPARED_SAMPLES)
+        );
+
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let mut below =
+            point_source_visibilities(&[(0.0, 0.0, 0.0)], 1.0e-3, [64, 64], (0.0, 0.0), 1.0);
+        let threshold = super::mosaic_metal_group_cache_min_raw_samples();
+        below.u_lambda.resize(threshold - 1, 0.0);
+        below.v_lambda.resize(threshold - 1, 0.0);
+        below.w_lambda.resize(threshold - 1, 0.0);
+        below
+            .visibility
+            .resize(threshold - 1, Complex32::new(1.0, 0.0));
+        below.weight.resize(threshold - 1, 1.0);
+        below.sumwt_factor.resize(threshold - 1, 1.0);
+        below.gridable.resize(threshold - 1, true);
+        let below_group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch: below,
+            sample_frequency_hz: Vec::new(),
+        };
+        assert!(!super::mosaic_metal_group_cache_can_help(&below_group));
+
+        let mut at_threshold = below_group;
+        at_threshold.batch.u_lambda.push(0.0);
+        at_threshold.batch.v_lambda.push(0.0);
+        at_threshold.batch.w_lambda.push(0.0);
+        at_threshold.batch.visibility.push(Complex32::new(1.0, 0.0));
+        at_threshold.batch.weight.push(1.0);
+        at_threshold.batch.sumwt_factor.push(1.0);
+        at_threshold.batch.gridable.push(true);
+        assert!(super::mosaic_metal_group_cache_can_help(&at_threshold));
+    }
+
+    #[test]
+    fn mosaic_streaming_metal_cache_block_matches_only_same_group_shape() {
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let batch =
+            point_source_visibilities(&[(0.0, 0.0, 0.0)], 1.0e-3, [64, 64], (0.0, 0.0), 1.0);
+        let group = super::MosaicPointingGroup {
+            pointing_direction_rad: [0.0, 0.0],
+            frequency_hz: 1.4e9,
+            primary_beam_model,
+            batch,
+            sample_frequency_hz: Vec::new(),
+        };
+        let cache = super::MosaicStreamingMetalGroupCacheBlock {
+            signatures: vec![super::MosaicPointingGroupCacheSignature::from_group(&group)],
+            prepared: vec![None],
+        };
+
+        assert!(cache.matches_groups(std::slice::from_ref(&group)));
+
+        let mut different_frequency = group.clone();
+        different_frequency.frequency_hz = 1.5e9;
+        assert!(!cache.matches_groups(&[different_frequency]));
+
+        let mut different_count = group;
+        different_count.batch.u_lambda.push(1.0);
+        different_count.batch.v_lambda.push(0.0);
+        different_count.batch.w_lambda.push(0.0);
+        different_count
+            .batch
+            .visibility
+            .push(Complex32::new(1.0, 0.0));
+        different_count.batch.weight.push(1.0);
+        different_count.batch.sumwt_factor.push(1.0);
+        different_count.batch.gridable.push(true);
+        assert!(!cache.matches_groups(&[different_count]));
     }
 
     #[test]
@@ -33560,6 +34048,25 @@ mod tests {
         };
         let mut model = Array2::<f32>::zeros((5, 5));
         let mut stage_timings = ImagingStageTimings::default();
+        let progress_events = Arc::new(Mutex::new(Vec::new()));
+        let progress_callback: StandardMfsProgressCallback = Arc::new({
+            let progress_events = Arc::clone(&progress_events);
+            move |event| {
+                progress_events
+                    .lock()
+                    .expect("progress events lock")
+                    .push(event);
+            }
+        });
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            Some(&progress_callback),
+            &request,
+            StandardMfsMinorCycleBackend::Cpu,
+            2,
+            11,
+            3,
+            0.0,
+        );
 
         let outcome = run_clark_minor_cycle(
             &request,
@@ -33572,6 +34079,7 @@ mod tests {
             &psf_patch,
             StandardMfsMinorCycleBackend::Cpu,
             &mut stage_timings,
+            &mut minor_progress,
         )
         .expect("run Clark minor cycle");
 
@@ -33583,6 +34091,22 @@ mod tests {
             stage_timings.deconvolver_model_updates,
             outcome.actual_updates as u64
         );
+        let events = progress_events.lock().expect("progress events lock");
+        let progress_event = events
+            .iter()
+            .find(|event| event.phase == StandardMfsProgressPhase::MinorCycleProgress)
+            .expect("Clark minor cycle progress event");
+        assert_eq!(progress_event.deconvolver, Deconvolver::Clark);
+        assert_eq!(
+            progress_event.minor_cycle_backend,
+            StandardMfsMinorCycleBackend::Cpu
+        );
+        assert_eq!(progress_event.major_cycle, 2);
+        assert!(progress_event.minor_iterations > 11);
+        assert!(progress_event.minor_iterations <= 14);
+        assert_eq!(progress_event.minor_iteration_limit, request.clean.niter);
+        assert_eq!(progress_event.cycle_iteration_limit, 3);
+        assert!(progress_event.peak_residual_jy_per_beam.is_some());
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
@@ -33654,6 +34178,24 @@ mod tests {
         let mut metal_residual = cpu_residual.clone();
         let mut cpu_timings = ImagingStageTimings::default();
         let mut metal_timings = ImagingStageTimings::default();
+        let mut cpu_progress = StandardMfsMinorCycleProgressReporter::new(
+            None,
+            &request,
+            StandardMfsMinorCycleBackend::Cpu,
+            0,
+            0,
+            8,
+            0.0,
+        );
+        let mut metal_progress = StandardMfsMinorCycleProgressReporter::new(
+            None,
+            &request,
+            StandardMfsMinorCycleBackend::Metal,
+            0,
+            0,
+            8,
+            0.0,
+        );
 
         let cpu = run_clark_minor_cycle_cpu(
             &request,
@@ -33665,6 +34207,7 @@ mod tests {
             0.0,
             &psf_patch,
             &mut cpu_timings,
+            &mut cpu_progress,
         );
         let metal = run_clark_minor_cycle_metal(
             &request,
@@ -33676,6 +34219,7 @@ mod tests {
             0.0,
             &psf_patch,
             &mut metal_timings,
+            &mut metal_progress,
         )
         .expect("run Metal Clark minor cycle");
 
@@ -34509,6 +35053,122 @@ mod tests {
         assert_eq!(outcome.actual_updates, 2);
         assert_eq!(outcome.reported_updates, 1);
         assert!((model[(3, 3)] - 0.9).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn hogbom_minor_cycle_emits_in_cycle_progress() {
+        let request = ImagingRequest {
+            geometry: ImageGeometry {
+                image_shape: [6, 6],
+                cell_size_rad: [1.0, 1.0],
+            },
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.0,
+            selected_frequency_range_hz: [1.0, 1.0],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                major_cycle_limit: None,
+                gain: 0.5,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 4,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.0,
+                max_psf_fraction: 1.0,
+                hogbom_iteration_mode: HogbomIterationMode::Strict,
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let psf = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0, //
+                0.0, 0.0, 0.1, 0.2, 0.1, 0.0, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.05, 0.2, 0.4, 1.0, 0.4, 0.1, //
+                0.0, 0.1, 0.2, 0.4, 0.2, 0.05, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0,
+            ],
+        )
+        .unwrap();
+        let psf_state = PsfState {
+            psf,
+            normalization_sumwt: 1.0,
+            reported_sumwt: 1.0,
+            psf_peak: 1.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+        };
+        let mut model = Array2::<f32>::zeros((6, 6));
+        let mut residual = Array2::from_shape_vec(
+            (6, 6),
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, //
+                0.0, 0.0, 0.05, 0.1, 0.05, 0.0, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.1, 0.4, 1.2, 0.4, 0.05, //
+                0.0, 0.05, 0.15, 0.4, 0.15, 0.0, //
+                0.0, 0.0, 0.0, 0.05, 0.0, 0.0,
+            ],
+        )
+        .unwrap();
+        let mut stage_timings = ImagingStageTimings::default();
+        let progress_events = Arc::new(Mutex::new(Vec::new()));
+        let progress_callback: StandardMfsProgressCallback = Arc::new({
+            let progress_events = Arc::clone(&progress_events);
+            move |event| {
+                progress_events
+                    .lock()
+                    .expect("progress events lock")
+                    .push(event);
+            }
+        });
+        let mut minor_progress = StandardMfsMinorCycleProgressReporter::new(
+            Some(&progress_callback),
+            &request,
+            StandardMfsMinorCycleBackend::Cpu,
+            3,
+            12,
+            4,
+            0.0,
+        );
+
+        let outcome = run_hogbom_minor_cycle_with_progress(
+            &request,
+            &psf_state,
+            &mut model,
+            &mut residual,
+            4,
+            0.0,
+            0.0,
+            StandardMfsMinorCycleBackend::Cpu,
+            &mut stage_timings,
+            &mut minor_progress,
+        )
+        .expect("run Hogbom minor cycle");
+
+        assert!(outcome.actual_updates > 0);
+        let events = progress_events.lock().expect("progress events lock");
+        let progress_event = events
+            .iter()
+            .find(|event| event.phase == StandardMfsProgressPhase::MinorCycleProgress)
+            .expect("Hogbom minor cycle progress event");
+        assert_eq!(progress_event.deconvolver, Deconvolver::Hogbom);
+        assert_eq!(progress_event.major_cycle, 3);
+        assert!(progress_event.minor_iterations > 12);
+        assert!(progress_event.minor_iterations <= 16);
+        assert_eq!(progress_event.cycle_iteration_limit, 4);
     }
 
     #[test]

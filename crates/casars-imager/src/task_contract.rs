@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use casa_imaging::{
     CleanStopReason, Deconvolver, GaussianUvTaper, HogbomIterationMode, MinorCycleTrace,
@@ -37,11 +38,38 @@ pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 2;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
+/// Version of the authoritative observability snapshot embedded in progress events.
+pub const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 2;
 /// Prefix used before each stderr progress-event JSON line.
 pub const IMAGER_PROGRESS_STDERR_PREFIX: &str = "CASARS_IMAGER_PROGRESS ";
 
 fn default_imager_progress_uv_point_weight() -> f32 {
     1.0
+}
+
+/// Detail level for imager progress and observability events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerProgressDetail {
+    /// Low-rate UI progress with cheap resource snapshots.
+    #[default]
+    Basic,
+    /// Structured performance diagnostics suitable for large-MS debugging.
+    Diagnostic,
+}
+
+impl FromStr for ImagerProgressDetail {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "basic" => Ok(Self::Basic),
+            "diagnostic" => Ok(Self::Diagnostic),
+            other => Err(format!(
+                "invalid progress detail {other:?}; expected basic or diagnostic"
+            )),
+        }
+    }
 }
 
 /// Version/compatibility information for the JSON task protocol.
@@ -160,6 +188,9 @@ pub struct ImagerProgressOptions {
     /// Minimum interval between non-forced progress events.
     #[serde(default = "default_progress_min_interval_ms")]
     pub min_interval_ms: u64,
+    /// Structured payload detail level.
+    #[serde(default)]
+    pub detail: ImagerProgressDetail,
 }
 
 impl Default for ImagerProgressOptions {
@@ -169,6 +200,7 @@ impl Default for ImagerProgressOptions {
             telemetry_jsonl_path: None,
             max_uv_points: default_progress_max_uv_points(),
             min_interval_ms: default_progress_min_interval_ms(),
+            detail: ImagerProgressDetail::Basic,
         }
     }
 }
@@ -321,6 +353,13 @@ pub struct ImagerProgressMemory {
     /// Short source label for the memory target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_target_source: Option<String>,
+    /// Optional directly attributed memory categories sampled by the backend.
+    ///
+    /// Planner fields above describe the intended memory shape. These rows are
+    /// for measured or otherwise specifically attributed bytes and must not be
+    /// fabricated from the planner totals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<ImagerProgressMemoryCategory>,
 }
 
 /// Stable resource rows reported by imager observability snapshots.
@@ -477,6 +516,8 @@ pub enum ImagerObservedMemoryKind {
     GpuDevice,
     /// Process RSS sample used as a separate runtime fact.
     ProcessBaseline,
+    /// Allocator, cache, and runtime memory not yet attributed to imager resources.
+    AllocatorRuntime,
     /// RSS not currently attributed to tracked domain allocations.
     UntrackedResident,
 }
@@ -493,6 +534,37 @@ pub enum ImagerObservedMemoryConfidence {
     Estimated,
     /// Category exists, but bytes are not yet attributable.
     Unknown,
+}
+
+/// Backend-attributed memory facts attached to a runtime memory snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressMemoryCategory {
+    /// Stable category id.
+    pub kind: ImagerObservedMemoryKind,
+    /// Resource row associated with this category, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<ImagerObservedResourceId>,
+    /// Planned or target bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_bytes: Option<usize>,
+    /// Currently tracked live bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_live_bytes: Option<usize>,
+    /// High-water bytes for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high_water_bytes: Option<usize>,
+    /// Rolling source row-block size when this category is a stream buffer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_block_rows: Option<usize>,
+    /// Active output planes represented by this category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_planes: Option<usize>,
+    /// Confidence class for this category, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<ImagerObservedMemoryConfidence>,
+    /// Short note explaining unknown or estimated entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One category entry in the imager memory ledger.
@@ -578,6 +650,22 @@ pub enum ImagerObservedWorkerState {
     Unknown,
 }
 
+/// Stable queue state labels for imager observability snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerObservedQueueState {
+    /// Queue producers or consumers are currently active.
+    Active,
+    /// Queue producers or consumers are blocked.
+    Blocked,
+    /// Queue is known empty or inactive.
+    Idle,
+    /// Last known queue observation is retained only as history.
+    Stale,
+    /// Queue state cannot currently be determined.
+    Unknown,
+}
+
 /// Aggregate worker snapshot for an imager observability event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservedWorkerSnapshot {
@@ -621,6 +709,8 @@ pub struct ImagerObservedQueueSnapshot {
     pub id: String,
     /// Short display label.
     pub label: String,
+    /// Current queue state.
+    pub state: ImagerObservedQueueState,
     /// Resource most closely associated with this queue.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_id: Option<ImagerObservedResourceId>,
@@ -639,6 +729,12 @@ pub struct ImagerObservedQueueSnapshot {
     pub consumers_active: bool,
     /// Count of producers or consumers known to be blocked.
     pub blocked_count: usize,
+    /// Current dominant blocked reason, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+    /// Duration this queue has been idle, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_duration_ms: Option<u64>,
     /// Confidence class for this queue observation.
     pub confidence: ImagerObservedQueueConfidence,
     /// Short note explaining unknown or estimated rows.
@@ -698,12 +794,228 @@ pub struct ImagerObservabilitySpan {
     /// Aggregated span counters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub counters: BTreeMap<String, u64>,
+    /// Milliseconds from task start to span start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_ms: Option<u64>,
+    /// Milliseconds from task start to span end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_ms: Option<u64>,
+    /// Inclusive wall duration for this span.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Duration excluding known child spans, when computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusive_duration_ms: Option<u64>,
     /// Elapsed milliseconds since the task started when the snapshot was built.
     pub elapsed_ms: u64,
 }
 
+/// Structured MeasurementSet/source-read diagnostic payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerSourceReadDiagnostic {
+    /// Source-read pass label such as initial-dirty or weighting-density.
+    pub pass_kind: String,
+    /// Slab id when the read belongs to a spectral slab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slab_id: Option<usize>,
+    /// Inclusive output-plane start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_start: Option<usize>,
+    /// Exclusive output-plane end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_end: Option<usize>,
+    /// MAIN rows represented by this source read.
+    pub rows: usize,
+    /// Planned row block size used by the reader.
+    pub row_block_rows: usize,
+    /// Inclusive source-channel start, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_start: Option<usize>,
+    /// Exclusive source-channel end, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_end: Option<usize>,
+    /// Number of source channels represented.
+    pub source_channels: usize,
+    /// Logical output bytes generated by the read/prepare path.
+    pub logical_output_bytes: u64,
+    /// Modeled bytes physically read from MeasurementSet columns.
+    pub modeled_physical_read_bytes: u64,
+    /// Full source-acquisition wall time, including row/block setup and decode overhead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_elapsed_ns: Option<u64>,
+    /// Logical output throughput over full source-acquisition wall time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logical_mb_per_s: Option<f64>,
+    /// Modeled physical read throughput over full source-acquisition wall time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modeled_physical_wall_mb_per_s: Option<f64>,
+    /// Bytes requested from source columns when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_requested: Option<u64>,
+    /// Bytes actually read from source columns when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_read: Option<u64>,
+    /// Source column ids or names touched by this read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub column_ids: Vec<String>,
+    /// Data-column role, for example DATA or CORRECTED_DATA.
+    pub data_column: String,
+    /// Inner column/decode elapsed time in nanoseconds.
+    pub elapsed_ns: u64,
+    /// Inner modeled physical read rate in decimal MB/s.
+    pub mb_per_s: f64,
+}
+
+/// Structured product-write diagnostic payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProductWriteDiagnostic {
+    /// Product or artifact family written.
+    pub artifact_kind: String,
+    /// Slab id when the write belongs to a spectral slab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slab_id: Option<usize>,
+    /// Inclusive output-plane start.
+    pub plane_start: usize,
+    /// Exclusive output-plane end.
+    pub plane_end: usize,
+    /// Number of output planes written.
+    pub planes: usize,
+    /// Estimated or measured written bytes.
+    pub bytes_written: u64,
+    /// Elapsed write wall time in nanoseconds.
+    pub elapsed_ns: u64,
+    /// Write rate in decimal MB/s.
+    pub mb_per_s: f64,
+}
+
+/// Structured backend-selection diagnostic payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerBackendDiagnostic {
+    /// Stage that selected or rejected this backend.
+    pub stage_kind: ImagerObservedStageKind,
+    /// Requested acceleration policy or backend selector.
+    pub requested_backend: String,
+    /// Backend actually selected.
+    pub selected_backend: String,
+    /// Whether GPU execution was eligible for this stage.
+    pub gpu_eligible: bool,
+    /// Whether GPU execution was actually selected.
+    pub gpu_selected: bool,
+    /// Whether a GPU device was available.
+    pub gpu_device_available: bool,
+    /// GPU device name, when the backend exposes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_device_name: Option<String>,
+    /// Rejection or fallback reasons for backends not selected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejection_reasons: Vec<String>,
+    /// CPU fallback reason, when different from the rejection list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_fallback_reason: Option<String>,
+    /// Host-side staging bytes, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_bytes: Option<u64>,
+    /// Device-resident bytes, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_bytes: Option<u64>,
+    /// GPU command-buffer elapsed time when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_buffer_ns: Option<u64>,
+    /// GPU kernel elapsed time when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_ns: Option<u64>,
+}
+
+/// Structured per-stage diagnostic summary payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerStageDiagnosticSummary {
+    /// Stage kind being summarized.
+    pub stage_kind: ImagerObservedStageKind,
+    /// Short stage label.
+    pub label: String,
+    /// Slab id when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slab_id: Option<usize>,
+    /// Inclusive output-plane start when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_start: Option<usize>,
+    /// Exclusive output-plane end when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_end: Option<usize>,
+    /// Backend label used by the stage.
+    pub backend: String,
+    /// Worker count attributed to the stage.
+    pub worker_count: usize,
+    /// Elapsed stage wall time in nanoseconds.
+    pub elapsed_ns: u64,
+    /// Exclusive stage time when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusive_elapsed_ns: Option<u64>,
+    /// Rows touched by the stage, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<usize>,
+    /// Planes touched by the stage, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planes: Option<usize>,
+    /// Bytes read by the stage, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_read: Option<u64>,
+    /// Bytes written by the stage, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_written: Option<u64>,
+    /// Throughput rate in decimal MB/s, when meaningful.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mb_per_s: Option<f64>,
+}
+
+/// Final structured diagnostic run summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerRunDiagnosticSummary {
+    /// Total wall time in milliseconds.
+    pub total_wall_ms: u64,
+    /// Stage totals keyed by stage label.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_totals_ms: BTreeMap<String, u64>,
+    /// Total modeled source-read bytes.
+    pub source_read_bytes: u64,
+    /// Aggregate modeled source-read MB/s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_read_mb_per_s: Option<f64>,
+    /// Total product-write bytes.
+    pub product_write_bytes: u64,
+    /// Aggregate product-write MB/s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_write_mb_per_s: Option<f64>,
+    /// Resource high-water bytes keyed by resource id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource_high_water_bytes: BTreeMap<String, usize>,
+    /// Dominant stall/backpressure reasons observed by the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_stall_reasons: Vec<String>,
+}
+
+/// Additional diagnostic payloads emitted only when requested.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerProgressDiagnostics {
+    /// Recent real source-read diagnostics.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_reads: Vec<ImagerSourceReadDiagnostic>,
+    /// Recent real product-write diagnostics.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub product_writes: Vec<ImagerProductWriteDiagnostic>,
+    /// Backend selection or rejection decisions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backend_decisions: Vec<ImagerBackendDiagnostic>,
+    /// Recent stage summaries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_summaries: Vec<ImagerStageDiagnosticSummary>,
+    /// Final run summary, present on completion events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_summary: Option<ImagerRunDiagnosticSummary>,
+}
+
 /// Authoritative execution-state snapshot emitted with imager progress events.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerObservabilitySnapshot {
     /// Monotonic observability schema version.
     pub schema_version: u32,
@@ -730,6 +1042,9 @@ pub struct ImagerObservabilitySnapshot {
     /// Queue and producer/consumer rows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queues: Vec<ImagerObservedQueueSnapshot>,
+    /// Diagnostic payloads emitted only when requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<ImagerProgressDiagnostics>,
 }
 
 /// One coarse progress event emitted while an imager task is running.
@@ -2517,6 +2832,8 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 
 #[cfg(test)]
 mod tests {
+    use super::{ImagerObservedMemoryConfidence, ImagerObservedMemoryKind};
+
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs;
@@ -2533,11 +2850,12 @@ mod tests {
     use tempfile::{NamedTempFile, tempdir};
 
     use super::{
-        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
-        ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
-        ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-        ImagerHogbomIterationMode, ImagerObservedResourceId, ImagerObservedResourceState,
-        ImagerObservedStageKind, ImagerPlaneSelection, ImagerProgressEvent, ImagerProgressRuntime,
+        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_TASK_PROTOCOL_NAME,
+        IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind, ImagerAutoMultiThresholdConfig,
+        ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue,
+        ImagerCubeInterpolation, ImagerDeconvolver, ImagerHogbomIterationMode,
+        ImagerObservedResourceId, ImagerObservedResourceState, ImagerObservedStageKind,
+        ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime,
         ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
         ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
         ImagerWTermMode, ImagerWeighting,
@@ -3410,7 +3728,8 @@ mod tests {
               "enabled": true,
               "telemetry_jsonl_path": "/tmp/imager-progress.jsonl",
               "max_uv_points": 128,
-              "min_interval_ms": 400
+              "min_interval_ms": 400,
+              "detail": "diagnostic"
             }
           }
         }"#;
@@ -3425,6 +3744,7 @@ mod tests {
         );
         assert_eq!(progress.max_uv_points, 128);
         assert_eq!(progress.min_interval_ms, 400);
+        assert_eq!(progress.detail, ImagerProgressDetail::Diagnostic);
 
         let payload_without_progress = r#"{
           "kind": "run",
@@ -3439,6 +3759,24 @@ mod tests {
             serde_json::from_str(payload_without_progress).expect("parse request");
         let ImagerTaskRequest::Run(request) = request;
         assert!(request.progress.is_none());
+
+        let payload_without_detail = r#"{
+          "kind": "run",
+          "request": {
+            "measurement_set": "/data/probed.ms",
+            "image_name": "/data/casa-rs-runs/probed-dirty",
+            "image_size": 256,
+            "cell_arcsec": 0.25,
+            "progress": {"enabled": true}
+          }
+        }"#;
+        let request: ImagerTaskRequest =
+            serde_json::from_str(payload_without_detail).expect("parse request");
+        let ImagerTaskRequest::Run(request) = request;
+        assert_eq!(
+            request.progress.expect("progress").detail,
+            ImagerProgressDetail::Basic
+        );
     }
 
     #[test]
@@ -3486,11 +3824,22 @@ mod tests {
               "product_scratch_bytes": 10945390173,
               "active_planes": 47,
               "row_block_rows": 128704,
-              "memory_target_source": "system_half"
+              "memory_target_source": "system_half",
+              "categories": [
+                {
+                  "kind": "grid-fft-scratch",
+                  "resource_id": "visibility-grid",
+                  "planned_bytes": 7340032,
+                  "tracked_live_bytes": 6291456,
+                  "high_water_bytes": 8388608,
+                  "confidence": "measured",
+                  "note": "sampled FFT scratch"
+                }
+              ]
             }
           },
           "observability": {
-            "schema_version": 1,
+            "schema_version": 2,
             "resources": [
               {
                 "id": "source-stream",
@@ -3525,7 +3874,85 @@ mod tests {
               }
             ],
             "memory_target_bytes": 17179869184,
-            "memory_target_source": "system_half"
+            "memory_target_source": "system_half",
+            "diagnostics": {
+              "source_reads": [
+                {
+                  "pass_kind": "initial_dirty",
+                  "slab_id": 2,
+                  "plane_start": 32,
+                  "plane_end": 64,
+                  "rows": 292000,
+                  "row_block_rows": 292000,
+                  "channel_start": 8,
+                  "channel_end": 16,
+                  "source_channels": 8,
+                  "logical_output_bytes": 1073741824,
+                  "modeled_physical_read_bytes": 2147483648,
+                  "wall_elapsed_ns": 4000000000,
+                  "logical_mb_per_s": 268.435456,
+                  "modeled_physical_wall_mb_per_s": 536.870912,
+                  "bytes_requested": 2147483648,
+                  "bytes_read": 2147483648,
+                  "column_ids": ["DATA", "FLAG", "WEIGHT", "UVW"],
+                  "data_column": "DATA",
+                  "elapsed_ns": 2000000000,
+                  "mb_per_s": 1073.741824
+                }
+              ],
+              "product_writes": [
+                {
+                  "artifact_kind": "mosaic_cube_plane",
+                  "slab_id": 2,
+                  "plane_start": 32,
+                  "plane_end": 33,
+                  "planes": 1,
+                  "bytes_written": 16777216,
+                  "elapsed_ns": 100000000,
+                  "mb_per_s": 167.77216
+                }
+              ],
+              "backend_decisions": [
+                {
+                  "stage_kind": "gridding",
+                  "requested_backend": "auto",
+                  "selected_backend": "wave3_metal_grouped",
+                  "gpu_eligible": true,
+                  "gpu_selected": true,
+                  "gpu_device_available": true,
+                  "gpu_device_name": "Apple GPU",
+                  "host_bytes": 1024,
+                  "device_bytes": 2048
+                }
+              ],
+              "stage_summaries": [
+                {
+                  "stage_kind": "source_stream",
+                  "label": "source_read_for/initial_dirty",
+                  "slab_id": 2,
+                  "plane_start": 32,
+                  "plane_end": 64,
+                  "backend": "source_stream",
+                  "worker_count": 1,
+                  "elapsed_ns": 2000000000,
+                  "exclusive_elapsed_ns": 2000000000,
+                  "rows": 292000,
+                  "planes": 32,
+                  "bytes_read": 2147483648,
+                  "mb_per_s": 1073.741824
+                }
+              ],
+              "run_summary": {
+                "total_wall_ms": 9000,
+                "stage_totals_ms": {"source_read_for/initial_dirty": 2000, "product_write/mosaic_cube_plane": 100},
+                "source_read_bytes": 2147483648,
+                "source_read_mb_per_s": 1073.741824,
+                "product_write_bytes": 16777216,
+                "product_write_mb_per_s": 167.77216,
+                "resource_high_water_bytes": {"source-stream": 3804104045},
+                "top_stall_reasons": ["gpu_eligible_not_selected:0"]
+              }
+            }
           }
         }"#;
         let event: ImagerProgressEvent =
@@ -3562,8 +3989,30 @@ mod tests {
                 .active_planes,
             47
         );
+        let category = &event
+            .runtime
+            .as_ref()
+            .unwrap()
+            .memory
+            .as_ref()
+            .unwrap()
+            .categories[0];
+        assert_eq!(category.kind, ImagerObservedMemoryKind::GridFftScratch);
+        assert_eq!(
+            category.resource_id,
+            Some(ImagerObservedResourceId::VisibilityGrid)
+        );
+        assert_eq!(category.tracked_live_bytes, Some(6_291_456));
+        assert_eq!(category.high_water_bytes, Some(8_388_608));
+        assert_eq!(
+            category.confidence,
+            Some(ImagerObservedMemoryConfidence::Measured)
+        );
         let observability = event.observability.as_ref().unwrap();
-        assert_eq!(observability.schema_version, 1);
+        assert_eq!(
+            observability.schema_version,
+            IMAGER_OBSERVABILITY_SCHEMA_VERSION
+        );
         assert_eq!(observability.resources.len(), 2);
         assert_eq!(
             observability.resources[0].id,
@@ -3587,6 +4036,49 @@ mod tests {
             ImagerObservedStageKind::SourceStream
         );
         assert_eq!(observability.active_spans[0].resource_ids.len(), 2);
+        let diagnostics = observability.diagnostics.as_ref().expect("diagnostics");
+        assert_eq!(diagnostics.source_reads[0].rows, 292_000);
+        assert_eq!(diagnostics.source_reads[0].mb_per_s, 1073.741824);
+        assert_eq!(
+            diagnostics.source_reads[0].wall_elapsed_ns,
+            Some(4_000_000_000)
+        );
+        assert_eq!(
+            diagnostics.source_reads[0].logical_mb_per_s,
+            Some(268.435456)
+        );
+        assert_eq!(
+            diagnostics.source_reads[0].modeled_physical_wall_mb_per_s,
+            Some(536.870912)
+        );
+        assert_eq!(
+            diagnostics.source_reads[0].column_ids,
+            vec![
+                "DATA".to_string(),
+                "FLAG".to_string(),
+                "WEIGHT".to_string(),
+                "UVW".to_string()
+            ]
+        );
+        assert_eq!(
+            diagnostics.backend_decisions[0].selected_backend,
+            "wave3_metal_grouped"
+        );
+        assert!(diagnostics.backend_decisions[0].gpu_selected);
+        assert_eq!(
+            diagnostics.stage_summaries[0].stage_kind,
+            ImagerObservedStageKind::SourceStream
+        );
+        assert_eq!(diagnostics.product_writes[0].bytes_written, 16_777_216);
+        assert_eq!(
+            diagnostics
+                .run_summary
+                .as_ref()
+                .unwrap()
+                .stage_totals_ms
+                .get("source_read_for/initial_dirty"),
+            Some(&2000)
+        );
 
         let minimal: ImagerProgressEvent = serde_json::from_str(
             r#"{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"start"}"#,

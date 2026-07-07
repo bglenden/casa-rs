@@ -16,7 +16,7 @@ use casa_imaging::{
     VisibilityFloatSamplesRef, VisibilitySourcePartition, VisibilitySourcePartitionId,
     VisibilitySourceShape, WeightingRoutePlan,
 };
-use casa_tables::{RequiredScalarColumnValues, SelectedArray2DCells, Table};
+use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells, Table};
 use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType, ScalarValue};
 use ndarray::Ix1;
 use serde::Serialize;
@@ -952,7 +952,6 @@ impl MeasurementSet {
         if request.include_flags {
             buffer.flags = None;
         }
-        let weights_existing = buffer.weights.take();
         if request.include_weight_spectrum {
             buffer.weight_spectrum = None;
         }
@@ -971,6 +970,7 @@ impl MeasurementSet {
             scan_numbers: buffer.scan_numbers.take(),
             state_ids: buffer.state_ids.take(),
         };
+        let weights_existing = buffer.weights.take();
         let read_weight_spectrum = request.include_weight_spectrum
             && main_table_has_column(self.main_table(), "WEIGHT_SPECTRUM");
         if request.include_weight_spectrum && !read_weight_spectrum {
@@ -1420,19 +1420,21 @@ fn channel_block_report(
     ms: &MeasurementSet,
     column_name: &str,
     primitive: PrimitiveType,
+    channel_start: usize,
     channel_count: usize,
     corr_count: usize,
     row_count: usize,
 ) -> MsResult<VisibilityBufferColumnReport> {
-    column_report(
-        ms.main_table(),
+    column_report(ColumnReportInput {
+        table: ms.main_table(),
         column_name,
         primitive,
-        true,
-        channel_count,
-        corr_count,
+        channelized: true,
+        channel_start,
+        requested_channels: channel_count,
+        elements_per_channel_or_row: corr_count,
         row_count,
-    )
+    })
 }
 
 fn read_complex_channel_column(
@@ -1469,6 +1471,7 @@ fn read_complex_channel_column(
         ms,
         column_name,
         primitive,
+        channel_start,
         channel_count,
         corr_count,
         row_indices.len(),
@@ -1495,6 +1498,7 @@ fn read_bool_channel_column(
         ms,
         column_name,
         primitive,
+        channel_start,
         channel_count,
         corr_count,
         row_indices.len(),
@@ -1532,6 +1536,7 @@ fn read_float_channel_column(
         ms,
         column_name,
         primitive,
+        channel_start,
         channel_count,
         corr_count,
         row_indices.len(),
@@ -1545,6 +1550,41 @@ fn read_float_row_column(
     row_indices: &[usize],
     existing: Option<VisibilityFloatSamples>,
 ) -> MsResult<(VisibilityFloatSamples, usize, VisibilityBufferColumnReport)> {
+    if let Ok(cells) = ms
+        .main_table()
+        .column_accessor(column_name)?
+        .array_cells_1d_typed_uncached(row_indices)
+    {
+        let primitive = cells.primitive_type();
+        let corr_count = cells.axis0_count();
+        let samples = match cells {
+            SelectedArray1DCells::Float32(values) => VisibilityFloatSamples::Float32(
+                reuse_or_replace_f32(existing, values.into_values()),
+            ),
+            SelectedArray1DCells::Float64(values) => VisibilityFloatSamples::Float64(
+                reuse_or_replace_f64(existing, values.into_values()),
+            ),
+            other => {
+                return Err(column_type_error(
+                    column_name,
+                    "Float32 or Float64 array",
+                    other.primitive_type(),
+                ));
+            }
+        };
+        let report = column_report(ColumnReportInput {
+            table: ms.main_table(),
+            column_name,
+            primitive,
+            channelized: false,
+            channel_start: 0,
+            requested_channels: 1,
+            elements_per_channel_or_row: corr_count,
+            row_count: row_indices.len(),
+        })?;
+        return Ok((samples, corr_count, report));
+    }
+
     let values = ms
         .main_table()
         .column_accessor(column_name)?
@@ -1619,16 +1659,43 @@ fn read_float_row_column(
             ));
         }
     };
-    let report = column_report(
-        ms.main_table(),
+    let report = column_report(ColumnReportInput {
+        table: ms.main_table(),
         column_name,
         primitive,
-        false,
-        1,
-        corr_count,
-        row_indices.len(),
-    )?;
+        channelized: false,
+        channel_start: 0,
+        requested_channels: 1,
+        elements_per_channel_or_row: corr_count,
+        row_count: row_indices.len(),
+    })?;
     Ok((samples, corr_count, report))
+}
+
+fn reuse_or_replace_f32(
+    existing: Option<VisibilityFloatSamples>,
+    replacement: Vec<f32>,
+) -> Vec<f32> {
+    if let Some(VisibilityFloatSamples::Float32(mut values)) = existing {
+        values.clear();
+        values.extend_from_slice(&replacement);
+        values
+    } else {
+        replacement
+    }
+}
+
+fn reuse_or_replace_f64(
+    existing: Option<VisibilityFloatSamples>,
+    replacement: Vec<f64>,
+) -> Vec<f64> {
+    if let Some(VisibilityFloatSamples::Float64(mut values)) = existing {
+        values.clear();
+        values.extend_from_slice(&replacement);
+        values
+    } else {
+        replacement
+    }
 }
 
 fn read_uvw_column(
@@ -1636,6 +1703,41 @@ fn read_uvw_column(
     row_indices: &[usize],
     existing: Option<Vec<f64>>,
 ) -> MsResult<(Vec<f64>, VisibilityBufferColumnReport)> {
+    if let Ok(cells) = ms
+        .main_table()
+        .column_accessor("UVW")?
+        .array_cells_1d_typed_uncached(row_indices)
+    {
+        let primitive = cells.primitive_type();
+        if primitive != PrimitiveType::Float64 {
+            return Err(column_type_error("UVW", "Float64 array", primitive));
+        }
+        let SelectedArray1DCells::Float64(values) = cells else {
+            return Err(column_type_error("UVW", "Float64 array", primitive));
+        };
+        if values.axis0_count() != 3 {
+            return Err(invalid_input(format!(
+                "UVW typed selected 1-D rows have axis length {}, expected 3",
+                values.axis0_count()
+            )));
+        }
+        let replacement = values.into_values();
+        let mut out = existing.unwrap_or_else(|| Vec::with_capacity(replacement.len()));
+        out.clear();
+        out.extend_from_slice(&replacement);
+        let report = column_report(ColumnReportInput {
+            table: ms.main_table(),
+            column_name: "UVW",
+            primitive,
+            channelized: false,
+            channel_start: 0,
+            requested_channels: 1,
+            elements_per_channel_or_row: 3,
+            row_count: row_indices.len(),
+        })?;
+        return Ok((out, report));
+    }
+
     let values = ms
         .main_table()
         .column_accessor("UVW")?
@@ -1666,15 +1768,16 @@ fn read_uvw_column(
             out[row_slot * 3 + axis] = array[axis];
         }
     }
-    let report = column_report(
-        ms.main_table(),
-        "UVW",
+    let report = column_report(ColumnReportInput {
+        table: ms.main_table(),
+        column_name: "UVW",
         primitive,
-        false,
-        1,
-        3,
-        row_indices.len(),
-    )?;
+        channelized: false,
+        channel_start: 0,
+        requested_channels: 1,
+        elements_per_channel_or_row: 3,
+        row_count: row_indices.len(),
+    })?;
     Ok((out, report))
 }
 
@@ -1712,15 +1815,16 @@ fn read_i32_scalar_column(
             }
         }
     }
-    let report = column_report(
-        ms.main_table(),
+    let report = column_report(ColumnReportInput {
+        table: ms.main_table(),
         column_name,
         primitive,
-        false,
-        1,
-        1,
-        row_indices.len(),
-    )?;
+        channelized: false,
+        channel_start: 0,
+        requested_channels: 1,
+        elements_per_channel_or_row: 1,
+        row_count: row_indices.len(),
+    })?;
     Ok((out, report))
 }
 
@@ -1758,15 +1862,16 @@ fn read_f64_scalar_column(
             }
         }
     }
-    let report = column_report(
-        ms.main_table(),
+    let report = column_report(ColumnReportInput {
+        table: ms.main_table(),
         column_name,
         primitive,
-        false,
-        1,
-        1,
-        row_indices.len(),
-    )?;
+        channelized: false,
+        channel_start: 0,
+        requested_channels: 1,
+        elements_per_channel_or_row: 1,
+        row_count: row_indices.len(),
+    })?;
     Ok((out, report))
 }
 
@@ -1804,27 +1909,41 @@ fn read_bool_scalar_column(
             }
         }
     }
-    let report = column_report(
-        ms.main_table(),
+    let report = column_report(ColumnReportInput {
+        table: ms.main_table(),
         column_name,
         primitive,
-        false,
-        1,
-        1,
-        row_indices.len(),
-    )?;
+        channelized: false,
+        channel_start: 0,
+        requested_channels: 1,
+        elements_per_channel_or_row: 1,
+        row_count: row_indices.len(),
+    })?;
     Ok((out, report))
 }
 
-fn column_report(
-    table: &Table,
-    column_name: &str,
+struct ColumnReportInput<'a> {
+    table: &'a Table,
+    column_name: &'a str,
     primitive: PrimitiveType,
     channelized: bool,
+    channel_start: usize,
     requested_channels: usize,
     elements_per_channel_or_row: usize,
     row_count: usize,
-) -> MsResult<VisibilityBufferColumnReport> {
+}
+
+fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColumnReport> {
+    let ColumnReportInput {
+        table,
+        column_name,
+        primitive,
+        channelized,
+        channel_start,
+        requested_channels,
+        elements_per_channel_or_row,
+        row_count,
+    } = input;
     let element_bytes = primitive.fixed_width_bytes().ok_or_else(|| {
         MsError::InvalidInput(format!(
             "{column_name} has variable-width type {primitive:?}"
@@ -1841,7 +1960,13 @@ fn column_report(
         .saturating_mul(elements_per_channel_or_row);
     let logical_output_bytes = logical_elements.saturating_mul(element_bytes) as u64;
     let physical_channels = match granularity {
-        VisibilityChannelReadGranularity::RequestedRange => requested_channels,
+        VisibilityChannelReadGranularity::RequestedRange => modeled_tile_aligned_channel_count(
+            table,
+            column_name,
+            channel_start,
+            requested_channels,
+        )
+        .unwrap_or(requested_channels),
         VisibilityChannelReadGranularity::FullCell if channelized => {
             modeled_full_cell_channel_count(table, column_name).unwrap_or(requested_channels)
         }
@@ -1914,6 +2039,27 @@ fn data_manager_types_for_column(table: &Table, column_name: &str) -> Vec<String
 
 fn modeled_full_cell_channel_count(_table: &Table, _column_name: &str) -> Option<usize> {
     None
+}
+
+fn modeled_tile_aligned_channel_count(
+    table: &Table,
+    column_name: &str,
+    channel_start: usize,
+    requested_channels: usize,
+) -> Option<usize> {
+    let tile_width = table
+        .array_column_2d_channel_tile_width(column_name)
+        .ok()
+        .flatten()
+        .filter(|width| *width > 0)?;
+    let requested_end = channel_start.checked_add(requested_channels)?;
+    let physical_start = (channel_start / tile_width) * tile_width;
+    let physical_end = requested_end.div_ceil(tile_width) * tile_width;
+    Some(
+        physical_end
+            .saturating_sub(physical_start)
+            .max(requested_channels),
+    )
 }
 
 fn first_1d_count(values: &[Option<ArrayValue>], column_name: &str) -> MsResult<usize> {

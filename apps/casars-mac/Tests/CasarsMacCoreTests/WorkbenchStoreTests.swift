@@ -597,7 +597,8 @@ final class WorkbenchStoreTests: XCTestCase {
             "ms", "imagename", "imsize", "cell_arcsec", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "gridder", "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
+            "gridder", "standard_mfs_acceleration", "perchanweightdensity",
+            "restoringbeam", "niter", "nmajor", "gain",
             "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
             "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
@@ -656,6 +657,43 @@ final class WorkbenchStoreTests: XCTestCase {
             try ProcessGenericTaskClient.arguments(for: request),
             ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
         )
+    }
+
+    func testGenericTaskArgumentsEvaluateConditionalToggleDefaults() throws {
+        let schema = try makeImagerTaskUISchema()
+        let task = makeImagerTaskCatalogEntry()
+        let cubeRequest = GenericTaskRequest(
+            runID: "run-cube",
+            task: task,
+            schema: schema,
+            values: [
+                "ms": "/data/input.ms",
+                "imagename": "/tmp/out",
+                "imsize": "512",
+                "cell_arcsec": "1.0",
+                "specmode": "cube",
+                "deconvolver": "clark",
+                "weighting": "uniform",
+                "gridder": "mosaic"
+            ],
+            toggles: [:]
+        )
+        let cubeArguments = try ProcessGenericTaskClient.arguments(for: cubeRequest)
+        XCTAssertTrue(cubeArguments.contains("--perchanweightdensity"))
+        XCTAssertFalse(cubeArguments.contains("--no-perchanweightdensity"))
+
+        var cubedataValues = cubeRequest.values
+        cubedataValues["specmode"] = "cubedata"
+        let cubedataRequest = GenericTaskRequest(
+            runID: "run-cubedata",
+            task: task,
+            schema: schema,
+            values: cubedataValues,
+            toggles: [:]
+        )
+        let cubedataArguments = try ProcessGenericTaskClient.arguments(for: cubedataRequest)
+        XCTAssertTrue(cubedataArguments.contains("--no-perchanweightdensity"))
+        XCTAssertFalse(cubedataArguments.contains("--perchanweightdensity"))
     }
 
     func testGenericTaskArgumentsInvokeHiddenDefaultOptions() throws {
@@ -1661,6 +1699,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 "weighting": "briggsbwtaper",
                 "robust": "0.5",
                 "gridder": "wproject",
+                "standard_mfs_acceleration": "metal",
                 "restoringbeam": "common",
                 "niter": "1000",
                 "nmajor": "4",
@@ -1699,10 +1738,11 @@ final class WorkbenchStoreTests: XCTestCase {
             "--noisethreshold", "--sidelobethreshold", "--lownoisethreshold",
             "--minbeamfrac", "--negativethreshold", "--scales", "--smallscalebias",
             "--gridder", "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
-            "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
+            "--standard-mfs-acceleration", "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
         ] {
             XCTAssertTrue(arguments.contains(flag), "missing \(flag)")
         }
+        XCTAssertTrue(arguments.contains("metal"))
     }
 
     func testGenericMutatingTaskRequiresConfirmationBeforeStart() throws {
@@ -3000,27 +3040,8 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(progress.runtime.memory?.rowBlockRows, 128704)
         XCTAssertEqual(progress.runtime.memory?.memoryTargetSource, "system_half")
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["source-stream"])
-        XCTAssertEqual(progress.resourceActivities.count, 5)
-        let sourceResource = try XCTUnwrap(progress.resourceActivities.first)
-        XCTAssertEqual(sourceResource.id, "source-stream")
-        XCTAssertEqual(sourceResource.detail, "128.7k rows / 3.8 GB planned")
-        XCTAssertEqual(sourceResource.state, .busy)
-        XCTAssertEqual(sourceResource.sectionStartFraction, 0.2, accuracy: 0.001)
-        XCTAssertEqual(sourceResource.sectionEndFraction, 0.4, accuracy: 0.001)
-        XCTAssertEqual(sourceResource.activeThreads, 2)
-        let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
-        XCTAssertEqual(gridResource.detail, "backend declared")
-        XCTAssertEqual(gridResource.state, .idle)
-        XCTAssertEqual(gridResource.activeThreads, 0)
-        let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
-        XCTAssertEqual(planeResource.detail, "47 planes")
-        XCTAssertEqual(planeResource.state, .idle)
-        XCTAssertEqual(planeResource.activeThreads, 0)
-        let deconvolverResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "deconvolver" })
-        XCTAssertEqual(deconvolverResource.detail, "backend declared")
-        let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
-        XCTAssertEqual(productResource.detail, "10.9 GB planned")
-        XCTAssertTrue(progress.sourceStreamIsActive)
+        XCTAssertEqual(progress.resourceActivities, [])
+        XCTAssertFalse(progress.sourceStreamIsActive)
         guard case .diagnostic(let diagnostic) = records[1] else {
             return XCTFail("expected diagnostic record")
         }
@@ -3029,7 +3050,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
     func testImagerProgressUsesObservabilityResourcesWhenPresent() throws {
         var parser = ImagerProgressStderrParser()
-        let progressJSON = #"{"schema_version":1,"sequence":5,"elapsed_ms":1250,"phase":"residual_refresh","summary":"refreshing residual","ms_read":{"total_rows":1000,"total_channels":32,"row_start":100,"row_end":300,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"metal","active_resources":["visibility-grid","plane-state"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":12884901888,"source_stream_buffer_bytes":3221225472,"product_scratch_bytes":5368709120,"active_planes":4,"row_block_rows":292000,"memory_target_source":"test"}},"observability":{"schema_version":1,"resources":[{"id":"source-stream","label":"Source Stream","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false,"memory":{"planned_bytes":3221225472,"row_block_rows":292000}},{"id":"visibility-grid","label":"Grid/FFT","state":"active","lease_count":1,"active_threads":4,"gpu_active":true,"owner":"residual_refresh"},{"id":"plane-state","label":"Plane State","state":"active","lease_count":1,"active_threads":4,"gpu_active":true,"owner":"residual_refresh","memory":{"active_planes":4}},{"id":"deconvolver","label":"Deconvolver","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"product-scratch","label":"Products","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false,"memory":{"planned_bytes":5368709120}}],"active_spans":[{"id":"residual_refresh","name":"refreshing residual","stage_kind":"residual_refresh","state":"running","worker_id":"cpu-compute","resource_ids":["visibility-grid","plane-state"],"counters":{"major_cycle":1,"minor_iterations":25},"elapsed_ms":1250}],"recent_spans":[{"id":"source_stream-1","name":"source stream","stage_kind":"source_stream","state":"complete","resource_ids":["source-stream"],"elapsed_ms":900}],"memory_target_bytes":17179869184,"memory_target_source":"test","memory_ledger":{"entries":[{"kind":"source-buffer","label":"Source stream","resource_id":"source-stream","planned_bytes":3221225472,"tracked_live_bytes":3221225472,"high_water_bytes":4294967296,"row_block_rows":292000,"confidence":"planned"},{"kind":"grid-fft-scratch","label":"Grid / FFT scratch","resource_id":"visibility-grid","confidence":"unknown","note":"not yet attributed"},{"kind":"plane-state","label":"Plane state","resource_id":"plane-state","active_planes":4,"confidence":"unknown"},{"kind":"deconvolver-scratch","label":"Deconvolver scratch","resource_id":"deconvolver","confidence":"unknown"},{"kind":"products","label":"Products","resource_id":"product-scratch","planned_bytes":5368709120,"tracked_live_bytes":5368709120,"high_water_bytes":6442450944,"confidence":"planned"},{"kind":"process-baseline","label":"Process RSS","resource_id":"process-runtime","process_rss_bytes":10737418240,"process_peak_rss_bytes":12884901888,"confidence":"measured"},{"kind":"untracked-resident","label":"Untracked resident","resource_id":"process-runtime","process_rss_bytes":10737418240,"untracked_bytes":2147483648,"confidence":"estimated"}],"planned_total_bytes":8589934592,"tracked_live_total_bytes":8589934592,"tracked_high_water_total_bytes":10737418240,"process_rss_bytes":10737418240,"process_peak_rss_bytes":12884901888,"untracked_resident_bytes":2147483648},"workers":[{"id":"cpu-compute","label":"CPU compute","state":"running-cpu","resource_id":"visibility-grid","span_id":"residual_refresh","active_count":4,"capacity":8},{"id":"gpu-submit","label":"GPU submit","state":"gpu-submit","resource_id":"visibility-grid","span_id":"residual_refresh","active_count":1,"capacity":1},{"id":"idle","label":"Idle","state":"idle","active_count":4,"capacity":8}],"queues":[{"id":"source-row-block","label":"Source row block","resource_id":"source-stream","len":0,"capacity":1,"bytes":3221225472,"producers_active":false,"consumers_active":true,"blocked_count":0,"confidence":"estimated"},{"id":"worker-dispatch","label":"Worker dispatch","resource_id":"worker-queue","capacity":8,"producers_active":true,"consumers_active":true,"blocked_count":0,"confidence":"unknown"}]}}"#
+        let progressJSON = #"{"schema_version":1,"sequence":5,"elapsed_ms":1250,"phase":"residual_refresh","summary":"refreshing residual","ms_read":{"total_rows":1000,"total_channels":32,"row_start":100,"row_end":300,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"metal","active_resources":["visibility-grid","plane-state"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":12884901888,"source_stream_buffer_bytes":3221225472,"product_scratch_bytes":5368709120,"active_planes":4,"row_block_rows":292000,"memory_target_source":"test"}},"observability":{"schema_version":2,"resources":[{"id":"source-stream","label":"Source Stream","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false,"memory":{"planned_bytes":3221225472,"row_block_rows":292000}},{"id":"visibility-grid","label":"Grid/FFT","state":"active","lease_count":1,"active_threads":4,"gpu_active":true,"owner":"residual_refresh"},{"id":"plane-state","label":"Plane State","state":"active","lease_count":1,"active_threads":4,"gpu_active":true,"owner":"residual_refresh","memory":{"active_planes":4}},{"id":"deconvolver","label":"Deconvolver","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"product-scratch","label":"Products","state":"idle","lease_count":0,"active_threads":0,"gpu_active":false,"memory":{"planned_bytes":5368709120}}],"active_spans":[{"id":"residual_refresh","name":"refreshing residual","stage_kind":"residual_refresh","state":"running","parent_id":"run-1","worker_id":"cpu-compute","resource_ids":["visibility-grid","plane-state"],"expected_resource_ids":["visibility-grid","plane-state","deconvolver"],"extent":{"row_start":100,"row_end":300,"channel_start":8,"channel_end":16,"plane_start":4,"plane_end":8},"counters":{"major_cycle":1,"minor_iterations":25},"elapsed_ms":1250}],"recent_spans":[{"id":"source_stream-1","name":"source stream","stage_kind":"source_stream","state":"complete","resource_ids":["source-stream"],"extent":{"row_start":0,"row_end":100},"elapsed_ms":900}],"memory_target_bytes":17179869184,"memory_target_source":"test","memory_ledger":{"entries":[{"kind":"source-buffer","label":"Source stream","resource_id":"source-stream","planned_bytes":3221225472,"row_block_rows":292000,"confidence":"planned"},{"kind":"grid-fft-scratch","label":"Grid / FFT scratch","resource_id":"visibility-grid","confidence":"unknown","note":"not yet attributed"},{"kind":"plane-state","label":"Plane state","resource_id":"plane-state","active_planes":4,"confidence":"unknown"},{"kind":"deconvolver-scratch","label":"Deconvolver scratch","resource_id":"deconvolver","confidence":"unknown"},{"kind":"products","label":"Products","resource_id":"product-scratch","planned_bytes":5368709120,"confidence":"planned"},{"kind":"allocator-runtime","label":"Allocator runtime","resource_id":"process-runtime","confidence":"unknown","note":"allocator caches and runtime overhead are not yet separately sampled"},{"kind":"process-baseline","label":"Process RSS","resource_id":"process-runtime","process_rss_bytes":10737418240,"process_peak_rss_bytes":12884901888,"confidence":"measured"},{"kind":"untracked-resident","label":"Untracked resident","resource_id":"process-runtime","process_rss_bytes":10737418240,"untracked_bytes":10737418240,"confidence":"estimated"}],"planned_total_bytes":8589934592,"tracked_live_total_bytes":0,"tracked_high_water_total_bytes":0,"process_rss_bytes":10737418240,"process_peak_rss_bytes":12884901888,"untracked_resident_bytes":10737418240},"workers":[{"id":"cpu-compute-visibility-grid","label":"CPU Grid/FFT","state":"running-cpu","resource_id":"visibility-grid","span_id":"residual_refresh","active_count":4,"capacity":8},{"id":"cpu-compute-plane-state","label":"CPU Plane State","state":"running-cpu","resource_id":"plane-state","span_id":"residual_refresh","active_count":4,"capacity":8},{"id":"gpu-submit","label":"GPU submit","state":"gpu-submit","resource_id":"visibility-grid","span_id":"residual_refresh","active_count":1,"capacity":1},{"id":"idle","label":"Idle","state":"idle","active_count":4,"capacity":8}],"queues":[{"id":"source-row-block","label":"Source row block","state":"idle","resource_id":"source-stream","len":0,"capacity":1,"bytes":3221225472,"producers_active":false,"consumers_active":true,"blocked_count":0,"confidence":"estimated"},{"id":"worker-dispatch","label":"Worker dispatch","state":"active","resource_id":"worker-queue","capacity":8,"producers_active":true,"consumers_active":true,"blocked_count":0,"confidence":"unknown"},{"id":"cube-product-publisher","label":"Cube product publisher","state":"active","resource_id":"product-scratch","len":2,"capacity":3,"producers_active":true,"consumers_active":false,"blocked_count":1,"confidence":"measured"}]}}"#
 
         let records = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-obs", state: .running)
 
@@ -3037,64 +3058,123 @@ final class WorkbenchStoreTests: XCTestCase {
             return XCTFail("expected progress record")
         }
         let observability = try XCTUnwrap(progress.observability)
+        XCTAssertEqual(observability.schemaVersion, 2)
         XCTAssertEqual(observability.resources.count, 5)
+        XCTAssertEqual(observability.activeSpans.first?.stageKind, "residual_refresh")
+        XCTAssertEqual(observability.activeSpans.first?.parentID, "run-1")
         XCTAssertEqual(observability.activeSpans.first?.workerID, "cpu-compute")
         XCTAssertEqual(observability.activeSpans.first?.resourceIDs, ["visibility-grid", "plane-state"])
+        XCTAssertEqual(observability.activeSpans.first?.expectedResourceIDs, ["visibility-grid", "plane-state", "deconvolver"])
+        XCTAssertEqual(observability.activeSpans.first?.extent?.rowStart, 100)
+        XCTAssertEqual(observability.activeSpans.first?.extent?.rowEnd, 300)
+        XCTAssertEqual(observability.activeSpans.first?.extent?.channelStart, 8)
+        XCTAssertEqual(observability.activeSpans.first?.extent?.channelEnd, 16)
+        XCTAssertEqual(observability.activeSpans.first?.extent?.planeStart, 4)
+        XCTAssertEqual(observability.activeSpans.first?.extent?.planeEnd, 8)
         XCTAssertEqual(observability.activeSpans.first?.counters["major_cycle"], 1)
         XCTAssertEqual(observability.activeSpans.first?.counters["minor_iterations"], 25)
+        XCTAssertEqual(observability.recentSpans.first?.stageKind, "source_stream")
         XCTAssertEqual(observability.recentSpans.first?.state, "complete")
         XCTAssertEqual(observability.recentSpans.first?.resourceIDs, ["source-stream"])
         let ledger = try XCTUnwrap(observability.memoryLedger)
-        XCTAssertEqual(ledger.entries.count, 7)
-        XCTAssertEqual(ledger.trackedLiveTotalBytes, 8_589_934_592)
-        XCTAssertEqual(ledger.trackedHighWaterTotalBytes, 10_737_418_240)
-        XCTAssertEqual(ledger.entry(for: "source-stream")?.highWaterBytes, 4_294_967_296)
-        XCTAssertEqual(ledger.untrackedResidentBytes, 2_147_483_648)
+        XCTAssertEqual(ledger.entries.count, 8)
+        XCTAssertEqual(ledger.plannedTotalBytes, 8_589_934_592)
+        XCTAssertEqual(ledger.trackedLiveTotalBytes, 0)
+        XCTAssertEqual(ledger.trackedHighWaterTotalBytes, 0)
+        XCTAssertNil(ledger.entry(for: "source-stream")?.trackedLiveBytes)
+        XCTAssertNil(ledger.entry(for: "source-stream")?.highWaterBytes)
+        XCTAssertEqual(ledger.untrackedResidentBytes, 10_737_418_240)
         XCTAssertEqual(ledger.entry(for: "visibility-grid")?.confidence, "unknown")
-        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute" }?.state, "running-cpu")
-        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute" }?.spanID, "residual_refresh")
+        XCTAssertEqual(ledger.entries.first { $0.kind == "allocator-runtime" }?.confidence, "unknown")
+        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute-visibility-grid" }?.label, "CPU Grid/FFT")
+        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute-visibility-grid" }?.state, "running-cpu")
+        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute-visibility-grid" }?.spanID, "residual_refresh")
+        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute-plane-state" }?.label, "CPU Plane State")
+        XCTAssertEqual(observability.workers.first { $0.id == "cpu-compute-plane-state" }?.resourceID, "plane-state")
         XCTAssertEqual(observability.workers.first { $0.id == "gpu-submit" }?.activeCount, 1)
         XCTAssertEqual(observability.queues.first { $0.id == "source-row-block" }?.bytes, 3_221_225_472)
+        XCTAssertEqual(observability.queues.first { $0.id == "source-row-block" }?.state, "idle")
         XCTAssertEqual(observability.queues.first { $0.id == "worker-dispatch" }?.confidence, "unknown")
+        XCTAssertEqual(observability.queues.first { $0.id == "cube-product-publisher" }?.blockedCount, 1)
         let sourceResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "source-stream" })
-        XCTAssertEqual(sourceResource.detail, "292.0k rows / 3.2 GB planned")
+        XCTAssertEqual(sourceResource.detail, "292.0k rows / 3.2 GB planned / queue idle 0/1 p/C")
         XCTAssertEqual(sourceResource.state, .idle)
         XCTAssertFalse(progress.sourceStreamIsActive)
         let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
         XCTAssertEqual(gridResource.name, "Grid/FFT")
-        XCTAssertEqual(gridResource.detail, "residual_refresh")
-        XCTAssertEqual(gridResource.state, .busy)
+        XCTAssertEqual(gridResource.detail, "owner=residual_refresh / leases 1")
+        XCTAssertEqual(gridResource.state, .active)
         XCTAssertEqual(gridResource.activeThreads, 4)
         XCTAssertTrue(gridResource.gpuActive)
         let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
-        XCTAssertEqual(planeResource.detail, "4 planes")
+        XCTAssertEqual(planeResource.detail, "4 planes / owner=residual_refresh / leases 1")
         XCTAssertEqual(planeResource.sectionStartFraction, 0.25, accuracy: 0.001)
         XCTAssertEqual(planeResource.sectionEndFraction, 0.5, accuracy: 0.001)
         let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
-        XCTAssertEqual(productResource.detail, "5.4 GB planned")
+        XCTAssertEqual(productResource.detail, "5.4 GB planned / queue active 2/3 1 blocked P/c")
         XCTAssertEqual(productResource.byteFraction, Double(5_368_709_120) / Double(17_179_869_184), accuracy: 0.001)
 
         let executionState = try XCTUnwrap(progress.executionStateSummary)
         XCTAssertEqual(executionState.subtitle, "1 current / 1 recent")
         XCTAssertEqual(executionState.currentSpans.first?.elapsedLabel, "1.25 s")
-        XCTAssertEqual(executionState.currentSpans.first?.detail, "visibility-grid, plane-state / worker=cpu-compute / major_cycle=1, minor_iterations=25")
-        XCTAssertEqual(executionState.recentSpans.first?.detail, "source-stream")
+        XCTAssertEqual(executionState.currentSpans.first?.detail, "stage=residual_refresh / owns=visibility-grid, plane-state / expects=visibility-grid, plane-state, deconvolver / rows 100-300, channels 8-16, planes 4-8 / parent=run-1 / worker=cpu-compute / major_cycle=1, minor_iterations=25")
+        XCTAssertEqual(executionState.recentSpans.first?.detail, "stage=source_stream / owns=source-stream / rows 0-100")
         XCTAssertEqual(executionState.resourceStates.map(\.label), ["active", "idle"])
         XCTAssertEqual(executionState.resourceStates.map(\.value), ["2", "3"])
-        XCTAssertEqual(executionState.memory.first { $0.id == "memory-tracked" }?.value, "8.6 GB")
-        XCTAssertEqual(executionState.memory.first { $0.id == "memory-tracked" }?.detail, "8.6 GB planned / 10.7 GB peak")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-tracked" }?.value, "0 B")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-tracked" }?.detail, "8.6 GB planned")
         XCTAssertEqual(executionState.memory.first { $0.id == "memory-target" }?.value, "17.2 GB")
         XCTAssertEqual(executionState.memory.first { $0.id == "memory-rss" }?.detail, "12.9 GB peak")
-        XCTAssertEqual(executionState.memory.first { $0.id == "memory-untracked" }?.value, "2.1 GB")
-        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute" }?.value, "4/8")
-        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute" }?.detail, "running-cpu / visibility-grid / residual_refresh")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-allocator" }?.value, "unknown")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-allocator" }?.detail, "unknown")
+        XCTAssertEqual(executionState.memory.first { $0.id == "memory-untracked" }?.value, "10.7 GB")
+        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute-visibility-grid" }?.value, "4/8")
+        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute-visibility-grid" }?.detail, "running-cpu / visibility-grid / residual_refresh")
+        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute-plane-state" }?.value, "4/8")
+        XCTAssertEqual(executionState.workers.first { $0.id == "worker-cpu-compute-plane-state" }?.detail, "running-cpu / plane-state / residual_refresh")
         XCTAssertEqual(executionState.queues.first { $0.id == "queue-source-row-block" }?.value, "0/1 / 3.2 GB")
-        XCTAssertEqual(executionState.queues.first { $0.id == "queue-source-row-block" }?.detail, "source-stream / estimated / p/C")
+        XCTAssertEqual(executionState.queues.first { $0.id == "queue-source-row-block" }?.detail, "idle / source-stream / estimated / p/C")
+        XCTAssertEqual(executionState.queues.first { $0.id == "queue-cube-product-publisher" }?.value, "2/3 / 1 blocked")
+        XCTAssertEqual(executionState.queues.first { $0.id == "queue-cube-product-publisher" }?.detail, "active / product-scratch / measured / P/c")
+    }
+
+    func testImagerProgressKeepsLastReadChunkWhenComputeEventCarriesSlabExtent() throws {
+        var parser = ImagerProgressStderrParser()
+        let readJSON = #"{"schema_version":1,"sequence":3,"elapsed_ms":100,"phase":"reading_ms","summary":"reading rows","ms_read":{"total_rows":1000,"total_channels":32,"row_start":100,"row_end":200,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":false,"backend":"source stream"}}"#
+        let computeJSON = #"{"schema_version":1,"sequence":4,"elapsed_ms":200,"phase":"backend_execution","summary":"backend execution for slab","ms_read":{"total_rows":1000,"total_channels":32,"row_start":0,"row_end":1000,"channel_start":8,"channel_end":16},"output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"metal"}}"#
+
+        _ = parser.append(imagerProgressStderrPrefix + readJSON + "\n", runID: "imager-read-window", state: .running)
+        let records = parser.append(imagerProgressStderrPrefix + computeJSON + "\n", runID: "imager-read-window", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertEqual(progress.measurementSetWindow.activeRowStart, 100)
+        XCTAssertEqual(progress.measurementSetWindow.activeRowEnd, 200)
+        XCTAssertEqual(progress.measurementSetWindow.activeChannelStart, 8)
+        XCTAssertEqual(progress.measurementSetWindow.activeChannelEnd, 16)
+    }
+
+    func testImagerProgressPreservesFullCubeExtentAcrossPerPlaneEvents() throws {
+        var parser = ImagerProgressStderrParser()
+        let fullCubeJSON = #"{"schema_version":1,"sequence":1,"elapsed_ms":100,"phase":"reading_ms","summary":"full cube extent","output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":16,"active_plane_start":7,"active_plane_end":14},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":false,"backend":"source"}}"#
+        let planeJSON = #"{"schema_version":1,"sequence":2,"elapsed_ms":200,"phase":"forming weighted mosaic groups","summary":"single plane event","output_cube":{"x_pixels":128,"y_pixels":128,"z_planes":1,"active_plane_start":0,"active_plane_end":1},"runtime":{"active_threads":1,"total_threads":8,"gpu_active":true,"backend":"metal minor cycle"}}"#
+
+        _ = parser.append(imagerProgressStderrPrefix + fullCubeJSON + "\n", runID: "imager-cube", state: .running)
+        let records = parser.append(imagerProgressStderrPrefix + planeJSON + "\n", runID: "imager-cube", state: .running)
+
+        guard case .progress(let progress) = records.first else {
+            return XCTFail("expected progress record")
+        }
+        XCTAssertEqual(progress.outputCube.zPlanes, 16)
+        XCTAssertEqual(progress.outputCube.activePlaneStart, 7)
+        XCTAssertEqual(progress.outputCube.activePlaneEnd, 14)
+        XCTAssertEqual(progress.outputCube.activeRangeLabel, "Freq planes 7-14 / 16 (7 planes)")
     }
 
     func testImagerProgressPreservesObservedResourceStates() throws {
         var parser = ImagerProgressStderrParser()
-        let progressJSON = #"{"schema_version":1,"sequence":6,"elapsed_ms":2000,"phase":"deconvolving and writing products","summary":"phase text mentions work that should not drive state","runtime":{"active_threads":8,"total_threads":8,"gpu_active":true,"backend":"observed-only"},"observability":{"schema_version":1,"resources":[{"id":"source-stream","label":"Source Stream","state":"retained","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"visibility-grid","label":"Grid/FFT","state":"blocked","lease_count":1,"active_threads":0,"gpu_active":false},{"id":"plane-state","label":"Plane State","state":"unknown","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"deconvolver","label":"Deconvolver","state":"active","lease_count":1,"active_threads":6,"gpu_active":true},{"id":"product-scratch","label":"Products","state":"stale","lease_count":0,"active_threads":0,"gpu_active":false}]}}"#
+        let progressJSON = #"{"schema_version":1,"sequence":6,"elapsed_ms":2000,"phase":"deconvolving and writing products","summary":"phase text mentions work that should not drive state","runtime":{"active_threads":8,"total_threads":8,"gpu_active":true,"backend":"observed-only"},"observability":{"schema_version":2,"resources":[{"id":"source-stream","label":"Source Stream","state":"retained","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"visibility-grid","label":"Grid/FFT","state":"blocked","lease_count":1,"active_threads":0,"gpu_active":false},{"id":"plane-state","label":"Plane State","state":"unknown","lease_count":0,"active_threads":0,"gpu_active":false},{"id":"deconvolver","label":"Deconvolver","state":"active","lease_count":1,"active_threads":6,"gpu_active":true},{"id":"product-scratch","label":"Products","state":"stale","lease_count":0,"active_threads":0,"gpu_active":false}]}}"#
 
         let records = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-observed-states", state: .running)
 
@@ -3102,12 +3182,19 @@ final class WorkbenchStoreTests: XCTestCase {
             return XCTFail("expected progress record")
         }
         XCTAssertFalse(progress.runtime.activeResourceIDsAreAuthoritative)
+        XCTAssertEqual(progress.observability?.schemaVersion, 2)
         let statesByResource = Dictionary(uniqueKeysWithValues: progress.resourceActivities.map { ($0.id, $0.observedState) })
         XCTAssertEqual(statesByResource["source-stream"], "retained")
         XCTAssertEqual(statesByResource["visibility-grid"], "blocked")
         XCTAssertEqual(statesByResource["plane-state"], "unknown")
         XCTAssertEqual(statesByResource["deconvolver"], "active")
         XCTAssertEqual(statesByResource["product-scratch"], "stale")
+        let typedStatesByResource = Dictionary(uniqueKeysWithValues: progress.resourceActivities.map { ($0.id, $0.state) })
+        XCTAssertEqual(typedStatesByResource["source-stream"], .retained)
+        XCTAssertEqual(typedStatesByResource["visibility-grid"], .blocked)
+        XCTAssertEqual(typedStatesByResource["plane-state"], .unknown)
+        XCTAssertEqual(typedStatesByResource["deconvolver"], .active)
+        XCTAssertEqual(typedStatesByResource["product-scratch"], .stale)
         XCTAssertEqual(progress.resourceActivities.filter(\.isBusy).map(\.id), ["deconvolver"])
         XCTAssertEqual(progress.resourceActivities.first { $0.id == "deconvolver" }?.activeThreads, 6)
         XCTAssertTrue(progress.resourceActivities.first { $0.id == "deconvolver" }?.gpuActive ?? false)
@@ -3120,7 +3207,29 @@ final class WorkbenchStoreTests: XCTestCase {
         ])
     }
 
-    func testImagerProgressUsesExplicitRuntimeResourceOwnershipWhenNoSnapshotExists() throws {
+    func testImagerProgressDoesNotCarryForwardPreviousObservabilitySnapshot() throws {
+        var parser = ImagerProgressStderrParser()
+        let observedProgressJSON = #"{"schema_version":1,"sequence":7,"elapsed_ms":2000,"phase":"deconvolving","summary":"active observed resource","runtime":{"active_threads":6,"total_threads":8,"gpu_active":false,"backend":"observed"},"observability":{"schema_version":2,"resources":[{"id":"deconvolver","label":"Deconvolver","state":"active","lease_count":1,"active_threads":6,"gpu_active":false}]}}"#
+        let runtimeOnlyProgressJSON = #"{"schema_version":1,"sequence":8,"elapsed_ms":2100,"phase":"finished event without observability","summary":"no current observability","runtime":{"active_threads":0,"total_threads":8,"gpu_active":false,"backend":"runtime-only","active_resources":[]}}"#
+
+        let observedRecords = parser.append(imagerProgressStderrPrefix + observedProgressJSON + "\n", runID: "imager-no-carry", state: .running)
+        guard case .progress(let observedProgress) = observedRecords.first else {
+            return XCTFail("expected observed progress record")
+        }
+        XCTAssertEqual(observedProgress.resourceActivities.filter(\.isBusy).map(\.id), ["deconvolver"])
+        XCTAssertNotNil(observedProgress.observability)
+
+        let runtimeOnlyRecords = parser.append(imagerProgressStderrPrefix + runtimeOnlyProgressJSON + "\n", runID: "imager-no-carry", state: .running)
+        guard case .progress(let runtimeOnlyProgress) = runtimeOnlyRecords.first else {
+            return XCTFail("expected runtime-only progress record")
+        }
+        XCTAssertNil(runtimeOnlyProgress.observability)
+        XCTAssertEqual(runtimeOnlyProgress.resourceActivities, [])
+        XCTAssertNil(runtimeOnlyProgress.executionStateSummary)
+        XCTAssertFalse(runtimeOnlyProgress.sourceStreamIsActive)
+    }
+
+    func testImagerProgressIgnoresRuntimeResourceOwnershipWhenNoSnapshotExists() throws {
         var parser = ImagerProgressStderrParser()
         let progressJSON = #"{"schema_version":1,"sequence":3,"elapsed_ms":1500,"phase":"reading_ms","summary":"resource ownership","ms_read":{"total_rows":100,"total_channels":16,"row_start":20,"row_end":40,"channel_start":4,"channel_end":8},"output_cube":{"x_pixels":64,"y_pixels":64,"z_planes":16,"active_plane_start":4,"active_plane_end":8},"runtime":{"active_threads":4,"total_threads":8,"gpu_active":true,"backend":"explicit test","active_resources":["visibility-grid","plane-state","product-scratch"],"memory":{"memory_target_bytes":17179869184,"planned_active_bytes":17179863154,"source_stream_buffer_bytes":3804104045,"product_scratch_bytes":10945390173,"active_planes":4,"row_block_rows":128704,"memory_target_source":"system_half"}}}"#
 
@@ -3131,27 +3240,15 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["visibility-grid", "plane-state", "product-scratch"])
         XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
-        let sourceResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "source-stream" })
-        XCTAssertEqual(sourceResource.state, .idle)
-        let gridResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "visibility-grid" })
-        XCTAssertEqual(gridResource.state, .busy)
-        XCTAssertEqual(gridResource.activeThreads, 4)
-        XCTAssertTrue(gridResource.gpuActive)
-        let planeResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "plane-state" })
-        XCTAssertEqual(planeResource.state, .busy)
-        let deconvolverResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "deconvolver" })
-        XCTAssertEqual(deconvolverResource.state, .idle)
-        let productResource = try XCTUnwrap(progress.resourceActivities.first { $0.id == "product-scratch" })
-        XCTAssertEqual(productResource.state, .busy)
-        XCTAssertEqual(productResource.activeThreads, 4)
+        XCTAssertEqual(progress.resourceActivities, [])
+        XCTAssertFalse(progress.sourceStreamIsActive)
 
         let finishedRecords = parser.append(imagerProgressStderrPrefix + progressJSON + "\n", runID: "imager-8", state: .succeeded)
 
         guard case .progress(let finishedProgress) = finishedRecords.first else {
             return XCTFail("expected completed progress record")
         }
-        XCTAssertTrue(finishedProgress.resourceActivities.allSatisfy { $0.state == .idle })
-        XCTAssertTrue(finishedProgress.resourceActivities.allSatisfy { $0.activeThreads == 0 })
+        XCTAssertEqual(finishedProgress.resourceActivities, [])
         XCTAssertFalse(finishedProgress.sourceStreamIsActive)
     }
 
@@ -3166,8 +3263,7 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, [])
         XCTAssertEqual(progress.runtime.activeResourceIDsAreAuthoritative, true)
-        XCTAssertTrue(progress.resourceActivities.allSatisfy { $0.state == .idle })
-        XCTAssertTrue(progress.resourceActivities.allSatisfy { $0.activeThreads == 0 })
+        XCTAssertEqual(progress.resourceActivities, [])
         XCTAssertFalse(progress.sourceStreamIsActive)
     }
 
@@ -3195,20 +3291,11 @@ final class WorkbenchStoreTests: XCTestCase {
             return XCTFail("expected progress record")
         }
         XCTAssertEqual(progress.runtime.activeResourceIDs, ["source-stream", "visibility-grid", "plane-state"])
-        XCTAssertEqual(progress.resourceActivities.filter(\.isBusy).map(\.id), [
-            "source-stream",
-            "visibility-grid",
-            "plane-state"
-        ])
         XCTAssertEqual(progress.runtime.activeResourceThreadCounts["source-stream"], 1)
         XCTAssertEqual(progress.runtime.activeResourceThreadCounts["visibility-grid"], 4)
         XCTAssertEqual(progress.runtime.activeResourceThreadCounts["plane-state"], 4)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "source-stream" }?.activeThreads, 1)
-        XCTAssertTrue(progress.sourceStreamIsActive)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "visibility-grid" }?.activeThreads, 4)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "plane-state" }?.activeThreads, 4)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "product-scratch" }?.activeThreads, 0)
-        XCTAssertEqual(progress.resourceActivities.first { $0.id == "deconvolver" }?.state, .idle)
+        XCTAssertEqual(progress.resourceActivities, [])
+        XCTAssertFalse(progress.sourceStreamIsActive)
     }
 
     func testOpenImagerTaskDoesNotSeedMockProgressBeforeRun() throws {
@@ -3365,6 +3452,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["niter"], "2048")
         XCTAssertEqual(values["threshold_jy"], "0.0")
         XCTAssertEqual(toggles["dirty_only"], false)
+        XCTAssertEqual(toggles["perchanweightdensity"], true)
         XCTAssertEqual(toggles["write_pb"], true)
         XCTAssertEqual(toggles["pbcor"], true)
     }
@@ -4171,7 +4259,18 @@ final class WorkbenchStoreTests: XCTestCase {
         let helperScript = """
         #!/bin/sh
         set -eu
-        printf '%s\\n' '\(imagerProgressStderrPrefix){"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"started","work":{"completed_units":0,"total_units":1,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":1,"gpu_active":false,"backend":"test"}}' >&2
+        progress_file=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--progress-jsonl" ]; then
+            shift
+            progress_file="$1"
+          fi
+          shift || true
+        done
+        if [ -n "$progress_file" ]; then
+          mkdir -p "$(dirname "$progress_file")"
+          printf '%s\\n' '{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"started","work":{"completed_units":0,"total_units":1,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":1,"gpu_active":false,"backend":"test"}}' > "$progress_file"
+        fi
         cat "\(resultURL.path)"
         """
         try helperScript.write(to: helperURL, atomically: true, encoding: .utf8)
@@ -4268,6 +4367,7 @@ final class WorkbenchStoreTests: XCTestCase {
           mkdir -p "$(dirname "$progress_file")"
           printf '%s\\n' '{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"jsonl_transport","summary":"side-channel progress","work":{"completed_units":1,"total_units":2,"unit_label":"unit","basis":"test","confidence":"exact"},"runtime":{"active_threads":1,"total_threads":2,"gpu_active":false,"backend":"jsonl","active_resources":["visibility-grid"]}}' > "$progress_file"
         fi
+        printf '%s\\n' '\(imagerProgressStderrPrefix){"schema_version":1,"sequence":2,"elapsed_ms":1,"phase":"stderr_transport_should_be_ignored","summary":"legacy stderr progress","runtime":{"active_threads":1,"total_threads":2,"gpu_active":false,"backend":"stderr","active_resources":["source-stream"]}}' >&2
         printf '%s\\n' 'ordinary stderr diagnostic' >&2
         cat "\(resultURL.path)"
         """
@@ -4324,9 +4424,31 @@ final class WorkbenchStoreTests: XCTestCase {
         lock.unlock()
         let arguments = try XCTUnwrap(result?.arguments)
         XCTAssertTrue(arguments.contains("--progress-jsonl"))
+        let progressFlagIndex = try XCTUnwrap(arguments.firstIndex(of: "--progress-jsonl"))
+        let progressPath = arguments[progressFlagIndex + 1]
+        let progressFilename = URL(fileURLWithPath: progressPath).lastPathComponent
+        XCTAssertTrue(progressFilename.hasPrefix("jsonl-progress-pid"), progressFilename)
+        XCTAssertTrue(progressFilename.hasSuffix("-imager-progress.jsonl"), progressFilename)
+        XCTAssertFalse(progressFilename == "jsonl-progress-imager-progress.jsonl")
         XCTAssertEqual(progress?.phase, "jsonl_transport")
         XCTAssertEqual(progress?.runtime.activeResourceIDs, ["visibility-grid"])
         XCTAssertEqual(result?.stderr, "ordinary stderr diagnostic")
+    }
+
+    func testImagerProgressTelemetryFilenameIsCollisionResistant() throws {
+        let first = ProcessGenericTaskClient.progressTelemetryFilename(
+            runID: "../imager 1",
+            processID: 123,
+            nonce: try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        )
+        let second = ProcessGenericTaskClient.progressTelemetryFilename(
+            runID: "../imager 1",
+            processID: 123,
+            nonce: try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        )
+
+        XCTAssertEqual(first, "imager-1-pid123-00000000-0000-0000-0000-000000000001-imager-progress.jsonl")
+        XCTAssertNotEqual(first, second)
     }
 
     func testGenericTaskClientFindsBundledAndReleaseHelpers() {
@@ -5106,6 +5228,7 @@ private func makeImagerTaskUISchema() throws -> TaskUISchema {
         {"id":"polarization","label":"Corr / Stokes","order":13,"parser":{"kind":"option","flags":["--corr"],"metavar":"PLANE","choices":["I","Q","U","V","XX","YY","RR","LL"]},"value_kind":"choice","required":false,"default":"I","help":"","group":"Context","advanced":true,"hidden_in_tui":false},
         {"id":"specmode","label":"Spectral Mode","order":20,"parser":{"kind":"option","flags":["--specmode"],"metavar":"MODE","choices":["mfs","cube","cubedata"]},"value_kind":"choice","required":true,"default":"mfs","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"interpolation","label":"Cube Interp","order":21,"parser":{"kind":"option","flags":["--interpolation"],"metavar":"MODE","choices":["nearest","linear","cubic"]},"value_kind":"choice","required":false,"default":null,"help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
+        {"id":"perchanweightdensity","label":"Per-Channel Density","order":23,"parser":{"kind":"toggle","true_flags":["--perchanweightdensity"],"false_flags":["--no-perchanweightdensity"]},"value_kind":"bool","required":false,"default":"cube:true,cubedata:false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
         {"id":"dirty_only","label":"Dirty Only","order":30,"parser":{"kind":"toggle","true_flags":["--dirty-only"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"niter","label":"Iterations","order":31,"parser":{"kind":"option","flags":["--niter"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":"0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"threshold_jy","label":"Threshold","order":32,"parser":{"kind":"option","flags":["--threshold-jy"],"metavar":"JY","choices":[]},"value_kind":"float","required":false,"default":"0.0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},

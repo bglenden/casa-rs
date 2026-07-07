@@ -3301,7 +3301,7 @@ public final class WorkbenchStore: ObservableObject {
             switch argument.parser.kind {
             case "toggle":
                 if toggles[argument.id] == nil {
-                    toggles[argument.id] = argument.default == "true"
+                    toggles[argument.id] = argument.defaultToggleValue(values: values)
                 }
             case "option", "positional":
                 if values[argument.id] == nil {
@@ -3421,6 +3421,7 @@ public final class WorkbenchStore: ObservableObject {
         values["niter"] = "2048"
         values["threshold_jy"] = "0.0"
         toggles["dirty_only"] = false
+        toggles["perchanweightdensity"] = true
         toggles["write_pb"] = true
         toggles["pbcor"] = true
 
