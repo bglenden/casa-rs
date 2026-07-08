@@ -828,6 +828,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "single_plane_execution_plan": [],
         "standard_mfs_runtime_plan": [],
         "source_stream_memory_plan": [],
+        "imaging_source_read_ahead": [],
         "standard_mfs_source_read_ahead": [],
         "dirty_product_fft": [],
         "source_stream_consumer": [],
@@ -872,7 +873,11 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["standard_mfs_runtime_plan"].append(parsed)
         elif name == "standard_mfs_memory_plan_actual":
             buckets["source_stream_memory_plan"].append(parsed)
+        elif name == "imaging_source_read_ahead_summary":
+            buckets["imaging_source_read_ahead"].append(parsed)
         elif name == "standard_mfs_source_read_ahead_summary":
+            parsed.setdefault("fields", {})["mode"] = "standard_mfs"
+            buckets["imaging_source_read_ahead"].append(parsed)
             buckets["standard_mfs_source_read_ahead"].append(parsed)
         elif name == "dirty_product_fft_timing":
             buckets["dirty_product_fft"].append(parsed)
@@ -998,9 +1003,16 @@ def parse_scalar_value(value: str) -> Any:
 def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
-    source_read_ahead = last_fields(
-        buckets.get("standard_mfs_source_read_ahead", [])
+    source_read_ahead_entries = unique_entries_by_raw(
+        buckets.get("imaging_source_read_ahead", [])
     )
+    source_read_ahead = aggregate_source_read_ahead_fields(source_read_ahead_entries)
+    source_read_ahead_modes = [
+        entry.get("fields", {}).get("mode")
+        for entry in source_read_ahead_entries
+        if isinstance(entry.get("fields", {}), dict)
+        and entry.get("fields", {}).get("mode") is not None
+    ]
     dirty_product_fft = last_fields(buckets.get("dirty_product_fft", []))
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
@@ -1266,6 +1278,9 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "planned_active_bytes": memory.get("planned_active_bytes"),
         "source_stream_buffer_bytes": memory.get("source_stream_buffer_bytes"),
         "source_read_ahead_enabled": source_read_ahead.get("enabled"),
+        "source_read_ahead_mode": source_read_ahead.get("mode"),
+        "source_read_ahead_modes": sorted(set(source_read_ahead_modes)),
+        "source_read_ahead_summary_count": len(source_read_ahead_entries),
         "source_read_ahead_max_live_row_blocks": source_read_ahead.get(
             "max_live_row_blocks"
         ),
@@ -1703,6 +1718,38 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def aggregate_source_read_ahead_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    fields = dict(last_fields(entries))
+    if not fields:
+        return fields
+    entry_fields = [
+        entry.get("fields", {})
+        for entry in entries
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    for field in (
+        "row_blocks",
+        "consumer_recv_blocked_ms",
+        "producer_send_blocked_ms",
+        "source_read_ms",
+        "source_route_ms",
+        "consumer_ms",
+        "source_prepare_ms",
+        "streamed_samples",
+    ):
+        total = sum_int_or_float_field(entry_fields, field)
+        if total is not None:
+            fields[field] = total
+    for field in ("max_live_row_blocks", "queue_capacity"):
+        maximum = max_int_or_float_field(entry_fields, field)
+        if maximum is not None:
+            fields[field] = maximum
+    enabled = [entry.get("enabled") for entry in entry_fields if "enabled" in entry]
+    if enabled:
+        fields["enabled"] = any(value is True for value in enabled)
+    return fields
+
+
 def unique_entries_by_raw(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     raw_entries = [entry.get("raw") for entry in entries]
     half = len(raw_entries) // 2
@@ -1896,6 +1943,11 @@ def build_benchmark_feature_summary(
             "row_block_rows": backend_summary.get("row_block_rows"),
             "source_read_ahead_enabled": backend_summary.get(
                 "source_read_ahead_enabled"
+            ),
+            "source_read_ahead_mode": backend_summary.get("source_read_ahead_mode"),
+            "source_read_ahead_modes": backend_summary.get("source_read_ahead_modes"),
+            "source_read_ahead_summary_count": backend_summary.get(
+                "source_read_ahead_summary_count"
             ),
             "source_read_ahead_queue_capacity": backend_summary.get(
                 "source_read_ahead_queue_capacity"

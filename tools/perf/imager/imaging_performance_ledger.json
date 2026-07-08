@@ -17,6 +17,7 @@
     "chanchunks_effective",
     "row_block_rows",
     "read_ahead_blocks",
+    "source_read_ahead_modes",
     "memory_target_gb",
     "peak_rss_gb",
     "baseline_total_wall_s",
@@ -88,7 +89,7 @@
         "wave4-standard-cubedata-line-medium.json",
         "wave4-standard-cubedata-line-large-bounded.json"
       ],
-      "required_roles": ["serial_cpu", "parallel_auto", "parallel_chanchunks"]
+      "required_roles": ["serial_cpu", "parallel_auto", "parallel_chanchunks", "read_ahead_disabled", "read_ahead_enabled"]
     },
     {
       "group_id": "mosaic_cube_large_overlap",
@@ -98,7 +99,18 @@
         "wave3-mosaic-cube-alma-large-stress-auto.json",
         "wave4-mosaic-cube-alma-large-dirty-bounded.json"
       ],
-      "required_roles": ["serial_cpu", "parallel_auto", "read_ahead_enabled"]
+      "required_roles": ["serial_cpu", "parallel_auto", "read_ahead_disabled", "read_ahead_enabled"]
+    },
+    {
+      "group_id": "mosaic_mfs_large_overlap",
+      "owner_issues": [343, 352],
+      "workloads": [
+        "wave3-mosaic-mfs-alma-large-stress-serial.json",
+        "wave3-mosaic-mfs-alma-large-stress-multicpu.json",
+        "wave3-mosaic-mfs-alma-large-stress-auto.json",
+        "wave3-mosaic-mfs-alma-large-stress-metal.json"
+      ],
+      "required_roles": ["serial_cpu", "parallel_auto", "read_ahead_disabled", "read_ahead_enabled", "metal_f32_candidate"]
     },
     {
       "group_id": "mtmfs_mosaic_medium_correctness_perf",
@@ -107,7 +119,7 @@
         "wave3-mtmfs-heavy-wave1-medium-serial.json",
         "wave3-mtmfs-heavy-wave1-medium-multicpu.json"
       ],
-      "required_roles": ["standard_mtmfs_baseline", "mosaic_mtmfs_candidate", "casa_oracle"]
+      "required_roles": ["standard_mtmfs_baseline", "mosaic_mtmfs_candidate", "read_ahead_disabled", "read_ahead_enabled", "casa_oracle"]
     },
     {
       "group_id": "gpu_residency_medium_large",
@@ -142,6 +154,7 @@
         "baseline": 1,
         "candidate": 2
       },
+      "source_read_ahead_modes": ["standard_mfs"],
       "memory_target_gb": 16.0,
       "peak_rss_gb": {
         "baseline": 14.529,
@@ -217,6 +230,101 @@
         "producer_consumer_overlap_s": null,
         "consumer_blocked_on_input_s": 5.372655,
         "producer_blocked_on_capacity_s": 0.000012,
+        "queue_high_water_blocks": 1,
+        "queue_high_water_bytes": null,
+        "effective_read_bandwidth_mb_s": null
+      }
+    },
+    {
+      "workload_id": "wave4-standard-cubedata-line-medium",
+      "issue_slice": "343-cubedata-slab-read-ahead",
+      "commit": "6bc3c373+worktree",
+      "machine": "bg-macbook-air",
+      "mode": "dirty cubedata",
+      "gridder": "standard",
+      "deconvolver": "hogbom",
+      "precision_policy": "auto",
+      "parallel_requested": "auto",
+      "parallel_effective": {
+        "baseline": "cpu_slab active_planes=60 worker_count=10 slab_count=9",
+        "candidate": "cpu_slab active_planes=40 worker_count=10 slab_count=13"
+      },
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 234567,
+        "candidate": 415491
+      },
+      "read_ahead_blocks": {
+        "baseline": 1,
+        "candidate": 2
+      },
+      "source_read_ahead_modes": ["cube_slab"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": {
+        "baseline": 11.396,
+        "candidate": 11.177
+      },
+      "baseline_total_wall_s": 181.649655,
+      "candidate_total_wall_s": 221.884456,
+      "speedup": 0.818668,
+      "wall_reduction_fraction": -0.221497,
+      "correctness_status": "rust_only_skip_casa; benchmark products were not compared; targeted cubedata product-invariance test covers .psf/.residual/.image/.sumwt for read-ahead on this path",
+      "max_abs": null,
+      "rms": null,
+      "notes": "GLENDENNING medium standard cubedata dirty workload. Enabling read-ahead with the current memory planner was 22.1% slower because the extra live row-block reserve reduced active_planes from 60 to 40 and increased slab_count from 9 to 13. This is negative default evidence, not a speedup claim.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-imaging-read-ahead/20260708T214308Z-wave4-standard-cubedata-line-medium-e9cdc5c8.json",
+        "candidate": "/private/tmp/casa-rs-imaging-read-ahead/20260708T214635Z-wave4-standard-cubedata-line-medium-996e72ff.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 181.649655,
+          "candidate_s": 221.884456,
+          "delta_s": 40.234801,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": -0.221497,
+          "contribution_to_total_saved_wall": 1.0
+        },
+        {
+          "stage": "source_read",
+          "baseline_s": 27.725404,
+          "candidate_s": 44.262709,
+          "delta_s": 16.537305,
+          "baseline_wall_fraction": 0.152631,
+          "candidate_wall_fraction": 0.199485,
+          "saved_fraction_of_baseline_wall": -0.091040,
+          "contribution_to_total_saved_wall": 0.411020
+        },
+        {
+          "stage": "backend_execution",
+          "baseline_s": 150.756000,
+          "candidate_s": 174.272000,
+          "delta_s": 23.516000,
+          "baseline_wall_fraction": 0.829927,
+          "candidate_wall_fraction": 0.785418,
+          "saved_fraction_of_baseline_wall": -0.129458,
+          "contribution_to_total_saved_wall": 0.584469
+        },
+        {
+          "stage": "product_write",
+          "baseline_s": 6.729000,
+          "candidate_s": 8.473000,
+          "delta_s": 1.744000,
+          "baseline_wall_fraction": 0.037044,
+          "candidate_wall_fraction": 0.038187,
+          "saved_fraction_of_baseline_wall": -0.009601,
+          "contribution_to_total_saved_wall": 0.043346
+        }
+      ],
+      "overlap": {
+        "producer_active_s": 44.262709,
+        "consumer_active_s": 0.006059,
+        "producer_consumer_overlap_s": null,
+        "consumer_blocked_on_input_s": 44.258461,
+        "producer_blocked_on_capacity_s": 0.000396,
         "queue_high_water_blocks": 1,
         "queue_high_water_bytes": null,
         "effective_read_bandwidth_mb_s": null

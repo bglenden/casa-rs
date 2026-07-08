@@ -7604,6 +7604,99 @@ fn prepare_mfs_mosaic_source_row_block_plane_from_source(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn stream_mfs_mosaic_source_row_block_planes<F>(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    load_visibility_values: bool,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    max_live_row_blocks: usize,
+    selected_channel_count: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    cube_row_spectral_reusable_plan: Option<Arc<CubeRowSpectralReusablePlan>>,
+    read_ahead_mode: &'static str,
+    mut on_plane: F,
+) -> Result<(), ImagingError>
+where
+    F: FnMut(PlaneInput, usize) -> Result<(), ImagingError>,
+{
+    let row_block_rows = row_block_rows.max(1);
+    let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    stream_imaging_source_read_ahead_blocks(
+        read_ahead_mode,
+        max_live_row_blocks,
+        row_block_rows,
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let stage_started_at = Instant::now();
+            let source_block = read_columnar_prepared_source(
+                ms,
+                data_column_kind,
+                load_visibility_values,
+                selection,
+                table_values,
+                ddid_info,
+                row_chunk,
+                derived_engine,
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                geometry_columns,
+                None,
+                None,
+            )?;
+            let read_elapsed = stage_started_at.elapsed();
+            let row_count = row_chunk.len();
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                (source_block, read_elapsed, row_count),
+                read_elapsed,
+                Duration::ZERO,
+                row_count.saturating_mul(selected_channel_count),
+            )))
+        },
+        |(source_block, read_elapsed, row_count)| {
+            let consumer_started_at = Instant::now();
+            prepare_stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
+            let plane = prepare_mfs_mosaic_source_row_block_plane_from_source(
+                ms,
+                config,
+                selection,
+                ddid_info,
+                spectral_window,
+                polarization,
+                flag_row,
+                &source_block,
+                derived_engine,
+                prepare_started_at,
+                prepare_stage_timings,
+                accumulate_timings,
+                cube_row_spectral_reusable_plan.clone(),
+            )
+            .map_err(|error| error.to_string())?;
+            on_plane(plane, row_count).map_err(|error| error.to_string())?;
+            Ok(consumer_started_at.elapsed())
+        },
+    )
+    .map_err(ImagingError::InvalidRequest)?;
+    Ok(())
+}
+
 fn one_channel_cube_plane_input_to_streaming_plane(
     cube: CubePlaneInput,
 ) -> Result<PlaneInput, String> {
@@ -8209,28 +8302,30 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
             let load_visibility_values = pass.needs_visibility_values();
             let mut block_count = 0usize;
             let mut sample_count = 0usize;
-            for row_chunk in active_selected_rows.chunks(row_block_rows) {
-                let plane = prepare_mfs_mosaic_source_row_block_plane(
-                    ms,
-                    config,
-                    data_column,
-                    load_visibility_values,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &spectral_window,
-                    &polarization,
-                    flag_row,
-                    row_chunk,
-                    derived_engine.as_ref(),
-                    channel_read_range,
-                    &geometry_columns,
-                    prepare_started_at,
-                    &mut prepare_stage_timings,
-                    &mut accumulate_timings,
-                    None,
-                )
-                .map_err(ImagingError::InvalidRequest)?;
+            stream_mfs_mosaic_source_row_block_planes(
+                ms,
+                config,
+                data_column,
+                load_visibility_values,
+                &selection,
+                &table_values,
+                &ddid_info,
+                &spectral_window,
+                &polarization,
+                flag_row,
+                &active_selected_rows,
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                row_block_rows,
+                strategy.max_live_row_blocks,
+                selected_channel_count,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                None,
+                "mosaic_mtmfs_replay",
+                |plane, _row_count| {
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
                     return Err(ImagingError::InvalidRequest(
                         "streaming mosaic MT-MFS row block produced standard gridder metadata"
@@ -8285,7 +8380,9 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                         replay_started.elapsed().as_secs_f64(),
                     );
                 }
-            }
+                    Ok(())
+                },
+            )?;
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
                     "mosaic_mtmfs_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
@@ -8610,28 +8707,30 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
             let load_visibility_values = pass.needs_visibility_values();
             let mut block_count = 0usize;
             let mut sample_count = 0usize;
-            for row_chunk in active_selected_rows.chunks(row_block_rows) {
-                let plane = prepare_mfs_mosaic_source_row_block_plane(
-                    ms,
-                    read_config,
-                    data_column,
-                    load_visibility_values,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &spectral_window,
-                    &polarization,
-                    flag_row,
-                    row_chunk,
-                    derived_engine.as_ref(),
-                    channel_read_range,
-                    &geometry_columns,
-                    prepare_started_at,
-                    &mut prepare_stage_timings,
-                    &mut accumulate_timings,
-                    None,
-                )
-                .map_err(ImagingError::InvalidRequest)?;
+            stream_mfs_mosaic_source_row_block_planes(
+                ms,
+                read_config,
+                data_column,
+                load_visibility_values,
+                &selection,
+                &table_values,
+                &ddid_info,
+                &spectral_window,
+                &polarization,
+                flag_row,
+                &active_selected_rows,
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                row_block_rows,
+                strategy.max_live_row_blocks,
+                selected_channel_count,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                None,
+                "mfs_mosaic_replay",
+                |plane, _row_count| {
                 let GridderMode::Mosaic(mosaic) = plane.gridder_mode else {
                     return Err(ImagingError::InvalidRequest(
                         "streaming MFS mosaic row block produced standard gridder metadata"
@@ -8663,7 +8762,9 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                         replay_started.elapsed().as_secs_f64(),
                     );
                 }
-            }
+                    Ok(())
+                },
+            )?;
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
                     "mfs_mosaic_stream_replay invocation={} pass={:?} load_visibility_values={} blocks={} samples={} elapsed_ms={:.3}",
@@ -12302,7 +12403,7 @@ fn run_standard_spectral_cube_slab_from_open_ms(
     let prepared_residency = spectral_slab::PreparedVisibilityResidency {
         sample_lanes_per_source_channel: table_values.corr_types.len().max(1),
         bucket_sample_bytes: ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES,
-        max_live_row_blocks: 1,
+        max_live_row_blocks: imaging_slab_source_read_ahead_max_live_row_blocks(config),
     };
     let mut executor_scratch = cube_slab_executor_scratch_shape(
         config,
@@ -24250,6 +24351,16 @@ struct SharedColumnarCubeSlabSource {
     modeled_physical_read_bytes: u64,
 }
 
+struct SharedColumnarCubeSlabSourceBlock {
+    source: ColumnarPreparedSource,
+    read_timings: GetMsValuesTimings,
+    read_elapsed: Duration,
+    logical_output_bytes: u64,
+    modeled_physical_read_bytes: u64,
+    source_fill_elapsed_ns: u128,
+    row_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct VisibilityGeometryCacheKey {
     pass_compatibility: &'static str,
@@ -29966,6 +30077,14 @@ fn prepare_standard_mfs_input_in_row_blocks(
         .map(|prepared| (prepared, stage_timings))
 }
 
+struct StandardMfsPreparedPlaneBlock {
+    plane: PlaneInput,
+    read_timings: GetMsValuesTimings,
+    get_ms_values_elapsed: Duration,
+    prepare_processing_elapsed: Duration,
+    accumulate_delta: AccumulateRowTimings,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stream_standard_mfs_prepared_row_blocks<F>(
     ms: &MeasurementSet,
@@ -29992,59 +30111,96 @@ where
     F: FnMut(PlaneInput, &mut StandardMfsStreamingPassStats) -> Result<(), String>,
 {
     let mut prepared_batch_count = 0usize;
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let stage_started_at = Instant::now();
-        let columnar_source = read_columnar_prepared_source(
-            ms,
-            data_column_kind,
-            true,
-            selection,
-            table_values,
-            ddid_info,
-            row_chunk,
-            derived_engine,
-            uvw_reprojection_mode_for_selection(config, selection),
-            channel_read_range,
-            geometry_columns,
-            None,
-            None,
-        )?;
-        let get_ms_values_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
-        pass_stats.add_get_ms_values_detail(columnar_source.read_timings);
+    let row_block_rows = row_block_rows.max(1);
+    let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
+    let max_live_row_blocks = imaging_slab_source_read_ahead_max_live_row_blocks(config);
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    stream_imaging_source_read_ahead_blocks(
+        "standard_mfs_prepared",
+        max_live_row_blocks,
+        row_block_rows,
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let stage_started_at = Instant::now();
+            let columnar_source = read_columnar_prepared_source(
+                ms,
+                data_column_kind,
+                true,
+                selection,
+                table_values,
+                ddid_info,
+                row_chunk,
+                derived_engine,
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                geometry_columns,
+                None,
+                None,
+            )?;
+            let get_ms_values_elapsed = stage_started_at.elapsed();
+            let read_timings = columnar_source.read_timings;
 
-        let stage_started_at = Instant::now();
-        let before_accumulate = *accumulate_timings;
-        let plane = prepare_processing_buffer(
-            ms,
-            config,
-            selection,
-            ddid_info,
-            spectral_window,
-            polarization,
-            flag_row,
-            &columnar_source,
-            derived_engine,
-            accumulate_timings,
-            standard_mfs_streaming_batch_size(),
-        )?;
-        let prepare_processing_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
-        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
-        prepared_batch_count += plane.batches.len();
-        pass_stats.record_prepared_plane(&plane, get_ms_values_elapsed, prepare_processing_elapsed);
-        on_plane(plane, pass_stats)?;
-        release_allocator_pressure();
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/row_block rows_done={} rows_total={} batches={} total_elapsed_s={:.3}",
-                accumulate_timings.rows_seen,
-                active_selected_rows.len(),
-                prepared_batch_count,
-                prepare_started_at.elapsed().as_secs_f64(),
+            let stage_started_at = Instant::now();
+            let mut accumulate_delta = AccumulateRowTimings::default();
+            let plane = prepare_processing_buffer(
+                ms,
+                config,
+                selection,
+                ddid_info,
+                spectral_window,
+                polarization,
+                flag_row,
+                &columnar_source,
+                derived_engine,
+                &mut accumulate_delta,
+                standard_mfs_streaming_batch_size(),
+            )?;
+            let prepare_processing_elapsed = stage_started_at.elapsed();
+            let sample_count = plane_input_sample_count(&plane);
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                StandardMfsPreparedPlaneBlock {
+                    plane,
+                    read_timings,
+                    get_ms_values_elapsed,
+                    prepare_processing_elapsed,
+                    accumulate_delta,
+                },
+                get_ms_values_elapsed,
+                prepare_processing_elapsed,
+                sample_count,
+            )))
+        },
+        |block| {
+            let consumer_started_at = Instant::now();
+            prepare_stage_timings.get_ms_values_into_processing_buffer +=
+                block.get_ms_values_elapsed;
+            prepare_stage_timings.prepare_processing_buffer += block.prepare_processing_elapsed;
+            pass_stats.add_get_ms_values_detail(block.read_timings);
+            *accumulate_timings += block.accumulate_delta;
+            pass_stats.add_accumulate_rows_detail(block.accumulate_delta);
+            prepared_batch_count += block.plane.batches.len();
+            pass_stats.record_prepared_plane(
+                &block.plane,
+                block.get_ms_values_elapsed,
+                block.prepare_processing_elapsed,
             );
-        }
-    }
+            on_plane(block.plane, pass_stats)?;
+            release_allocator_pressure();
+            if frontend_progress_enabled() {
+                eprintln!(
+                    "frontend stage=prepare_plane_input/row_block rows_done={} rows_total={} batches={} total_elapsed_s={:.3}",
+                    accumulate_timings.rows_seen,
+                    active_selected_rows.len(),
+                    prepared_batch_count,
+                    prepare_started_at.elapsed().as_secs_f64(),
+                );
+            }
+            Ok(consumer_started_at.elapsed())
+        },
+    )?;
     Ok(prepared_batch_count)
 }
 
@@ -30175,7 +30331,7 @@ struct StandardMfsRoutedPreparedVisibilityBlock {
 }
 
 #[derive(Default)]
-struct StandardMfsReadAheadSummary {
+struct ImagingSourceReadAheadSummary {
     row_blocks: usize,
     source_read_elapsed: Duration,
     source_route_elapsed: Duration,
@@ -30183,6 +30339,194 @@ struct StandardMfsReadAheadSummary {
     consumer_recv_blocked: Duration,
     consumer_elapsed: Duration,
     streamed_samples: usize,
+}
+
+struct ImagingSourceReadAheadBlock<T> {
+    block: T,
+    source_read_elapsed: Duration,
+    source_route_elapsed: Duration,
+    streamed_samples: usize,
+}
+
+impl<T> ImagingSourceReadAheadBlock<T> {
+    fn new(
+        block: T,
+        source_read_elapsed: Duration,
+        source_route_elapsed: Duration,
+        streamed_samples: usize,
+    ) -> Self {
+        Self {
+            block,
+            source_read_elapsed,
+            source_route_elapsed,
+            streamed_samples,
+        }
+    }
+}
+
+enum ImagingSourceReadAheadMessage<T> {
+    Block(Box<ImagingSourceReadAheadBlock<T>>),
+    Error(String),
+}
+
+fn log_imaging_source_read_ahead_summary(
+    mode: &'static str,
+    enabled: bool,
+    max_live_row_blocks: usize,
+    queue_capacity: usize,
+    row_block_rows: usize,
+    summary: &ImagingSourceReadAheadSummary,
+) {
+    eprintln!(
+        "imaging_source_read_ahead_summary mode={} enabled={} max_live_row_blocks={} queue_capacity={} row_blocks={} row_block_rows={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} streamed_samples={}",
+        mode,
+        enabled,
+        max_live_row_blocks,
+        queue_capacity,
+        summary.row_blocks,
+        row_block_rows,
+        duration_ms(summary.consumer_recv_blocked),
+        duration_ms(summary.producer_send_blocked),
+        duration_ms(summary.source_read_elapsed),
+        duration_ms(summary.source_route_elapsed),
+        duration_ms(summary.consumer_elapsed),
+        duration_ms(
+            summary
+                .source_route_elapsed
+                .saturating_add(summary.consumer_elapsed)
+        ),
+        summary.streamed_samples,
+    );
+}
+
+fn imaging_source_read_ahead_max_live_row_blocks(config: &CliConfig) -> usize {
+    explicit_imaging_source_read_ahead_max_live_row_blocks(config).unwrap_or(2)
+}
+
+fn imaging_slab_source_read_ahead_max_live_row_blocks(config: &CliConfig) -> usize {
+    explicit_imaging_source_read_ahead_max_live_row_blocks(config).unwrap_or(1)
+}
+
+fn explicit_imaging_source_read_ahead_max_live_row_blocks(config: &CliConfig) -> Option<usize> {
+    config
+        .imaging_read_ahead_blocks
+        .or_else(|| env_usize("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS"))
+        .filter(|value| *value > 0)
+        .map(|value| value.min(2))
+}
+
+fn add_source_read_ahead_producer_metrics<T>(
+    summary: &mut ImagingSourceReadAheadSummary,
+    block: &ImagingSourceReadAheadBlock<T>,
+) {
+    summary.row_blocks = summary.row_blocks.saturating_add(1);
+    summary.source_read_elapsed += block.source_read_elapsed;
+    summary.source_route_elapsed += block.source_route_elapsed;
+    summary.streamed_samples = summary
+        .streamed_samples
+        .saturating_add(block.streamed_samples);
+}
+
+#[allow(clippy::type_complexity)]
+fn stream_imaging_source_read_ahead_blocks<T, P, C>(
+    mode: &'static str,
+    max_live_row_blocks: usize,
+    row_block_rows: usize,
+    row_block_count: usize,
+    mut produce_next: P,
+    mut consume_block: C,
+) -> Result<ImagingSourceReadAheadSummary, String>
+where
+    T: Send,
+    P: FnMut() -> Result<Option<ImagingSourceReadAheadBlock<T>>, String> + Send,
+    C: FnMut(T) -> Result<Duration, String>,
+{
+    let max_live_row_blocks = max_live_row_blocks.max(1);
+    let queue_capacity = max_live_row_blocks.saturating_sub(1);
+    let read_ahead_enabled = queue_capacity > 0 && row_block_count > 1;
+    let mut summary = ImagingSourceReadAheadSummary::default();
+    if read_ahead_enabled {
+        thread::scope(|scope| -> Result<(), String> {
+            let (tx, rx) = mpsc::sync_channel::<ImagingSourceReadAheadMessage<T>>(queue_capacity);
+            let producer = scope.spawn(move || {
+                let mut producer_summary = ImagingSourceReadAheadSummary::default();
+                loop {
+                    match produce_next() {
+                        Ok(Some(block)) => {
+                            add_source_read_ahead_producer_metrics(&mut producer_summary, &block);
+                            let send_started_at = Instant::now();
+                            if tx
+                                .send(ImagingSourceReadAheadMessage::Block(Box::new(block)))
+                                .is_err()
+                            {
+                                producer_summary.producer_send_blocked += send_started_at.elapsed();
+                                return producer_summary;
+                            }
+                            producer_summary.producer_send_blocked += send_started_at.elapsed();
+                        }
+                        Ok(None) => return producer_summary,
+                        Err(error) => {
+                            let _ = tx.send(ImagingSourceReadAheadMessage::Error(error));
+                            return producer_summary;
+                        }
+                    }
+                }
+            });
+
+            let mut consumer_result = Ok(());
+            loop {
+                let recv_started_at = Instant::now();
+                let message = rx.recv();
+                summary.consumer_recv_blocked += recv_started_at.elapsed();
+                match message {
+                    Ok(ImagingSourceReadAheadMessage::Block(block)) => {
+                        match consume_block(block.block) {
+                            Ok(consumer_elapsed) => {
+                                summary.consumer_elapsed += consumer_elapsed;
+                            }
+                            Err(error) => {
+                                consumer_result = Err(error);
+                                break;
+                            }
+                        }
+                    }
+                    Ok(ImagingSourceReadAheadMessage::Error(error)) => {
+                        consumer_result = Err(error);
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+            drop(rx);
+            let producer_summary = producer
+                .join()
+                .map_err(|_| format!("{mode} source read-ahead producer panicked"))?;
+            summary.row_blocks = producer_summary.row_blocks;
+            summary.source_read_elapsed = producer_summary.source_read_elapsed;
+            summary.source_route_elapsed = producer_summary.source_route_elapsed;
+            summary.producer_send_blocked = producer_summary.producer_send_blocked;
+            summary.streamed_samples = producer_summary.streamed_samples;
+            consumer_result
+        })?;
+    } else {
+        while let Some(block) = produce_next()? {
+            add_source_read_ahead_producer_metrics(&mut summary, &block);
+            summary.consumer_elapsed += consume_block(block.block)?;
+        }
+    }
+    log_imaging_source_read_ahead_summary(
+        mode,
+        read_ahead_enabled,
+        max_live_row_blocks,
+        if read_ahead_enabled {
+            queue_capacity
+        } else {
+            0
+        },
+        row_block_rows,
+        &summary,
+    );
+    Ok(summary)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -30339,39 +30683,6 @@ where
     Ok(consumer_elapsed)
 }
 
-fn log_standard_mfs_source_read_ahead_summary(
-    enabled: bool,
-    max_live_row_blocks: usize,
-    queue_capacity: usize,
-    row_block_rows: usize,
-    summary: &StandardMfsReadAheadSummary,
-) {
-    eprintln!(
-        "standard_mfs_source_read_ahead_summary enabled={} max_live_row_blocks={} queue_capacity={} row_blocks={} row_block_rows={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} streamed_samples={}",
-        enabled,
-        max_live_row_blocks,
-        queue_capacity,
-        summary.row_blocks,
-        row_block_rows,
-        duration_ms(summary.consumer_recv_blocked),
-        duration_ms(summary.producer_send_blocked),
-        duration_ms(summary.source_read_elapsed),
-        duration_ms(summary.source_route_elapsed),
-        duration_ms(summary.consumer_elapsed),
-        duration_ms(
-            summary
-                .source_route_elapsed
-                .saturating_add(summary.consumer_elapsed)
-        ),
-        summary.streamed_samples,
-    );
-}
-
-enum StandardMfsReadAheadMessage {
-    Block(Box<StandardMfsRoutedPreparedVisibilityBlock>),
-    Error(String),
-}
-
 #[allow(clippy::too_many_arguments)]
 fn stream_standard_mfs_routed_visibility_essentials_run_blocks<F>(
     ms: &MeasurementSet,
@@ -30401,125 +30712,6 @@ where
     let row_block_rows = row_block_rows.max(1);
     let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
     let max_live_row_blocks = source_read_ahead_blocks.max(1);
-    let queue_capacity = max_live_row_blocks.saturating_sub(1);
-    let read_ahead_enabled = queue_capacity > 0 && row_block_count > 1;
-    if read_ahead_enabled {
-        let mut read_ahead_summary = StandardMfsReadAheadSummary::default();
-        thread::scope(|scope| -> Result<(), String> {
-            let (tx, rx) = mpsc::sync_channel::<StandardMfsReadAheadMessage>(queue_capacity);
-            let producer = scope.spawn(move || {
-                let mut producer_summary = StandardMfsReadAheadSummary::default();
-                let mut prepared = match PreparedSelection::new_standard_mfs_from_table_values(
-                    config,
-                    table_values,
-                    selection.phase_center.clone(),
-                    false,
-                ) {
-                    Ok(prepared) => prepared,
-                    Err(error) => {
-                        let _ = tx.send(StandardMfsReadAheadMessage::Error(error));
-                        return producer_summary;
-                    }
-                };
-                let source_channel_indices = Arc::<[usize]>::from(
-                    prepared.source_channel_indices.clone().into_boxed_slice(),
-                );
-                let mut next_input_seq = 0u64;
-                for row_chunk in active_selected_rows.chunks(row_block_rows) {
-                    let block = match prepare_standard_mfs_routed_visibility_essentials_block(
-                        ms,
-                        data_column_kind,
-                        table_values,
-                        row_chunk,
-                        derived_engine,
-                        Arc::clone(&channel_axes),
-                        channel_read_range,
-                        geometry_columns,
-                        &mut prepared,
-                        Arc::clone(&source_channel_indices),
-                        planned_sample_builder,
-                        &mut next_input_seq,
-                        progress_output_cube.clone(),
-                    ) {
-                        Ok(block) => block,
-                        Err(error) => {
-                            let _ = tx.send(StandardMfsReadAheadMessage::Error(error));
-                            return producer_summary;
-                        }
-                    };
-                    producer_summary.row_blocks = producer_summary.row_blocks.saturating_add(1);
-                    producer_summary.source_read_elapsed += block.get_ms_values_elapsed;
-                    producer_summary.source_route_elapsed += block.route_processing_elapsed;
-                    producer_summary.streamed_samples = producer_summary
-                        .streamed_samples
-                        .saturating_add(block.block_planned_samples);
-                    let send_started_at = Instant::now();
-                    if tx
-                        .send(StandardMfsReadAheadMessage::Block(Box::new(block)))
-                        .is_err()
-                    {
-                        producer_summary.producer_send_blocked += send_started_at.elapsed();
-                        return producer_summary;
-                    }
-                    producer_summary.producer_send_blocked += send_started_at.elapsed();
-                }
-                producer_summary
-            });
-
-            let mut consumer_result = Ok(());
-            loop {
-                let recv_started_at = Instant::now();
-                let message = rx.recv();
-                read_ahead_summary.consumer_recv_blocked += recv_started_at.elapsed();
-                match message {
-                    Ok(StandardMfsReadAheadMessage::Block(block)) => {
-                        match consume_standard_mfs_routed_prepared_visibility_block(
-                            *block,
-                            active_selected_rows.len(),
-                            prepare_started_at,
-                            prepare_stage_timings,
-                            accumulate_timings,
-                            pass_stats,
-                            &mut streamed_samples,
-                            &mut consume,
-                        ) {
-                            Ok(consumer_elapsed) => {
-                                read_ahead_summary.consumer_elapsed += consumer_elapsed;
-                            }
-                            Err(error) => {
-                                consumer_result = Err(error);
-                                break;
-                            }
-                        }
-                    }
-                    Ok(StandardMfsReadAheadMessage::Error(error)) => {
-                        consumer_result = Err(error);
-                        break;
-                    }
-                    Err(_) => break,
-                }
-            }
-            drop(rx);
-            let producer_summary = producer
-                .join()
-                .map_err(|_| "standard MFS source read-ahead producer panicked".to_string())?;
-            read_ahead_summary.row_blocks = producer_summary.row_blocks;
-            read_ahead_summary.source_read_elapsed = producer_summary.source_read_elapsed;
-            read_ahead_summary.source_route_elapsed = producer_summary.source_route_elapsed;
-            read_ahead_summary.producer_send_blocked = producer_summary.producer_send_blocked;
-            read_ahead_summary.streamed_samples = producer_summary.streamed_samples;
-            log_standard_mfs_source_read_ahead_summary(
-                true,
-                max_live_row_blocks,
-                queue_capacity,
-                row_block_rows,
-                &read_ahead_summary,
-            );
-            consumer_result
-        })?;
-        return Ok(streamed_samples);
-    }
-
     let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
         config,
         table_values,
@@ -30529,46 +30721,54 @@ where
     let source_channel_indices =
         Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
     let mut next_input_seq = 0u64;
-    let mut read_ahead_summary = StandardMfsReadAheadSummary::default();
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let block = prepare_standard_mfs_routed_visibility_essentials_block(
-            ms,
-            data_column_kind,
-            table_values,
-            row_chunk,
-            derived_engine,
-            Arc::clone(&channel_axes),
-            channel_read_range,
-            geometry_columns,
-            &mut prepared,
-            Arc::clone(&source_channel_indices),
-            planned_sample_builder,
-            &mut next_input_seq,
-            progress_output_cube.clone(),
-        )?;
-        read_ahead_summary.row_blocks = read_ahead_summary.row_blocks.saturating_add(1);
-        read_ahead_summary.source_read_elapsed += block.get_ms_values_elapsed;
-        read_ahead_summary.source_route_elapsed += block.route_processing_elapsed;
-        let consumer_elapsed = consume_standard_mfs_routed_prepared_visibility_block(
-            block,
-            active_selected_rows.len(),
-            prepare_started_at,
-            prepare_stage_timings,
-            accumulate_timings,
-            pass_stats,
-            &mut streamed_samples,
-            &mut consume,
-        )?;
-        read_ahead_summary.consumer_elapsed += consumer_elapsed;
-    }
-    read_ahead_summary.streamed_samples = streamed_samples;
-    log_standard_mfs_source_read_ahead_summary(
-        false,
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    stream_imaging_source_read_ahead_blocks(
+        "standard_mfs",
         max_live_row_blocks,
-        0,
         row_block_rows,
-        &read_ahead_summary,
-    );
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let block = prepare_standard_mfs_routed_visibility_essentials_block(
+                ms,
+                data_column_kind,
+                table_values,
+                row_chunk,
+                derived_engine,
+                Arc::clone(&channel_axes),
+                channel_read_range,
+                geometry_columns,
+                &mut prepared,
+                Arc::clone(&source_channel_indices),
+                planned_sample_builder,
+                &mut next_input_seq,
+                progress_output_cube.clone(),
+            )?;
+            let source_read_elapsed = block.get_ms_values_elapsed;
+            let source_route_elapsed = block.route_processing_elapsed;
+            let block_planned_samples = block.block_planned_samples;
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                block,
+                source_read_elapsed,
+                source_route_elapsed,
+                block_planned_samples,
+            )))
+        },
+        |block| {
+            consume_standard_mfs_routed_prepared_visibility_block(
+                block,
+                active_selected_rows.len(),
+                prepare_started_at,
+                prepare_stage_timings,
+                accumulate_timings,
+                pass_stats,
+                &mut streamed_samples,
+                &mut consume,
+            )
+        },
+    )?;
     Ok(streamed_samples)
 }
 
@@ -30948,91 +31148,110 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
     let mut collapsed_samples = 0usize;
     let started = Instant::now();
 
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let stage_started_at = Instant::now();
-        let columnar_source = read_columnar_prepared_source(
-            ms,
-            data_column_kind,
-            true,
-            selection,
-            table_values,
-            ddid_info,
-            row_chunk,
-            derived_engine,
-            uvw_reprojection_mode_for_selection(config, selection),
-            channel_read_range,
-            &geometry_columns,
-            None,
-            None,
-        )?;
-        let read_timings = columnar_source.read_timings;
-        let read_elapsed = stage_started_at.elapsed();
-        stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
-        combined_read_timings += read_timings;
-
-        let stage_started_at = Instant::now();
-        let before_accumulate = combined_accumulate_timings;
-        let mut prepared = PreparedSelection::new(
-            config,
-            selection.selected_ddid,
-            ddid_info,
-            spectral_window,
-            polarization,
-            selection.phase_center.clone(),
-            None,
-            false,
-            true,
-        );
-        if let Some(init_error) = prepared.initialization_error.take() {
-            return Err(init_error);
-        }
-        for row_slot in 0..columnar_source.row_count() {
-            let row = columnar_source.to_prepared_geometry_row(row_slot);
-            prepared.accumulate_row(
-                &row,
-                &columnar_source,
-                flag_row,
+    let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    stream_imaging_source_read_ahead_blocks(
+        "mfs_mosaic_prepare",
+        memory_plan.max_live_row_blocks,
+        row_block_rows,
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let stage_started_at = Instant::now();
+            let columnar_source = read_columnar_prepared_source(
+                ms,
+                data_column_kind,
+                true,
+                selection,
+                table_values,
+                ddid_info,
+                row_chunk,
                 derived_engine,
-                row_slot,
-                &mut combined_accumulate_timings,
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                &geometry_columns,
+                None,
+                None,
             )?;
-        }
-        let prepared_input = prepared.finish_mfs_mosaic_without_trace(ms)?;
-        collapsed_samples += prepared_input_visibility_sample_count(&prepared_input);
-        inputs.push(prepared_input);
-        let prepare_elapsed = stage_started_at.elapsed();
-        stage_timings.prepare_processing_buffer += prepare_elapsed;
-        rows_done += row_chunk.len();
-
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/mfs_mosaic_source_row_block rows_done={} rows_total={} source_channels={} collapsed_samples={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
-                rows_done,
-                active_selected_rows.len(),
-                selected_channel_count,
-                collapsed_samples,
-                duration_ms(read_elapsed),
-                duration_ms(prepare_elapsed),
-                prepare_started_at.elapsed().as_secs_f64(),
+            let read_timings = columnar_source.read_timings;
+            let read_elapsed = stage_started_at.elapsed();
+            let row_count = row_chunk.len();
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                (columnar_source, read_timings, read_elapsed, row_count),
+                read_elapsed,
+                Duration::ZERO,
+                row_count.saturating_mul(selected_channel_count),
+            )))
+        },
+        |(columnar_source, read_timings, read_elapsed, row_count)| {
+            let stage_started_at = Instant::now();
+            stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
+            combined_read_timings += read_timings;
+            let before_accumulate = combined_accumulate_timings;
+            let mut prepared = PreparedSelection::new(
+                config,
+                selection.selected_ddid,
+                ddid_info,
+                spectral_window,
+                polarization,
+                selection.phase_center.clone(),
+                None,
+                false,
+                true,
             );
-        }
-        if standard_mfs_profile_detail_enabled() {
-            let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
-            eprintln!(
-                "mfs_mosaic_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
-                row_chunk.len(),
-                selected_channel_count,
-                duration_ms(read_timings.data_column),
-                duration_ms(read_timings.flag_column),
-                duration_ms(read_timings.weight_column),
-                duration_ms(read_timings.weight_spectrum),
-                duration_ms(read_timings.geometry_rows),
-                duration_ms(block_timings.adapt_samples),
-                duration_ms(read_elapsed),
-                duration_ms(prepare_elapsed),
-            );
-        }
-    }
+            if let Some(init_error) = prepared.initialization_error.take() {
+                return Err(init_error);
+            }
+            for row_slot in 0..columnar_source.row_count() {
+                let row = columnar_source.to_prepared_geometry_row(row_slot);
+                prepared.accumulate_row(
+                    &row,
+                    &columnar_source,
+                    flag_row,
+                    derived_engine,
+                    row_slot,
+                    &mut combined_accumulate_timings,
+                )?;
+            }
+            let prepared_input = prepared.finish_mfs_mosaic_without_trace(ms)?;
+            collapsed_samples += prepared_input_visibility_sample_count(&prepared_input);
+            inputs.push(prepared_input);
+            let prepare_elapsed = stage_started_at.elapsed();
+            stage_timings.prepare_processing_buffer += prepare_elapsed;
+            rows_done += row_count;
+            if frontend_progress_enabled() {
+                eprintln!(
+                    "frontend stage=prepare_plane_input/mfs_mosaic_source_row_block rows_done={} rows_total={} source_channels={} collapsed_samples={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
+                    rows_done,
+                    active_selected_rows.len(),
+                    selected_channel_count,
+                    collapsed_samples,
+                    duration_ms(read_elapsed),
+                    duration_ms(prepare_elapsed),
+                    prepare_started_at.elapsed().as_secs_f64(),
+                );
+            }
+            if standard_mfs_profile_detail_enabled() {
+                let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
+                eprintln!(
+                    "mfs_mosaic_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
+                    row_count,
+                    selected_channel_count,
+                    duration_ms(read_timings.data_column),
+                    duration_ms(read_timings.flag_column),
+                    duration_ms(read_timings.weight_column),
+                    duration_ms(read_timings.weight_spectrum),
+                    duration_ms(read_timings.geometry_rows),
+                    duration_ms(block_timings.adapt_samples),
+                    duration_ms(read_elapsed),
+                    duration_ms(prepare_elapsed),
+                );
+            }
+            Ok(prepare_elapsed)
+        },
+    )?;
 
     let merge_started = Instant::now();
     let prepared_input = merge_mfs_mosaic_prepared_inputs(inputs)?;
@@ -31208,122 +31427,158 @@ fn read_shared_columnar_cube_slab_source(
     let selected_channel_count =
         source_stream_selected_channel_count(table_values, channel_read_range);
 
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let block_started = Instant::now();
-        let cache_key = visibility_geometry_cache_key_for_rows(
-            config,
-            selection,
-            table_values,
-            row_chunk,
-            channel_read_range,
-            pass_kind,
-        );
-        let mut columnar_source = read_columnar_prepared_source_with_progress_cube(
-            ms,
-            data_column_kind,
-            include_data,
-            selection,
-            table_values,
-            ddid_info,
-            row_chunk,
-            Some(derived_engine),
-            uvw_reprojection_mode_for_selection(config, selection),
-            channel_read_range,
-            &geometry_columns,
-            Some(geometry_cache),
-            Some(cache_key),
-            Some(progress_output_cube.clone()),
-        )?;
-        if let Some(spectral_plan) = spectral_plan {
-            if spectral_plan.shared_spectral_binding.is_some() {
-                if standard_mfs_profile_detail_enabled() {
-                    eprintln!(
-                        "cube_shared_columnar_slab_source_spectral_bindings rows={} bindings=1 binding_scope=plan_shared visibility_grid_assignments={}",
-                        columnar_source.visibility.row_count(),
-                        spectral_plan.use_visibility_grid_assignments,
-                    );
+    let max_live_row_blocks = imaging_source_read_ahead_max_live_row_blocks(config);
+    let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    let read_ahead_mode = if backend == "mosaic_multi_plane_stream" {
+        "mosaic_cube_slab"
+    } else {
+        "cube_slab"
+    };
+    stream_imaging_source_read_ahead_blocks(
+        read_ahead_mode,
+        max_live_row_blocks,
+        row_block_rows,
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let block_started = Instant::now();
+            let cache_key = visibility_geometry_cache_key_for_rows(
+                config,
+                selection,
+                table_values,
+                row_chunk,
+                channel_read_range,
+                pass_kind,
+            );
+            let mut columnar_source = read_columnar_prepared_source_with_progress_cube(
+                ms,
+                data_column_kind,
+                include_data,
+                selection,
+                table_values,
+                ddid_info,
+                row_chunk,
+                Some(derived_engine),
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                &geometry_columns,
+                Some(geometry_cache),
+                Some(cache_key),
+                Some(progress_output_cube.clone()),
+            )?;
+            if let Some(spectral_plan) = spectral_plan {
+                if spectral_plan.shared_spectral_binding.is_some() {
+                    if standard_mfs_profile_detail_enabled() {
+                        eprintln!(
+                            "cube_shared_columnar_slab_source_spectral_bindings rows={} bindings=1 binding_scope=plan_shared visibility_grid_assignments={}",
+                            columnar_source.visibility.row_count(),
+                            spectral_plan.use_visibility_grid_assignments,
+                        );
+                    }
+                } else {
+                    let spectral_rows =
+                        bind_cube_spectral_rows(&columnar_source.geometry_rows, spectral_plan)?;
+                    if spectral_rows.row_count() != columnar_source.visibility.row_count() {
+                        return Err(format!(
+                            "direct cube spectral row bindings have {} rows but visibility block has {} rows",
+                            spectral_rows.row_count(),
+                            columnar_source.visibility.row_count()
+                        ));
+                    }
+                    if standard_mfs_profile_detail_enabled() {
+                        eprintln!(
+                            "cube_shared_columnar_slab_source_spectral_bindings rows={} bindings={} visibility_grid_assignments={}",
+                            spectral_rows.row_count(),
+                            spectral_rows.binding_count(),
+                            spectral_plan.use_visibility_grid_assignments,
+                        );
+                    }
+                    columnar_source.cube_spectral_rows = Some(spectral_rows);
                 }
-            } else {
-                let spectral_rows =
-                    bind_cube_spectral_rows(&columnar_source.geometry_rows, spectral_plan)?;
-                if spectral_rows.row_count() != columnar_source.visibility.row_count() {
-                    return Err(format!(
-                        "direct cube spectral row bindings have {} rows but visibility block has {} rows",
-                        spectral_rows.row_count(),
-                        columnar_source.visibility.row_count()
-                    ));
-                }
-                if standard_mfs_profile_detail_enabled() {
-                    eprintln!(
-                        "cube_shared_columnar_slab_source_spectral_bindings rows={} bindings={} visibility_grid_assignments={}",
-                        spectral_rows.row_count(),
-                        spectral_rows.binding_count(),
-                        spectral_plan.use_visibility_grid_assignments,
-                    );
-                }
-                columnar_source.cube_spectral_rows = Some(spectral_rows);
             }
-        }
-        if let Some(lookup) = columnar_source.geometry_cache_lookup {
-            eprintln!(
-                "{}",
-                spectral_slab::SpectralObservabilityEvent {
-                    mode: canonical_spectral_mode_name(config.spectral_mode),
-                    pass_kind,
-                    stage: lookup.event_stage(),
-                    slab_id: Some(slab_id),
-                    plane_start,
-                    plane_end,
-                    row_block_rows: Some(row_chunk.len()),
-                    bytes_read: None,
-                    bytes_written: lookup.stored.then_some(lookup.estimated_bytes),
-                    worker_count: Some(worker_count),
-                    backend,
-                    elapsed_ms: Some(0),
-                    estimated_resident_bytes: Some(lookup.estimated_bytes),
-                }
-                .log_line()
-            );
-        }
-        let read_timings = columnar_source.read_timings;
-        let read_elapsed = block_started.elapsed();
-        stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
-        combined_read_timings += read_timings;
-        logical_output_bytes =
-            logical_output_bytes.saturating_add(columnar_source.fill_report.logical_output_bytes);
-        modeled_physical_read_bytes = modeled_physical_read_bytes
-            .saturating_add(columnar_source.fill_report.modeled_physical_read_bytes);
-        source_fill_elapsed_ns =
-            source_fill_elapsed_ns.saturating_add(columnar_source.fill_report.timings.total_ns);
-        rows_done += row_chunk.len();
-
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/cube_shared_columnar_slab_source rows_done={} rows_total={} source_channels={} read_ms={:.3} total_elapsed_s={:.3}",
-                rows_done,
-                active_selected_rows.len(),
-                selected_channel_count,
-                duration_ms(read_elapsed),
-                prepare_started_at.elapsed().as_secs_f64(),
-            );
-        }
-        if standard_mfs_profile_detail_enabled() {
-            eprintln!(
-                "cube_shared_columnar_slab_source_block rows={} source_channels={} logical_output_bytes={} modeled_physical_read_bytes={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} read_geometry_ms={:.3} block_read_ms={:.3}",
-                row_chunk.len(),
-                selected_channel_count,
-                columnar_source.fill_report.logical_output_bytes,
-                columnar_source.fill_report.modeled_physical_read_bytes,
-                duration_ms(read_timings.data_column),
-                duration_ms(read_timings.flag_column),
-                duration_ms(read_timings.weight_column),
-                duration_ms(read_timings.weight_spectrum),
-                duration_ms(read_timings.geometry_rows),
-                duration_ms(read_elapsed),
-            );
-        }
-        blocks.push(columnar_source);
-    }
+            if let Some(lookup) = columnar_source.geometry_cache_lookup {
+                eprintln!(
+                    "{}",
+                    spectral_slab::SpectralObservabilityEvent {
+                        mode: canonical_spectral_mode_name(config.spectral_mode),
+                        pass_kind,
+                        stage: lookup.event_stage(),
+                        slab_id: Some(slab_id),
+                        plane_start,
+                        plane_end,
+                        row_block_rows: Some(row_chunk.len()),
+                        bytes_read: None,
+                        bytes_written: lookup.stored.then_some(lookup.estimated_bytes),
+                        worker_count: Some(worker_count),
+                        backend,
+                        elapsed_ms: Some(0),
+                        estimated_resident_bytes: Some(lookup.estimated_bytes),
+                    }
+                    .log_line()
+                );
+            }
+            let read_timings = columnar_source.read_timings;
+            let read_elapsed = block_started.elapsed();
+            let logical = columnar_source.fill_report.logical_output_bytes;
+            let modeled = columnar_source.fill_report.modeled_physical_read_bytes;
+            let fill_elapsed_ns = columnar_source.fill_report.timings.total_ns;
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                SharedColumnarCubeSlabSourceBlock {
+                    source: columnar_source,
+                    read_timings,
+                    read_elapsed,
+                    logical_output_bytes: logical,
+                    modeled_physical_read_bytes: modeled,
+                    source_fill_elapsed_ns: fill_elapsed_ns,
+                    row_count: row_chunk.len(),
+                },
+                read_elapsed,
+                Duration::ZERO,
+                logical as usize,
+            )))
+        },
+        |block| {
+            let consumer_started_at = Instant::now();
+            stage_timings.get_ms_values_into_processing_buffer += block.read_elapsed;
+            combined_read_timings += block.read_timings;
+            logical_output_bytes = logical_output_bytes.saturating_add(block.logical_output_bytes);
+            modeled_physical_read_bytes =
+                modeled_physical_read_bytes.saturating_add(block.modeled_physical_read_bytes);
+            source_fill_elapsed_ns =
+                source_fill_elapsed_ns.saturating_add(block.source_fill_elapsed_ns);
+            rows_done += block.row_count;
+            if frontend_progress_enabled() {
+                eprintln!(
+                    "frontend stage=prepare_plane_input/cube_shared_columnar_slab_source rows_done={} rows_total={} source_channels={} read_ms={:.3} total_elapsed_s={:.3}",
+                    rows_done,
+                    active_selected_rows.len(),
+                    selected_channel_count,
+                    duration_ms(block.read_elapsed),
+                    prepare_started_at.elapsed().as_secs_f64(),
+                );
+            }
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "cube_shared_columnar_slab_source_block rows={} source_channels={} logical_output_bytes={} modeled_physical_read_bytes={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} read_geometry_ms={:.3} block_read_ms={:.3}",
+                    block.row_count,
+                    selected_channel_count,
+                    block.logical_output_bytes,
+                    block.modeled_physical_read_bytes,
+                    duration_ms(block.read_timings.data_column),
+                    duration_ms(block.read_timings.flag_column),
+                    duration_ms(block.read_timings.weight_column),
+                    duration_ms(block.read_timings.weight_spectrum),
+                    duration_ms(block.read_timings.geometry_rows),
+                    duration_ms(block.read_elapsed),
+                );
+            }
+            blocks.push(block.source);
+            Ok(consumer_started_at.elapsed())
+        },
+    )?;
 
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
@@ -31520,87 +31775,106 @@ fn prepare_cube_without_trace_in_source_row_blocks(
     let mut prepared_batch_stats = PreparedCubeBatchStats::default();
     let started = Instant::now();
 
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let stage_started_at = Instant::now();
-        let columnar_source = read_columnar_prepared_source(
-            ms,
-            data_column_kind,
-            true,
-            selection,
-            table_values,
-            ddid_info,
-            row_chunk,
-            derived_engine,
-            uvw_reprojection_mode_for_selection(config, selection),
-            channel_read_range,
-            &geometry_columns,
-            None,
-            None,
-        )?;
-        let read_timings = columnar_source.read_timings;
-        let read_elapsed = stage_started_at.elapsed();
-        stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
-        combined_read_timings += read_timings;
-
-        let stage_started_at = Instant::now();
-        let before_accumulate = combined_accumulate_timings;
-        let prepared_input = prepare_source_row_block_plane_inner(
-            SourceRowBlockPlaneDescriptor {
+    let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    stream_imaging_source_read_ahead_blocks(
+        "cube_prepare",
+        memory_plan.max_live_row_blocks,
+        row_block_rows,
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let stage_started_at = Instant::now();
+            let columnar_source = read_columnar_prepared_source(
                 ms,
-                config,
+                data_column_kind,
+                true,
                 selection,
+                table_values,
                 ddid_info,
-                spectral_window,
-                polarization,
-                source_block: &columnar_source,
-                flag_row,
+                row_chunk,
                 derived_engine,
-                standard_mfs_table_values: None,
-                cube_context: Some(cube_context.clone()),
-                finish: SourceRowBlockFinish::Cube,
-                cube_row_spectral_reusable_plan: None,
-                build_cube_briggs_density_samples: true,
-                build_cube_mosaic_metadata,
-            },
-            &mut combined_accumulate_timings,
-        )?;
-        let block_batch_stats = prepared_cube_batch_stats(&prepared_input);
-        prepared_batch_stats.add(block_batch_stats);
-        prepared_samples += prepared_input_visibility_sample_count(&prepared_input);
-        inputs.push(prepared_input);
-        let prepare_elapsed = stage_started_at.elapsed();
-        stage_timings.prepare_processing_buffer += prepare_elapsed;
-        rows_done += row_chunk.len();
-
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/cube_source_row_block rows_done={} rows_total={} source_channels={} prepared_samples={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
-                rows_done,
-                active_selected_rows.len(),
-                selected_channel_count,
-                prepared_samples,
-                duration_ms(read_elapsed),
-                duration_ms(prepare_elapsed),
-                prepare_started_at.elapsed().as_secs_f64(),
-            );
-        }
-        if standard_mfs_profile_detail_enabled() {
-            let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
-            eprintln!(
-                "cube_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
-                row_chunk.len(),
-                selected_channel_count,
-                duration_ms(read_timings.data_column),
-                duration_ms(read_timings.flag_column),
-                duration_ms(read_timings.weight_column),
-                duration_ms(read_timings.weight_spectrum),
-                duration_ms(read_timings.geometry_rows),
-                duration_ms(block_timings.adapt_samples),
-                duration_ms(read_elapsed),
-                duration_ms(prepare_elapsed),
-            );
-        }
-    }
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                &geometry_columns,
+                None,
+                None,
+            )?;
+            let read_timings = columnar_source.read_timings;
+            let read_elapsed = stage_started_at.elapsed();
+            let row_count = row_chunk.len();
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                (columnar_source, read_timings, read_elapsed, row_count),
+                read_elapsed,
+                Duration::ZERO,
+                row_count.saturating_mul(selected_channel_count),
+            )))
+        },
+        |(columnar_source, read_timings, read_elapsed, row_count)| {
+            let stage_started_at = Instant::now();
+            stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
+            combined_read_timings += read_timings;
+            let before_accumulate = combined_accumulate_timings;
+            let prepared_input = prepare_source_row_block_plane_inner(
+                SourceRowBlockPlaneDescriptor {
+                    ms,
+                    config,
+                    selection,
+                    ddid_info,
+                    spectral_window,
+                    polarization,
+                    source_block: &columnar_source,
+                    flag_row,
+                    derived_engine,
+                    standard_mfs_table_values: None,
+                    cube_context: Some(cube_context.clone()),
+                    finish: SourceRowBlockFinish::Cube,
+                    cube_row_spectral_reusable_plan: None,
+                    build_cube_briggs_density_samples: true,
+                    build_cube_mosaic_metadata,
+                },
+                &mut combined_accumulate_timings,
+            )?;
+            let block_batch_stats = prepared_cube_batch_stats(&prepared_input);
+            prepared_batch_stats.add(block_batch_stats);
+            prepared_samples += prepared_input_visibility_sample_count(&prepared_input);
+            inputs.push(prepared_input);
+            let prepare_elapsed = stage_started_at.elapsed();
+            stage_timings.prepare_processing_buffer += prepare_elapsed;
+            rows_done += row_count;
+            if frontend_progress_enabled() {
+                eprintln!(
+                    "frontend stage=prepare_plane_input/cube_source_row_block rows_done={} rows_total={} source_channels={} prepared_samples={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
+                    rows_done,
+                    active_selected_rows.len(),
+                    selected_channel_count,
+                    prepared_samples,
+                    duration_ms(read_elapsed),
+                    duration_ms(prepare_elapsed),
+                    prepare_started_at.elapsed().as_secs_f64(),
+                );
+            }
+            if standard_mfs_profile_detail_enabled() {
+                let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
+                eprintln!(
+                    "cube_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
+                    row_count,
+                    selected_channel_count,
+                    duration_ms(read_timings.data_column),
+                    duration_ms(read_timings.flag_column),
+                    duration_ms(read_timings.weight_column),
+                    duration_ms(read_timings.weight_spectrum),
+                    duration_ms(read_timings.geometry_rows),
+                    duration_ms(block_timings.adapt_samples),
+                    duration_ms(read_elapsed),
+                    duration_ms(prepare_elapsed),
+                );
+            }
+            Ok(prepare_elapsed)
+        },
+    )?;
 
     let merge_started = Instant::now();
     let prepared_input = merge_prepared_inputs_for_same_measurement_set(inputs)?;
@@ -31728,76 +32002,96 @@ fn prepare_trace_in_source_row_blocks(
     let mut rows_done = 0usize;
     let started = Instant::now();
 
-    for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let stage_started_at = Instant::now();
-        let source_block = read_columnar_prepared_source(
-            ms,
-            data_column_kind,
-            true,
-            selection,
-            table_values,
-            ddid_info,
-            row_chunk,
-            derived_engine,
-            uvw_reprojection_mode_for_selection(config, selection),
-            channel_read_range,
-            &geometry_columns,
-            None,
-            None,
-        )?;
-        let read_elapsed = stage_started_at.elapsed();
-        stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
-        let read_timings = source_block.read_timings;
-        combined_read_timings += read_timings;
+    let row_block_count = active_selected_rows.len().div_ceil(row_block_rows);
+    let mut row_chunks = active_selected_rows.chunks(row_block_rows);
+    stream_imaging_source_read_ahead_blocks(
+        "trace_prepare",
+        memory_plan.max_live_row_blocks,
+        row_block_rows,
+        row_block_count,
+        move || {
+            let Some(row_chunk) = row_chunks.next() else {
+                return Ok(None);
+            };
+            let stage_started_at = Instant::now();
+            let source_block = read_columnar_prepared_source(
+                ms,
+                data_column_kind,
+                true,
+                selection,
+                table_values,
+                ddid_info,
+                row_chunk,
+                derived_engine,
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                &geometry_columns,
+                None,
+                None,
+            )?;
+            let read_elapsed = stage_started_at.elapsed();
+            let read_timings = source_block.read_timings;
+            let row_count = row_chunk.len();
+            Ok(Some(ImagingSourceReadAheadBlock::new(
+                (source_block, read_timings, read_elapsed, row_count),
+                read_elapsed,
+                Duration::ZERO,
+                row_count.saturating_mul(selected_channel_count),
+            )))
+        },
+        |(source_block, read_timings, read_elapsed, row_count)| {
+            let stage_started_at = Instant::now();
+            stage_timings.get_ms_values_into_processing_buffer += read_elapsed;
+            combined_read_timings += read_timings;
+            let before_accumulate = combined_accumulate_timings;
+            let prepared_with_trace = prepare_source_row_block_trace_inner(
+                ms,
+                config,
+                data_column_kind,
+                selection,
+                ddid_info,
+                spectral_window,
+                polarization,
+                &source_block,
+                flag_row,
+                derived_engine,
+                cube_context.clone(),
+                &mut combined_accumulate_timings,
+            )?;
+            prepared_blocks.push(prepared_with_trace);
+            let prepare_elapsed = stage_started_at.elapsed();
+            stage_timings.prepare_processing_buffer += prepare_elapsed;
+            rows_done += row_count;
 
-        let stage_started_at = Instant::now();
-        let before_accumulate = combined_accumulate_timings;
-        let prepared_with_trace = prepare_source_row_block_trace_inner(
-            ms,
-            config,
-            data_column_kind,
-            selection,
-            ddid_info,
-            spectral_window,
-            polarization,
-            &source_block,
-            flag_row,
-            derived_engine,
-            cube_context.clone(),
-            &mut combined_accumulate_timings,
-        )?;
-        prepared_blocks.push(prepared_with_trace);
-        let prepare_elapsed = stage_started_at.elapsed();
-        stage_timings.prepare_processing_buffer += prepare_elapsed;
-        rows_done += row_chunk.len();
-
-        if frontend_progress_enabled() {
-            eprintln!(
-                "frontend stage=prepare_plane_input/trace_source_row_block rows_done={} rows_total={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
-                rows_done,
-                active_selected_rows.len(),
-                duration_ms(read_elapsed),
-                duration_ms(prepare_elapsed),
-                prepare_started_at.elapsed().as_secs_f64(),
-            );
-        }
-        if standard_mfs_profile_detail_enabled() {
-            let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
-            eprintln!(
-                "trace_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
-                row_chunk.len(),
-                selected_channel_count,
-                duration_ms(read_timings.data_column),
-                duration_ms(read_timings.flag_column),
-                duration_ms(read_timings.weight_column),
-                duration_ms(read_timings.weight_spectrum),
-                duration_ms(read_timings.geometry_rows),
-                duration_ms(block_timings.adapt_samples),
-                duration_ms(read_elapsed),
-                duration_ms(prepare_elapsed),
-            );
-        }
-    }
+            if frontend_progress_enabled() {
+                eprintln!(
+                    "frontend stage=prepare_plane_input/trace_source_row_block rows_done={} rows_total={} read_ms={:.3} prepare_ms={:.3} total_elapsed_s={:.3}",
+                    rows_done,
+                    active_selected_rows.len(),
+                    duration_ms(read_elapsed),
+                    duration_ms(prepare_elapsed),
+                    prepare_started_at.elapsed().as_secs_f64(),
+                );
+            }
+            if standard_mfs_profile_detail_enabled() {
+                let block_timings = combined_accumulate_timings.delta_since(before_accumulate);
+                eprintln!(
+                    "trace_source_row_block rows={} source_channels={} read_data_ms={:.3} read_flag_ms={:.3} read_weight_ms={:.3} read_weight_spectrum_ms={:.3} geometry_ms={:.3} accumulate_adapt_ms={:.3} block_read_ms={:.3} block_prepare_ms={:.3}",
+                    row_count,
+                    selected_channel_count,
+                    duration_ms(read_timings.data_column),
+                    duration_ms(read_timings.flag_column),
+                    duration_ms(read_timings.weight_column),
+                    duration_ms(read_timings.weight_spectrum),
+                    duration_ms(read_timings.geometry_rows),
+                    duration_ms(block_timings.adapt_samples),
+                    duration_ms(read_elapsed),
+                    duration_ms(prepare_elapsed),
+                );
+            }
+            Ok(prepare_elapsed)
+        },
+    )?;
 
     let merge_started = Instant::now();
     let (prepared_input, mut trace) =
@@ -32465,12 +32759,7 @@ fn standard_mfs_memory_plan_with_visibility_shape(
     let output_image_bytes = estimated_output_image_working_set_bytes(config);
     let fixed_tile_resident =
         estimated_fixed_tile_residency_with_backend(config, fixed_tile_backend_enabled);
-    let max_live_row_blocks = config
-        .imaging_read_ahead_blocks
-        .or_else(|| env_usize("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS"))
-        .filter(|value| *value > 0)
-        .map(|value| value.min(2))
-        .unwrap_or(2);
+    let max_live_row_blocks = imaging_source_read_ahead_max_live_row_blocks(config);
     let queued_task_bytes = fixed_tile_resident
         .tile_limit
         .saturating_mul(max_live_row_blocks)
@@ -51252,6 +51541,26 @@ mod tests {
     }
 
     #[test]
+    fn source_read_ahead_defaults_keep_full_slab_modes_opt_in() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let _queue_blocks = EnvGuard::unset("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS");
+        let config = minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+
+        assert_eq!(imaging_source_read_ahead_max_live_row_blocks(&config), 2);
+        assert_eq!(
+            imaging_slab_source_read_ahead_max_live_row_blocks(&config),
+            1
+        );
+
+        let mut read_ahead_config = config.clone();
+        read_ahead_config.imaging_read_ahead_blocks = Some(2);
+        assert_eq!(
+            imaging_slab_source_read_ahead_max_live_row_blocks(&read_ahead_config),
+            2
+        );
+    }
+
+    #[test]
     fn source_stream_block_memory_guard_rejects_over_target_shape() {
         let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
         let mut config =
@@ -58272,7 +58581,7 @@ deconvolver=mtmfs
         );
         ms.save().unwrap();
 
-        let summary = run_from_config(&CliConfig {
+        let config = CliConfig {
             ms: ms_path.clone(),
             imagename: image_prefix.clone(),
             imsize: 32,
@@ -58343,8 +58652,8 @@ deconvolver=mtmfs
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: false,
-        })
-        .unwrap();
+        };
+        let summary = run_from_config(&config).unwrap();
         assert!(summary.gridded_samples > 0);
         assert!(summary.frontend_timings.total > Duration::default());
 
@@ -58413,7 +58722,7 @@ deconvolver=mtmfs
         );
         ms.save().unwrap();
 
-        let summary = run_from_config(&CliConfig {
+        let config = CliConfig {
             ms: ms_path.clone(),
             imagename: image_prefix.clone(),
             imsize: 32,
@@ -58484,13 +58793,28 @@ deconvolver=mtmfs
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: false,
-        })
-        .unwrap();
+        };
+        let summary = run_from_config(&config).unwrap();
 
         assert!(summary.gridded_samples > 0);
         for suffix in ["psf", "residual", "model", "image", "sumwt"] {
             let path = format!("{}.{}", image_prefix.display(), suffix);
             assert!(Path::new(&path).exists(), "missing product {path}");
+        }
+
+        let read_ahead_prefix = tmp.path().join("tiny_multifield_read_ahead_image");
+        let mut read_ahead_config = config.clone();
+        read_ahead_config.imagename = read_ahead_prefix.clone();
+        read_ahead_config.imaging_row_block_rows = Some(1);
+        read_ahead_config.imaging_read_ahead_blocks = Some(2);
+        let read_ahead_summary = run_from_config(&read_ahead_config).unwrap();
+        assert!(read_ahead_summary.gridded_samples > 0);
+        for suffix in ["psf", "residual", "model", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", read_ahead_prefix.display(), suffix),
+                1.0e-5,
+            );
         }
     }
 
@@ -58690,6 +59014,29 @@ deconvolver=mtmfs
             assert_f32_images_close(
                 format!("{}.{}", image_prefix.display(), suffix),
                 format!("{}.{}", slab2_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
+        let read_ahead_prefix = tmp.path().join("tiny_mosaic_cube_read_ahead_image");
+        let mut read_ahead_config = config.clone();
+        read_ahead_config.imagename = read_ahead_prefix.clone();
+        read_ahead_config.imaging_row_block_rows = Some(1);
+        read_ahead_config.imaging_read_ahead_blocks = Some(2);
+        let read_ahead_summary = run_from_config(&read_ahead_config).unwrap();
+        assert_eq!(read_ahead_summary.channel_summaries.len(), 2);
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "sumwt",
+            "weight",
+            "pb",
+            "image.pbcor",
+        ] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", read_ahead_prefix.display(), suffix),
                 1.0e-5,
             );
         }
@@ -59443,6 +59790,22 @@ deconvolver=mtmfs
             );
         }
 
+        let read_ahead_prefix = tmp.path().join("tiny_cube_read_ahead_image");
+        let mut read_ahead_config = dirty_config.clone();
+        read_ahead_config.imagename = read_ahead_prefix.clone();
+        read_ahead_config.imaging_row_block_rows = Some(1);
+        read_ahead_config.imaging_read_ahead_blocks = Some(2);
+        let read_ahead_summary = run_from_config(&read_ahead_config).unwrap();
+        assert!(read_ahead_summary.gridded_samples > 0);
+        assert_eq!(read_ahead_summary.channel_summaries.len(), 4);
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", read_ahead_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
         let chanchunks_prefix = tmp.path().join("tiny_cube_chanchunks_image");
         let mut chanchunks_config = dirty_config.clone();
         chanchunks_config.imagename = chanchunks_prefix.clone();
@@ -59764,6 +60127,22 @@ deconvolver=mtmfs
             );
         }
 
+        let read_ahead_prefix = tmp.path().join("tiny_cubedata_read_ahead_image");
+        let mut read_ahead_config = dirty_config.clone();
+        read_ahead_config.imagename = read_ahead_prefix.clone();
+        read_ahead_config.imaging_row_block_rows = Some(1);
+        read_ahead_config.imaging_read_ahead_blocks = Some(2);
+        let read_ahead_summary = run_from_config(&read_ahead_config).unwrap();
+        assert!(read_ahead_summary.gridded_samples > 0);
+        assert_eq!(read_ahead_summary.channel_summaries.len(), 3);
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", read_ahead_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
         let chanchunks_prefix = tmp.path().join("tiny_cubedata_chanchunks_image");
         let mut chanchunks_config = dirty_config.clone();
         chanchunks_config.imagename = chanchunks_prefix.clone();
@@ -59972,7 +60351,7 @@ deconvolver=mtmfs
         );
         ms.save().unwrap();
 
-        let summary = run_from_config(&CliConfig {
+        let config = CliConfig {
             ms: ms_path.clone(),
             imagename: image_prefix.clone(),
             imsize: 32,
@@ -60043,8 +60422,8 @@ deconvolver=mtmfs
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
-        })
-        .unwrap();
+        };
+        let summary = run_from_config(&config).unwrap();
         assert!(summary.gridded_samples > 0);
         assert!(summary.minor_iterations <= 6);
         assert!(
@@ -60055,6 +60434,21 @@ deconvolver=mtmfs
             Path::new(&format!("{}.residual.tt0", image_prefix.display())).exists(),
             "bounded-stream MT-MFS should write Taylor residual products"
         );
+
+        let read_ahead_prefix = tmp.path().join("tiny_mtmfs_read_ahead_image");
+        let mut read_ahead_config = config.clone();
+        read_ahead_config.imagename = read_ahead_prefix.clone();
+        read_ahead_config.imaging_row_block_rows = Some(1);
+        read_ahead_config.imaging_read_ahead_blocks = Some(2);
+        let read_ahead_summary = run_from_config(&read_ahead_config).unwrap();
+        assert!(read_ahead_summary.gridded_samples > 0);
+        for suffix in ["image.tt0", "residual.tt0"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", read_ahead_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
     }
 
     #[test]
