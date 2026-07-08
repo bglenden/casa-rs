@@ -8,7 +8,7 @@
 //! current RustFFT path.
 
 use std::fmt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -1117,6 +1117,7 @@ fn accelerate_transform_f64(
 mod accelerate {
     use std::ffi::c_void;
     use std::os::raw::c_int;
+    use std::time::Instant;
 
     use super::*;
 
@@ -1321,6 +1322,7 @@ mod accelerate {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn split_f32(input: &Array2<Complex32>) -> (Vec<f32>, Vec<f32>) {
     let mut real = Vec::with_capacity(input.len());
     let mut imag = Vec::with_capacity(input.len());
@@ -1331,6 +1333,7 @@ fn split_f32(input: &Array2<Complex32>) -> (Vec<f32>, Vec<f32>) {
     (real, imag)
 }
 
+#[cfg(target_os = "macos")]
 fn split_f64(input: &Array2<Complex64>) -> (Vec<f64>, Vec<f64>) {
     let mut real = Vec::with_capacity(input.len());
     let mut imag = Vec::with_capacity(input.len());
@@ -1341,6 +1344,7 @@ fn split_f64(input: &Array2<Complex64>) -> (Vec<f64>, Vec<f64>) {
     (real, imag)
 }
 
+#[cfg(target_os = "macos")]
 fn join_f32(rows: usize, columns: usize, real: &[f32], imag: &[f32]) -> Array2<Complex32> {
     Array2::from_shape_fn((rows, columns), |(row, column)| {
         let index = row * columns + column;
@@ -1348,6 +1352,7 @@ fn join_f32(rows: usize, columns: usize, real: &[f32], imag: &[f32]) -> Array2<C
     })
 }
 
+#[cfg(target_os = "macos")]
 fn join_f64(rows: usize, columns: usize, real: &[f64], imag: &[f64]) -> Array2<Complex64> {
     Array2::from_shape_fn((rows, columns), |(row, column)| {
         let index = row * columns + column;
@@ -1355,6 +1360,7 @@ fn join_f64(rows: usize, columns: usize, real: &[f64], imag: &[f64]) -> Array2<C
     })
 }
 
+#[cfg(target_os = "macos")]
 fn shift2_f32(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
     let rows = input.shape()[0];
     let columns = input.shape()[1];
@@ -1369,6 +1375,7 @@ fn shift2_f32(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn shift2_f64(input: &Array2<Complex64>, inverse: bool) -> Array2<Complex64> {
     let rows = input.shape()[0];
     let columns = input.shape()[1];
