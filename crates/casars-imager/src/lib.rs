@@ -12294,6 +12294,55 @@ fn run_standard_spectral_cube_slab_dirty_from_open_ms(
     )
 }
 
+fn plan_spectral_memory_with_slab_read_ahead_guard(
+    config: &CliConfig,
+    input: spectral_slab::SpectralMemoryPlannerInput,
+) -> Result<spectral_slab::SpectralMemoryPlan, String> {
+    let requested_max_live_row_blocks = input.prepared_residency.max_live_row_blocks;
+    let plan = spectral_slab::plan_spectral_memory(input.clone())?;
+    if requested_max_live_row_blocks <= 1
+        || explicit_imaging_source_read_ahead_max_live_row_blocks(config).unwrap_or(1) <= 1
+    {
+        return Ok(plan);
+    }
+
+    let mut single_block_input = input;
+    single_block_input.prepared_residency.max_live_row_blocks = 1;
+    let mut single_block_plan = spectral_slab::plan_spectral_memory(single_block_input)?;
+    let read_ahead_increases_residency_cost = plan.slab_count > single_block_plan.slab_count
+        || plan.source_channel_visits > single_block_plan.source_channel_visits
+        || plan.modeled_total_io_bytes > single_block_plan.modeled_total_io_bytes
+        || plan.modeled_worker_runtime_cost_units
+            > single_block_plan.modeled_worker_runtime_cost_units;
+    let read_ahead_reduces_row_locality_without_modeled_savings = plan.row_block_rows
+        < single_block_plan.row_block_rows
+        && plan.modeled_total_io_bytes >= single_block_plan.modeled_total_io_bytes
+        && plan.modeled_worker_runtime_cost_units
+            >= single_block_plan.modeled_worker_runtime_cost_units;
+    if !read_ahead_increases_residency_cost
+        && !read_ahead_reduces_row_locality_without_modeled_savings
+    {
+        return Ok(plan);
+    }
+
+    single_block_plan.warnings.push(format!(
+        "slab_read_ahead_disabled_to_preserve_residency:requested_max_live_row_blocks={requested_max_live_row_blocks}:read_ahead_active_planes={}:read_ahead_slab_count={}:read_ahead_row_block_rows={}:read_ahead_source_channel_visits={}:read_ahead_modeled_total_io_bytes={}:read_ahead_worker_runtime_cost_units={}:selected_active_planes={}:selected_slab_count={}:selected_row_block_rows={}:selected_source_channel_visits={}:selected_modeled_total_io_bytes={}:selected_worker_runtime_cost_units={}",
+        plan.active_planes,
+        plan.slab_count,
+        plan.row_block_rows,
+        plan.source_channel_visits,
+        plan.modeled_total_io_bytes,
+        plan.modeled_worker_runtime_cost_units,
+        single_block_plan.active_planes,
+        single_block_plan.slab_count,
+        single_block_plan.row_block_rows,
+        single_block_plan.source_channel_visits,
+        single_block_plan.modeled_total_io_bytes,
+        single_block_plan.modeled_worker_runtime_cost_units,
+    ));
+    Ok(single_block_plan)
+}
+
 fn run_standard_spectral_cube_slab_from_open_ms(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -12458,9 +12507,9 @@ fn run_standard_spectral_cube_slab_from_open_ms(
         let mut streaming_input = base_memory_input;
         streaming_input.requirements =
             spectral_slab::PlaneStateRequirements::dirty_standard().with_streaming_plane_results();
-        spectral_slab::plan_spectral_memory(streaming_input)?
+        plan_spectral_memory_with_slab_read_ahead_guard(config, streaming_input)?
     } else {
-        spectral_slab::plan_spectral_memory(base_memory_input)?
+        plan_spectral_memory_with_slab_read_ahead_guard(config, base_memory_input)?
     };
     #[cfg(test)]
     let memory_plan =
@@ -18679,7 +18728,7 @@ fn cube_slab_visibility_shapes_from_plane_read_ranges(
 fn chanchunks_active_plane_candidates(chanchunks: Option<usize>, nplanes: usize) -> Vec<usize> {
     let nplanes = nplanes.max(1);
     if let Some(chunks) = chanchunks.filter(|value| *value > 0) {
-        return vec![chanchunks_to_active_planes(chunks, nplanes)];
+        return (chanchunks_to_active_planes(chunks, nplanes)..=nplanes).collect();
     }
     (1..=nplanes).collect()
 }
@@ -49004,7 +49053,7 @@ mod tests {
     }
 
     #[test]
-    fn chanchunks_limits_spectral_slab_candidate_size() {
+    fn chanchunks_adds_bounded_spectral_slab_candidates_without_hiding_larger_shapes() {
         assert_eq!(chanchunks_to_active_planes(1, 10), 10);
         assert_eq!(chanchunks_to_active_planes(4, 10), 3);
         assert_eq!(chanchunks_to_active_planes(99, 10), 1);
@@ -49012,9 +49061,18 @@ mod tests {
             chanchunks_active_plane_candidates(None, 4),
             vec![1, 2, 3, 4]
         );
-        assert_eq!(chanchunks_active_plane_candidates(Some(2), 4), vec![2]);
-        assert_eq!(chanchunks_active_plane_candidates(Some(4), 4), vec![1]);
-        assert_eq!(chanchunks_active_plane_candidates(Some(3), 3), vec![1]);
+        assert_eq!(
+            chanchunks_active_plane_candidates(Some(2), 4),
+            vec![2, 3, 4]
+        );
+        assert_eq!(
+            chanchunks_active_plane_candidates(Some(4), 4),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            chanchunks_active_plane_candidates(Some(3), 3),
+            vec![1, 2, 3]
+        );
     }
 
     #[test]
@@ -51557,6 +51615,154 @@ mod tests {
         assert_eq!(
             imaging_slab_source_read_ahead_max_live_row_blocks(&read_ahead_config),
             2
+        );
+    }
+
+    fn reread_all_source_slab_shapes_for_test(
+        nplanes: usize,
+        full_source_channels: usize,
+    ) -> Vec<spectral_slab::VisibilitySlabShape> {
+        (1..=nplanes)
+            .map(|active_planes| {
+                let slab_count = nplanes.div_ceil(active_planes);
+                spectral_slab::VisibilitySlabShape {
+                    active_planes,
+                    slab_count,
+                    source_channel_visits: slab_count.saturating_mul(full_source_channels),
+                    physical_source_channel_visits: slab_count.saturating_mul(full_source_channels),
+                    max_slab_source_channels: full_source_channels,
+                }
+            })
+            .collect()
+    }
+
+    fn spectral_read_ahead_guard_regression_input(
+        max_live_row_blocks: usize,
+    ) -> spectral_slab::SpectralMemoryPlannerInput {
+        let nplanes = 512;
+        let image_shape = [2048, 2048];
+        let active_rows = 3_086_235;
+        let corr_count = 2;
+        let memory_target_bytes = 13 * 1024 * 1024 * 1024;
+        let visibility = spectral_slab::VisibilitySourceShape {
+            active_rows,
+            full_source_channel_count: 64,
+            source_cell_channel_count: 64,
+            corr_count,
+            data_element_bytes: 8,
+            flag_element_bytes: 1,
+            weight_element_bytes: 4,
+            weight_spectrum_element_bytes: None,
+            data_channel_read_granularity:
+                spectral_slab::VisibilityChannelReadGranularity::RequestedRange,
+            flag_channel_read_granularity:
+                spectral_slab::VisibilityChannelReadGranularity::RequestedRange,
+            weight_spectrum_channel_read_granularity: None,
+            uvw_element_bytes: 8,
+            antenna_element_bytes: 4,
+            time_element_bytes: Some(8),
+            pointing_id_element_bytes: None,
+            resident_layout:
+                spectral_slab::VisibilityResidentLayout::standard_spectral_cube_columnar(
+                    corr_count, 4,
+                ),
+            prepared_sample_bytes: 64,
+            full_source_cacheable: false,
+            slab_shapes: reread_all_source_slab_shapes_for_test(nplanes, 64),
+        };
+        spectral_slab::SpectralMemoryPlannerInput {
+            output: spectral_slab::ImagingOutputShape {
+                plane_count: nplanes,
+                image_shape,
+            },
+            visibility,
+            executor_capabilities:
+                spectral_slab::SpectralExecutorCapabilities::slab_runner_without_output_spill_or_full_source_cache(),
+            memory_target_bytes,
+            fixed_frontend_bytes: 233_378_040,
+            worker_staging_bytes: 0,
+            gpu_staging_bytes: 0,
+            safety_margin_bytes: 0,
+            executor_scratch: spectral_slab::ExecutorScratchShape {
+                fixed_bytes: 651_443_456,
+                per_active_plane_bytes: 0,
+                per_slab_source_channel_bytes: 0,
+                per_worker_bytes: 243_526_803,
+                per_worker_row_block_bytes: 64,
+                per_worker_row_block_limit_bytes: 50_331_648,
+                per_product_batch_plane_bytes: 0,
+                per_product_pending_plane_bytes: 0,
+            },
+            source_buffer_residency: spectral_slab::SourceBufferResidency::FullSlabRawSource,
+            product_write_bytes_per_plane: 0,
+            max_row_block_rows: active_rows,
+            max_worker_count: 10,
+            worker_plan_input: ImagingWorkerPlanInput {
+                output_planes: nplanes,
+                image_pixels: image_shape[0].saturating_mul(image_shape[1]),
+                work_iterations_per_plane: 1,
+                scale_count: 1,
+                max_workers: 10,
+                hardware_threads: 10,
+                parallelism: ImagingWorkerParallelism::PlaneParallel,
+                backend: ImagingWorkerBackend::Cpu,
+            },
+            requirements: spectral_slab::PlaneStateRequirements::dirty_standard()
+                .with_streaming_plane_results(),
+            prepared_residency: spectral_slab::PreparedVisibilityResidency {
+                sample_lanes_per_source_channel: corr_count,
+                bucket_sample_bytes: ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES,
+                max_live_row_blocks,
+            },
+        }
+    }
+
+    #[test]
+    fn explicit_slab_read_ahead_falls_back_when_it_reduces_residency_or_row_locality() {
+        let _env_lock = STANDARD_MFS_RUNTIME_ENV_LOCK.lock().unwrap();
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imaging_read_ahead_blocks = Some(2);
+
+        let single_block_plan =
+            spectral_slab::plan_spectral_memory(spectral_read_ahead_guard_regression_input(1))
+                .expect("single-block plan fits");
+        let read_ahead_plan =
+            spectral_slab::plan_spectral_memory(spectral_read_ahead_guard_regression_input(2))
+                .expect("read-ahead plan fits");
+
+        assert!(
+            read_ahead_plan.active_planes < single_block_plan.active_planes
+                || read_ahead_plan.row_block_rows < single_block_plan.row_block_rows,
+            "test input should model the observed read-ahead residency or row-locality regression: single={} read_ahead={}",
+            single_block_plan.log_line(),
+            read_ahead_plan.log_line()
+        );
+
+        let selected_plan = plan_spectral_memory_with_slab_read_ahead_guard(
+            &config,
+            spectral_read_ahead_guard_regression_input(2),
+        )
+        .expect("guarded plan fits");
+
+        assert_eq!(selected_plan.active_planes, single_block_plan.active_planes);
+        assert_eq!(selected_plan.slab_count, single_block_plan.slab_count);
+        assert_eq!(
+            selected_plan.row_block_rows,
+            single_block_plan.row_block_rows
+        );
+        assert_eq!(
+            selected_plan.prepared_residency.max_live_row_blocks,
+            single_block_plan.prepared_residency.max_live_row_blocks
+        );
+        assert!(
+            selected_plan
+                .warnings
+                .iter()
+                .any(|warning| warning
+                    .starts_with("slab_read_ahead_disabled_to_preserve_residency:")),
+            "{:?}",
+            selected_plan.warnings
         );
     }
 
