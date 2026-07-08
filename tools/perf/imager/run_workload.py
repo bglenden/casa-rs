@@ -398,6 +398,9 @@ def build_plan(
         "IMAGER_BENCH_IMAGING_FFT_PRECISION": str_value(
             imaging, "imaging_fft_precision", "auto"
         ),
+        "IMAGER_BENCH_IMAGING_FFT_BACKEND": str_value(
+            imaging, "imaging_fft_backend", "auto"
+        ),
         "IMAGER_BENCH_HOGBOM_ITERATION_MODE": hogbom_iteration_mode,
         "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
@@ -439,6 +442,8 @@ def build_plan(
         "imaging_prepare_buffer_mb": "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
         "imaging_row_block_rows": "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
         "imaging_prepare_workers": "IMAGER_BENCH_IMAGING_PREPARE_WORKERS",
+        "imaging_read_ahead_blocks": "IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS",
+        "chanchunks": "IMAGER_BENCH_CHANCHUNKS",
     }
     for imaging_key, env_key in optional_imaging_env.items():
         if imaging.get(imaging_key) is not None:
@@ -449,6 +454,8 @@ def build_plan(
                 env[env_key] = str(imaging[imaging_key])
             else:
                 env[env_key] = str(int_value(imaging, imaging_key, 0))
+    if imaging.get("parallel") is not None:
+        env["IMAGER_BENCH_PARALLEL"] = boolean_env_value(imaging, "parallel", True)
     env.setdefault("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", "1")
     env.update(extra_env)
 
@@ -486,8 +493,24 @@ def build_plan(
             "standard_mfs_acceleration": str_value(
                 imaging, "standard_mfs_acceleration", "auto"
             ),
+            "parallel": (
+                bool_value(imaging, "parallel", True)
+                if imaging.get("parallel") is not None
+                else None
+            ),
+            "chanchunks": (
+                int_value(imaging, "chanchunks", 0)
+                if imaging.get("chanchunks") is not None
+                else None
+            ),
             "imaging_fft_precision": str_value(
                 imaging, "imaging_fft_precision", "auto"
+            ),
+            "imaging_fft_backend": str_value(imaging, "imaging_fft_backend", "auto"),
+            "imaging_read_ahead_blocks": (
+                int_value(imaging, "imaging_read_ahead_blocks", 0)
+                if imaging.get("imaging_read_ahead_blocks") is not None
+                else None
             ),
             "standard_mfs_metal_minor_cycle_chunk": (
                 str(imaging["standard_mfs_metal_minor_cycle_chunk"])
@@ -805,6 +828,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "single_plane_execution_plan": [],
         "standard_mfs_runtime_plan": [],
         "source_stream_memory_plan": [],
+        "standard_mfs_source_read_ahead": [],
+        "dirty_product_fft": [],
         "source_stream_consumer": [],
         "frontend_progress": [],
         "profile_runs": [],
@@ -847,6 +872,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["standard_mfs_runtime_plan"].append(parsed)
         elif name == "standard_mfs_memory_plan_actual":
             buckets["source_stream_memory_plan"].append(parsed)
+        elif name == "standard_mfs_source_read_ahead_summary":
+            buckets["standard_mfs_source_read_ahead"].append(parsed)
+        elif name == "dirty_product_fft_timing":
+            buckets["dirty_product_fft"].append(parsed)
         elif name == "visibility_source_stream_consumer":
             buckets["source_stream_consumer"].append(parsed)
         elif name == "frontend":
@@ -969,6 +998,10 @@ def parse_scalar_value(value: str) -> Any:
 def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
+    source_read_ahead = last_fields(
+        buckets.get("standard_mfs_source_read_ahead", [])
+    )
+    dirty_product_fft = last_fields(buckets.get("dirty_product_fft", []))
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
@@ -1090,6 +1123,11 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "resolved_initial_dirty_backend": runtime.get("initial_dirty_backend"),
         "resolved_minor_cycle_backend": runtime.get("minor_cycle_backend"),
         "resolved_minor_cycle_backend_reason": runtime.get("minor_cycle_backend_reason"),
+        "requested_imaging_fft_backend": runtime.get("imaging_fft_backend"),
+        "dirty_product_fft_selected_backend": dirty_product_fft.get("selected_backend"),
+        "dirty_product_fft_requested_backend": dirty_product_fft.get("requested_backend"),
+        "dirty_product_fft_fallback_used": dirty_product_fft.get("fallback_used"),
+        "dirty_product_fft_total_ms": dirty_product_fft.get("total_ms"),
         "metal_device_available": runtime.get("metal_device_available"),
         "metal_grouped_input_cache": runtime.get("metal_grouped_input_cache"),
         "cube_per_plane_backend": cube_per_plane_backend.get("selected_backend"),
@@ -1227,6 +1265,27 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "memory_target_bytes": memory.get("memory_target_bytes"),
         "planned_active_bytes": memory.get("planned_active_bytes"),
         "source_stream_buffer_bytes": memory.get("source_stream_buffer_bytes"),
+        "source_read_ahead_enabled": source_read_ahead.get("enabled"),
+        "source_read_ahead_max_live_row_blocks": source_read_ahead.get(
+            "max_live_row_blocks"
+        ),
+        "source_read_ahead_queue_capacity": source_read_ahead.get("queue_capacity"),
+        "source_read_ahead_row_blocks": source_read_ahead.get("row_blocks"),
+        "source_read_ahead_consumer_recv_blocked_ms": source_read_ahead.get(
+            "consumer_recv_blocked_ms"
+        ),
+        "source_read_ahead_producer_send_blocked_ms": source_read_ahead.get(
+            "producer_send_blocked_ms"
+        ),
+        "source_read_ahead_source_read_ms": source_read_ahead.get("source_read_ms"),
+        "source_read_ahead_source_route_ms": source_read_ahead.get("source_route_ms"),
+        "source_read_ahead_consumer_ms": source_read_ahead.get("consumer_ms"),
+        "source_read_ahead_source_prepare_ms": source_read_ahead.get(
+            "source_prepare_ms"
+        ),
+        "source_read_ahead_streamed_samples": source_read_ahead.get(
+            "streamed_samples"
+        ),
         "visibility_row_channel_bytes": memory.get("visibility_row_channel_bytes"),
         "visibility_row_fixed_bytes": memory.get("visibility_row_fixed_bytes"),
         "visibility_row_fixed_resident_bytes": memory.get(
@@ -1835,17 +1894,63 @@ def build_benchmark_feature_summary(
             "memory_headroom_bytes": memory_headroom_bytes(backend_summary),
             "row_block_count": row_block_count(selected_rows, backend_summary.get("row_block_rows")),
             "row_block_rows": backend_summary.get("row_block_rows"),
+            "source_read_ahead_enabled": backend_summary.get(
+                "source_read_ahead_enabled"
+            ),
+            "source_read_ahead_queue_capacity": backend_summary.get(
+                "source_read_ahead_queue_capacity"
+            ),
+            "source_read_ahead_row_blocks": backend_summary.get(
+                "source_read_ahead_row_blocks"
+            ),
+            "source_read_ahead_consumer_recv_blocked_ms": backend_summary.get(
+                "source_read_ahead_consumer_recv_blocked_ms"
+            ),
+            "source_read_ahead_producer_send_blocked_ms": backend_summary.get(
+                "source_read_ahead_producer_send_blocked_ms"
+            ),
+            "source_read_ahead_source_read_ms": backend_summary.get(
+                "source_read_ahead_source_read_ms"
+            ),
+            "source_read_ahead_source_route_ms": backend_summary.get(
+                "source_read_ahead_source_route_ms"
+            ),
+            "source_read_ahead_consumer_ms": backend_summary.get(
+                "source_read_ahead_consumer_ms"
+            ),
+            "source_read_ahead_source_prepare_ms": backend_summary.get(
+                "source_read_ahead_source_prepare_ms"
+            ),
             "peak_rss_bytes": backend_summary.get("peak_rss_bytes"),
             "metal_device": backend_summary.get("metal_device_available"),
             "metal_grouped_input_cache": backend_summary.get("metal_grouped_input_cache"),
+            "dirty_product_fft_selected_backend": backend_summary.get(
+                "dirty_product_fft_selected_backend"
+            ),
+            "dirty_product_fft_requested_backend": backend_summary.get(
+                "dirty_product_fft_requested_backend"
+            ),
+            "dirty_product_fft_total_ms": backend_summary.get("dirty_product_fft_total_ms"),
         },
         "backend": {
             "requested_acceleration": mode.get("standard_mfs_acceleration"),
+            "requested_imaging_fft_backend": backend_summary.get(
+                "requested_imaging_fft_backend"
+            ),
             "resolved_backend": backend_summary.get("resolved_backend"),
             "resolved_grid_threads": backend_summary.get("resolved_grid_threads"),
             "resolved_tile_anchor": backend_summary.get("resolved_tile_anchor"),
             "resolved_residual_backend": backend_summary.get("resolved_residual_backend"),
             "resolved_initial_dirty_backend": backend_summary.get("resolved_initial_dirty_backend"),
+            "dirty_product_fft_selected_backend": backend_summary.get(
+                "dirty_product_fft_selected_backend"
+            ),
+            "dirty_product_fft_requested_backend": backend_summary.get(
+                "dirty_product_fft_requested_backend"
+            ),
+            "dirty_product_fft_fallback_used": backend_summary.get(
+                "dirty_product_fft_fallback_used"
+            ),
             "cube_per_plane_backend": backend_summary.get("cube_per_plane_backend"),
             "cube_per_plane_phase": backend_summary.get("cube_per_plane_phase"),
             "cube_per_plane_workers": backend_summary.get("cube_per_plane_workers"),

@@ -110,6 +110,10 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         use_mask="auto-multithresh",
         auto_mask={"sidelobe_threshold": 2.0, "noise_threshold": 4.25},
         mask_boxes=[(100, 100, 150, 150)],
+        parallel=True,
+        imaging_read_ahead_blocks=2,
+        imaging_fft_precision="f32",
+        imaging_fft_backend="metal-mpsgraph",
         binary=binary,
     )
 
@@ -140,6 +144,10 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["auto_mask"]["sidelobe_threshold"] == 2.0
     assert request["auto_mask"]["noise_threshold"] == 4.25
     assert request["mask_boxes"] == [[100, 100, 150, 150]]
+    assert request["parallel"] is True
+    assert request["imaging_read_ahead_blocks"] == 2
+    assert request["imaging_fft_precision"] == "f32"
+    assert request["imaging_fft_backend"] == "metal-mpsgraph"
 
 
 def test_wrapper_encodes_briggs_bandwidth_taper(tmp_path: Path) -> None:
@@ -193,7 +201,7 @@ def _write_stub_binary(
     path: Path,
     *,
     version: str,
-    protocol_version: int = 2,
+    protocol_version: int = 3,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     script = textwrap.dedent(

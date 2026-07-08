@@ -676,8 +676,8 @@ mod tests {
     };
     use crate::{
         AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, CubeAxisConfig,
-        FrontendStageTimings, ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
-        StandardMfsAccelerationPolicy,
+        FrontendStageTimings, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, RunSummary,
+        SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
     };
     use casa_imaging::{
         CleanStopReason, Deconvolver, HogbomIterationMode, ImagingStageTimings, RestoringBeamMode,
@@ -741,6 +741,7 @@ mod tests {
             force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
+            chanchunks: None,
             standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
@@ -755,7 +756,9 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
             write_preview_pngs: true,
         }
     }
@@ -967,6 +970,8 @@ mod tests {
                 force_standard_gridder: true,
                 w_project_planes: Some(32),
                 dirty_only: true,
+                parallel: None,
+                chanchunks: None,
                 standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
                 standard_mfs_backend: None,
                 standard_mfs_grid_threads: None,
@@ -981,7 +986,9 @@ mod tests {
                 imaging_prepare_buffer_mb: None,
                 imaging_row_block_rows: None,
                 imaging_prepare_workers: None,
+                imaging_read_ahead_blocks: None,
                 imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
+                imaging_fft_backend: ImagingFftBackendPolicy::Auto,
                 write_preview_pngs: false,
                 progress: None,
             },

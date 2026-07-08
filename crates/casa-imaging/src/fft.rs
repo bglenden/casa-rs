@@ -25,6 +25,7 @@ static FFT32_CACHE: FftCache<FftPlan32> = LazyLock::new(|| Mutex::new(HashMap::n
 static FFT64_CACHE: FftCache<FftPlan64> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const IMAGING_FFT_PRECISION_ENV: &str = "CASA_RS_IMAGING_FFT_PRECISION";
+const IMAGING_FFT_BACKEND_ENV: &str = "CASA_RS_IMAGING_FFT_BACKEND";
 const DIRTY_F32_FFT_BATCH_CHUNK_ENV: &str = "CASA_RS_DIRTY_F32_FFT_BATCH_CHUNK";
 const DIRTY_F32_FFT_BATCH_TARGET_BYTES_ENV: &str = "CASA_RS_DIRTY_F32_FFT_BATCH_TARGET_BYTES";
 const DEFAULT_DIRTY_F32_FFT_BATCH_TARGET_BYTES: usize = 256 * 1024 * 1024;
@@ -65,6 +66,7 @@ pub(crate) fn centered_fft2_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Array2<Complex32>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     rustfft_centered_transform_f32(input, false, use_case, backend_choice)
 }
 
@@ -74,6 +76,7 @@ pub(crate) fn centered_fft2_batch_f32_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Vec<Array2<Complex32>>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     centered_transform_batch_f32(inputs, false, use_case, backend_choice)
 }
 
@@ -89,6 +92,7 @@ pub(crate) fn centered_fft2_f64_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Array2<Complex64>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     centered_fft2_f64_timed_with_backend_and_policy(
         input,
         use_case,
@@ -121,6 +125,7 @@ pub(crate) fn centered_ifft2_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Array2<Complex32>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     rustfft_centered_transform_f32(input, true, use_case, backend_choice)
 }
 
@@ -130,6 +135,7 @@ pub(crate) fn centered_ifft2_batch_f32_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Vec<Array2<Complex32>>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     centered_transform_batch_f32(inputs, true, use_case, backend_choice)
 }
 
@@ -138,6 +144,7 @@ pub(crate) fn centered_ifft2_batch_f64_to_f32_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Vec<Array2<Complex32>>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     centered_transform_batch_f64_to_f32(inputs, true, use_case, backend_choice)
 }
 
@@ -153,6 +160,7 @@ pub(crate) fn centered_ifft2_f64_timed_with_backend(
     use_case: FftUseCase,
     backend_choice: FftBackendChoice,
 ) -> (Array2<Complex64>, FftTiming) {
+    let backend_choice = resolve_imaging_fft_backend_choice(backend_choice);
     centered_ifft2_f64_timed_with_backend_and_policy(
         input,
         use_case,
@@ -758,6 +766,16 @@ pub(crate) fn imaging_demote_dirty_f64_fft_to_f32() -> bool {
     })
 }
 
+fn resolve_imaging_fft_backend_choice(default_choice: FftBackendChoice) -> FftBackendChoice {
+    if default_choice != FftBackendChoice::Auto {
+        return default_choice;
+    }
+    std::env::var(IMAGING_FFT_BACKEND_ENV)
+        .ok()
+        .and_then(|value| value.trim().to_ascii_lowercase().parse().ok())
+        .unwrap_or(FftBackendChoice::Auto)
+}
+
 fn inverse_fft2_scale_centered_frequency_f64(input: &mut Array2<Complex64>) {
     transform_axis_f64(input, Axis(0), true);
     transform_axis_f64(input, Axis(1), true);
@@ -992,13 +1010,15 @@ fn shift2_f64(input: &Array2<Complex64>, inverse: bool) -> Array2<Complex64> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use ndarray::Array2;
     use num_complex::{Complex32, Complex64};
 
     use crate::fft_backend::{FftBackendChoice, FftPrecision, FftUseCase};
 
     use super::{
-        centered_fft2, centered_fft2_batch_f32_timed_with_backend,
+        IMAGING_FFT_BACKEND_ENV, centered_fft2, centered_fft2_batch_f32_timed_with_backend,
         centered_fft2_f64_timed_with_backend_and_policy, centered_fft2_timed_with_backend,
         centered_ifft2, centered_ifft2_batch_f32_timed_with_backend,
         centered_ifft2_batch_f64_to_f32_timed_with_backend, centered_ifft2_f64,
@@ -1006,6 +1026,35 @@ mod tests {
         centered_ifft2_f64_timed_with_backend_and_policy, centered_ifft2_timed_with_backend,
         rustfft_centered_transform_f64_via_f32,
     };
+
+    struct EnvGuard {
+        name: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(name);
+            // SAFETY: this test guard is scoped to a single unit test and restores
+            // the process environment before returning.
+            unsafe {
+                std::env::set_var(name, value);
+            }
+            Self { name, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: this restores the process environment saved by `set`.
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var(self.name, value),
+                    None => std::env::remove_var(self.name),
+                }
+            }
+        }
+    }
 
     #[test]
     fn fft_round_trip_preserves_image() {
@@ -1023,6 +1072,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn f32_model_and_restoration_helpers_use_shared_auto_backend_contract() {
         let image = Array2::from_shape_fn((8, 6), |(x, y)| {
             Complex32::new((x as f32 + 0.25) * 0.5, (y as f32 - 0.75) * 0.25)
@@ -1051,6 +1101,27 @@ mod tests {
             restoration_timing.selection.requested_backend,
             FftBackendChoice::Auto
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_backend_can_be_overridden_by_scoped_imaging_policy() {
+        let _backend = EnvGuard::set(IMAGING_FFT_BACKEND_ENV, "rustfft");
+        let image = Array2::from_shape_fn((8, 6), |(x, y)| {
+            Complex32::new((x as f32 + 0.25) * 0.5, (y as f32 - 0.75) * 0.25)
+        });
+
+        let (_, timing) = centered_ifft2_timed_with_backend(
+            &image,
+            FftUseCase::DirtyPsfResidual,
+            FftBackendChoice::Auto,
+        );
+
+        assert_eq!(
+            timing.selection.requested_backend,
+            FftBackendChoice::RustFft
+        );
+        assert_eq!(timing.selection.selected_backend, FftBackendChoice::RustFft);
     }
 
     #[test]
@@ -1188,6 +1259,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn dirty_f64_fast_path_uses_shared_f32_backend_contract() {
         let image = Array2::from_shape_fn((8, 6), |(x, y)| {
             Complex64::new((x as f64 + 0.125) * 1.0e-3, (y as f64 - 0.375) * 2.0e-3)

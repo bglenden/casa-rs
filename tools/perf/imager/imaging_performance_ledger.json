@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "wave_issues": [56, 343, 262, 352],
+  "description": "Performance-evidence ledger for the broad imaging performance wave. Fill this from GLENDENNING medium/large run_workload.py results before claiming speedup fractions.",
+  "summary_columns": [
+    "workload_id",
+    "issue_slice",
+    "commit",
+    "machine",
+    "mode",
+    "gridder",
+    "deconvolver",
+    "precision_policy",
+    "parallel_requested",
+    "parallel_effective",
+    "chanchunks_requested",
+    "chanchunks_effective",
+    "row_block_rows",
+    "read_ahead_blocks",
+    "memory_target_gb",
+    "peak_rss_gb",
+    "baseline_total_wall_s",
+    "candidate_total_wall_s",
+    "speedup",
+    "wall_reduction_fraction",
+    "correctness_status",
+    "max_abs",
+    "rms",
+    "notes"
+  ],
+  "stage_columns": [
+    "stage",
+    "baseline_s",
+    "candidate_s",
+    "delta_s",
+    "baseline_wall_fraction",
+    "candidate_wall_fraction",
+    "saved_fraction_of_baseline_wall",
+    "contribution_to_total_saved_wall"
+  ],
+  "overlap_columns": [
+    "producer_active_s",
+    "consumer_active_s",
+    "producer_consumer_overlap_s",
+    "consumer_blocked_on_input_s",
+    "producer_blocked_on_capacity_s",
+    "queue_high_water_blocks",
+    "queue_high_water_bytes",
+    "effective_read_bandwidth_mb_s"
+  ],
+  "gpu_columns": [
+    "host_grid_accumulation_s",
+    "f32_cast_pack_s",
+    "host_to_device_staging_s",
+    "device_fft_s",
+    "device_normalization_s",
+    "device_shift_crop_s",
+    "device_product_assembly_s",
+    "device_to_host_final_export_s",
+    "product_write_s",
+    "gpu_sync_wait_s",
+    "gpu_device_memory_high_water_bytes",
+    "fallback_reason"
+  ],
+  "formulas": {
+    "speedup": "baseline_total_wall_s / candidate_total_wall_s",
+    "wall_reduction_fraction": "(baseline_total_wall_s - candidate_total_wall_s) / baseline_total_wall_s",
+    "baseline_wall_fraction": "baseline_stage_s / baseline_total_wall_s",
+    "candidate_wall_fraction": "candidate_stage_s / candidate_total_wall_s",
+    "saved_fraction_of_baseline_wall": "(baseline_stage_s - candidate_stage_s) / baseline_total_wall_s",
+    "contribution_to_total_saved_wall": "(baseline_stage_s - candidate_stage_s) / (baseline_total_wall_s - candidate_total_wall_s)"
+  },
+  "workload_groups": [
+    {
+      "group_id": "standard_cube_medium_controls",
+      "owner_issues": [56, 343],
+      "workloads": [
+        "wave4-standard-cube-line-medium.json",
+        "wave4-standard-cube-line-medium-clean-clark.json",
+        "wave4-standard-cube-line-medium-clean-multiscale.json"
+      ],
+      "required_roles": ["serial_cpu", "parallel_auto", "parallel_chanchunks", "read_ahead_disabled", "read_ahead_enabled"]
+    },
+    {
+      "group_id": "standard_cubedata_medium_large_controls",
+      "owner_issues": [56, 343],
+      "workloads": [
+        "wave4-standard-cubedata-line-medium.json",
+        "wave4-standard-cubedata-line-large-bounded.json"
+      ],
+      "required_roles": ["serial_cpu", "parallel_auto", "parallel_chanchunks"]
+    },
+    {
+      "group_id": "mosaic_cube_large_overlap",
+      "owner_issues": [56, 343],
+      "workloads": [
+        "wave3-mosaic-cube-alma-large-stress-serial.json",
+        "wave3-mosaic-cube-alma-large-stress-auto.json",
+        "wave4-mosaic-cube-alma-large-dirty-bounded.json"
+      ],
+      "required_roles": ["serial_cpu", "parallel_auto", "read_ahead_enabled"]
+    },
+    {
+      "group_id": "mtmfs_mosaic_medium_correctness_perf",
+      "owner_issues": [262],
+      "workloads": [
+        "wave3-mtmfs-heavy-wave1-medium-serial.json",
+        "wave3-mtmfs-heavy-wave1-medium-multicpu.json"
+      ],
+      "required_roles": ["standard_mtmfs_baseline", "mosaic_mtmfs_candidate", "casa_oracle"]
+    },
+    {
+      "group_id": "gpu_residency_medium_large",
+      "owner_issues": [352],
+      "workloads": [
+        "wave4-standard-cube-line-medium.json",
+        "wave4-standard-cubedata-line-medium.json",
+        "wave3-mosaic-mfs-alma-large-stress-auto.json"
+      ],
+      "required_roles": ["cpu_f64_parity", "cpu_f32_baseline", "metal_f32_candidate"]
+    }
+  ],
+  "runs": [
+    {
+      "workload_id": "wave3-standard-mfs-single-term-heavy-wave2",
+      "issue_slice": "343-standard-mfs-read-ahead",
+      "commit": "c5673768b+worktree",
+      "machine": "bg-macbook-air",
+      "mode": "clean mfs",
+      "gridder": "standard",
+      "deconvolver": "hogbom",
+      "precision_policy": "auto",
+      "parallel_requested": "multi-cpu",
+      "parallel_effective": "fixed_tile grid_threads=4",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 2312333,
+        "candidate": 1261599
+      },
+      "read_ahead_blocks": {
+        "baseline": 1,
+        "candidate": 2
+      },
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": {
+        "baseline": 14.529,
+        "candidate": null
+      },
+      "baseline_total_wall_s": 155.578507,
+      "candidate_total_wall_s": 122.825994,
+      "speedup": 1.266658,
+      "wall_reduction_fraction": 0.21052081,
+      "correctness_status": "not_run_rust_only_skip_casa; same gridded_samples=197519040, major_cycles=10, minor_iterations=510",
+      "max_abs": null,
+      "rms": null,
+      "notes": "GLENDENNING medium Wave 3 standard-MFS clean workload. Baseline run used imaging_read_ahead_blocks=1; candidate used 2. CASA was skipped for timing isolation.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-imager-perf-medium/runs/20260708T175142Z-wave3-standard-mfs-single-term-heavy-wave2-26ddffdf.json",
+        "candidate": "/private/tmp/casa-rs-imager-perf-medium/runs/20260708T175725Z-wave3-standard-mfs-single-term-heavy-wave2-adf9056a.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 155.578507,
+          "candidate_s": 122.825994,
+          "delta_s": -32.752513,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.21052081,
+          "contribution_to_total_saved_wall": 1.0
+        },
+        {
+          "stage": "prepare_plane_input",
+          "baseline_s": 112.818782,
+          "candidate_s": 102.190230,
+          "delta_s": -10.628552,
+          "baseline_wall_fraction": 0.725157,
+          "candidate_wall_fraction": 0.831991,
+          "saved_fraction_of_baseline_wall": 0.068316,
+          "contribution_to_total_saved_wall": 0.324510
+        },
+        {
+          "stage": "source_read",
+          "baseline_s": 61.902895,
+          "candidate_s": 50.266542,
+          "delta_s": -11.636353,
+          "baseline_wall_fraction": 0.397887,
+          "candidate_wall_fraction": 0.409250,
+          "saved_fraction_of_baseline_wall": 0.074792,
+          "contribution_to_total_saved_wall": 0.355287
+        },
+        {
+          "stage": "source_prepare",
+          "baseline_s": 50.915888,
+          "candidate_s": 51.923688,
+          "delta_s": 1.007800,
+          "baseline_wall_fraction": 0.327263,
+          "candidate_wall_fraction": 0.422742,
+          "saved_fraction_of_baseline_wall": -0.006478,
+          "contribution_to_total_saved_wall": -0.030771
+        },
+        {
+          "stage": "core_total",
+          "baseline_s": 147.217979,
+          "candidate_s": 118.576573,
+          "delta_s": -28.641406,
+          "baseline_wall_fraction": 0.946262,
+          "candidate_wall_fraction": 0.965403,
+          "saved_fraction_of_baseline_wall": 0.184096,
+          "contribution_to_total_saved_wall": 0.874473
+        }
+      ],
+      "overlap": {
+        "producer_active_s": 7.304020,
+        "consumer_active_s": 2.123856,
+        "producer_consumer_overlap_s": null,
+        "consumer_blocked_on_input_s": 5.372655,
+        "producer_blocked_on_capacity_s": 0.000012,
+        "queue_high_water_blocks": 1,
+        "queue_high_water_bytes": null,
+        "effective_read_bandwidth_mb_s": null
+      }
+    },
+    {
+      "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
+      "issue_slice": "56-mosaic-cube-chanchunks",
+      "commit": "c5673768b+worktree",
+      "machine": "bg-macbook-air",
+      "mode": "dirty cube",
+      "gridder": "mosaic",
+      "deconvolver": "hogbom",
+      "precision_policy": "auto",
+      "parallel_requested": "multi-cpu",
+      "parallel_effective": {
+        "baseline": "mosaic shared source slab active_planes=8 worker_count=8",
+        "candidate": "mosaic shared source slab active_planes=2 worker_count=2 slab_count=4"
+      },
+      "chanchunks_requested": {
+        "baseline": 1,
+        "candidate": 4
+      },
+      "chanchunks_effective": {
+        "baseline": "8 planes in 1 slab",
+        "candidate": "2 planes per slab, 4 slabs"
+      },
+      "row_block_rows": {
+        "baseline": 6060670,
+        "candidate": 6060670
+      },
+      "read_ahead_blocks": null,
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": {
+        "baseline": null,
+        "candidate": null
+      },
+      "baseline_total_wall_s": 154.955595,
+      "candidate_total_wall_s": 279.914547,
+      "speedup": 0.553582,
+      "wall_reduction_fraction": -0.806418,
+      "correctness_status": "rust_only_skip_casa; candidate completed all 8 PB-aware mosaic cube planes after slab-local source-channel remap fix; targeted product-invariance tests cover .psf/.residual/.image/.sumwt/.weight/.pb/.image.pbcor",
+      "max_abs": null,
+      "rms": null,
+      "notes": "GLENDENNING medium mosaic cube bounded dirty workload. chanchunks=4 reduces resident slab memory from planned_active_bytes=10.759GB to 3.122GB but is 80.6% slower than the one-slab baseline on this medium case because each slab rereads and replays the 6.06M-row source. This is bounded-memory evidence, not a default-speedup claim.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-imaging-wave/runs/20260708T192304Z-wave4-mosaic-cube-alma-medium-dirty-bounded-a27d1c5a.json",
+        "candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T193058Z-wave4-mosaic-cube-alma-medium-dirty-bounded-278ad003.json",
+        "failed_pre_fix_candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T192707Z-wave4-mosaic-cube-alma-medium-dirty-bounded-aab82699.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 154.955595,
+          "candidate_s": 279.914547,
+          "delta_s": 124.958952,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": -0.806418,
+          "contribution_to_total_saved_wall": 1.0
+        },
+        {
+          "stage": "source_read",
+          "baseline_s": 15.685784,
+          "candidate_s": 62.094254,
+          "delta_s": 46.408470,
+          "baseline_wall_fraction": 0.101230,
+          "candidate_wall_fraction": 0.221837,
+          "saved_fraction_of_baseline_wall": -0.299499,
+          "contribution_to_total_saved_wall": 0.371383
+        },
+        {
+          "stage": "run_imaging",
+          "baseline_s": 117.178000,
+          "candidate_s": 205.773000,
+          "delta_s": 88.595000,
+          "baseline_wall_fraction": 0.756203,
+          "candidate_wall_fraction": 0.735126,
+          "saved_fraction_of_baseline_wall": -0.571744,
+          "contribution_to_total_saved_wall": 0.709793
+        }
+      ]
+    }
+  ]
+}

@@ -32,6 +32,8 @@ GridderMode: TypeAlias = Literal[
 PlaneSelection: TypeAlias = Literal["I", "Q", "U", "V", "XX", "YY", "RR", "LL"]
 SaveModel: TypeAlias = Literal["none", "modelcolumn"]
 CleanMaskMode: TypeAlias = Literal["user", "auto-multithresh"]
+ImagingFftPrecision: TypeAlias = Literal["auto", "f64", "f32"]
+ImagingFftBackend: TypeAlias = Literal["auto", "rustfft", "accelerate", "metal-mpsgraph"]
 
 
 def configure(*, binary: StrPath | None) -> None:
@@ -97,6 +99,10 @@ def mfs(
     w_term_mode: WTermMode = "none",
     w_project_planes: int | None = None,
     dirty_only: bool = False,
+    parallel: bool | None = None,
+    imaging_read_ahead_blocks: int | None = None,
+    imaging_fft_precision: ImagingFftPrecision = "auto",
+    imaging_fft_backend: ImagingFftBackend = "auto",
     write_preview_pngs: bool = True,
     binary: StrPath | None = None,
 ) -> TaskResult:
@@ -150,6 +156,10 @@ def mfs(
         "w_term_mode": resolved_w_term_mode,
         "w_project_planes": w_project_planes,
         "dirty_only": dirty_only,
+        "parallel": parallel,
+        "imaging_read_ahead_blocks": imaging_read_ahead_blocks,
+        "imaging_fft_precision": imaging_fft_precision,
+        "imaging_fft_backend": imaging_fft_backend,
         "write_preview_pngs": write_preview_pngs,
     }
     return run(request, binary=binary)

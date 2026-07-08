@@ -2962,6 +2962,17 @@ pub struct SinglePlaneVisibilityBlock {
     pub gridder_metadata: SinglePlaneGridderMetadata,
 }
 
+/// Bounded visibility block for streaming mosaic MT-MFS imaging.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MosaicMtmfsVisibilityBlock {
+    /// Scalar visibility samples prepared from a bounded MS row block.
+    pub visibility: VisibilityBatch,
+    /// Per-sample world frequencies in Hz aligned with `visibility`.
+    pub sample_frequencies_hz: Vec<f64>,
+    /// Mosaic PB/pointing metadata aligned with this block.
+    pub gridder_metadata: GroupedVisibilityMetadataBatch,
+}
+
 /// Logical consumer pass for replayable one-output-plane visibility streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SinglePlaneStreamPass {
@@ -3404,6 +3415,899 @@ where
             image_units: "Jy/beam".to_string(),
         },
     })
+}
+
+/// Run CASA-style MT-MFS imaging with the streaming mosaic gridder.
+///
+/// This keeps the large-mosaic data path replayable: visibility row blocks are
+/// consumed pass-by-pass and Taylor-term grids are accumulated directly from
+/// mosaic/PB metadata instead of materializing a full weighted visibility cache.
+pub fn run_mosaic_mtmfs_from_single_plane_stream<F>(
+    request: MtmfsRequest,
+    execution_config: StandardMfsExecutionConfig,
+    weight_density_mode: WeightDensityMode,
+    mut replay_unweighted_blocks: F,
+) -> Result<MtmfsResult, ImagingError>
+where
+    F: FnMut(
+        SinglePlaneStreamPass,
+        &mut dyn FnMut(MosaicMtmfsVisibilityBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.weighting.validate()?;
+    request.clean.validate()?;
+    if request.compatibility != CompatibilityMode::CasaStandardMfs {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MT-MFS requires CASA standard MFS compatibility".to_string(),
+        ));
+    }
+    let GridderMode::Mosaic(config) = request.gridder_mode.clone() else {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MT-MFS requires gridder='mosaic'".to_string(),
+        ));
+    };
+    validate_mosaic_streaming_config(&config)?;
+    if request.w_term_mode != WTermMode::None {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MT-MFS currently supports only w_term_mode='none'".to_string(),
+        ));
+    }
+    if matches!(request.weighting, WeightingMode::BriggsBwTaper { .. }) {
+        return Err(ImagingError::Unsupported(
+            "streaming mosaic MT-MFS does not yet support BriggsBwTaper per-plane density"
+                .to_string(),
+        ));
+    }
+    if request.nterms == 0 {
+        return Err(ImagingError::InvalidRequest(
+            "streaming mosaic MT-MFS requires nterms >= 1".to_string(),
+        ));
+    }
+    if let Some(mask) = request.clean_mask.as_ref()
+        && mask.dim() != (request.geometry.nx(), request.geometry.ny())
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "clean mask shape {:?} does not match image shape {:?}",
+            mask.dim(),
+            (request.geometry.nx(), request.geometry.ny())
+        )));
+    }
+
+    let gridder = StandardGridder::new_unpadded(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let conv_sampling = mosaic_projector_sampling(request.geometry);
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_request = mosaic_mtmfs_weighting_request(&request);
+
+    let weighting_started = Instant::now();
+    let mut weighting_plans = BTreeMap::<(u64, u64), MosaicStreamingWeightingPlan>::new();
+    let mosaic_parallel_threads = mosaic_parallel_thread_count(usize::MAX);
+    let density_context = MosaicStreamingDensityContext {
+        geometry: request.geometry,
+        weighting: request.weighting,
+        selected_frequency_range_hz: request.selected_frequency_range_hz,
+        weight_density_mode,
+        _config: &config,
+        _gridder: &gridder,
+        _conv_sampling: conv_sampling,
+    };
+    if request.weighting != WeightingMode::Natural {
+        replay_unweighted_blocks(SinglePlaneStreamPass::WeightingDensity, &mut |block| {
+            block
+                .gridder_metadata
+                .validate_len(block.visibility.len())?;
+            accumulate_mosaic_streaming_density(
+                &density_context,
+                &block.visibility,
+                &block.gridder_metadata,
+                &mut weighting_plans,
+                mosaic_parallel_threads,
+            )
+        })?;
+        for plan in weighting_plans.values_mut() {
+            plan.finish_density_pass();
+        }
+    }
+    stage_timings.weighting += weighting_started.elapsed();
+
+    let dirty_started = Instant::now();
+    let initial = accumulate_mosaic_mtmfs_stream_grids(
+        &request,
+        &weighting_request,
+        &config,
+        &gridder,
+        &weighting_plans,
+        conv_sampling,
+        None,
+        &mut replay_unweighted_blocks,
+        SinglePlaneStreamPass::InitialDirty,
+        execution_config.progress_callback.as_ref(),
+        Some(standard_mfs_progress_context(
+            &weighting_request,
+            execution_config.minor_cycle_backend,
+            0,
+            0,
+            0,
+            None,
+            None,
+        )),
+    )?;
+    stage_timings.psf_grid += dirty_started.elapsed();
+
+    if !(initial.normalization_sumwt.is_finite() && initial.normalization_sumwt > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic MT-MFS normalization sumwt is non-finite or zero".to_string(),
+        ));
+    }
+    if !(initial.reported_sumwt_terms[0].is_finite() && initial.reported_sumwt_terms[0] > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic MT-MFS reported sumwt is non-finite or zero".to_string(),
+        ));
+    }
+
+    let weight_image_for_mask = initial
+        .pointing_weights
+        .build_image(request.geometry, &config)?;
+    let fft_started = Instant::now();
+    let raw_psf_terms = initial
+        .psf_grids
+        .iter()
+        .map(centered_ifft2_f64)
+        .collect::<Vec<_>>();
+    let raw_residual_terms = initial
+        .residual_grids
+        .iter()
+        .map(centered_ifft2_f64)
+        .collect::<Vec<_>>();
+    let raw_weight = centered_ifft2_f64(&initial.weight_grid);
+    stage_timings.psf_fft += fft_started.elapsed();
+
+    let normalize_started = Instant::now();
+    let normalization_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_weight);
+    let fft_sumwt_scale = (nx * ny) as f32 / initial.normalization_sumwt as f32;
+    let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+    let mut psf_terms = raw_psf_terms
+        .iter()
+        .map(|raw| {
+            let mut image = gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
+            image.mapv_inplace(|value| value * fft_sumwt_scale);
+            image
+        })
+        .collect::<Vec<_>>();
+    let psf_peak = peak_abs_value(&psf_terms[0]);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "streaming mosaic MT-MFS PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    for psf_term in &mut psf_terms {
+        psf_term.mapv_inplace(|value| value / psf_peak);
+    }
+    let mut residual_terms = raw_residual_terms
+        .iter()
+        .map(|raw| {
+            let mut image = gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
+            image.mapv_inplace(|value| value * fft_sumwt_scale);
+            normalize_mosaic_residual_by_weight(&mut image, &weight_image, config.pb_limit)?;
+            Ok(image)
+        })
+        .collect::<Result<Vec<_>, ImagingError>>()?;
+    stage_timings.psf_normalize += normalize_started.elapsed();
+
+    let mosaic_clean_mask = build_mosaic_clean_mask(
+        &weight_image_for_mask,
+        config.pb_limit,
+        request.clean_mask.as_ref(),
+    )?;
+    let mut clean_request = request.clone();
+    clean_request.clean_mask = Some(mosaic_clean_mask);
+    let clean_mask_pixels = clean_request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let psf_state = MtmfsPsfState {
+        psf_terms,
+        normalization_sumwt: initial.normalization_sumwt as f32,
+        reported_sumwt_terms: initial
+            .reported_sumwt_terms
+            .iter()
+            .copied()
+            .map(|value| value as f32)
+            .collect(),
+        psf_peak,
+        gridded_samples: initial.gridded_samples,
+        skipped_samples: initial.skipped_samples,
+    };
+    let hessian = mtmfs_hessian(&psf_state.psf_terms, clean_request.nterms)?;
+    let inv_hessian = invert_small_matrix(&hessian)?;
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf_terms[0],
+        clean_request.geometry.cell_size_rad,
+        clean_request.clean.psf_cutoff,
+    );
+    let initial_peak = peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref());
+    let mut model_terms = vec![Array2::<f32>::zeros((nx, ny)); clean_request.nterms];
+    let mut warnings = Vec::new();
+
+    let controller_started = Instant::now();
+    let mut reported_minor_iterations = 0usize;
+    let mut major_cycles = 0usize;
+    let mut clean_stop_reason = None::<CleanStopReason>;
+    let mut minor_cycle_traces = Vec::<MinorCycleTrace>::new();
+    let mut final_cycle_threshold_jy_per_beam = clean_request.clean.threshold_jy_per_beam;
+    let mut min_residual_peak_jy_per_beam = initial_peak;
+    let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
+
+    while reported_minor_iterations < clean_request.clean.niter {
+        if clean_request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
+        let Some((_, cycle_peak_value)) =
+            peak_location_masked(&residual_terms[0], clean_request.clean_mask.as_ref())
+        else {
+            clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break;
+        };
+        let cycle_peak = cycle_peak_value.abs();
+        let cycle_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
+            &residual_terms[0],
+            clean_request.clean_mask.as_ref(),
+            clean_request.clean,
+        );
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            cycle_peak,
+            clean_request.clean.threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+        let remaining_reported = clean_request.clean.niter - reported_minor_iterations;
+        let cycle_reported_niter = remaining_reported.min(clean_request.clean.minor_cycle_length);
+        let start_reported_iteration = reported_minor_iterations;
+        let cycle_threshold_jy_per_beam =
+            clean_cycle_threshold(cycle_peak, max_psf_sidelobe_level, clean_request.clean);
+        let (outcome, probe) = run_mtmfs_minor_cycle(
+            &clean_request,
+            &psf_state.psf_terms,
+            &hessian,
+            &inv_hessian,
+            &mut model_terms,
+            &mut residual_terms,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+            &mut stage_timings,
+        );
+        minor_cycle_traces.push(make_minor_cycle_trace(
+            minor_cycle_traces.len(),
+            start_reported_iteration,
+            outcome,
+            cycle_peak,
+            &residual_terms[0],
+            &model_terms[0],
+            probe,
+        ));
+        reported_minor_iterations += outcome.reported_updates;
+        final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
+        let mut stop_after_refresh = None::<CleanStopReason>;
+        if let Some(reason) = outcome.stop_reason {
+            match reason {
+                CleanStopReason::CycleThresholdReached if outcome.updated_model => {}
+                CleanStopReason::CycleThresholdReached => clean_stop_reason = Some(reason),
+                _ => {
+                    clean_stop_reason = Some(reason);
+                    stop_after_refresh = Some(reason);
+                }
+            }
+        }
+        if !outcome.updated_model {
+            break;
+        }
+        residual_needs_refresh = true;
+        let minor_peak =
+            peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref());
+        if let Some(stop_reason) = update_divergence_state(
+            &mut warnings,
+            &mut min_residual_peak_jy_per_beam,
+            minor_peak,
+            &mut divergence_warned,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+        if reported_minor_iterations >= clean_request.clean.niter {
+            clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+            break;
+        }
+        let refresh_started = Instant::now();
+        residual_terms = compute_mosaic_mtmfs_residual_terms_streaming(
+            &clean_request,
+            &weighting_request,
+            &config,
+            &gridder,
+            &weighting_plans,
+            conv_sampling,
+            &model_terms,
+            &psf_state,
+            &weight_image,
+            &mut replay_unweighted_blocks,
+            &mut stage_timings,
+            execution_config.progress_callback.as_ref(),
+            Some(standard_mfs_progress_context(
+                &weighting_request,
+                execution_config.minor_cycle_backend,
+                major_cycles,
+                reported_minor_iterations,
+                cycle_reported_niter,
+                Some(cycle_peak),
+                Some(cycle_threshold_jy_per_beam),
+            )),
+        )?;
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        major_cycles += 1;
+        residual_needs_refresh = false;
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
+        let refreshed_peak =
+            peak_abs_value_masked(&residual_terms[0], clean_request.clean_mask.as_ref());
+        let refreshed_nsigma_threshold_jy_per_beam = nsigma_threshold_jy_per_beam(
+            &residual_terms[0],
+            clean_request.clean_mask.as_ref(),
+            clean_request.clean,
+        );
+        if stop_after_refresh.is_some() {
+            break;
+        }
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            refreshed_peak,
+            clean_request.clean.threshold_jy_per_beam,
+            refreshed_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+    }
+    if clean_request.clean.niter > 0 && clean_stop_reason.is_none() {
+        clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        residual_terms = compute_mosaic_mtmfs_residual_terms_streaming(
+            &clean_request,
+            &weighting_request,
+            &config,
+            &gridder,
+            &weighting_plans,
+            conv_sampling,
+            &model_terms,
+            &psf_state,
+            &weight_image,
+            &mut replay_unweighted_blocks,
+            &mut stage_timings,
+            execution_config.progress_callback.as_ref(),
+            None,
+        )?;
+        refresh_latest_minor_cycle_trace_residual(&mut minor_cycle_traces, &residual_terms[0]);
+    }
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_started.elapsed().saturating_sub(accounted);
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf_terms[0],
+        clean_request.geometry.cell_size_rad,
+        clean_request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    warnings.extend(beam_warnings);
+    let restore_started = Instant::now();
+    let principal_residual_terms = principal_solution_terms(&residual_terms, &inv_hessian);
+    let mut image_terms = Vec::with_capacity(clean_request.nterms);
+    for (model_term, residual_term) in model_terms.iter().zip(principal_residual_terms.iter()) {
+        let restored_model = restore_model(model_term, clean_request.geometry.cell_size_rad, beam);
+        image_terms.push(&restored_model + residual_term);
+    }
+    stage_timings.restore += restore_started.elapsed();
+    stage_timings.total = total_started.elapsed();
+
+    let (alpha, alpha_error) =
+        compute_mtmfs_alpha_products(&image_terms, &principal_residual_terms);
+    let fractional_bandwidth = (clean_request.selected_frequency_range_hz[1]
+        - clean_request.selected_frequency_range_hz[0])
+        / clean_request.reffreq_hz;
+
+    Ok(MtmfsResult {
+        psf_terms: psf_state.psf_terms.iter().map(expand_plane).collect(),
+        residual_terms: residual_terms.iter().map(expand_plane).collect(),
+        model_terms: model_terms.iter().map(expand_plane).collect(),
+        image_terms: image_terms.iter().map(expand_plane).collect(),
+        sumwt_terms: psf_state
+            .reported_sumwt_terms
+            .iter()
+            .copied()
+            .map(expand_scalar)
+            .collect(),
+        alpha: alpha.as_ref().map(expand_plane),
+        alpha_error: alpha_error.as_ref().map(expand_plane),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            normalization_sumwt: psf_state.normalization_sumwt,
+            reported_sumwt: psf_state.reported_sumwt_terms[0],
+            psf_peak_normalization: psf_state.psf_peak,
+            major_cycles: casa_major_cycle_count(major_cycles, clean_request.clean.niter),
+            minor_iterations: reported_minor_iterations,
+            clean_stop_reason,
+            minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual_terms[0],
+                clean_request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda: initial.max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: Some(weight_image),
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: clean_request.plane_stokes,
+            reffreq_hz: clean_request.reffreq_hz,
+            channel_frequencies_hz: vec![clean_request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+struct MosaicMtmfsStreamGridAccumulation {
+    psf_grids: Vec<Array2<Complex64>>,
+    residual_grids: Vec<Array2<Complex64>>,
+    weight_grid: Array2<Complex64>,
+    pointing_weights: MosaicPointingWeightAccumulator,
+    reported_sumwt_terms: Vec<f64>,
+    normalization_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    max_abs_w_lambda: f64,
+}
+
+fn mosaic_mtmfs_weighting_request(request: &MtmfsRequest) -> ImagingRequest {
+    ImagingRequest {
+        geometry: request.geometry,
+        visibility_batches: Vec::new(),
+        gridder_mode: request.gridder_mode.clone(),
+        plane_stokes: request.plane_stokes,
+        weighting: request.weighting,
+        reffreq_hz: request.reffreq_hz,
+        selected_frequency_range_hz: request.selected_frequency_range_hz,
+        deconvolver: Deconvolver::Mtmfs,
+        multiscale_scales: request.multiscale_scales.clone(),
+        small_scale_bias: request.small_scale_bias,
+        clean: request.clean,
+        clean_mask: request.clean_mask.clone(),
+        initial_model: None,
+        w_term_mode: request.w_term_mode,
+        w_project_planes: request.w_project_planes,
+        compatibility: request.compatibility,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_mosaic_mtmfs_stream_grids<F>(
+    request: &MtmfsRequest,
+    weighting_request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+    conv_sampling: usize,
+    model_grids: Option<&[Array2<Complex32>]>,
+    replay_unweighted_blocks: &mut F,
+    pass: SinglePlaneStreamPass,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
+) -> Result<MosaicMtmfsStreamGridAccumulation, ImagingError>
+where
+    F: FnMut(
+        SinglePlaneStreamPass,
+        &mut dyn FnMut(MosaicMtmfsVisibilityBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let psf_term_count = 2 * request.nterms - 1;
+    let mut accumulation = MosaicMtmfsStreamGridAccumulation {
+        psf_grids: (0..psf_term_count)
+            .map(|_| Array2::<Complex64>::zeros((grid_nx, grid_ny)))
+            .collect(),
+        residual_grids: (0..request.nterms)
+            .map(|_| Array2::<Complex64>::zeros((grid_nx, grid_ny)))
+            .collect(),
+        weight_grid: Array2::<Complex64>::zeros((grid_nx, grid_ny)),
+        pointing_weights: MosaicPointingWeightAccumulator::default(),
+        reported_sumwt_terms: vec![0.0; psf_term_count],
+        normalization_sumwt: 0.0,
+        gridded_samples: 0,
+        skipped_samples: 0,
+        max_abs_w_lambda: 0.0,
+    };
+    let mut dirty_projector_cache = MosaicProjectorCache::new();
+    let mut taylor_weights = Vec::<f32>::new();
+    let mut predicted_terms = Vec::<Complex32>::new();
+    replay_unweighted_blocks(pass, &mut |block| {
+        block
+            .gridder_metadata
+            .validate_len(block.visibility.len())?;
+        if block.sample_frequencies_hz.len() != block.visibility.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "streaming mosaic MT-MFS block has {} sample frequencies for {} samples",
+                block.sample_frequencies_hz.len(),
+                block.visibility.len()
+            )));
+        }
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::WeightedMosaicStart,
+        );
+        let weighted = weight_mosaic_streaming_batch(
+            weighting_request,
+            block.visibility,
+            &block.gridder_metadata,
+            weighting_plans,
+        )?;
+        let groups = build_mosaic_pointing_groups_from_grouped(
+            std::slice::from_ref(&weighted),
+            std::slice::from_ref(&block.gridder_metadata),
+            false,
+        )?;
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::WeightedMosaicEnd,
+        );
+        accumulation
+            .pointing_weights
+            .accumulate(request.geometry, config, &groups);
+        accumulation.max_abs_w_lambda = accumulation
+            .max_abs_w_lambda
+            .max(max_abs_w_lambda_for_mosaic_groups(&groups));
+        for group in &block.gridder_metadata.groups {
+            accumulate_mosaic_mtmfs_metadata_group(
+                request,
+                config,
+                gridder,
+                &weighted,
+                &block.sample_frequencies_hz,
+                group,
+                conv_sampling,
+                model_grids,
+                &mut dirty_projector_cache,
+                &mut accumulation,
+                &mut taylor_weights,
+                &mut predicted_terms,
+            )?;
+        }
+        Ok(())
+    })?;
+    Ok(accumulation)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_mosaic_mtmfs_metadata_group(
+    request: &MtmfsRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    sample_frequencies_hz: &[f64],
+    group: &GroupedVisibilityMetadata,
+    conv_sampling: usize,
+    model_grids: Option<&[Array2<Complex32>]>,
+    projector_cache: &mut MosaicProjectorCache,
+    accumulation: &mut MosaicMtmfsStreamGridAccumulation,
+    taylor_weights: &mut Vec<f32>,
+    predicted_terms: &mut Vec<Complex32>,
+) -> Result<(), ImagingError> {
+    if !mosaic_pointing_contributes_by_simple_pb_center(
+        request.geometry,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+    ) {
+        accumulation.skipped_samples += group
+            .sample_ranges
+            .iter()
+            .map(|range| range.end.saturating_sub(range.start))
+            .sum::<usize>();
+        return Ok(());
+    }
+    let projector = cached_mosaic_projector(
+        projector_cache,
+        request.geometry,
+        gridder,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.primary_beam_model,
+        group.beam_frequency_hz,
+        conv_sampling,
+        2,
+        true,
+    )?;
+    let weight_projector = build_mosaic_projector(
+        request.geometry,
+        gridder,
+        config.phase_center_direction_rad,
+        group.pointing_direction_rad,
+        group.primary_beam_model,
+        group.beam_frequency_hz,
+        conv_sampling,
+        4,
+        true,
+    )?;
+    let weight_plan = weight_projector
+        .plan_sample_for_grid(0.0, 0.0)
+        .ok_or_else(|| {
+            ImagingError::Normalization(
+                "mosaic MT-MFS weight projector failed to plan the centered kernel".to_string(),
+            )
+        })?;
+    let mut weight_support_sums = MosaicWeightGridAccumulator::new(&weight_projector);
+    for range in &group.sample_ranges {
+        if range.end > batch.len() || range.start > range.end {
+            return Err(ImagingError::InvalidRequest(
+                "grouped mosaic MT-MFS metadata range exceeds visibility batch".to_string(),
+            ));
+        }
+        for (sample_index, &frequency_hz) in sample_frequencies_hz
+            .iter()
+            .enumerate()
+            .take(range.end)
+            .skip(range.start)
+        {
+            if !batch.gridable[sample_index] {
+                accumulation.skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[sample_index];
+            let sumwt_factor = batch.sumwt_factor[sample_index];
+            let visibility = batch.visibility[sample_index];
+            if !(frequency_hz.is_finite()
+                && frequency_hz > 0.0
+                && weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0
+                && visibility.re.is_finite()
+                && visibility.im.is_finite())
+            {
+                accumulation.skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) = projector
+                .plan_sample_for_grid(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            else {
+                accumulation.skipped_samples += 1;
+                continue;
+            };
+            fill_mtmfs_taylor_weights(
+                taylor_weights,
+                frequency_hz,
+                request.reffreq_hz,
+                2 * request.nterms - 1,
+            );
+            let grid_weight = weight * sumwt_factor;
+            let grid_weight64 = f64::from(grid_weight);
+            for (order, &taylor_weight) in taylor_weights
+                .iter()
+                .enumerate()
+                .take(2 * request.nterms - 1)
+            {
+                let factor = f64::from(taylor_weight);
+                projector.grid_sample_planned_f64(
+                    &mut accumulation.psf_grids[order],
+                    &plan,
+                    Complex64::new(grid_weight64 * factor, 0.0),
+                );
+                if plan.center_in_bounds {
+                    accumulation.reported_sumwt_terms[order] += grid_weight64 * factor;
+                }
+            }
+            predicted_terms.clear();
+            if let Some(model_grids) = model_grids {
+                for model_grid in model_grids.iter().take(request.nterms) {
+                    predicted_terms.push(projector.degrid_sample_planned(model_grid, &plan));
+                }
+            }
+            let mut predicted_visibility = Complex32::new(0.0, 0.0);
+            for (model_order, &taylor_weight) in
+                taylor_weights.iter().enumerate().take(request.nterms)
+            {
+                if let Some(predicted) = predicted_terms.get(model_order) {
+                    predicted_visibility += *predicted * taylor_weight;
+                }
+            }
+            let residual_visibility = visibility - predicted_visibility;
+            for (residual_order, &taylor_weight) in
+                taylor_weights.iter().enumerate().take(request.nterms)
+            {
+                let factor = f64::from(taylor_weight);
+                projector.grid_sample_planned_f64(
+                    &mut accumulation.residual_grids[residual_order],
+                    &plan,
+                    Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64)
+                        * grid_weight64
+                        * factor,
+                );
+            }
+            add_mosaic_weight_support_sample(
+                &mut weight_support_sums,
+                &weight_projector,
+                batch.u_lambda[sample_index],
+                batch.v_lambda[sample_index],
+                grid_weight64,
+            );
+            if plan.center_in_bounds {
+                accumulation.normalization_sumwt += grid_weight64;
+            }
+            accumulation.gridded_samples += 1;
+        }
+    }
+    add_mosaic_center_weight_grid_from_support_sums(
+        &weight_projector,
+        &weight_plan,
+        &mut accumulation.weight_grid,
+        &weight_support_sums.support_sums(),
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_mosaic_mtmfs_residual_terms_streaming<F>(
+    request: &MtmfsRequest,
+    weighting_request: &ImagingRequest,
+    config: &MosaicGridderConfig,
+    gridder: &StandardGridder,
+    weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
+    conv_sampling: usize,
+    model_terms: &[Array2<f32>],
+    psf_state: &MtmfsPsfState,
+    weight_image: &Array2<f32>,
+    replay_unweighted_blocks: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+    progress_callback: Option<&StandardMfsProgressCallback>,
+    progress_context: Option<StandardMfsProgressContext>,
+) -> Result<Vec<Array2<f32>>, ImagingError>
+where
+    F: FnMut(
+        SinglePlaneStreamPass,
+        &mut dyn FnMut(MosaicMtmfsVisibilityBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let mut timings = ResidualComputationTimings::default();
+    let model_grids = if model_terms
+        .iter()
+        .any(|term| term.iter().any(|value| value.abs() > 0.0))
+    {
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftStart,
+        );
+        let model_fft_started = Instant::now();
+        let grids = model_terms
+            .iter()
+            .map(|model_term| {
+                flat_sky_mosaic_model_for_prediction(model_term, weight_image, config.pb_limit).map(
+                    |prediction_model| {
+                        centered_fft2(
+                            &gridder.apodize_mosaic_model(&prediction_model, conv_sampling),
+                        )
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, ImagingError>>()?;
+        timings.model_fft = model_fft_started.elapsed();
+        emit_standard_mfs_context_progress(
+            progress_callback,
+            progress_context,
+            StandardMfsProgressPhase::FftEnd,
+        );
+        Some(grids)
+    } else {
+        None
+    };
+
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridStart,
+    );
+    let degrid_started = Instant::now();
+    let accumulation = accumulate_mosaic_mtmfs_stream_grids(
+        request,
+        weighting_request,
+        config,
+        gridder,
+        weighting_plans,
+        conv_sampling,
+        model_grids.as_deref(),
+        replay_unweighted_blocks,
+        SinglePlaneStreamPass::ResidualRefresh,
+        progress_callback,
+        progress_context,
+    )?;
+    timings.degrid_grid += degrid_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::ResidualGridEnd,
+    );
+
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftStart,
+    );
+    let fft_started = Instant::now();
+    let raw_terms = accumulation
+        .residual_grids
+        .iter()
+        .map(centered_ifft2_f64)
+        .collect::<Vec<_>>();
+    timings.fft += fft_started.elapsed();
+    emit_standard_mfs_context_progress(
+        progress_callback,
+        progress_context,
+        StandardMfsProgressPhase::FftEnd,
+    );
+
+    let normalize_started = Instant::now();
+    let fft_sumwt_scale =
+        (request.geometry.nx() * request.geometry.ny()) as f32 / psf_state.normalization_sumwt;
+    let residual_terms = raw_terms
+        .iter()
+        .map(|raw| {
+            let mut image = gridder.corrected_mosaic_image_from_grid_f64(raw, conv_sampling);
+            image.mapv_inplace(|value| value * fft_sumwt_scale);
+            normalize_mosaic_residual_by_weight(&mut image, weight_image, config.pb_limit)?;
+            Ok(image)
+        })
+        .collect::<Result<Vec<_>, ImagingError>>()?;
+    timings.normalize += normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(residual_terms)
 }
 
 fn validate_mosaic_streaming_config(config: &MosaicGridderConfig) -> Result<(), ImagingError> {
@@ -29824,39 +30728,40 @@ mod tests {
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
         HogbomPlaneMinorCycleControl, ImageGeometry, ImageWindow, ImagingError, ImagingRequest,
-        ImagingStageTimings, MosaicGridderConfig, MtmfsRequest, MultiscaleCandidate,
-        ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PrimaryBeamProductRequest,
-        PrimaryBeamWeightSample, PsfState, SinglePlaneGridderMetadata, SinglePlaneVisibilityBlock,
-        StandardGridder, StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-        StandardMfsMinorCycleBackend, StandardMfsMinorCycleProgressReporter,
-        StandardMfsModelPredictor, StandardMfsPlan, StandardMfsPlannedSampleBuilder,
-        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
-        StandardMfsProgressCallback, StandardMfsProgressContext, StandardMfsProgressPhase,
-        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
-        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-        add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
-        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
-        build_image_coordinate_system, build_image_spectral_coordinate,
-        build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
-        clean_cycle_threshold, clean_mask_image_product, clean_mask_pixel_count,
-        collapse_primary_beam_weight_samples, compute_dirty_psf_and_residual_standard, compute_psf,
-        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, extract_mfs_plane_product, kernel_nonzero_support,
-        make_multiscale_kernel, mean_stddev, mfs_image_product_peak_abs_masked,
-        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
-        mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
-        mosaic_projector_sampling, normalized_weighted_primary_beam_product,
-        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
+        ImagingStageTimings, MosaicGridderConfig, MosaicMtmfsVisibilityBlock, MtmfsRequest,
+        MultiscaleCandidate, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
+        PrimaryBeamProductRequest, PrimaryBeamWeightSample, PsfState, SinglePlaneGridderMetadata,
+        SinglePlaneVisibilityBlock, StandardGridder, StandardMfsBackendSelection,
+        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
+        StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
+        StandardMfsMinorCycleProgressReporter, StandardMfsModelPredictor, StandardMfsPlan,
+        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
+        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsProgressCallback,
+        StandardMfsProgressContext, StandardMfsProgressPhase, StandardMfsWeightedSample,
+        VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample,
+        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
+        add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
+        build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
+        build_image_spectral_coordinate, build_multiscale_scale_masks,
+        casa_multiscale_divergence_stop_reason, clean_cycle_threshold, clean_mask_image_product,
+        clean_mask_pixel_count, collapse_primary_beam_weight_samples,
+        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
+        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        extract_mfs_plane_product, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
+        mfs_image_product_peak_abs_masked, minor_cycle_stop_reason,
+        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
+        mosaic_primary_beam_product_from_weight_product, mosaic_projector_sampling,
+        normalized_weighted_primary_beam_product, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
+        peak_location_masked_in_window, phase_rotate_visibility,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_correct_alpha_product, primary_beam_correct_image_product,
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
         primary_beam_support_mask_product, primary_beam_voltage_pattern_for_offsets,
         run_clark_cotton_schwab, run_clark_minor_cycle, run_hogbom_minor_cycle,
         run_hogbom_minor_cycle_with_progress, run_hogbom_plane_minor_cycle, run_imaging,
-        run_imaging_owned, run_mosaic_mfs_from_single_plane_stream, run_mtmfs,
-        run_standard_mfs_plan,
+        run_imaging_owned, run_mosaic_mfs_from_single_plane_stream,
+        run_mosaic_mtmfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_plan,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
@@ -32403,6 +33308,246 @@ mod tests {
             phases.contains(&StandardMfsProgressPhase::WeightedMosaicEnd),
             "streaming mosaic should close weighted mosaic grouping"
         );
+    }
+
+    #[test]
+    fn streaming_mosaic_mtmfs_nterms_one_matches_mosaic_mfs_dirty_products() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let batch = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (34.0, 30.0),
+            1.0,
+        );
+        let sample_frequencies_hz = vec![1.35e9, 1.38e9, 1.4e9, 1.42e9, 1.45e9, 1.47e9];
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let grouped_metadata = GroupedVisibilityMetadataBatch {
+            sample_count: batch.len(),
+            groups: vec![GroupedVisibilityMetadata {
+                beam_frequency_hz: 1.4e9,
+                primary_beam_model,
+                pointing_direction_rad: [0.0, 0.0],
+                sample_ranges: vec![VisibilitySampleRange {
+                    start: 0,
+                    end: batch.len(),
+                }],
+            }],
+        };
+        let gridder_mode = GridderMode::Mosaic(MosaicGridderConfig {
+            phase_center_direction_rad: [0.0, 0.0],
+            primary_beam_model,
+            pb_limit: 0.1,
+            metadata_batches: Vec::new(),
+            grouped_metadata_batches: vec![grouped_metadata.clone()],
+        });
+        let clean = CleanConfig {
+            niter: 0,
+            ..CleanConfig::default()
+        };
+        let mfs = run_mosaic_mfs_from_single_plane_stream(
+            ImagingRequest {
+                geometry,
+                visibility_batches: Vec::new(),
+                gridder_mode: gridder_mode.clone(),
+                plane_stokes: PlaneStokes::I,
+                weighting: WeightingMode::Natural,
+                reffreq_hz: 1.4e9,
+                selected_frequency_range_hz: [1.35e9, 1.47e9],
+                deconvolver: Deconvolver::Hogbom,
+                multiscale_scales: Vec::new(),
+                small_scale_bias: 0.0,
+                clean,
+                clean_mask: None,
+                initial_model: None,
+                w_term_mode: WTermMode::None,
+                w_project_planes: None,
+                compatibility: CompatibilityMode::CasaStandardMfs,
+            },
+            StandardMfsExecutionConfig::default(),
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(SinglePlaneVisibilityBlock {
+                    visibility: batch.clone(),
+                    gridder_metadata: SinglePlaneGridderMetadata::Mosaic(grouped_metadata.clone()),
+                })
+            },
+        )
+        .unwrap();
+        let mtmfs = run_mosaic_mtmfs_from_single_plane_stream(
+            MtmfsRequest {
+                geometry,
+                visibility_batches: Vec::new(),
+                sample_frequency_batches_hz: Vec::new(),
+                gridder_mode,
+                plane_stokes: PlaneStokes::I,
+                weighting: WeightingMode::Natural,
+                reffreq_hz: 1.4e9,
+                selected_frequency_range_hz: [1.35e9, 1.47e9],
+                nterms: 1,
+                multiscale_scales: Vec::new(),
+                small_scale_bias: 0.0,
+                w_term_mode: WTermMode::None,
+                w_project_planes: None,
+                clean,
+                clean_mask: None,
+                compatibility: CompatibilityMode::CasaStandardMfs,
+            },
+            StandardMfsExecutionConfig::default(),
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: batch.clone(),
+                    sample_frequencies_hz: sample_frequencies_hz.clone(),
+                    gridder_metadata: grouped_metadata.clone(),
+                })
+            },
+        )
+        .unwrap();
+
+        assert_array4_close(&mtmfs.psf_terms[0], &mfs.psf, 1.0e-5);
+        assert_array4_close(&mtmfs.residual_terms[0], &mfs.residual, 1.0e-5);
+        assert_array4_close(&mtmfs.model_terms[0], &mfs.model, 1.0e-5);
+        assert_array4_close(&mtmfs.image_terms[0], &mfs.image, 1.0e-5);
+        assert_array4_close(&mtmfs.sumwt_terms[0], &mfs.sumwt, 1.0e-5);
+    }
+
+    #[test]
+    fn streaming_mosaic_mtmfs_dirty_products_are_block_invariant() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let batch = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (34.0, 30.0),
+            1.0,
+        );
+        let sample_frequencies_hz = vec![1.35e9, 1.38e9, 1.4e9, 1.42e9, 1.45e9, 1.47e9];
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let metadata_for_len = |len| GroupedVisibilityMetadataBatch {
+            sample_count: len,
+            groups: vec![GroupedVisibilityMetadata {
+                beam_frequency_hz: 1.4e9,
+                primary_beam_model,
+                pointing_direction_rad: [0.0, 0.0],
+                sample_ranges: vec![VisibilitySampleRange { start: 0, end: len }],
+            }],
+        };
+        let slice_batch = |start: usize, end: usize| VisibilityBatch {
+            u_lambda: batch.u_lambda[start..end].to_vec(),
+            v_lambda: batch.v_lambda[start..end].to_vec(),
+            w_lambda: batch.w_lambda[start..end].to_vec(),
+            weight: batch.weight[start..end].to_vec(),
+            sumwt_factor: batch.sumwt_factor[start..end].to_vec(),
+            gridable: batch.gridable[start..end].to_vec(),
+            visibility: batch.visibility[start..end].to_vec(),
+        };
+        let gridder_mode = GridderMode::Mosaic(MosaicGridderConfig {
+            phase_center_direction_rad: [0.0, 0.0],
+            primary_beam_model,
+            pb_limit: 0.1,
+            metadata_batches: Vec::new(),
+            grouped_metadata_batches: vec![metadata_for_len(batch.len())],
+        });
+        let request = MtmfsRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            sample_frequency_batches_hz: Vec::new(),
+            gridder_mode,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.35e9, 1.47e9],
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            clean: CleanConfig {
+                niter: 0,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let full = run_mosaic_mtmfs_from_single_plane_stream(
+            request.clone(),
+            StandardMfsExecutionConfig::default(),
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: batch.clone(),
+                    sample_frequencies_hz: sample_frequencies_hz.clone(),
+                    gridder_metadata: metadata_for_len(batch.len()),
+                })
+            },
+        )
+        .unwrap();
+        let split = run_mosaic_mtmfs_from_single_plane_stream(
+            request,
+            StandardMfsExecutionConfig::default(),
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: slice_batch(0, 3),
+                    sample_frequencies_hz: sample_frequencies_hz[0..3].to_vec(),
+                    gridder_metadata: metadata_for_len(3),
+                })?;
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: slice_batch(3, 6),
+                    sample_frequencies_hz: sample_frequencies_hz[3..6].to_vec(),
+                    gridder_metadata: metadata_for_len(3),
+                })
+            },
+        )
+        .unwrap();
+
+        assert_eq!(full.psf_terms.len(), split.psf_terms.len());
+        assert_eq!(full.residual_terms.len(), split.residual_terms.len());
+        for (actual, expected) in split.psf_terms.iter().zip(full.psf_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        for (actual, expected) in split.residual_terms.iter().zip(full.residual_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        for (actual, expected) in split.image_terms.iter().zip(full.image_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        for (actual, expected) in split.sumwt_terms.iter().zip(full.sumwt_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        assert_eq!(full.alpha.is_some(), split.alpha.is_some());
+        if let (Some(actual), Some(expected)) = (&split.alpha, &full.alpha) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
     }
 
     #[test]
