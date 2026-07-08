@@ -658,6 +658,7 @@ real 1.145408
                 "imaging_prepare_buffer_mb": 128,
                 "imaging_row_block_rows": 4096,
                 "imaging_prepare_workers": 3,
+                "imaging_fft_precision": "f32",
                 "standard_mfs_grid_threads": "1",
                 "standard_mfs_metal_minor_cycle_chunk": "auto:1000",
             },
@@ -677,6 +678,8 @@ real 1.145408
         self.assertEqual("128", env["IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB"])
         self.assertEqual("4096", env["IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS"])
         self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
+        self.assertEqual("f32", env["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
+        self.assertEqual("f32", plan["mode"]["imaging_fft_precision"])
         self.assertEqual("1", env["IMAGER_BENCH_STANDARD_MFS_GRID_THREADS"])
         self.assertEqual(
             "auto:1000", env["IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK"]
@@ -706,6 +709,7 @@ real 1.145408
             manifest,
             [
                 "standard_mfs_acceleration=multi-cpu",
+                "imaging_fft_precision=f32",
                 "deconvolver=clark",
                 "niter=1000",
                 "pbcor=true",
@@ -722,6 +726,8 @@ real 1.145408
         )
 
         self.assertEqual("multi-cpu", plan["mode"]["standard_mfs_acceleration"])
+        self.assertEqual("f32", plan["mode"]["imaging_fft_precision"])
+        self.assertEqual("f32", plan["command"]["env"]["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
         self.assertEqual("clark", plan["mode"]["deconvolver"])
         self.assertEqual(1000, plan["mode"]["niter"])
         self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PBCOR"])
@@ -771,6 +777,8 @@ real 1.145408
 standard_mfs_runtime_plan policy=auto eligible=true auto_multi_cpu=true auto_metal=true metal_device_available=true backend=fixed_tile backend_source=planner grid_threads=4 grid_threads_source=auto density_threads=4 density_threads_source=auto tile_anchor=center_quadrants tile_anchor_source=planner residual_backend=fixed_tile residual_backend_source=planner initial_dirty_backend=fixed_tile initial_dirty_backend_source=planner metal_grouped_input_cache=false metal_grouped_input_cache_source=planner mtmfs_metal_backend=false mtmfs_metal_input_cache=false
 standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=8192 selected_channels=64 row_block_rows=2048 row_block_rows_source=heuristic heuristic_row_block_rows=2048 worker_buffers=4 system_memory_bytes=34359738368 memory_target_bytes=8589934592 memory_target_source=cli total_budget_bytes=8589934592 planned_reserved_bytes=100 planned_active_bytes=200 reserve_over_budget_bytes=0 prepare_buffer_floor_applied=false prepare_buffer_bytes=100 image_working_set_bytes=100 weighting_density_bytes=100 gridded_visibility_bytes=100 output_image_bytes=100 fixed_tile_resident_bytes=100 fixed_tile_resident_limit=true fixed_tile_edge=512 fixed_tile_anchor=center max_live_row_blocks=1 live_row_block_bytes=100 live_bucket_bytes=100 visibility_row_channel_bytes=13 visibility_row_fixed_bytes=28 visibility_row_fixed_resident_bytes=120 visibility_row_cache_overhead_bytes=92 queued_task_bytes=100 resident_tile_buffer_bytes=100 global_grid_bytes=100 tile_cell_bin_bytes=100 worker_staging_bytes=100 gpu_staging_bytes=100 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false executor_plan_bytes_estimate=100 local_grid_bytes_estimate=100 peak_rss_bytes=0 product_status=planned
 standard_mfs_profile_run run=1 workload_ms=/tmp/input.ms field_ids=Some([0]) phasecenter_field=None ddid=Some(0) spw=Some(0) channel_start=Some(0) channel_count=Some(64) spectral_mode=Mfs weighting=Briggs deconvolver=Hogbom nterms=1 imsize=1024 niter=500 dirty_only=false gridded_samples=500000 major_cycles=10 minor_iterations=500 thread_env=4 row_block_rows_env=auto prepare_workers_env=auto ms_read_threads_env=auto frontend_total_ms=1000.000 core_total_ms=800.000 prepare_plane_input_ms=100.000 source_read_ms=40.000 source_prepare_ms=60.000 weighting_ms=20.000 psf_grid_ms=300.000 residual_degrid_grid_ms=200.000 major_cycle_refresh_ms=150.000 peak_rss_bytes=123456 product_status=written
+image_product_write suffix=.image role=image shape=1024x1024x1x1 elements=1048576 elapsed_ms=12.500
+image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 elements=1048576 elapsed_ms=14.250
 Rust release CLI timings (seconds):
   run=1 real=1.500
 """
@@ -780,6 +788,8 @@ Rust release CLI timings (seconds):
 standard_mfs_runtime_plan policy=auto eligible=true auto_multi_cpu=true auto_metal=true metal_device_available=true backend=fixed_tile backend_source=planner grid_threads=4 grid_threads_source=auto density_threads=4 density_threads_source=auto tile_anchor=center_quadrants tile_anchor_source=planner residual_backend=fixed_tile residual_backend_source=planner initial_dirty_backend=fixed_tile initial_dirty_backend_source=planner metal_grouped_input_cache=false metal_grouped_input_cache_source=planner mtmfs_metal_backend=false mtmfs_metal_input_cache=false
 standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=8192 selected_channels=64 row_block_rows=2048 row_block_rows_source=heuristic heuristic_row_block_rows=2048 worker_buffers=4 system_memory_bytes=34359738368 memory_target_bytes=8589934592 memory_target_source=cli total_budget_bytes=8589934592 planned_reserved_bytes=100 planned_active_bytes=200 reserve_over_budget_bytes=0 prepare_buffer_floor_applied=false prepare_buffer_bytes=100 image_working_set_bytes=100 weighting_density_bytes=100 gridded_visibility_bytes=100 output_image_bytes=100 fixed_tile_resident_bytes=100 fixed_tile_resident_limit=true fixed_tile_edge=512 fixed_tile_anchor=center max_live_row_blocks=1 live_row_block_bytes=100 live_bucket_bytes=100 visibility_row_channel_bytes=13 visibility_row_fixed_bytes=28 visibility_row_fixed_resident_bytes=120 visibility_row_cache_overhead_bytes=92 queued_task_bytes=100 resident_tile_buffer_bytes=100 global_grid_bytes=100 tile_cell_bin_bytes=100 worker_staging_bytes=100 gpu_staging_bytes=100 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false executor_plan_bytes_estimate=100 local_grid_bytes_estimate=100 peak_rss_bytes=0 product_status=planned
 standard_mfs_profile_run run=1 workload_ms=/tmp/input.ms field_ids=Some([0]) phasecenter_field=None ddid=Some(0) spw=Some(0) channel_start=Some(0) channel_count=Some(64) spectral_mode=Mfs weighting=Briggs deconvolver=Hogbom nterms=1 imsize=1024 niter=500 dirty_only=false gridded_samples=500000 major_cycles=10 minor_iterations=500 thread_env=4 row_block_rows_env=auto prepare_workers_env=auto ms_read_threads_env=auto frontend_total_ms=1000.000 core_total_ms=800.000 prepare_plane_input_ms=100.000 source_read_ms=40.000 source_prepare_ms=60.000 weighting_ms=20.000 psf_grid_ms=300.000 residual_degrid_grid_ms=200.000 major_cycle_refresh_ms=150.000 peak_rss_bytes=123456 product_status=written
+image_product_write suffix=.image role=image shape=1024x1024x1x1 elements=1048576 elapsed_ms=12.500
+image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 elements=1048576 elapsed_ms=14.250
 """
         )
         plan = {
@@ -813,6 +823,15 @@ standard_mfs_profile_run run=1 workload_ms=/tmp/input.ms field_ids=Some([0]) pha
         self.assertEqual(1024 * 1024 * 4, features["image"]["image_work"])
         self.assertEqual(4, features["resources"]["row_block_count"])
         self.assertEqual(8589934392, features["resources"]["memory_headroom_bytes"])
+        self.assertEqual(2, summary["image_product_write_count"])
+        self.assertEqual(
+            {".image": 12.5, ".image.pbcor": 14.25},
+            summary["image_product_write_ms_by_suffix"],
+        )
+        self.assertEqual(
+            {".image": "1024x1024x1x1", ".image.pbcor": "1024x1024x1x1"},
+            summary["image_product_write_shape_by_suffix"],
+        )
 
     def test_completed_run_promotes_enriched_benchmark_features(self) -> None:
         plan = {
@@ -964,6 +983,8 @@ cube_per_plane_backend_summary phase=clean_deconvolution output_planes=8 plane_w
 spectral_slab_event mode=cube pass_kind=initial_dirty stage=source_read slab_id=0 plane_start=0 plane_end=4 row_block_rows=32768 bytes_read=2048 bytes_written=unset worker_count=4 backend=cpu_slab elapsed_ms=12 estimated_resident_bytes=123456
 spectral_slab_memory mode=cube stage=after_slab_prepare slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1000000 peak_rss_bytes=1200000 delta_from_baseline_bytes=400000 delta_from_previous_bytes=300000 estimated_resident_bytes=123456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=prepared
 spectral_slab_memory mode=cube stage=after_slab_run slab_id=0 plane_start=0 plane_end=4 current_rss_bytes=1500000 peak_rss_bytes=1700000 delta_from_baseline_bytes=900000 delta_from_previous_bytes=500000 estimated_resident_bytes=223456 planned_active_bytes=456789 visibility_staging_bytes=222222 plane_state_bytes=111111 product_scratch_bytes=333333 cache_budget_bytes=1048576 note=run_cube
+mosaic_cube_slab_plane plane=0 batch=0 batch_tasks=4 worker_slot=1 worker_elapsed_ms=90.000 publish_elapsed_ms=7.500
+mosaic_cube_slab_executor_summary slab_id=0 plane_start=0 plane_end=4 worker_count=4 completed=4 elapsed_ms=111.000 worker_sum_ms=300.000 worker_max_ms=90.000 product_write_ms=33.000 residency=ordered_plane_results
 cube_shared_direct_plane_executor_summary slab_plane_start=0 slab_plane_end=4 worker_count=4 product_batch_planes=2 completed=4 elapsed_ms=100.000 worker_sum_ms=300.000 worker_max_ms=90.000 result_wait_ms=10.000 consume_ms=20.000 product_write_ms=30.000 product_role_ms=29.000 product_psf_ms=10.000 product_residual_ms=11.000 product_model_ms=0.000 product_image_ms=0.000 product_sumwt_ms=1.000 product_bytes=1024 product_groups=2 product_group_planes=4 writer_groups=2 writer_planes=4 writer_estimated_bytes=1024 tiled_c_order_calls=4 tiled_fortran_calls=2 tiled_tile_visits=128 tiled_copied_elements=2048 tiled_lru_hits=1 tiled_lru_misses=2 tiled_lru_zero_fill_tiles=64 tiled_lru_read_tiles=0 tiled_lru_read_bytes=0 tiled_lru_dirty_evictions=0 tiled_lru_flush_calls=0 tiled_lru_flush_write_tiles=0 tiled_lru_flush_write_bytes=0 tiled_lru_batch_flushes=2 tiled_lru_batch_flush_tiles=64 tiled_lru_batch_flush_bytes=4096 tiled_direct_write_calls=2 tiled_direct_write_tiles=128 tiled_direct_write_bytes=8192 tiled_direct_pack_ns=1200 tiled_direct_swap_ns=0 tiled_direct_write_ns=3400 tiled_flat_allocations=0 tiled_flat_allocated_bytes=0 tiled_flat_zero_fill_bytes=0 tiled_flat_bulk_read_bytes=0 tiled_flat_flush_calls=0 tiled_flat_flush_write_tiles=0 tiled_flat_flush_write_bytes=0 residency=streaming_plane_results
 cube_resident_clean_stage_summary result_wait_ms=10.000 consume_ms=20.000 worker_sum_ms=700.000 worker_max_ms=200.000 controller_overhead_ms=30.000 weighting_ms=0.000 executor_build_ms=0.000 psf_grid_alloc_ms=0.000 planned_sample_replay_ms=0.000 grid_update_ms=0.000 psf_grid_ms=0.000 psf_fft_ms=0.000 psf_image_correction_ms=0.000 psf_normalize_ms=0.000 model_fft_ms=0.000 residual_grid_alloc_ms=0.000 residual_degrid_grid_ms=0.000 residual_fft_ms=0.000 residual_image_correction_ms=0.000 residual_normalize_ms=0.000 clean_cycle_setup_ms=0.000 deconvolver_setup_ms=0.000 minor_cycle_ms=40.000 minor_cycle_solve_ms=500.000 major_cycle_refresh_ms=50.000 residual_refresh_overhead_ms=5.000 multiscale_scale_refresh_ms=0.000 beam_fit_ms=0.000 restore_ms=60.000 total_ms=680.000
 cube_resident_clean_finish_plane plane=0 blocks=10 skipped_minor_cycle=false gridded_samples=100 initial_peak=1.000000000e+00 final_peak=2.000000000e-01 trace_final_peak=3.000000000e-01 cycle_threshold=5.000000000e-01 stop_reason=Some(CycleThresholdReached) minor_iterations=7 minor_cycle_count=2 actual_updates=7 reported_updates=8 model_nonzero_pixels=3 model_sum_abs_jy=4.500000000e+00 model_peak_abs_jy=2.500000000e+00 prepare_ms=1.000 finish_ms=2.000 replay=[]
@@ -995,6 +1016,21 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
         self.assertEqual(4, parsed["summary"]["mosaic_cube_slab_active_planes"])
         self.assertEqual(2, parsed["summary"]["mosaic_cube_slab_count"])
         self.assertEqual(4, parsed["summary"]["mosaic_cube_slab_worker_count"])
+        self.assertEqual(1, parsed["summary"]["mosaic_cube_slab_plane_count"])
+        self.assertEqual(7.5, parsed["summary"]["mosaic_cube_slab_plane_publish_ms"])
+        self.assertEqual(
+            1, parsed["summary"]["mosaic_cube_slab_executor_summary_count"]
+        )
+        self.assertEqual(
+            111.0, parsed["summary"]["mosaic_cube_slab_executor_elapsed_ms"]
+        )
+        self.assertEqual(
+            300.0, parsed["summary"]["mosaic_cube_slab_executor_worker_sum_ms"]
+        )
+        self.assertEqual(
+            90.0, parsed["summary"]["mosaic_cube_slab_executor_worker_max_ms"]
+        )
+        self.assertEqual(33.0, parsed["summary"]["mosaic_cube_slab_product_write_ms"])
         self.assertEqual(
             500.0, parsed["summary"]["cube_resident_clean_minor_cycle_solve_ms"]
         )

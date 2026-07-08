@@ -1487,8 +1487,16 @@ impl StandardGridder {
     }
 
     pub(crate) fn corrected_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
-        self.corrected_complex_image_from_grid(raw)
-            .mapv(|value| value.re)
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                image[(x, y)] = raw[(grid_x, grid_y)].re
+                    * (self.correction_x[grid_x] * self.correction_y[grid_y]);
+            }
+        }
+        image
     }
 
     pub(crate) fn corrected_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
@@ -1525,22 +1533,6 @@ impl StandardGridder {
                 let source_y = (grid_y + shift_y) % grid_ny;
                 image[(x, y)] = raw[(source_x, source_y)].re as f32
                     * (self.correction_x[grid_x] * self.correction_y[grid_y]);
-            }
-        }
-        image
-    }
-
-    pub(crate) fn corrected_complex_image_from_grid(
-        &self,
-        raw: &Array2<Complex32>,
-    ) -> Array2<Complex32> {
-        let mut image = Array2::<Complex32>::zeros((self.geometry.nx(), self.geometry.ny()));
-        for x in 0..self.geometry.nx() {
-            for y in 0..self.geometry.ny() {
-                let grid_x = self.image_blc[0] + x;
-                let grid_y = self.image_blc[1] + y;
-                image[(x, y)] =
-                    raw[(grid_x, grid_y)] * (self.correction_x[grid_x] * self.correction_y[grid_y]);
             }
         }
         image

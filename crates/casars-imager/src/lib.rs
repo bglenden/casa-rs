@@ -38,9 +38,9 @@ use casa_imaging::{
     PrimaryBeamProductRequest, PrimaryBeamWeightSample, ResidualRefreshDiagnostics,
     RestoringBeamMode, ScalarVisibilitySample, StandardMfsCleanFinishPlan, StandardMfsCleanPlan,
     StandardMfsCleanSession, StandardMfsDensitySourcePlan, StandardMfsDensitySourcePlanRequest,
-    StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyPlan,
-    StandardMfsExecutionConfig, StandardMfsMinorCycleBackend, StandardMfsModelPredictor,
-    StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
+    StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsDirtyGridResult,
+    StandardMfsDirtyPlan, StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
+    StandardMfsModelPredictor, StandardMfsObservabilityCallback, StandardMfsObservabilityEvent,
     StandardMfsPairCollapseTransform, StandardMfsPlan, StandardMfsPlannedSampleBlock,
     StandardMfsPlannedSampleBuilder, StandardMfsProgressCallback, StandardMfsProgressEvent,
     StandardMfsProgressPhase, StandardMfsQueueProgress, StandardMfsQueueProgressConfidence,
@@ -55,12 +55,13 @@ use casa_imaging::{
     casa_cube_briggs_gridft_density_cell_from_lambda, casa_cube_briggs_weight_denominator,
     clean_cycle_threshold, clean_mask_pixel_count,
     clean_peak_location_masked_with_relative_tolerance, cube_image_product_set,
-    estimate_psf_sidelobe_from_psf, extract_mfs_plane_product, mfs_image_product_peak_abs_masked,
+    estimate_psf_sidelobe_from_psf, extract_mfs_plane_product,
+    finish_standard_mfs_dirty_grid_results, mfs_image_product_peak_abs_masked,
     mfs_image_product_set, mtmfs_image_product_set, phase_rotate_visibility,
     plan_imaging_worker_count, plan_standard_mfs_density_source, planned_backend_command_target_ms,
     primary_beam_correct_alpha_product, primary_beam_output_products, primary_beam_product,
     restore_standard_mfs_model, run_hogbom_plane_minor_cycle, run_imaging,
-    run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_plan,
+    run_mosaic_mfs_from_single_plane_stream, run_mtmfs, run_standard_mfs_dirty_grid_plan,
     run_standard_mfs_plan, single_plane_image_product, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_w_project_plan,
 };
@@ -2945,6 +2946,7 @@ fn progress_runtime_from_config_with_resources(
         .map(usize::from)
         .unwrap_or(1);
     let acceleration = standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration);
+    let fft_precision = imaging_fft_precision_policy_label(config.imaging_fft_precision);
     let minor_cycle_backend = if matches!(
         selected_backend,
         Some(PerPlaneExecutionBackend::Wave3MetalGrouped)
@@ -2966,15 +2968,15 @@ fn progress_runtime_from_config_with_resources(
                 .is_some_and(|value| value.to_ascii_lowercase().contains("metal"));
     let backend = if let Some(selected_backend) = selected_backend {
         format!(
-            "{acceleration} / {} / {} minor cycle",
+            "{acceleration} / fft:{fft_precision} / {} / {} minor cycle",
             selected_backend.label(),
             minor_cycle_backend.label()
         )
     } else if config.dirty_only || config.niter == 0 {
-        acceleration.to_string()
+        format!("{acceleration} / fft:{fft_precision}")
     } else {
         format!(
-            "{acceleration} / {} minor cycle",
+            "{acceleration} / fft:{fft_precision} / {} minor cycle",
             minor_cycle_backend.label()
         )
     };
@@ -5128,6 +5130,10 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration).to_string(),
     );
     manifest.insert(
+        "imaging_fft_precision".to_string(),
+        imaging_fft_precision_policy_label(config.imaging_fft_precision).to_string(),
+    );
+    manifest.insert(
         "standard_mfs_backend".to_string(),
         config
             .standard_mfs_backend
@@ -6565,6 +6571,7 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
 }
 
 fn run_from_cli_config(config: &CliConfig) -> Result<RunSummary, String> {
+    let _imaging_fft_precision_guard = ImagingFftPrecisionGuard::new(config.imaging_fft_precision);
     if config.outlier_file.is_some() {
         return run_outlier_file_from_config(config);
     }
@@ -13631,7 +13638,7 @@ where
     );
     let stop_workers = AtomicBool::new(false);
     let (result_tx, result_rx) =
-        mpsc::channel::<Result<IndependentImagingPlaneResult<R>, String>>();
+        mpsc::sync_channel::<Result<IndependentImagingPlaneResult<R>, String>>(worker_count);
     if standard_mfs_profile_detail_enabled() {
         let planes = {
             let pending = pending
@@ -15304,7 +15311,7 @@ fn direct_cube_plane_replay_planned_run_blocks(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_direct_dirty_cube_plane_from_shared_source(
+fn run_direct_dirty_cube_plane_grids_from_shared_source(
     geometry: ImageGeometry,
     clean: CleanConfig,
     plane_stokes: PlaneStokes,
@@ -15318,10 +15325,16 @@ fn run_direct_dirty_cube_plane_from_shared_source(
     channel_frequency_hz: f64,
     spectral_plan: &CubeRowSpectralReusablePlan,
     corr_types: &[i32],
-) -> Result<DirtyCubeImagingResult, String> {
+) -> Result<
+    (
+        StandardMfsDirtyGridResult,
+        DirectDirtyCubePlaneReplayTimings,
+    ),
+    String,
+> {
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "cube_shared_direct_dirty_entry output_channel={} blocks={} weighting={:?}",
+            "cube_shared_direct_dirty_grid_entry output_channel={} blocks={} weighting={:?}",
             output_channel,
             shared_source.blocks.len(),
             weighting,
@@ -15348,39 +15361,37 @@ fn run_direct_dirty_cube_plane_from_shared_source(
             )
             .map_err(ImagingError::InvalidRequest)
         };
-    let plane_result = run_standard_mfs_dirty_plan(StandardMfsDirtyPlan::planned_sample_blocks(
-        ImagingRequest {
-            geometry,
-            visibility_batches: Vec::new(),
-            gridder_mode: GridderMode::Standard,
-            plane_stokes,
-            weighting,
-            reffreq_hz: channel_frequency_hz,
-            selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
-            deconvolver,
-            multiscale_scales,
-            small_scale_bias,
-            clean,
-            clean_mask: None,
-            initial_model: None,
-            w_term_mode: WTermMode::None,
-            w_project_planes: None,
-            compatibility: CompatibilityMode::CasaStandardMfs,
-        },
-        execution_config,
-        &mut replay,
-    ))
-    .map_err(|error| error.to_string())?;
+    let grid_result =
+        run_standard_mfs_dirty_grid_plan(StandardMfsDirtyPlan::planned_sample_blocks(
+            ImagingRequest {
+                geometry,
+                visibility_batches: Vec::new(),
+                gridder_mode: GridderMode::Standard,
+                plane_stokes,
+                weighting,
+                reffreq_hz: channel_frequency_hz,
+                selected_frequency_range_hz: [channel_frequency_hz, channel_frequency_hz],
+                deconvolver,
+                multiscale_scales,
+                small_scale_bias,
+                clean,
+                clean_mask: None,
+                initial_model: None,
+                w_term_mode: WTermMode::None,
+                w_project_planes: None,
+                compatibility: CompatibilityMode::CasaStandardMfs,
+            },
+            execution_config,
+            &mut replay,
+        ))
+        .map_err(|error| error.to_string())?;
     if standard_mfs_profile_detail_enabled() {
         eprintln!(
-            "cube_shared_direct_dirty_exit output_channel={} blocks={} planned_samples={}",
+            "cube_shared_direct_dirty_grid_exit output_channel={} blocks={} planned_samples={}",
             output_channel, replay_timings.blocks, replay_timings.planned_samples,
         );
     }
-    let mut result =
-        single_plane_dirty_imaging_result_to_cube_result(channel_frequency_hz, plane_result);
-    result.direct_replay_timings = replay_timings;
-    Ok(result)
+    Ok((grid_result, replay_timings))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -15543,11 +15554,162 @@ fn skip_direct_clean_cube_plane_from_resident_state(
     ))
 }
 
-struct SharedDirtyCubePlaneRunResult {
-    cube_result: DirtyCubeImagingResult,
+struct SharedDirtyCubePlaneGridRunResult {
+    grid_result: StandardMfsDirtyGridResult,
+    direct_replay_timings: DirectDirtyCubePlaneReplayTimings,
     run_imaging_elapsed: Duration,
     visibility_batches: usize,
     visibility_samples: usize,
+    channel_frequency_hz: f64,
+}
+
+struct SharedDirtyCubePlaneProductMetadata {
+    plane_index: usize,
+    batch_index: usize,
+    batch_task_count: usize,
+    worker_slot: usize,
+    worker_elapsed: Duration,
+    run_imaging_elapsed: Duration,
+    visibility_batches: usize,
+    visibility_samples: usize,
+    direct_replay_timings: DirectDirtyCubePlaneReplayTimings,
+    channel_frequency_hz: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_ready_dirty_grid_products(
+    force: bool,
+    flush_planes: usize,
+    next_grid_product_plane: &mut usize,
+    pending_grid_results: &mut BTreeMap<
+        usize,
+        IndependentImagingPlaneResult<SharedDirtyCubePlaneGridRunResult>,
+    >,
+    product_publisher: &mut OrderedCubeProductPublisher<DirtyCubeImagingResult>,
+    product_writers: &mut CubeSlabProductWriters,
+    aggregate: &mut CubeSlabAggregateDiagnostics,
+    stage_timings: &mut ImagingStageTimings,
+    dirty_product_finalize_elapsed: &mut Duration,
+    config: &CliConfig,
+) -> Result<(), String> {
+    let flush_planes = flush_planes.max(1);
+    loop {
+        let mut ready_planes = 0usize;
+        let mut probe_plane = *next_grid_product_plane;
+        while pending_grid_results.contains_key(&probe_plane) {
+            ready_planes = ready_planes.saturating_add(1);
+            probe_plane = probe_plane.saturating_add(1);
+            if ready_planes >= flush_planes {
+                break;
+            }
+        }
+        if ready_planes == 0 || (ready_planes < flush_planes && !force) {
+            break;
+        }
+
+        let group_planes = ready_planes.min(flush_planes);
+        let mut grid_results = Vec::with_capacity(group_planes);
+        let mut product_metadata = Vec::with_capacity(group_planes);
+        for _ in 0..group_planes {
+            let plane_index = *next_grid_product_plane;
+            let plane_result = pending_grid_results.remove(&plane_index).ok_or_else(|| {
+                format!("direct dirty cube product flush missing plane {plane_index}")
+            })?;
+            *next_grid_product_plane = next_grid_product_plane.saturating_add(1);
+            product_metadata.push(SharedDirtyCubePlaneProductMetadata {
+                plane_index: plane_result.plane_index,
+                batch_index: plane_result.batch_index,
+                batch_task_count: plane_result.batch_task_count,
+                worker_slot: plane_result.worker_slot,
+                worker_elapsed: plane_result.worker_elapsed,
+                run_imaging_elapsed: plane_result.result.run_imaging_elapsed,
+                visibility_batches: plane_result.result.visibility_batches,
+                visibility_samples: plane_result.result.visibility_samples,
+                direct_replay_timings: plane_result.result.direct_replay_timings,
+                channel_frequency_hz: plane_result.result.channel_frequency_hz,
+            });
+            grid_results.push(plane_result.result.grid_result);
+        }
+
+        let dirty_product_finalize_started = Instant::now();
+        let dirty_plane_results = finish_standard_mfs_dirty_grid_results(grid_results)
+            .map_err(|error| error.to_string())?;
+        *dirty_product_finalize_elapsed += dirty_product_finalize_started.elapsed();
+        if dirty_plane_results.len() != product_metadata.len() {
+            return Err(format!(
+                "direct dirty cube product flush finished {} products for {} grid planes",
+                dirty_plane_results.len(),
+                product_metadata.len()
+            ));
+        }
+
+        for (plane_meta, plane_result) in product_metadata.into_iter().zip(dirty_plane_results) {
+            let mut cube_result = single_plane_dirty_imaging_result_to_cube_result(
+                plane_meta.channel_frequency_hz,
+                plane_result,
+            );
+            cube_result.direct_replay_timings = plane_meta.direct_replay_timings;
+            let stage_timings_for_plane = cube_result.diagnostics.stage_timings;
+            add_imaging_stage_timings(stage_timings, stage_timings_for_plane);
+            if standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "cube_shared_direct_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} blocks={} samples={} core_total_ms={:.3} core_psf_grid_alloc_ms={:.3} core_sample_replay_ms={:.3} core_grid_update_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_correction_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_alloc_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_correction_ms={:.3} core_residual_normalize_ms={:.3} residency=batched_dirty_grid_products",
+                    plane_meta.plane_index,
+                    plane_meta.batch_index,
+                    plane_meta.batch_task_count,
+                    plane_meta.worker_slot,
+                    duration_ms(plane_meta.worker_elapsed),
+                    duration_ms(plane_meta.run_imaging_elapsed),
+                    plane_meta.visibility_batches,
+                    plane_meta.visibility_samples,
+                    duration_ms(stage_timings_for_plane.total),
+                    duration_ms(stage_timings_for_plane.psf_grid_alloc),
+                    duration_ms(stage_timings_for_plane.planned_sample_replay),
+                    duration_ms(stage_timings_for_plane.grid_update),
+                    duration_ms(stage_timings_for_plane.psf_grid),
+                    duration_ms(stage_timings_for_plane.psf_fft),
+                    duration_ms(stage_timings_for_plane.psf_image_correction),
+                    duration_ms(stage_timings_for_plane.psf_normalize),
+                    duration_ms(stage_timings_for_plane.residual_grid_alloc),
+                    duration_ms(stage_timings_for_plane.residual_degrid_grid),
+                    duration_ms(stage_timings_for_plane.residual_fft),
+                    duration_ms(stage_timings_for_plane.residual_image_correction),
+                    duration_ms(stage_timings_for_plane.residual_normalize),
+                );
+                let replay = plane_meta.direct_replay_timings;
+                eprintln!(
+                    "cube_shared_direct_plane_result_replay plane={} {}",
+                    plane_meta.plane_index,
+                    direct_cube_replay_timing_detail(replay),
+                );
+                eprintln!(
+                    "cube_shared_direct_plane_result_stage_detail plane={} {}",
+                    plane_meta.plane_index,
+                    imaging_stage_timing_detail(stage_timings_for_plane),
+                );
+            }
+            with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::ProductWrite,
+                None,
+                plane_meta.plane_index,
+                plane_meta.plane_index.saturating_add(1),
+                1,
+                "product writer",
+                None,
+                true,
+                || {
+                    product_publisher.accept(
+                        plane_meta.plane_index,
+                        cube_result,
+                        product_writers,
+                        aggregate,
+                    )
+                },
+            )?;
+        }
+    }
+    Ok(())
 }
 
 struct DirectCleanCubePlaneTaskPayload {
@@ -16171,43 +16333,35 @@ fn run_independent_shared_cube_slab_planes(
                 }
             })
             .collect::<Vec<_>>();
+        let direct_dirty_started = Instant::now();
         let run_plane = |payload: DirectDirtyCubePlaneTaskPayload| {
             let worker_started = Instant::now();
-            let cube_result = run_direct_dirty_cube_plane_from_shared_source(
-                geometry,
-                clean,
-                slab_config
-                    .correlation
-                    .as_deref()
-                    .map(parse_plane_stokes)
-                    .transpose()?
-                    .unwrap_or(PlaneStokes::I),
-                slab_config.weighting,
-                slab_config.deconvolver,
-                slab_config.multiscale_scales.clone(),
-                slab_config.small_scale_bias,
-                plane_execution_config.clone(),
-                &shared_source,
-                payload.output_channel,
-                payload.channel_frequency_hz,
-                spectral_plan,
-                corr_types,
-            )?;
-            let stage_timings = cube_result.diagnostics.stage_timings;
-            let plane_diagnostics = cube_result
-                .diagnostics
-                .channel_diagnostics
-                .first()
-                .ok_or_else(|| {
-                    format!(
-                        "direct shared cube plane {} returned no channel diagnostics",
-                        payload.plane_index
-                    )
-                })?;
-            let gridded_samples = plane_diagnostics.gridded_samples;
-            let skipped_samples = plane_diagnostics.skipped_samples;
-            let normalization_sumwt = plane_diagnostics.normalization_sumwt;
-            let reported_sumwt = plane_diagnostics.reported_sumwt;
+            let (grid_result, replay_timings) =
+                run_direct_dirty_cube_plane_grids_from_shared_source(
+                    geometry,
+                    clean,
+                    slab_config
+                        .correlation
+                        .as_deref()
+                        .map(parse_plane_stokes)
+                        .transpose()?
+                        .unwrap_or(PlaneStokes::I),
+                    slab_config.weighting,
+                    slab_config.deconvolver,
+                    slab_config.multiscale_scales.clone(),
+                    slab_config.small_scale_bias,
+                    plane_execution_config.clone(),
+                    &shared_source,
+                    payload.output_channel,
+                    payload.channel_frequency_hz,
+                    spectral_plan,
+                    corr_types,
+                )?;
+            let stage_timings = grid_result.stage_timings();
+            let gridded_samples = grid_result.gridded_samples();
+            let skipped_samples = grid_result.skipped_samples();
+            let normalization_sumwt = grid_result.normalization_sumwt();
+            let reported_sumwt = grid_result.reported_sumwt();
             if standard_mfs_profile_detail_enabled() {
                 eprintln!(
                     "cube_shared_direct_plane_worker plane={} blocks={} gridded_samples={} skipped_samples={} normalization_sumwt={:.9e} reported_sumwt={:.9e} run_imaging_ms={:.3} worker_wall_ms={:.3} core_total_ms={:.3} core_psf_grid_alloc_ms={:.3} core_sample_replay_ms={:.3} core_grid_update_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_correction_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_alloc_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_correction_ms={:.3} core_residual_normalize_ms={:.3}",
@@ -16233,7 +16387,7 @@ fn run_independent_shared_cube_slab_planes(
                     duration_ms(stage_timings.residual_image_correction),
                     duration_ms(stage_timings.residual_normalize),
                 );
-                let replay = cube_result.direct_replay_timings;
+                let replay = replay_timings;
                 eprintln!(
                     "cube_shared_direct_plane_replay plane={} {}",
                     payload.plane_index,
@@ -16246,11 +16400,13 @@ fn run_independent_shared_cube_slab_planes(
                 );
             }
             Ok((
-                SharedDirtyCubePlaneRunResult {
-                    cube_result,
+                SharedDirtyCubePlaneGridRunResult {
+                    grid_result,
+                    direct_replay_timings: replay_timings,
                     run_imaging_elapsed: worker_started.elapsed(),
                     visibility_batches: shared_source.blocks.len(),
                     visibility_samples: gridded_samples,
+                    channel_frequency_hz: payload.channel_frequency_hz,
                 },
                 stage_timings,
             ))
@@ -16262,16 +16418,22 @@ fn run_independent_shared_cube_slab_planes(
         let mut direct_replay_timings = DirectDirtyCubePlaneReplayTimings::default();
         let product_stats_before = product_writers.write_stats();
         let product_io_stats_before = product_writers.tiled_io_stats();
+        let mut pending_grid_results = BTreeMap::<
+            usize,
+            IndependentImagingPlaneResult<SharedDirtyCubePlaneGridRunResult>,
+        >::new();
+        let mut next_grid_product_plane = slab_plane_start;
+        let dirty_product_flush_planes = dirty_product_grid_flush_planes(config, slab_plane_count);
+        let mut dirty_product_finalize_elapsed = Duration::ZERO;
         let plane_execution_stats = run_owned_independent_imaging_planes_with_consumer(
             tasks,
             worker_count,
             run_plane,
             |plane_result| {
-                add_imaging_stage_timings(&mut stage_timings, plane_result.stage_timings);
-                direct_replay_timings.add(plane_result.result.cube_result.direct_replay_timings);
+                direct_replay_timings.add(plane_result.result.direct_replay_timings);
                 if standard_mfs_profile_detail_enabled() {
                     eprintln!(
-                        "cube_shared_direct_plane_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} blocks={} samples={} core_total_ms={:.3} core_psf_grid_alloc_ms={:.3} core_sample_replay_ms={:.3} core_grid_update_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_correction_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_alloc_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_correction_ms={:.3} core_residual_normalize_ms={:.3} residency=streaming_plane_results",
+                        "cube_shared_direct_plane_grid_result plane={} batch={} batch_tasks={} worker_slot={} worker_elapsed_ms={:.3} run_imaging_ms={:.3} blocks={} samples={} core_total_ms={:.3} core_psf_grid_alloc_ms={:.3} core_sample_replay_ms={:.3} core_grid_update_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_correction_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_alloc_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_correction_ms={:.3} core_residual_normalize_ms={:.3} residency=resident_dirty_grids",
                         plane_result.plane_index,
                         plane_result.batch_index,
                         plane_result.batch_task_count,
@@ -16294,40 +16456,61 @@ fn run_independent_shared_cube_slab_planes(
                         duration_ms(plane_result.stage_timings.residual_image_correction),
                         duration_ms(plane_result.stage_timings.residual_normalize),
                     );
-                    let replay = plane_result.result.cube_result.direct_replay_timings;
+                    let replay = plane_result.result.direct_replay_timings;
                     eprintln!(
-                        "cube_shared_direct_plane_result_replay plane={} {}",
+                        "cube_shared_direct_plane_grid_result_replay plane={} {}",
                         plane_result.plane_index,
                         direct_cube_replay_timing_detail(replay),
                     );
                     eprintln!(
-                        "cube_shared_direct_plane_result_stage_detail plane={} {}",
+                        "cube_shared_direct_plane_grid_result_stage_detail plane={} {}",
                         plane_result.plane_index,
                         imaging_stage_timing_detail(plane_result.stage_timings),
                     );
                 }
-                with_imager_progress_spectral_stage(
+                if pending_grid_results
+                    .insert(plane_result.plane_index, plane_result)
+                    .is_some()
+                {
+                    return Err("duplicate direct dirty cube plane result".to_string());
+                }
+                flush_ready_dirty_grid_products(
+                    false,
+                    dirty_product_flush_planes,
+                    &mut next_grid_product_plane,
+                    &mut pending_grid_results,
+                    &mut product_publisher,
+                    product_writers,
+                    aggregate,
+                    &mut stage_timings,
+                    &mut dirty_product_finalize_elapsed,
                     config,
-                    spectral_slab::SpectralEventStage::ProductWrite,
-                    None,
-                    plane_result.plane_index,
-                    plane_result.plane_index.saturating_add(1),
-                    1,
-                    "product writer",
-                    None,
-                    true,
-                    || {
-                        product_publisher.accept(
-                            plane_result.plane_index,
-                            plane_result.result.cube_result,
-                            product_writers,
-                            aggregate,
-                        )
-                    },
                 )?;
                 Ok(())
             },
         )?;
+        flush_ready_dirty_grid_products(
+            true,
+            dirty_product_flush_planes,
+            &mut next_grid_product_plane,
+            &mut pending_grid_results,
+            &mut product_publisher,
+            product_writers,
+            aggregate,
+            &mut stage_timings,
+            &mut dirty_product_finalize_elapsed,
+            config,
+        )?;
+        if !pending_grid_results.is_empty() {
+            let pending = pending_grid_results
+                .keys()
+                .map(|plane| plane.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Err(format!(
+                "direct dirty cube slab stopped with pending grid planes [{pending}]"
+            ));
+        }
         let publish_stats = product_publisher.finish(product_writers, aggregate)?;
         product_write_elapsed += publish_stats.write_elapsed;
         product_bytes += publish_stats.bytes;
@@ -16337,19 +16520,25 @@ fn run_independent_shared_cube_slab_planes(
         let product_io_stats = product_writers
             .tiled_io_stats()
             .delta_since(product_io_stats_before);
+        let direct_dirty_elapsed = direct_dirty_started.elapsed();
         if standard_mfs_profile_detail_enabled() {
             eprintln!(
-                "cube_shared_direct_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} completed={} elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} core_total_ms={:.3} core_psf_grid_alloc_ms={:.3} core_sample_replay_ms={:.3} core_grid_update_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_correction_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_alloc_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_correction_ms={:.3} core_residual_normalize_ms={:.3} replay_blocks={} replay_rows_seen={} replay_rows_flagged={} replay_assignments_missing={} replay_assignments_empty={} replay_samples_rejected={} replay_fast_samples={} replay_planned_samples={} replay_planned_runs={} replay_max_run_samples={} replay_spectral_lookup_ms={:.3} replay_sample_build_ms={:.3} replay_plan_sample_ms={:.3} replay_build_planned_ms={:.3} replay_consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_direct_write_calls={} tiled_direct_write_tiles={} tiled_direct_write_bytes={} tiled_direct_pack_ns={} tiled_direct_swap_ns={} tiled_direct_write_ns={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=streaming_plane_results",
+                "cube_shared_direct_plane_executor_summary slab_plane_start={} slab_plane_end={} worker_count={} product_batch_planes={} dirty_product_grid_flush_planes={} dirty_product_fft_chunk_hint={} dirty_product_fft_batch_scope={} completed={} elapsed_ms={:.3} executor_elapsed_ms={:.3} worker_sum_ms={:.3} worker_max_ms={:.3} result_wait_ms={:.3} consume_ms={:.3} dirty_product_finalize_ms={:.3} core_total_ms={:.3} core_psf_grid_alloc_ms={:.3} core_sample_replay_ms={:.3} core_grid_update_ms={:.3} core_psf_grid_ms={:.3} core_psf_fft_ms={:.3} core_psf_correction_ms={:.3} core_psf_normalize_ms={:.3} core_residual_grid_alloc_ms={:.3} core_residual_grid_ms={:.3} core_residual_fft_ms={:.3} core_residual_correction_ms={:.3} core_residual_normalize_ms={:.3} replay_blocks={} replay_rows_seen={} replay_rows_flagged={} replay_assignments_missing={} replay_assignments_empty={} replay_samples_rejected={} replay_fast_samples={} replay_planned_samples={} replay_planned_runs={} replay_max_run_samples={} replay_spectral_lookup_ms={:.3} replay_sample_build_ms={:.3} replay_plan_sample_ms={:.3} replay_build_planned_ms={:.3} replay_consume_ms={:.3} product_write_ms={:.3} product_role_ms={:.3} product_psf_ms={:.3} product_residual_ms={:.3} product_model_ms={:.3} product_image_ms={:.3} product_sumwt_ms={:.3} product_bytes={} product_groups={} product_group_planes={} writer_groups={} writer_planes={} writer_estimated_bytes={} tiled_c_order_calls={} tiled_fortran_calls={} tiled_tile_visits={} tiled_copied_elements={} tiled_lru_hits={} tiled_lru_misses={} tiled_lru_zero_fill_tiles={} tiled_lru_read_tiles={} tiled_lru_read_bytes={} tiled_lru_dirty_evictions={} tiled_lru_flush_calls={} tiled_lru_flush_write_tiles={} tiled_lru_flush_write_bytes={} tiled_lru_batch_flushes={} tiled_lru_batch_flush_tiles={} tiled_lru_batch_flush_bytes={} tiled_direct_write_calls={} tiled_direct_write_tiles={} tiled_direct_write_bytes={} tiled_direct_pack_ns={} tiled_direct_swap_ns={} tiled_direct_write_ns={} tiled_flat_allocations={} tiled_flat_allocated_bytes={} tiled_flat_zero_fill_bytes={} tiled_flat_bulk_read_bytes={} tiled_flat_flush_calls={} tiled_flat_flush_write_tiles={} tiled_flat_flush_write_bytes={} residency=batched_dirty_grid_products",
                 slab_plane_start,
                 slab_plane_end,
                 worker_count,
                 product_batch_planes,
+                dirty_product_flush_planes,
+                dirty_product_fft_chunk_hint(config, slab_plane_count),
+                dirty_product_fft_batch_scope(config, slab_plane_count),
                 plane_execution_stats.completed,
+                duration_ms(direct_dirty_elapsed),
                 duration_ms(plane_execution_stats.elapsed),
                 duration_ms(plane_execution_stats.worker_elapsed_sum),
                 duration_ms(plane_execution_stats.worker_elapsed_max),
                 duration_ms(plane_execution_stats.result_wait_elapsed),
                 duration_ms(plane_execution_stats.consume_elapsed),
+                duration_ms(dirty_product_finalize_elapsed),
                 duration_ms(stage_timings.total),
                 duration_ms(stage_timings.psf_grid_alloc),
                 duration_ms(stage_timings.planned_sample_replay),
@@ -16423,9 +16612,9 @@ fn run_independent_shared_cube_slab_planes(
             );
         }
         return Ok(CubeSlabRunOutcome {
-            run_elapsed: plane_execution_stats.elapsed,
+            run_elapsed: direct_dirty_elapsed,
             slab_prepare_elapsed: Duration::ZERO,
-            plane_run_elapsed: plane_execution_stats.elapsed,
+            plane_run_elapsed: plane_execution_stats.elapsed + dirty_product_finalize_elapsed,
             product_write_elapsed,
             product_bytes,
             stage_timings,
@@ -16628,31 +16817,71 @@ impl CubeSlabProductWriters {
         self.psf
             .put_slice_view(result.psf.view().into_dyn(), &start)
             .map_err(|error| format!("write slab psf: {error}"))?;
-        self.stats.psf_elapsed += psf_started.elapsed();
+        let psf_elapsed = psf_started.elapsed();
+        self.stats.psf_elapsed += psf_elapsed;
+        log_image_product_write(
+            ".psf",
+            "psf",
+            result.psf.shape(),
+            result.psf.len(),
+            psf_elapsed,
+        );
         let residual_started = Instant::now();
         self.residual
             .put_slice_view(result.residual.view().into_dyn(), &start)
             .map_err(|error| format!("write slab residual: {error}"))?;
-        self.stats.residual_elapsed += residual_started.elapsed();
+        let residual_elapsed = residual_started.elapsed();
+        self.stats.residual_elapsed += residual_elapsed;
+        log_image_product_write(
+            ".residual",
+            "residual",
+            result.residual.shape(),
+            result.residual.len(),
+            residual_elapsed,
+        );
         if let Some(model) = self.model.as_mut() {
             let model_started = Instant::now();
             model
                 .put_slice_view(result.model.view().into_dyn(), &start)
                 .map_err(|error| format!("write slab model: {error}"))?;
-            self.stats.model_elapsed += model_started.elapsed();
+            let model_elapsed = model_started.elapsed();
+            self.stats.model_elapsed += model_elapsed;
+            log_image_product_write(
+                ".model",
+                "model",
+                result.model.shape(),
+                result.model.len(),
+                model_elapsed,
+            );
         }
         if !self.dirty_image_alias {
             let image_started = Instant::now();
             self.image
                 .put_slice_view(result.image.view().into_dyn(), &start)
                 .map_err(|error| format!("write slab image: {error}"))?;
-            self.stats.image_elapsed += image_started.elapsed();
+            let image_elapsed = image_started.elapsed();
+            self.stats.image_elapsed += image_elapsed;
+            log_image_product_write(
+                ".image",
+                "image",
+                result.image.shape(),
+                result.image.len(),
+                image_elapsed,
+            );
         }
         let sumwt_started = Instant::now();
         self.sumwt
             .put_slice_view(result.sumwt.view().into_dyn(), &start)
             .map_err(|error| format!("write slab sumwt: {error}"))?;
-        self.stats.sumwt_elapsed += sumwt_started.elapsed();
+        let sumwt_elapsed = sumwt_started.elapsed();
+        self.stats.sumwt_elapsed += sumwt_elapsed;
+        log_image_product_write(
+            ".sumwt",
+            "sumwt",
+            result.sumwt.shape(),
+            result.sumwt.len(),
+            sumwt_elapsed,
+        );
         for (offset, beam) in result.beams.iter().copied().enumerate() {
             let index = plane_start + offset;
             if index < self.beams.len() {
@@ -16693,17 +16922,41 @@ impl CubeSlabProductWriters {
         self.psf
             .put_slice_view(result.psf.view().into_dyn(), &start)
             .map_err(|error| format!("write dirty slab psf: {error}"))?;
-        self.stats.psf_elapsed += psf_started.elapsed();
+        let psf_elapsed = psf_started.elapsed();
+        self.stats.psf_elapsed += psf_elapsed;
+        log_image_product_write(
+            ".psf",
+            "psf",
+            result.psf.shape(),
+            result.psf.len(),
+            psf_elapsed,
+        );
         let residual_started = Instant::now();
         self.residual
             .put_slice_view(result.residual.view().into_dyn(), &start)
             .map_err(|error| format!("write dirty slab residual: {error}"))?;
-        self.stats.residual_elapsed += residual_started.elapsed();
+        let residual_elapsed = residual_started.elapsed();
+        self.stats.residual_elapsed += residual_elapsed;
+        log_image_product_write(
+            ".residual",
+            "residual",
+            result.residual.shape(),
+            result.residual.len(),
+            residual_elapsed,
+        );
         let sumwt_started = Instant::now();
         self.sumwt
             .put_slice_view(result.sumwt.view().into_dyn(), &start)
             .map_err(|error| format!("write dirty slab sumwt: {error}"))?;
-        self.stats.sumwt_elapsed += sumwt_started.elapsed();
+        let sumwt_elapsed = sumwt_started.elapsed();
+        self.stats.sumwt_elapsed += sumwt_elapsed;
+        log_image_product_write(
+            ".sumwt",
+            "sumwt",
+            result.sumwt.shape(),
+            result.sumwt.len(),
+            sumwt_elapsed,
+        );
         for (offset, beam) in result.beams.iter().copied().enumerate() {
             let index = plane_start + offset;
             if index < self.beams.len() {
@@ -16733,8 +16986,25 @@ impl CubeSlabProductWriters {
         support_mask: &ArrayD<bool>,
     ) -> Result<(), String> {
         let start = [0, 0, 0, plane_index];
+        let residual_started = Instant::now();
         write_product_mask_slice(&mut self.residual, support_mask, &start, "residual")?;
-        write_product_mask_slice(&mut self.image, support_mask, &start, "image")
+        log_image_product_write(
+            ".residual",
+            "residual.mask",
+            support_mask.shape(),
+            support_mask.len(),
+            residual_started.elapsed(),
+        );
+        let image_started = Instant::now();
+        write_product_mask_slice(&mut self.image, support_mask, &start, "image")?;
+        log_image_product_write(
+            ".image",
+            "image.mask",
+            support_mask.shape(),
+            support_mask.len(),
+            image_started.elapsed(),
+        );
+        Ok(())
     }
 
     fn finish(mut self, config: &CliConfig) -> Result<(), String> {
@@ -16982,9 +17252,17 @@ impl MosaicCubeSlabProductWriters {
         self.cube.write_slab(plane_index, &cube)?;
         let start = [0, 0, 0, plane_index];
         let weight_product = single_plane_image_product(weight);
+        let weight_started = Instant::now();
         self.weight
             .put_slice_view(weight_product.view().into_dyn(), &start)
             .map_err(|error| format!("write mosaic cube weight plane {plane_index}: {error}"))?;
+        log_image_product_write(
+            ".weight",
+            "weight",
+            weight_product.shape(),
+            weight_product.len(),
+            weight_started.elapsed(),
+        );
         let pb_product = primary_beam_product(PrimaryBeamProductRequest::MosaicFromWeight {
             weight_product: &weight_product,
         })
@@ -16998,21 +17276,53 @@ impl MosaicCubeSlabProductWriters {
         self.cube
             .write_support_mask_plane(plane_index, &pb_outputs.1)?;
         if let Some(pb) = self.pb.as_mut() {
+            let pb_started = Instant::now();
             pb.put_slice_view(pb_outputs.0.view().into_dyn(), &start)
                 .map_err(|error| format!("write mosaic cube pb plane {plane_index}: {error}"))?;
+            log_image_product_write(
+                ".pb",
+                "pb",
+                pb_outputs.0.shape(),
+                pb_outputs.0.len(),
+                pb_started.elapsed(),
+            );
+            let pb_mask_started = Instant::now();
             write_product_mask_slice(pb, &pb_outputs.1, &start, "pb")?;
+            log_image_product_write(
+                ".pb",
+                "pb.mask",
+                pb_outputs.1.shape(),
+                pb_outputs.1.len(),
+                pb_mask_started.elapsed(),
+            );
         }
         if let Some(image_pbcor) = self.image_pbcor.as_mut() {
             let pbcor_product = pb_outputs
                 .2
                 .as_ref()
                 .expect("mosaic cube image.pbcor requested but not produced");
+            let pbcor_started = Instant::now();
             image_pbcor
                 .put_slice_view(pbcor_product.view().into_dyn(), &start)
                 .map_err(|error| {
                     format!("write mosaic cube image.pbcor plane {plane_index}: {error}")
                 })?;
+            log_image_product_write(
+                ".image.pbcor",
+                "image.pbcor",
+                pbcor_product.shape(),
+                pbcor_product.len(),
+                pbcor_started.elapsed(),
+            );
+            let pbcor_mask_started = Instant::now();
             write_product_mask_slice(image_pbcor, &pb_outputs.1, &start, "image.pbcor")?;
+            log_image_product_write(
+                ".image.pbcor",
+                "image.pbcor.mask",
+                pb_outputs.1.shape(),
+                pb_outputs.1.len(),
+                pbcor_mask_started.elapsed(),
+            );
         }
         Ok(())
     }
@@ -19931,6 +20241,65 @@ fn env_flag_override(name: &str) -> Option<bool> {
 }
 
 static STANDARD_MFS_RUNTIME_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static IMAGING_FFT_PRECISION_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+const IMAGING_FFT_PRECISION_ENV: &str = "CASA_RS_IMAGING_FFT_PRECISION";
+
+struct ImagingFftPrecisionGuard {
+    _env_lock: MutexGuard<'static, ()>,
+    previous: Option<OsString>,
+    active: bool,
+}
+
+impl ImagingFftPrecisionGuard {
+    fn new(policy: ImagingFftPrecisionPolicy) -> Self {
+        let env_lock = IMAGING_FFT_PRECISION_ENV_LOCK
+            .lock()
+            .expect("imaging FFT precision env lock");
+        let previous = env::var_os(IMAGING_FFT_PRECISION_ENV);
+        let mut guard = Self {
+            _env_lock: env_lock,
+            previous,
+            active: policy != ImagingFftPrecisionPolicy::Auto,
+        };
+        match policy {
+            ImagingFftPrecisionPolicy::Auto => {}
+            ImagingFftPrecisionPolicy::F64 => guard.set("f64"),
+            ImagingFftPrecisionPolicy::F32 => guard.set("f32"),
+        }
+        guard
+    }
+
+    fn set(&mut self, value: &str) {
+        // SAFETY: the imager applies this process-local FFT policy before
+        // launching per-run worker threads and restores it after the run joins.
+        unsafe {
+            env::set_var(IMAGING_FFT_PRECISION_ENV, value);
+        }
+    }
+}
+
+impl Drop for ImagingFftPrecisionGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        match &self.previous {
+            Some(previous) => {
+                // SAFETY: see `set`; restoration happens after run workers join.
+                unsafe {
+                    env::set_var(IMAGING_FFT_PRECISION_ENV, previous);
+                }
+            }
+            None => {
+                // SAFETY: see `set`; restoration happens after run workers join.
+                unsafe {
+                    env::remove_var(IMAGING_FFT_PRECISION_ENV);
+                }
+            }
+        }
+    }
+}
 
 struct StandardMfsRuntimePlanGuard {
     _env_lock: MutexGuard<'static, ()>,
@@ -20353,8 +20722,9 @@ fn apply_standard_mfs_runtime_plan_locked(
         };
 
     eprintln!(
-        "standard_mfs_runtime_plan policy={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} worker_model={} worker_modeled_cost_units={} worker_candidate_costs={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
+        "standard_mfs_runtime_plan policy={} imaging_fft_precision={} eligible={} auto_multi_cpu={} auto_metal={} metal_device_available={} worker_model={} worker_modeled_cost_units={} worker_candidate_costs={} backend={} backend_source={} grid_threads={} grid_threads_source={} density_threads={} density_threads_source={} tile_anchor={} tile_anchor_source={} residual_backend={} residual_backend_source={} initial_dirty_backend={} initial_dirty_backend_source={} metal_grouped_input_cache={} metal_grouped_input_cache_source={} minor_cycle_backend={} minor_cycle_backend_reason={} metal_minor_cycle_chunk={} metal_minor_cycle_chunk_source={} mtmfs_metal_backend={} mtmfs_metal_input_cache={}",
         standard_mfs_acceleration_policy_label(config.standard_mfs_acceleration),
+        imaging_fft_precision_policy_label(config.imaging_fft_precision),
         eligible,
         auto_multi_cpu,
         policy_metal_requested,
@@ -20739,6 +21109,86 @@ fn standard_mfs_acceleration_policy_label(policy: StandardMfsAccelerationPolicy)
     }
 }
 
+fn imaging_fft_precision_policy_label(policy: ImagingFftPrecisionPolicy) -> &'static str {
+    match policy {
+        ImagingFftPrecisionPolicy::Auto => "auto",
+        ImagingFftPrecisionPolicy::F64 => "f64",
+        ImagingFftPrecisionPolicy::F32 => "f32",
+    }
+}
+
+fn dirty_product_grid_flush_planes(config: &CliConfig, plane_count: usize) -> usize {
+    const FLUSH_PLANES_ENV: &str = "CASA_RS_DIRTY_F32_GRID_FLUSH_PLANES";
+    const TARGET_BYTES_ENV: &str = "CASA_RS_DIRTY_F32_GRID_FLUSH_TARGET_BYTES";
+    const DEFAULT_TARGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
+
+    if plane_count <= 1 {
+        return plane_count.max(1);
+    }
+    if !matches!(config.imaging_fft_precision, ImagingFftPrecisionPolicy::F32) {
+        return 1;
+    }
+    if let Ok(value) = env::var(FLUSH_PLANES_ENV) {
+        if let Ok(parsed) = value.trim().parse::<usize>() {
+            return parsed.max(1).min(plane_count);
+        }
+    }
+
+    let target_bytes = env::var(TARGET_BYTES_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_TARGET_BYTES);
+    let bytes_per_plane = standard_mfs_workspace_scratch_bytes(config.imsize).max(1);
+    (target_bytes / bytes_per_plane).max(1).min(plane_count)
+}
+
+fn dirty_product_fft_chunk_hint(config: &CliConfig, plane_count: usize) -> usize {
+    match config.imaging_fft_precision {
+        ImagingFftPrecisionPolicy::F32 => {
+            let padded_side = standard_mfs_casa_composite_padded_len(config.imsize, 1.2);
+            dirty_product_fft_chunk_size(padded_side, padded_side, plane_count.saturating_mul(2))
+        }
+        ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => 1,
+    }
+}
+
+fn dirty_product_fft_batch_scope(config: &CliConfig, plane_count: usize) -> &'static str {
+    match config.imaging_fft_precision {
+        ImagingFftPrecisionPolicy::F32 if plane_count > 1 => "bounded_slab_psf_residual_batch",
+        ImagingFftPrecisionPolicy::F32 => "psf_residual_pair",
+        ImagingFftPrecisionPolicy::Auto | ImagingFftPrecisionPolicy::F64 => "single_transform",
+    }
+}
+
+fn dirty_product_fft_chunk_size(rows: usize, columns: usize, transform_count: usize) -> usize {
+    const CHUNK_ENV: &str = "CASA_RS_DIRTY_F32_FFT_BATCH_CHUNK";
+    const TARGET_BYTES_ENV: &str = "CASA_RS_DIRTY_F32_FFT_BATCH_TARGET_BYTES";
+    const DEFAULT_TARGET_BYTES: usize = 256 * 1024 * 1024;
+    const DEFAULT_MAX_CHUNK: usize = 8;
+
+    if transform_count <= 1 {
+        return transform_count.max(1);
+    }
+    if let Ok(value) = env::var(CHUNK_ENV) {
+        if let Ok(parsed) = value.trim().parse::<usize>() {
+            return parsed.max(1).min(transform_count);
+        }
+    }
+    let target_bytes = env::var(TARGET_BYTES_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_TARGET_BYTES);
+    let bytes_per_transform = rows
+        .saturating_mul(columns)
+        .saturating_mul(std::mem::size_of::<Complex32>())
+        .max(1);
+    (target_bytes / bytes_per_transform)
+        .clamp(2, DEFAULT_MAX_CHUNK)
+        .min(transform_count)
+}
+
 fn maybe_log_frontend_progress(stage: &str, stage_elapsed: Duration, total_elapsed: Duration) {
     if frontend_progress_enabled() {
         eprintln!(
@@ -21104,8 +21554,33 @@ pub struct CliConfig {
     pub imaging_row_block_rows: Option<usize>,
     /// Optional shared imaging source-stream prepare worker count.
     pub imaging_prepare_workers: Option<usize>,
+    /// Imaging-wide FFT precision policy for dirty/residual product transforms.
+    pub imaging_fft_precision: ImagingFftPrecisionPolicy,
     /// Write PNG preview sidecars for the CASA image products.
     pub write_preview_pngs: bool,
+}
+
+/// Imaging-wide dirty/residual FFT precision policy.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagingFftPrecisionPolicy {
+    /// Keep the correctness-default precision for each imaging role.
+    #[default]
+    Auto,
+    /// Force double-precision dirty/residual FFTs where the mode normally uses f64.
+    F64,
+    /// Use single-precision dirty/residual FFTs where validated and explicitly accepted.
+    F32,
 }
 
 /// Runtime acceleration policy for standard-MFS imaging.
@@ -21202,6 +21677,7 @@ impl CliConfig {
         let mut imaging_prepare_buffer_mb = None::<usize>;
         let mut imaging_row_block_rows = None::<usize>;
         let mut imaging_prepare_workers = None::<usize>;
+        let mut imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
         let mut write_preview_pngs = true;
 
         let mut args = args.into_iter();
@@ -21711,6 +22187,13 @@ impl CliConfig {
                     imaging_prepare_workers = Some(value);
                     continue;
                 }
+                "--imaging-fft-precision" | "--fft-precision" => {
+                    imaging_fft_precision = parse_imaging_fft_precision_policy(&next_value(
+                        &mut args,
+                        "--imaging-fft-precision",
+                    )?)?;
+                    continue;
+                }
                 "--no-preview-pngs" => {
                     write_preview_pngs = false;
                     continue;
@@ -21810,6 +22293,7 @@ impl CliConfig {
             imaging_prepare_buffer_mb,
             imaging_row_block_rows,
             imaging_prepare_workers,
+            imaging_fft_precision,
             write_preview_pngs,
         })
     }
@@ -39659,8 +40143,10 @@ fn write_image_product(
     set_metadata: &casa_imaging::ImageProductSetMetadata,
     product: &ImageProduct<'_>,
 ) -> Result<(), String> {
+    let started = Instant::now();
+    let path = PathBuf::from(format!("{base}{}", product.suffix()));
     write_single_product_inner(SingleProductWrite {
-        path: &PathBuf::from(format!("{base}{}", product.suffix())),
+        path: &path,
         data: product.data(),
         coords,
         units: product.metadata().units(),
@@ -39670,7 +40156,36 @@ fn write_image_product(
         channel_frequencies_hz: set_metadata.channel_frequencies_hz(),
         reffreq_hz: set_metadata.reffreq_hz(),
         mask: product.metadata().mask_array(),
-    })
+    })?;
+    log_image_product_write(
+        product.suffix(),
+        product.metadata().role_label(),
+        product.data().shape(),
+        product.data().len(),
+        started.elapsed(),
+    );
+    Ok(())
+}
+
+fn log_image_product_write(
+    suffix: &str,
+    role: &str,
+    shape: &[usize],
+    element_count: usize,
+    elapsed: Duration,
+) {
+    eprintln!(
+        "image_product_write suffix={} role={} shape={} elements={} elapsed_ms={:.3}",
+        suffix,
+        role,
+        shape
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("x"),
+        element_count,
+        duration_ms(elapsed),
+    );
 }
 
 fn should_write_product_preview(product: &ImageProduct<'_>) -> bool {
@@ -40137,6 +40652,19 @@ fn parse_standard_mfs_acceleration_policy(
         "metal" | "gpu" => Ok(StandardMfsAccelerationPolicy::Metal),
         _ => Err(format!(
             "unsupported --standard-mfs-acceleration value {text:?}; expected auto, cpu, multi-cpu, or metal"
+        )),
+    }
+}
+
+fn parse_imaging_fft_precision_policy(text: &str) -> Result<ImagingFftPrecisionPolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(ImagingFftPrecisionPolicy::Auto),
+        "f64" | "double" | "double-precision" | "accurate" => Ok(ImagingFftPrecisionPolicy::F64),
+        "f32" | "single" | "single-precision" | "fast" | "fast-f32" | "auto-f32" => {
+            Ok(ImagingFftPrecisionPolicy::F32)
+        }
+        _ => Err(format!(
+            "unsupported --imaging-fft-precision value {text:?}; expected auto, f64, or f32"
         )),
     }
 }
@@ -43804,6 +44332,8 @@ Options:
                             override Metal minor-cycle command-buffer component chunk
   --standard-mfs-metal-grouped-input-cache true|false
                             override planner use of the grouped Metal input cache
+  --imaging-fft-precision auto|f64|f32
+                            imaging-wide dirty/residual FFT precision policy
   --standard-mfs-memory-target-mb N
                             compatibility alias for --imaging-memory-target-mb
   --standard-mfs-prepare-buffer-mb N
@@ -47116,6 +47646,8 @@ mod tests {
             OsString::from("8192"),
             OsString::from("--imaging-prepare-workers"),
             OsString::from("2"),
+            OsString::from("--imaging-fft-precision"),
+            OsString::from("fast-f32"),
         ])
         .expect("parse acceleration options");
 
@@ -47136,6 +47668,7 @@ mod tests {
         assert_eq!(config.imaging_prepare_buffer_mb, Some(256));
         assert_eq!(config.imaging_row_block_rows, Some(8192));
         assert_eq!(config.imaging_prepare_workers, Some(2));
+        assert_eq!(config.imaging_fft_precision, ImagingFftPrecisionPolicy::F32);
     }
 
     #[test]
@@ -50868,6 +51401,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -50939,6 +51473,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -51026,6 +51561,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -51105,6 +51641,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -51187,6 +51724,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -51266,6 +51804,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -51337,6 +51876,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -53457,6 +53997,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
         }
     }
@@ -54024,6 +54565,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
         let ms = MeasurementSet::open(&config.ms).unwrap();
@@ -54140,6 +54682,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
         let ms = MeasurementSet::open(&config.ms).unwrap();
@@ -54252,6 +54795,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -54416,6 +54960,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -54560,6 +55105,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -54657,6 +55203,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -54786,6 +55333,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -54910,6 +55458,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55016,6 +55565,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55176,6 +55726,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55288,6 +55839,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55401,6 +55953,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55509,6 +56062,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55633,6 +56187,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55765,6 +56320,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -55874,6 +56430,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         }
     }
@@ -56175,6 +56732,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -56297,6 +56855,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -56436,6 +56995,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -56573,6 +57133,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -56711,6 +57272,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -56974,6 +57536,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
 
@@ -57436,6 +57999,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
         let summary = run_from_config(&dirty_config).unwrap();
@@ -57487,6 +58051,24 @@ deconvolver=mtmfs
                 format!("{}.{}", image_prefix.display(), suffix),
                 format!("{}.{}", slab2_prefix.display(), suffix),
                 1.0e-5,
+            );
+        }
+
+        let f32_prefix = tmp.path().join("tiny_cube_f32_fft_image");
+        let mut f32_config = dirty_config.clone();
+        f32_config.imagename = f32_prefix.clone();
+        f32_config.imaging_fft_precision = ImagingFftPrecisionPolicy::F32;
+        {
+            let _forced_slab4 = EnvGuard::set("CASA_RS_TEST_FORCE_SPECTRAL_ACTIVE_PLANES", "4");
+            let f32_summary = run_from_config(&f32_config).unwrap();
+            assert!(f32_summary.gridded_samples > 0);
+            assert_eq!(f32_summary.channel_summaries.len(), 4);
+        }
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", f32_prefix.display(), suffix),
+                1.0e-4,
             );
         }
 
@@ -57738,6 +58320,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         };
         assert!(can_run_standard_spectral_cube_slab(&dirty_config, false, 1));
@@ -57900,6 +58483,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap_err();
@@ -58026,6 +58610,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
         })
         .unwrap();
@@ -58153,6 +58738,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -58288,6 +58874,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -58422,6 +59009,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap_err();
@@ -58535,6 +59123,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -58641,6 +59230,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -58748,6 +59338,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap();
@@ -58858,6 +59449,7 @@ deconvolver=mtmfs
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: false,
         })
         .unwrap_err();

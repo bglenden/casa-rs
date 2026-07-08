@@ -15,5 +15,13 @@ let package = Package(
                 .linkedFramework("Metal"),
             ]
         ),
+        .executableTarget(
+            name: "AppleFFTProbe",
+            linkerSettings: [
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalPerformanceShaders"),
+                .linkedFramework("MetalPerformanceShadersGraph"),
+            ]
+        ),
     ]
 )

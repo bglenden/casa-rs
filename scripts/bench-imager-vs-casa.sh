@@ -63,6 +63,7 @@ deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
 standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
 standard_mfs_grid_threads="${IMAGER_BENCH_STANDARD_MFS_GRID_THREADS:-}"
 standard_mfs_metal_minor_cycle_chunk="${IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK:-}"
+imaging_fft_precision="${IMAGER_BENCH_IMAGING_FFT_PRECISION:-auto}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
@@ -122,6 +123,10 @@ if [[ -n "$standard_mfs_metal_minor_cycle_chunk" && "$standard_mfs_metal_minor_c
 fi
 if [[ "$standard_mfs_metal_minor_cycle_chunk" == "0" || "$standard_mfs_metal_minor_cycle_chunk" == "auto:0" || "$standard_mfs_metal_minor_cycle_chunk" == "auto:0.0" ]]; then
   echo "error: IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK must be auto, auto:<positive-ms>, full, or a positive integer" >&2
+  exit 2
+fi
+if [[ "$imaging_fft_precision" != "auto" && "$imaging_fft_precision" != "f64" && "$imaging_fft_precision" != "f32" && "$imaging_fft_precision" != "fast-f32" && "$imaging_fft_precision" != "auto-f32" ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_FFT_PRECISION must be auto, f64, or f32" >&2
   exit 2
 fi
 if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+$ ]]; then
@@ -350,13 +355,13 @@ emit_rust_backend_diagnostics() {
     return 0
   fi
   grep -E \
-    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
+    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
     "$stderr_file" || true
 }
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
@@ -466,6 +471,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      --imaging-fft-precision "$imaging_fft_precision" \
       ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -509,6 +515,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      --imaging-fft-precision "$imaging_fft_precision" \
       ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -566,6 +573,7 @@ elif [[ -n "$scales" ]]; then
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      --imaging-fft-precision "$imaging_fft_precision" \
     ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \
@@ -606,6 +614,7 @@ else
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
+      --imaging-fft-precision "$imaging_fft_precision" \
     ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
     ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
     --hogbom-iteration-mode "$hogbom_iteration_mode" \

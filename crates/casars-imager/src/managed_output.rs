@@ -676,7 +676,7 @@ mod tests {
     };
     use crate::{
         AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, CubeAxisConfig,
-        FrontendStageTimings, RunSummary, SaveModelMode, SpectralMode,
+        FrontendStageTimings, ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
         StandardMfsAccelerationPolicy,
     };
     use casa_imaging::{
@@ -755,6 +755,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
         }
     }
@@ -980,6 +981,7 @@ mod tests {
                 imaging_prepare_buffer_mb: None,
                 imaging_row_block_rows: None,
                 imaging_prepare_workers: None,
+                imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
                 write_preview_pngs: false,
                 progress: None,
             },

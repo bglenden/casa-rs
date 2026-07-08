@@ -606,6 +606,8 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-metal",
+ "objc2-metal-performance-shaders",
+ "objc2-metal-performance-shaders-graph",
  "rustfft",
  "serial_test",
  "thiserror 2.0.18",
@@ -2867,6 +2869,31 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-metal-performance-shaders"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46a10f15ff4e2045f947ffca8a17fc351b155c321de16f04278a008a1f446784"
+dependencies = [
+ "bitflags 2.11.0",
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
+]
+
+[[package]]
+name = "objc2-metal-performance-shaders-graph"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3733321d6edbaa799a59b3f2c82b9e83abfa7577eae0274d3c02f9e879eab1aa"
+dependencies = [
+ "bitflags 2.11.0",
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
+ "objc2-metal-performance-shaders",
 ]
 
 [[package]]
