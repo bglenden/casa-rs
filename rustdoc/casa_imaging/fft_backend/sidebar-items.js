@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FftBackendChoice","FftDirection","FftNormalization","FftPlacement","FftPrecision","FftShift","FftUseCase"],"fn":["fft_backend_capability","fftw_local_bench_command","select_fft_backend","validate_fft_backend","wall_to_io_ratio"],"struct":["Fft2Shape","Fft2Spec","FftBackendCapability","FftBackendSelection","FftTiming","FftValidationReport"]};
