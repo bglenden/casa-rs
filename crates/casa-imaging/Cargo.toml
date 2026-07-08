@@ -21,9 +21,15 @@ num-complex.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
 objc2 = { version = "0.6.4", default-features = false }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSArray",
+    "NSDictionary",
+    "NSObject",
+    "NSString",
+    "NSValue",
+] }
 objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLAllocation",
     "MTLBuffer",
@@ -38,6 +44,20 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLTypes",
     "block2",
     "objc2-core-foundation",
+] }
+objc2-metal-performance-shaders = { version = "0.3.2", default-features = false, features = [
+    "MPSCoreTypes",
+    "MPSNDArray",
+] }
+objc2-metal-performance-shaders-graph = { version = "0.3.2", default-features = false, features = [
+    "MPSGraph",
+    "MPSGraphCore",
+    "MPSGraphFourierTransformOps",
+    "MPSGraphMemoryOps",
+    "MPSGraphOperation",
+    "MPSGraphTensor",
+    "MPSGraphTensorData",
+    "objc2-metal-performance-shaders",
 ] }
 
 [dev-dependencies]

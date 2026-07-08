@@ -28,8 +28,8 @@ use serde_json::Value as JsonValue;
 
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
-    RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, command_schema,
-    run_from_request,
+    ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
+    StandardMfsAccelerationPolicy, command_schema, run_from_request,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -1953,6 +1953,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional shared imaging source-stream prepare worker count.
     #[serde(default)]
     pub imaging_prepare_workers: Option<usize>,
+    /// Imaging-wide FFT precision policy for dirty/residual product transforms.
+    #[serde(default)]
+    pub imaging_fft_precision: ImagingFftPrecisionPolicy,
     /// Write PNG preview sidecars for the CASA image products.
     #[serde(default = "default_write_preview_pngs")]
     pub write_preview_pngs: bool,
@@ -2039,6 +2042,7 @@ impl ImagerRunTaskRequest {
             imaging_prepare_buffer_mb: config.imaging_prepare_buffer_mb,
             imaging_row_block_rows: config.imaging_row_block_rows,
             imaging_prepare_workers: config.imaging_prepare_workers,
+            imaging_fft_precision: config.imaging_fft_precision,
             write_preview_pngs: config.write_preview_pngs,
             progress: None,
         }
@@ -2172,6 +2176,7 @@ impl ImagerRunTaskRequest {
             imaging_prepare_buffer_mb: self.imaging_prepare_buffer_mb,
             imaging_row_block_rows: self.imaging_row_block_rows,
             imaging_prepare_workers: self.imaging_prepare_workers,
+            imaging_fft_precision: self.imaging_fft_precision,
             write_preview_pngs: self.write_preview_pngs,
         })
     }
@@ -2860,7 +2865,10 @@ mod tests {
         ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
         ImagerWTermMode, ImagerWeighting,
     };
-    use crate::{CliConfig, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy};
+    use crate::{
+        CliConfig, ImagingFftPrecisionPolicy, SaveModelMode, SpectralMode,
+        StandardMfsAccelerationPolicy,
+    };
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
@@ -2976,6 +2984,8 @@ mod tests {
             OsString::from("wproject"),
             OsString::from("--wprojplanes"),
             OsString::from("8"),
+            OsString::from("--imaging-fft-precision"),
+            OsString::from("f32"),
             OsString::from("--dirty-only"),
             OsString::from("--no-preview-pngs"),
         ])
@@ -3004,6 +3014,10 @@ mod tests {
         assert!(restored.force_standard_gridder);
         assert_eq!(restored.w_term_mode, WTermMode::WProject);
         assert_eq!(restored.w_project_planes, Some(8));
+        assert_eq!(
+            restored.imaging_fft_precision,
+            ImagingFftPrecisionPolicy::F32
+        );
         assert!(restored.dirty_only);
         assert!(!restored.write_preview_pngs);
     }
@@ -3099,6 +3113,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -3183,6 +3198,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -3443,6 +3459,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -3620,6 +3637,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };
@@ -4180,6 +4198,7 @@ mod tests {
             imaging_prepare_buffer_mb: None,
             imaging_row_block_rows: None,
             imaging_prepare_workers: None,
+            imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
             write_preview_pngs: true,
             progress: None,
         };

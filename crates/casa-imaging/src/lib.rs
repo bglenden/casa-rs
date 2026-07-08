@@ -26,10 +26,13 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+#[cfg(all(target_os = "macos", not(coverage)))]
+mod apple_fft;
 mod beam;
 mod error;
 mod execution;
 mod fft;
+pub mod fft_backend;
 mod gridder;
 mod image_product;
 mod profile;
@@ -78,8 +81,14 @@ use execution::{
     StandardMfsVisibilityPlan, finite_visibility,
 };
 use fft::{
-    centered_fft2, centered_ifft2, centered_ifft2_f64, centered_ifft2_f64_owned,
-    centered_ifft2_f64_owned_unshifted_even,
+    centered_fft2, centered_ifft2, centered_ifft2_batch_f64_to_f32_timed_with_backend,
+    centered_ifft2_dirty_f64_owned, centered_ifft2_dirty_f64_owned_unshifted_even,
+    centered_ifft2_dirty_f64_pair_to_f32, centered_ifft2_f64, dirty_f32_fft_batch_chunk_size,
+    imaging_demote_dirty_f64_fft_to_f32, maybe_emit_dirty_f32_batch_fft_timing,
+};
+use fft_backend::{
+    Fft2Spec, FftBackendChoice, FftDirection, FftPrecision, FftTiming, FftUseCase,
+    select_fft_backend,
 };
 use gridder::{
     PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
@@ -1433,6 +1442,352 @@ pub fn run_standard_mfs_dirty_plan(
         plan.request,
         plan.execution_config,
         &mut plan.replay,
+    )
+}
+
+/// Raw standard-MFS dirty grids before FFT-backed product formation.
+///
+/// This is the slab-level boundary used by cube executors that need to batch
+/// PSF/residual FFTs across multiple output planes without changing the
+/// gridding semantics.
+#[derive(Debug)]
+pub struct StandardMfsDirtyGridResult {
+    request: ImagingRequest,
+    psf_grid: Array2<Complex64>,
+    residual_grid: Array2<Complex64>,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    max_abs_w_lambda: f64,
+    stage_timings: ImagingStageTimings,
+}
+
+impl StandardMfsDirtyGridResult {
+    fn new(
+        request: ImagingRequest,
+        psf_grid: Array2<Complex64>,
+        residual_grid: Array2<Complex64>,
+        accumulation: StandardMfsDirtyAccumulation,
+        stage_timings: ImagingStageTimings,
+    ) -> Self {
+        Self {
+            request,
+            psf_grid,
+            residual_grid,
+            normalization_sumwt: accumulation.normalization_sumwt,
+            reported_sumwt: accumulation.reported_sumwt,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
+            max_abs_w_lambda: accumulation.max_abs_w_lambda,
+            stage_timings,
+        }
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        ImagingRequest,
+        Array2<Complex64>,
+        Array2<Complex64>,
+        StandardMfsDirtyAccumulation,
+        ImagingStageTimings,
+    ) {
+        let accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: self.normalization_sumwt,
+            reported_sumwt: self.reported_sumwt,
+            gridded_samples: self.gridded_samples,
+            skipped_samples: self.skipped_samples,
+            max_abs_w_lambda: self.max_abs_w_lambda,
+        };
+        (
+            self.request,
+            self.psf_grid,
+            self.residual_grid,
+            accumulation,
+            self.stage_timings,
+        )
+    }
+
+    /// Number of scalar samples that contributed to these grids.
+    pub fn gridded_samples(&self) -> usize {
+        self.gridded_samples
+    }
+
+    /// Number of scalar samples skipped while accumulating these grids.
+    pub fn skipped_samples(&self) -> usize {
+        self.skipped_samples
+    }
+
+    /// Sum of weights used for internal CASA-compatible normalization.
+    pub fn normalization_sumwt(&self) -> f64 {
+        self.normalization_sumwt
+    }
+
+    /// Sum of weights reported in the output `.sumwt` product.
+    pub fn reported_sumwt(&self) -> f64 {
+        self.reported_sumwt
+    }
+
+    /// Stage timings accumulated before product formation.
+    pub fn stage_timings(&self) -> ImagingStageTimings {
+        self.stage_timings
+    }
+}
+
+/// Run a standard-MFS dirty-only plan through grid accumulation only.
+pub fn run_standard_mfs_dirty_grid_plan(
+    mut plan: StandardMfsDirtyPlan<'_>,
+) -> Result<StandardMfsDirtyGridResult, ImagingError> {
+    let total_started = Instant::now();
+    validate_standard_mfs_dirty_request(&mut plan.request)?;
+    let gridder = StandardGridder::new(plan.request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let progress_callback = plan.execution_config.progress_callback.clone();
+    let minor_cycle_backend = plan.execution_config.minor_cycle_backend;
+    let (psf_grid, residual_grid, accumulation) = run_with_standard_mfs_initial_grid_progress(
+        progress_callback.as_ref(),
+        &plan.request,
+        minor_cycle_backend,
+        || {
+            compute_dirty_grids_standard_sample_replay(
+                &gridder,
+                plan.execution_config.clone(),
+                &mut plan.replay,
+                &mut stage_timings,
+            )
+        },
+    )?;
+    stage_timings.total = total_started.elapsed();
+    Ok(StandardMfsDirtyGridResult::new(
+        plan.request,
+        psf_grid,
+        residual_grid,
+        accumulation,
+        stage_timings,
+    ))
+}
+
+/// Finish one raw standard-MFS dirty grid result into persisted dirty products.
+pub fn finish_standard_mfs_dirty_grid_result(
+    grid_result: StandardMfsDirtyGridResult,
+) -> Result<DirtyImagingResult, ImagingError> {
+    finish_standard_mfs_dirty_grid_results(vec![grid_result]).map(|mut results| results.remove(0))
+}
+
+/// Finish raw standard-MFS dirty grid results, batching f32 FFTs when eligible.
+pub fn finish_standard_mfs_dirty_grid_results(
+    grid_results: Vec<StandardMfsDirtyGridResult>,
+) -> Result<Vec<DirtyImagingResult>, ImagingError> {
+    if grid_results.is_empty() {
+        return Ok(Vec::new());
+    }
+    if grid_results.len() <= 1 {
+        return grid_results
+            .into_iter()
+            .map(finish_standard_mfs_dirty_grid_result_single)
+            .collect();
+    }
+    let first_shape = grid_results[0].psf_grid.shape().to_vec();
+    let uniform_shape = grid_results.iter().all(|result| {
+        result.psf_grid.shape() == first_shape.as_slice()
+            && result.residual_grid.shape() == first_shape.as_slice()
+    });
+    if !uniform_shape {
+        return grid_results
+            .into_iter()
+            .map(finish_standard_mfs_dirty_grid_result_single)
+            .collect();
+    }
+    if !imaging_demote_dirty_f64_fft_to_f32() {
+        return grid_results
+            .into_iter()
+            .map(finish_standard_mfs_dirty_grid_result_single)
+            .collect();
+    }
+
+    let mut raw_grids = Vec::with_capacity(grid_results.len() * 2);
+    let mut metadata = Vec::with_capacity(grid_results.len());
+    for result in grid_results {
+        let (request, psf_grid, residual_grid, accumulation, stage_timings) = result.into_parts();
+        raw_grids.push(psf_grid);
+        raw_grids.push(residual_grid);
+        metadata.push(StandardMfsDirtyGridProductMetadata {
+            request,
+            accumulation,
+            stage_timings,
+        });
+    }
+
+    finish_standard_mfs_dirty_grid_results_f32_streaming(metadata, raw_grids)
+}
+
+struct StandardMfsDirtyGridProductMetadata {
+    request: ImagingRequest,
+    accumulation: StandardMfsDirtyAccumulation,
+    stage_timings: ImagingStageTimings,
+}
+
+fn finish_standard_mfs_dirty_grid_results_f32_streaming(
+    metadata: Vec<StandardMfsDirtyGridProductMetadata>,
+    raw_grids: Vec<Array2<Complex64>>,
+) -> Result<Vec<DirtyImagingResult>, ImagingError> {
+    if raw_grids.len() != metadata.len() * 2 {
+        return Err(ImagingError::Normalization(format!(
+            "dirty f32 FFT received {} raw grids for {} planes",
+            raw_grids.len(),
+            metadata.len()
+        )));
+    }
+    if raw_grids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = raw_grids[0].shape()[0];
+    let columns = raw_grids[0].shape()[1];
+    let transform_count = raw_grids.len();
+    let transform_chunk_size = dirty_f32_fft_batch_chunk_size(rows, columns, transform_count);
+    let product_chunk_size = (transform_chunk_size / 2).max(1);
+    let spec = Fft2Spec::centered_c2c_batch(
+        rows,
+        columns,
+        transform_count,
+        FftPrecision::F32,
+        FftDirection::Inverse,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::Auto,
+    );
+    let mut fft_timing = FftTiming::new(spec, select_fft_backend(spec));
+    fft_timing.plan_cache_hit = true;
+    let mut saw_chunk = false;
+    let mut output = Vec::with_capacity(metadata.len());
+    let mut metadata_iter = metadata.into_iter();
+    let mut raw_iter = raw_grids.into_iter();
+
+    loop {
+        let mut chunk_metadata = Vec::with_capacity(product_chunk_size);
+        let mut chunk_inputs = Vec::with_capacity(product_chunk_size * 2);
+        for _ in 0..product_chunk_size {
+            let Some(meta) = metadata_iter.next() else {
+                break;
+            };
+            let psf_grid = raw_iter
+                .next()
+                .expect("dirty f32 FFT metadata should have a PSF grid");
+            let residual_grid = raw_iter
+                .next()
+                .expect("dirty f32 FFT metadata should have a residual grid");
+
+            chunk_inputs.push(psf_grid);
+            chunk_inputs.push(residual_grid);
+            chunk_metadata.push(meta);
+        }
+
+        if chunk_inputs.is_empty() {
+            break;
+        }
+
+        let chunk_fft_started = Instant::now();
+        let (mut chunk_outputs, chunk_timing) = centered_ifft2_batch_f64_to_f32_timed_with_backend(
+            &chunk_inputs,
+            FftUseCase::DirtyPsfResidual,
+            FftBackendChoice::Auto,
+        );
+        let chunk_total = chunk_fft_started.elapsed();
+        if !saw_chunk {
+            fft_timing.selection = chunk_timing.selection;
+            saw_chunk = true;
+        }
+        fft_timing.plan_cache_hit &= chunk_timing.plan_cache_hit;
+        fft_timing.plan += chunk_timing.plan;
+        fft_timing.pack += chunk_timing.pack;
+        fft_timing.transfer_to_device += chunk_timing.transfer_to_device;
+        fft_timing.exec += chunk_timing.exec;
+        fft_timing.device_exec += chunk_timing.device_exec;
+        fft_timing.transfer_from_device += chunk_timing.transfer_from_device;
+        fft_timing.sync += chunk_timing.sync;
+        fft_timing.total += chunk_total;
+
+        if chunk_outputs.len() != chunk_metadata.len() * 2 {
+            return Err(ImagingError::Normalization(format!(
+                "batched dirty FFT returned {} grids for {} product planes",
+                chunk_outputs.len(),
+                chunk_metadata.len()
+            )));
+        }
+        let per_transform_elapsed = chunk_total / chunk_outputs.len() as u32;
+        let mut output_iter = chunk_outputs.drain(..);
+        for mut meta in chunk_metadata {
+            let raw_psf = output_iter
+                .next()
+                .expect("batched dirty FFT should return a PSF grid for every plane");
+            let raw_residual = output_iter
+                .next()
+                .expect("batched dirty FFT should return a residual grid for every plane");
+            let finish_started = Instant::now();
+            let total_base = meta.stage_timings.total;
+            let max_abs_w_lambda = meta.accumulation.max_abs_w_lambda;
+            let gridder = StandardGridder::new(meta.request.geometry)?;
+            let (psf_state, residual) = dirty_f32_raw_grids_to_psf_and_residual(
+                &gridder,
+                &raw_psf,
+                &raw_residual,
+                meta.accumulation,
+                &mut meta.stage_timings,
+                per_transform_elapsed,
+                per_transform_elapsed,
+            )?;
+            output.push(dirty_imaging_result_from_products(
+                meta.request,
+                psf_state,
+                residual,
+                max_abs_w_lambda,
+                meta.stage_timings,
+                finish_started,
+                total_base,
+            )?);
+        }
+    }
+
+    if raw_iter.next().is_some() {
+        return Err(ImagingError::Normalization(
+            "dirty f32 FFT received trailing raw grids".to_string(),
+        ));
+    }
+    maybe_emit_dirty_f32_batch_fft_timing(
+        &fft_timing,
+        rows,
+        columns,
+        transform_count,
+        transform_chunk_size,
+    );
+    Ok(output)
+}
+
+fn finish_standard_mfs_dirty_grid_result_single(
+    grid_result: StandardMfsDirtyGridResult,
+) -> Result<DirtyImagingResult, ImagingError> {
+    let finish_started = Instant::now();
+    let (request, psf_grid, residual_grid, accumulation, mut stage_timings) =
+        grid_result.into_parts();
+    let total_base = stage_timings.total;
+    let max_abs_w_lambda = accumulation.max_abs_w_lambda;
+    let gridder = StandardGridder::new(request.geometry)?;
+    let (psf_state, residual) = dirty_grids_to_psf_and_residual_owned(
+        &gridder,
+        psf_grid,
+        residual_grid,
+        accumulation,
+        &mut stage_timings,
+    )?;
+    dirty_imaging_result_from_products(
+        request,
+        psf_state,
+        residual,
+        max_abs_w_lambda,
+        stage_timings,
+        finish_started,
+        total_base,
     )
 }
 
@@ -4695,6 +5050,31 @@ fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_c
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
 ) -> Result<DirtyImagingResult, ImagingError> {
     let total_started = Instant::now();
+    validate_standard_mfs_dirty_request(&mut request)?;
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let progress_callback = execution_config.progress_callback.clone();
+    let minor_cycle_backend = execution_config.minor_cycle_backend;
+    let mut replay_plan =
+        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
+    let (psf_state, residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
+        progress_callback.as_ref(),
+        &request,
+        minor_cycle_backend,
+        || replay_plan.compute_dirty_psf_and_residual(&mut stage_timings),
+    )?;
+    dirty_imaging_result_from_products(
+        request,
+        psf_state,
+        residual,
+        max_abs_w_lambda,
+        stage_timings,
+        total_started,
+        Duration::ZERO,
+    )
+}
+
+fn validate_standard_mfs_dirty_request(request: &mut ImagingRequest) -> Result<(), ImagingError> {
     request.geometry.validate()?;
     request.clean.validate()?;
     if request.clean.niter != 0 {
@@ -4726,19 +5106,19 @@ fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_c
             ));
         }
     }
-    let gridder = StandardGridder::new(request.geometry)?;
+    Ok(())
+}
+
+fn dirty_imaging_result_from_products(
+    request: ImagingRequest,
+    psf_state: PsfState,
+    residual: Array2<f32>,
+    max_abs_w_lambda: f64,
+    mut stage_timings: ImagingStageTimings,
+    total_started: Instant,
+    total_base: Duration,
+) -> Result<DirtyImagingResult, ImagingError> {
     let [nx, ny] = request.geometry.image_shape;
-    let mut stage_timings = ImagingStageTimings::default();
-    let progress_callback = execution_config.progress_callback.clone();
-    let minor_cycle_backend = execution_config.minor_cycle_backend;
-    let mut replay_plan =
-        StandardMfsReplayPlan::planned_samples(&gridder, execution_config, replay_weighted_samples);
-    let (psf_state, residual, max_abs_w_lambda) = run_with_standard_mfs_initial_grid_progress(
-        progress_callback.as_ref(),
-        &request,
-        minor_cycle_backend,
-        || replay_plan.compute_dirty_psf_and_residual(&mut stage_timings),
-    )?;
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
         &psf_state.psf,
         request.geometry.cell_size_rad,
@@ -4783,7 +5163,7 @@ fn run_standard_mfs_dirty_planned_sample_block_source_streaming_with_execution_c
         ));
     }
     warnings.extend(beam_warnings);
-    stage_timings.total = total_started.elapsed();
+    stage_timings.total = total_base + total_started.elapsed();
 
     Ok(DirtyImagingResult {
         psf: expand_plane(&psf_state.psf),
@@ -5321,12 +5701,19 @@ fn planned_sample_compact_taps(sample: StandardMfsPlannedWeightedSample) -> Plan
     }
 }
 
-fn compute_dirty_psf_and_residual_standard_sample_replay(
+fn compute_dirty_grids_standard_sample_replay(
     gridder: &StandardGridder,
     execution_config: StandardMfsExecutionConfig,
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
     stage_timings: &mut ImagingStageTimings,
-) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
+) -> Result<
+    (
+        Array2<Complex64>,
+        Array2<Complex64>,
+        StandardMfsDirtyAccumulation,
+    ),
+    ImagingError,
+> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
@@ -5363,14 +5750,7 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
         let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
         stage_timings.psf_grid += split_grid_elapsed;
         stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
-        return dirty_grids_to_psf_and_residual_owned(
-            gridder,
-            psf_grid,
-            residual_grid,
-            accumulation,
-            stage_timings,
-        )
-        .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda));
+        return Ok((psf_grid, residual_grid, accumulation));
     }
     let mut accumulation = StandardMfsDirtyAccumulation {
         normalization_sumwt: 0.0,
@@ -5465,6 +5845,21 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
     stage_timings.psf_grid += split_grid_elapsed;
     stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
 
+    Ok((psf_grid, residual_grid, accumulation))
+}
+
+fn compute_dirty_psf_and_residual_standard_sample_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
+    let (psf_grid, residual_grid, accumulation) = compute_dirty_grids_standard_sample_replay(
+        gridder,
+        execution_config,
+        replay_weighted_samples,
+        stage_timings,
+    )?;
     dirty_grids_to_psf_and_residual_owned(
         gridder,
         psf_grid,
@@ -6500,8 +6895,25 @@ fn dirty_grids_to_psf_and_residual_owned(
         return Err(ImagingError::NoUsableSamples);
     }
 
+    let (psf_grid, residual_grid) =
+        match centered_ifft2_dirty_f64_pair_to_f32(psf_grid, residual_grid) {
+            Ok((raw_psf, raw_residual, fft_timing)) => {
+                let psf_fft_elapsed = fft_timing.total / 2;
+                return dirty_f32_raw_grids_to_psf_and_residual(
+                    gridder,
+                    &raw_psf,
+                    &raw_residual,
+                    accumulation,
+                    stage_timings,
+                    psf_fft_elapsed,
+                    fft_timing.total.saturating_sub(psf_fft_elapsed),
+                );
+            }
+            Err(grids) => *grids,
+        };
+
     let psf_fft_started = Instant::now();
-    let mut psf = match centered_ifft2_f64_owned_unshifted_even(psf_grid) {
+    let mut psf = match centered_ifft2_dirty_f64_owned_unshifted_even(psf_grid) {
         Ok(raw_psf) => {
             stage_timings.psf_fft += psf_fft_started.elapsed();
             let psf_correction_started = Instant::now();
@@ -6512,7 +6924,7 @@ fn dirty_grids_to_psf_and_residual_owned(
             image
         }
         Err(psf_grid) => {
-            let raw_psf = centered_ifft2_f64_owned(psf_grid);
+            let raw_psf = centered_ifft2_dirty_f64_owned(psf_grid);
             stage_timings.psf_fft += psf_fft_started.elapsed();
             let psf_correction_started = Instant::now();
             let image = gridder.corrected_image_from_grid_f64(&raw_psf);
@@ -6534,7 +6946,7 @@ fn dirty_grids_to_psf_and_residual_owned(
     stage_timings.psf_normalize += psf_normalize_started.elapsed();
 
     let residual_fft_started = Instant::now();
-    let mut residual = match centered_ifft2_f64_owned_unshifted_even(residual_grid) {
+    let mut residual = match centered_ifft2_dirty_f64_owned_unshifted_even(residual_grid) {
         Ok(raw_residual) => {
             stage_timings.residual_fft += residual_fft_started.elapsed();
             let residual_correction_started = Instant::now();
@@ -6545,7 +6957,7 @@ fn dirty_grids_to_psf_and_residual_owned(
             image
         }
         Err(residual_grid) => {
-            let raw_residual = centered_ifft2_f64_owned(residual_grid);
+            let raw_residual = centered_ifft2_dirty_f64_owned(residual_grid);
             stage_timings.residual_fft += residual_fft_started.elapsed();
             let residual_correction_started = Instant::now();
             let image = gridder.corrected_image_from_grid_f64(&raw_residual);
@@ -6555,6 +6967,58 @@ fn dirty_grids_to_psf_and_residual_owned(
             image
         }
     };
+    let residual_normalize_started = Instant::now();
+    residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: accumulation.normalization_sumwt as f32,
+            reported_sumwt: accumulation.reported_sumwt as f32,
+            psf_peak,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
+        },
+        residual,
+    ))
+}
+
+fn dirty_f32_raw_grids_to_psf_and_residual(
+    gridder: &StandardGridder,
+    raw_psf: &Array2<Complex32>,
+    raw_residual: &Array2<Complex32>,
+    accumulation: StandardMfsDirtyAccumulation,
+    stage_timings: &mut ImagingStageTimings,
+    psf_fft_elapsed: Duration,
+    residual_fft_elapsed: Duration,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    stage_timings.psf_fft += psf_fft_elapsed;
+    stage_timings.residual_fft += residual_fft_elapsed;
+
+    let psf_correction_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid(raw_psf);
+    let correction_elapsed = psf_correction_started.elapsed();
+    stage_timings.psf_image_correction += correction_elapsed;
+    stage_timings.psf_normalize += correction_elapsed;
+
+    let psf_normalize_started = Instant::now();
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+    let residual_correction_started = Instant::now();
+    let mut residual = gridder.corrected_image_from_grid(raw_residual);
+    let correction_elapsed = residual_correction_started.elapsed();
+    stage_timings.residual_image_correction += correction_elapsed;
+    stage_timings.residual_normalize += correction_elapsed;
+
     let residual_normalize_started = Instant::now();
     residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
     stage_timings.residual_normalize += residual_normalize_started.elapsed();

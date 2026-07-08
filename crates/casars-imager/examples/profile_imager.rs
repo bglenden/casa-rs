@@ -15,12 +15,15 @@ use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
+use casa_imaging::{
+    Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode,
+    fft_backend::wall_to_io_ratio,
+};
 use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
 use casa_types::measures::doppler::DopplerRef;
 use casars_imager::{
-    CliConfig, ImagerRunTaskRequest, RunSummary, SpectralMode, StandardMfsAccelerationPolicy,
-    run_from_request,
+    CliConfig, ImagerRunTaskRequest, ImagingFftPrecisionPolicy, RunSummary, SpectralMode,
+    StandardMfsAccelerationPolicy, run_from_request,
 };
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,7 @@ struct Options {
     imaging_prepare_buffer_mb: Option<usize>,
     imaging_row_block_rows: Option<usize>,
     imaging_prepare_workers: Option<usize>,
+    imaging_fft_precision: ImagingFftPrecisionPolicy,
     nterms: usize,
     multiscale_scales: Vec<f32>,
     small_scale_bias: f32,
@@ -101,8 +105,10 @@ fn run() -> Result<(), String> {
     for run_index in 0..options.repeats {
         let prefix = temp.join(format!("run-{run_index}"));
         let summary = run_profile_request(&options, prefix)?;
+        let io_time = frontend_io_time(&summary);
+        let wall_io_ratio = wall_to_io_ratio(summary.frontend_timings.total, io_time);
         println!(
-            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} source_read_ms={:.3} source_prepare_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} major_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} multiscale_scale_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
+            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} source_read_ms={:.3} source_prepare_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} io_time_ms={:.3} wall_to_io_ratio={} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} major_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} multiscale_scale_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
             run_index + 1,
             millis(summary.frontend_timings.total),
             millis(summary.frontend_timings.open_measurement_set),
@@ -117,6 +123,8 @@ fn run() -> Result<(), String> {
             millis(summary.frontend_timings.run_imaging),
             millis(summary.frontend_timings.build_coordinate_system),
             millis(summary.frontend_timings.write_products),
+            millis(io_time),
+            format_optional_ratio(wall_io_ratio),
             millis(summary.stage_timings.total),
             millis(summary.stage_timings.controller_overhead),
             millis(summary.stage_timings.weighting),
@@ -208,6 +216,13 @@ fn run() -> Result<(), String> {
     print_stage(
         "frontend_total",
         median_duration(&runs, |run| run.frontend_timings.total),
+    );
+    print_stage("io_time", median_duration(&runs, frontend_io_time));
+    print_ratio_stage(
+        "wall_to_io_ratio",
+        median_optional_f64(&runs, |run| {
+            wall_to_io_ratio(run.frontend_timings.total, frontend_io_time(run))
+        }),
     );
     println!("core:");
     print_stage(
@@ -422,6 +437,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         imaging_prepare_buffer_mb: options.imaging_prepare_buffer_mb,
         imaging_row_block_rows: options.imaging_row_block_rows,
         imaging_prepare_workers: options.imaging_prepare_workers,
+        imaging_fft_precision: options.imaging_fft_precision,
         write_preview_pngs: false,
     }
 }
@@ -444,8 +460,38 @@ fn median_usize(runs: &[RunSummary], selector: impl Fn(&RunSummary) -> usize) ->
     values[values.len() / 2]
 }
 
+fn median_optional_f64(
+    runs: &[RunSummary],
+    selector: impl Fn(&RunSummary) -> Option<f64>,
+) -> Option<f64> {
+    let mut values = runs.iter().filter_map(selector).collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|left, right| left.total_cmp(right));
+    Some(values[values.len() / 2])
+}
+
 fn print_stage(label: &str, value: Duration) {
     println!("  {label}={:.3}", millis(value));
+}
+
+fn print_ratio_stage(label: &str, value: Option<f64>) {
+    println!("  {label}={}", format_optional_ratio(value));
+}
+
+fn frontend_io_time(summary: &RunSummary) -> Duration {
+    summary.frontend_timings.open_measurement_set
+        + summary
+            .frontend_timings
+            .get_ms_values_into_processing_buffer
+        + summary.frontend_timings.write_products
+}
+
+fn format_optional_ratio(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn maybe_print_standard_mfs_profile_run(
@@ -464,8 +510,10 @@ fn maybe_print_standard_mfs_profile_run(
         env::var("CASA_RS_IMAGING_PREPARE_WORKERS").unwrap_or_else(|_| "auto".to_string());
     let ms_read_threads_env =
         env::var("CASA_RS_MS_IMAGING_READ_THREADS").unwrap_or_else(|_| "auto".to_string());
+    let io_time = frontend_io_time(summary);
+    let wall_io_ratio = wall_to_io_ratio(summary.frontend_timings.total, io_time);
     println!(
-        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} gridded_samples={} major_cycles={} minor_iterations={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} source_read_ms={:.3} source_prepare_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
+        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} gridded_samples={} major_cycles={} minor_iterations={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} io_time_ms={:.3} wall_to_io_ratio={} core_total_ms={:.3} prepare_plane_input_ms={:.3} source_read_ms={:.3} source_prepare_ms={:.3} weighting_ms={:.3} executor_build_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
         run_number,
         options.ms.display(),
         options.field_ids,
@@ -489,6 +537,8 @@ fn maybe_print_standard_mfs_profile_run(
         prepare_workers_env,
         ms_read_threads_env,
         millis(summary.frontend_timings.total),
+        millis(io_time),
+        format_optional_ratio(wall_io_ratio),
         millis(summary.stage_timings.total),
         millis(summary.frontend_timings.prepare_plane_input),
         millis(
@@ -562,6 +612,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut imaging_prepare_buffer_mb = None::<usize>;
     let mut imaging_row_block_rows = None::<usize>;
     let mut imaging_prepare_workers = None::<usize>;
+    let mut imaging_fft_precision = ImagingFftPrecisionPolicy::Auto;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
     let mut small_scale_bias = 0.0f32;
@@ -658,6 +709,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--imaging-prepare-workers" => {
                 imaging_prepare_workers = Some(parse_next(&mut args, "--imaging-prepare-workers")?)
             }
+            "--imaging-fft-precision" | "--fft-precision" => {
+                imaging_fft_precision =
+                    parse_imaging_fft_precision(&next_value(&mut args, "--imaging-fft-precision")?)?
+            }
             "--nterms" => nterms = parse_next(&mut args, "--nterms")?,
             "--scales" => {
                 multiscale_scales = parse_multiscale_scales(&next_value(&mut args, "--scales")?)?
@@ -749,6 +804,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         imaging_prepare_buffer_mb,
         imaging_row_block_rows,
         imaging_prepare_workers,
+        imaging_fft_precision,
         nterms,
         multiscale_scales,
         small_scale_bias,
@@ -886,6 +942,19 @@ fn parse_standard_mfs_acceleration(text: &str) -> Result<StandardMfsAcceleration
     }
 }
 
+fn parse_imaging_fft_precision(text: &str) -> Result<ImagingFftPrecisionPolicy, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" | "default" => Ok(ImagingFftPrecisionPolicy::Auto),
+        "f64" | "double" | "double-precision" | "accurate" => Ok(ImagingFftPrecisionPolicy::F64),
+        "f32" | "single" | "single-precision" | "fast" | "fast-f32" | "auto-f32" => {
+            Ok(ImagingFftPrecisionPolicy::F32)
+        }
+        _ => Err(format!(
+            "unsupported --imaging-fft-precision value {text:?}; expected auto, f64, or f32"
+        )),
+    }
+}
+
 fn validate_metal_minor_cycle_chunk(text: &str) -> Result<(), String> {
     let value = text.trim();
     if value.eq_ignore_ascii_case("auto")
@@ -982,6 +1051,7 @@ Options:
   --standard-mfs-acceleration auto|cpu|multi-cpu|metal
   --standard-mfs-grid-threads N|auto
   --standard-mfs-metal-minor-cycle-chunk auto|auto:MS|full|N
+  --imaging-fft-precision auto|f64|f32
   --imaging-memory-target-mb N
   --imaging-prepare-buffer-mb N
   --imaging-row-block-rows N

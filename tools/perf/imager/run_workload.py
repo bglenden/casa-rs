@@ -65,6 +65,7 @@ RUST_STAGE_FIELDS = {
     "run_imaging",
     "build_coordinate_system",
     "write_products",
+    "io_time",
     "frontend_total",
     "controller_overhead",
     "weighting",
@@ -394,6 +395,9 @@ def build_plan(
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
             imaging, "standard_mfs_acceleration", "auto"
         ),
+        "IMAGER_BENCH_IMAGING_FFT_PRECISION": str_value(
+            imaging, "imaging_fft_precision", "auto"
+        ),
         "IMAGER_BENCH_HOGBOM_ITERATION_MODE": hogbom_iteration_mode,
         "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
@@ -481,6 +485,9 @@ def build_plan(
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
             "standard_mfs_acceleration": str_value(
                 imaging, "standard_mfs_acceleration", "auto"
+            ),
+            "imaging_fft_precision": str_value(
+                imaging, "imaging_fft_precision", "auto"
             ),
             "standard_mfs_metal_minor_cycle_chunk": (
                 str(imaging["standard_mfs_metal_minor_cycle_chunk"])
@@ -805,6 +812,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "spectral_slab_memory": [],
         "spectral_slab_plans": [],
         "mosaic_cube_slab_plans": [],
+        "mosaic_cube_slab_planes": [],
+        "mosaic_cube_slab_executor_summaries": [],
         "cube_per_plane_backend": [],
         "cube_resident_clean_control": [],
         "cube_resident_clean_executor": [],
@@ -812,6 +821,7 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "cube_resident_clean_stage": [],
         "cube_source_row_blocks": [],
         "cube_product_summaries": [],
+        "image_product_writes": [],
         "cube_plane_state_store": [],
         "visibility_geometry_cache": [],
         "executor_limitations": [],
@@ -851,6 +861,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["spectral_slab_plans"].append(parsed)
         elif name == "mosaic_cube_slab_plan":
             buckets["mosaic_cube_slab_plans"].append(parsed)
+        elif name == "mosaic_cube_slab_plane":
+            buckets["mosaic_cube_slab_planes"].append(parsed)
+        elif name == "mosaic_cube_slab_executor_summary":
+            buckets["mosaic_cube_slab_executor_summaries"].append(parsed)
         elif name == "cube_per_plane_backend_summary":
             buckets["cube_per_plane_backend"].append(parsed)
         elif name == "cube_resident_clean_control":
@@ -875,6 +889,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             "cube_shared_plane_executor_summary",
         }:
             buckets["cube_product_summaries"].append(parsed)
+        elif name == "image_product_write":
+            buckets["image_product_writes"].append(parsed)
         elif name.endswith("_executor_limitation"):
             buckets["executor_limitations"].append(parsed)
         elif name == "standard_mfs_hogbom_minor_cycle_summary":
@@ -957,6 +973,18 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
     mosaic_cube_slab_plan = last_fields(buckets.get("mosaic_cube_slab_plans", []))
+    mosaic_cube_slab_planes = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("mosaic_cube_slab_planes", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
+    mosaic_cube_slab_executor_summaries = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(
+            buckets.get("mosaic_cube_slab_executor_summaries", [])
+        )
+        if isinstance(entry.get("fields", {}), dict)
+    ]
     cube_per_plane_backend = last_fields(buckets.get("cube_per_plane_backend", []))
     cube_resident_control = last_fields(buckets.get("cube_resident_clean_control", []))
     cube_resident_executor = last_fields(buckets.get("cube_resident_clean_executor", []))
@@ -1034,6 +1062,11 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
     metal_grouped_append_detail = fields_for_names(
         metal_entries, {"standard_mfs_metal_row_run_grouped_append_detail"}
     )
+    image_product_writes = [
+        entry.get("fields", {})
+        for entry in unique_entries_by_raw(buckets.get("image_product_writes", []))
+        if isinstance(entry.get("fields", {}), dict)
+    ]
     spectral_memory = [
         entry.get("fields", {})
         for entry in buckets.get("spectral_slab_memory", [])
@@ -1166,6 +1199,28 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "mosaic_cube_slab_worker_count": mosaic_cube_slab_plan.get("worker_count"),
         "mosaic_cube_slab_source_reuse": mosaic_cube_slab_plan.get("source_reuse"),
         "mosaic_cube_slab_product_state": mosaic_cube_slab_plan.get("product_state"),
+        "mosaic_cube_slab_plane_count": len(mosaic_cube_slab_planes),
+        "mosaic_cube_slab_plane_publish_ms": sum_int_or_float_field(
+            mosaic_cube_slab_planes, "publish_elapsed_ms"
+        ),
+        "mosaic_cube_slab_plane_worker_sum_ms": sum_int_or_float_field(
+            mosaic_cube_slab_planes, "worker_elapsed_ms"
+        ),
+        "mosaic_cube_slab_executor_summary_count": len(
+            mosaic_cube_slab_executor_summaries
+        ),
+        "mosaic_cube_slab_executor_elapsed_ms": sum_int_or_float_field(
+            mosaic_cube_slab_executor_summaries, "elapsed_ms"
+        ),
+        "mosaic_cube_slab_executor_worker_sum_ms": sum_int_or_float_field(
+            mosaic_cube_slab_executor_summaries, "worker_sum_ms"
+        ),
+        "mosaic_cube_slab_executor_worker_max_ms": max_int_or_float_field(
+            mosaic_cube_slab_executor_summaries, "worker_max_ms"
+        ),
+        "mosaic_cube_slab_product_write_ms": sum_int_or_float_field(
+            mosaic_cube_slab_executor_summaries, "product_write_ms"
+        ),
         "row_block_rows": memory.get("row_block_rows"),
         "selected_channels": memory.get("selected_channels"),
         "active_rows": memory.get("rows_total"),
@@ -1182,6 +1237,8 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         ),
         "modeled_source_read_bytes": memory.get("modeled_source_read_bytes"),
         "peak_rss_bytes": profile.get("peak_rss_bytes"),
+        "frontend_io_time_ms": profile.get("io_time_ms"),
+        "frontend_wall_to_io_ratio": profile.get("wall_to_io_ratio"),
         "gridded_samples": profile.get("gridded_samples"),
         "major_cycles": profile.get("major_cycles"),
         "minor_iterations": profile.get("minor_iterations"),
@@ -1196,6 +1253,46 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "cube_product_summary_count": len(cube_product_summaries),
         "cube_product_write_ms": sum_int_or_float_field(
             cube_product_summaries, "product_write_ms"
+        ),
+        "image_product_write_count": len(image_product_writes),
+        "image_product_write_ms_by_suffix": sum_image_product_writes_by_suffix(
+            image_product_writes, "elapsed_ms"
+        ),
+        "image_product_write_elements_by_suffix": sum_image_product_writes_by_suffix(
+            image_product_writes, "elements"
+        ),
+        "image_product_write_shape_by_suffix": last_image_product_value_by_suffix(
+            image_product_writes, "shape"
+        ),
+        "image_product_write_role_by_suffix": last_image_product_value_by_suffix(
+            image_product_writes, "role"
+        ),
+        "cube_product_role_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_role_ms"
+        ),
+        "cube_product_psf_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_psf_ms"
+        ),
+        "cube_product_residual_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_residual_ms"
+        ),
+        "cube_product_model_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_model_ms"
+        ),
+        "cube_product_image_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_image_ms"
+        ),
+        "cube_product_sumwt_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_sumwt_ms"
+        ),
+        "cube_product_weight_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_weight_ms"
+        ),
+        "cube_product_pb_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_pb_ms"
+        ),
+        "cube_product_image_pbcor_ms": sum_int_or_float_field(
+            cube_product_summaries, "product_image_pbcor_ms"
         ),
         "cube_product_bytes": sum_int_or_float_field(cube_product_summaries, "product_bytes"),
         "cube_product_groups": sum_int_or_float_field(cube_product_summaries, "product_groups"),
@@ -1548,15 +1645,11 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def unique_entries_by_raw(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen = set()
-    unique = []
-    for entry in entries:
-        raw = entry.get("raw")
-        if raw in seen:
-            continue
-        seen.add(raw)
-        unique.append(entry)
-    return unique
+    raw_entries = [entry.get("raw") for entry in entries]
+    half = len(raw_entries) // 2
+    if half > 0 and len(raw_entries) % 2 == 0 and raw_entries[:half] == raw_entries[half:]:
+        return entries[:half]
+    return entries
 
 
 def fields_for_names(
@@ -1593,6 +1686,33 @@ def sum_int_or_float_field(entries: list[dict[str, Any]], field: str) -> int | f
         if isinstance(entry.get(field), int | float)
     ]
     return sum(values) if values else None
+
+
+def sum_image_product_writes_by_suffix(
+    entries: list[dict[str, Any]], field: str
+) -> dict[str, int | float]:
+    totals: dict[str, int | float] = {}
+    for entry in entries:
+        suffix = entry.get("suffix")
+        value = entry.get(field)
+        if not isinstance(suffix, str) or not isinstance(value, int | float):
+            continue
+        totals[suffix] = totals.get(suffix, 0) + value
+    return totals
+
+
+def last_image_product_value_by_suffix(
+    entries: list[dict[str, Any]], field: str
+) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for entry in entries:
+        suffix = entry.get("suffix")
+        if not isinstance(suffix, str):
+            continue
+        value = entry.get(field)
+        if value is not None:
+            values[suffix] = value
+    return values
 
 
 def count_positive_field(entries: list[dict[str, Any]], field: str) -> int:
