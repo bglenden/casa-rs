@@ -90,10 +90,12 @@ use fft_backend::{
     Fft2Spec, FftBackendChoice, FftDirection, FftPrecision, FftTiming, FftUseCase,
     select_fft_backend,
 };
+#[cfg(all(target_os = "macos", not(coverage)))]
+use gridder::GridCorrectionDescriptor;
 use gridder::{
-    GridCorrectionDescriptor, PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT,
-    ScreenProjectSamplePlan, ScreenProjector, StandardGridder, StandardMfsTapCensus,
-    StandardMfsTapSkipReason, WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
+    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
+    ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
+    WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
 };
 pub use weighting::{
     StandardMfsStreamingWeightingPlan, accumulate_standard_mfs_density_row_from_arrays,
