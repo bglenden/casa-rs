@@ -39,6 +39,7 @@ use super::table_control::ColumnDescContents;
 use super::{ScalarColumnSource, ScalarColumnSources, StorageError};
 
 const SSM_HEADER_SIZE: u64 = 512;
+const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
 const AIPSIO_MAGIC: u32 = 0xbebebebe;
 
 /// SSM column data — either flat (scalar/fixed-shape) or indirect (variable-shape).
@@ -52,12 +53,24 @@ fn is_ssm_variable_string(col_desc: &ColumnDescContents) -> bool {
     col_desc.data_type == CasacoreDataType::TpString && col_desc.max_length == 0
 }
 
+fn is_ssm_fixed_string(col_desc: &ColumnDescContents) -> bool {
+    col_desc.data_type == CasacoreDataType::TpString && col_desc.max_length > 0
+}
+
 fn is_ssm_array_file_indirect(col_desc: &ColumnDescContents) -> bool {
     col_desc.is_array && (col_desc.option & 1) == 0 && !is_ssm_variable_string(col_desc)
 }
 
 fn is_ssm_indirect(col_desc: &ColumnDescContents) -> bool {
     col_desc.is_record() || is_ssm_array_file_indirect(col_desc)
+}
+
+fn ssm_cell_element_count(col_desc: &ColumnDescContents) -> usize {
+    if col_desc.is_array && !col_desc.shape.is_empty() {
+        col_desc.shape.iter().map(|&s| s as usize).product()
+    } else {
+        1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +681,16 @@ fn read_ssm_string(
         .map_err(|e| StorageError::FormatMismatch(format!("SSM string is not valid UTF-8: {e}")))
 }
 
+fn read_fixed_ssm_string(bytes: &[u8]) -> Result<String, StorageError> {
+    let len = bytes
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8(bytes[..len].to_vec()).map_err(|e| {
+        StorageError::FormatMismatch(format!("SSM fixed string is not valid UTF-8: {e}"))
+    })
+}
+
 /// Read raw bytes from the SSM string bucket chain (for string array deserialization).
 fn read_ssm_string_bytes(
     file: &mut File,
@@ -877,6 +900,7 @@ pub(crate) fn read_ssm_file_columns(
                 index,
                 column_offset,
                 CasacoreDataType::TpInt,
+                0,
                 3,
                 0,
                 nrrow,
@@ -931,6 +955,7 @@ pub(crate) fn read_ssm_file_columns(
                 index,
                 column_offset,
                 CasacoreDataType::TpInt64,
+                0,
                 1,
                 0,
                 nrrow,
@@ -1015,6 +1040,7 @@ pub(crate) fn read_ssm_file_columns(
                 index,
                 column_offset,
                 col_desc.data_type,
+                col_desc.max_length,
                 nrelem,
                 0,
                 nrrow,
@@ -1105,17 +1131,25 @@ pub(crate) fn read_ssm_scalar_column_rows(
                 ))
             }
             CasacoreDataType::TpString => {
-                let ref_offset = column_offset + row_in_bucket * 12;
-                let str_bucket = read_i32_canonical(&cached_bucket[ref_offset..], be);
-                let str_offset = read_i32_canonical(&cached_bucket[ref_offset + 4..], be);
-                let str_length = read_i32_canonical(&cached_bucket[ref_offset + 8..], be);
-                let string = if str_length <= 8 {
-                    String::from_utf8(
-                        cached_bucket[ref_offset..ref_offset + str_length as usize].to_vec(),
-                    )
-                    .map_err(|err| StorageError::FormatMismatch(format!("invalid UTF-8: {err}")))?
+                let string = if col_desc.max_length > 0 {
+                    let width = col_desc.max_length as usize;
+                    let data_offset = column_offset + row_in_bucket * width;
+                    read_fixed_ssm_string(&cached_bucket[data_offset..data_offset + width])?
                 } else {
-                    read_ssm_string(&mut file, &header, str_bucket, str_offset, str_length)?
+                    let ref_offset = column_offset + row_in_bucket * 12;
+                    let str_bucket = read_i32_canonical(&cached_bucket[ref_offset..], be);
+                    let str_offset = read_i32_canonical(&cached_bucket[ref_offset + 4..], be);
+                    let str_length = read_i32_canonical(&cached_bucket[ref_offset + 8..], be);
+                    if str_length <= 8 {
+                        String::from_utf8(
+                            cached_bucket[ref_offset..ref_offset + str_length as usize].to_vec(),
+                        )
+                        .map_err(|err| {
+                            StorageError::FormatMismatch(format!("invalid UTF-8: {err}"))
+                        })?
+                    } else {
+                        read_ssm_string(&mut file, &header, str_bucket, str_offset, str_length)?
+                    }
                 };
                 Value::Scalar(ScalarValue::String(string))
             }
@@ -1203,6 +1237,7 @@ pub(crate) fn read_ssm_array_column_rows(
             index,
             column_offset,
             CasacoreDataType::TpInt64,
+            0,
             1,
             first_row,
             rows_to_read,
@@ -1273,6 +1308,7 @@ pub(crate) fn read_ssm_array_column_rows(
         index,
         column_offset,
         col_desc.data_type,
+        col_desc.max_length,
         nrelem,
         first_row,
         rows_to_read,
@@ -1301,6 +1337,7 @@ fn read_column_from_buckets(
     index: &SsmIndex,
     column_offset: usize,
     data_type: CasacoreDataType,
+    max_length: u32,
     nrelem: usize,
     first_row: usize,
     nrrow: usize,
@@ -1567,6 +1604,7 @@ fn read_column_from_buckets(
             // Arrays (nrelem>1): all elements serialized as [BE_i32_len][data]
             // pairs in a string bucket, one reference per row.
             let mut values = Vec::with_capacity(nrrow * nrelem);
+            let fixed_width = max_length as usize;
             for row in first_row..first_row + nrrow {
                 let (bucket_nr, start_row, _end_row) =
                     index.find_bucket(row as u64).ok_or_else(|| {
@@ -1576,6 +1614,17 @@ fn read_column_from_buckets(
                     })?;
                 let bucket = read_bucket(file, header, bucket_nr)?;
                 let row_in_bucket = (row as u64 - start_row) as usize;
+                if fixed_width > 0 {
+                    let row_width = fixed_width * nrelem;
+                    let row_offset = column_offset + row_in_bucket * row_width;
+                    for elem in 0..nrelem {
+                        let elem_offset = row_offset + elem * fixed_width;
+                        values.push(read_fixed_ssm_string(
+                            &bucket[elem_offset..elem_offset + fixed_width],
+                        )?);
+                    }
+                    continue;
+                }
                 let ref_offset = column_offset + row_in_bucket * 12;
                 let str_bucket = read_i32_canonical(&bucket[ref_offset..], be);
                 let str_offset = read_i32_canonical(&bucket[ref_offset + 4..], be);
@@ -1810,16 +1859,14 @@ fn write_ssm_file_impl(
     let col_sizes_bits: Vec<usize> = col_descs
         .iter()
         .map(|c| {
-            if is_ssm_variable_string(c) {
+            if is_ssm_fixed_string(c) {
+                c.max_length as usize * ssm_cell_element_count(c) * 8
+            } else if is_ssm_variable_string(c) {
                 96 // 12 bytes = 3 ints (bucketNr, offset, length) per row
             } else if is_ssm_indirect(c) {
                 64 // i64 offset = 8 bytes = 64 bits
             } else {
-                let nrelem = if c.is_array && !c.shape.is_empty() {
-                    c.shape.iter().map(|&s| s as usize).product()
-                } else {
-                    1
-                };
+                let nrelem = ssm_cell_element_count(c);
                 let (_, bits) = canonical_element_size(c.data_type);
                 nrelem * bits
             }
@@ -1856,7 +1903,7 @@ fn write_ssm_file_impl(
             .iter()
             .map(|&bits| (rows_per_bucket as usize * bits).div_ceil(8))
             .sum();
-        data_size.max(128) as u32
+        (data_size.max(128) as u32).max(DEFAULT_SSM_BUCKET_SIZE)
     };
 
     // 3. Compute column offsets within a data bucket
@@ -2155,6 +2202,34 @@ fn write_cell_to_bucket(
             write_bool_bits(&mut bucket[byte_offset..], sub_bit, &bools);
         }
         CasacoreDataType::TpString => {
+            if col_desc.max_length > 0 {
+                let width = col_desc.max_length as usize;
+                let row_offset = col_offset + row_in_bucket * width * nrelem;
+                if !col_desc.is_array {
+                    let s = match value {
+                        Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
+                        _ => "",
+                    };
+                    let bytes = s.as_bytes();
+                    let copy_len = bytes.len().min(width);
+                    bucket[row_offset..row_offset + copy_len].copy_from_slice(&bytes[..copy_len]);
+                } else {
+                    let strings = match value {
+                        Some(Value::Array(ArrayValue::String(arr))) => {
+                            arr.t().iter().cloned().collect::<Vec<_>>()
+                        }
+                        _ => vec![String::new(); nrelem],
+                    };
+                    for (elem, s) in strings.iter().take(nrelem).enumerate() {
+                        let elem_offset = row_offset + elem * width;
+                        let bytes = s.as_bytes();
+                        let copy_len = bytes.len().min(width);
+                        bucket[elem_offset..elem_offset + copy_len]
+                            .copy_from_slice(&bytes[..copy_len]);
+                    }
+                }
+                return;
+            }
             // C++ SSM stores ONE 12-byte reference (bucketNr, offset, length)
             // per row, regardless of nrelem. For scalars (nrelem=1), short
             // strings (<=8 bytes) are inlined in the reference slot. For arrays

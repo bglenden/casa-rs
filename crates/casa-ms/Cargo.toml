@@ -17,6 +17,7 @@ performance-tests = ["casa-test-support/performance-tests"]
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
 casa-imaging = { path = "../casa-imaging" }
+casa-logging = { path = "../casa-logging" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
@@ -32,6 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sofars.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
@@ -103,6 +105,10 @@ required-features = ["slow-tests"]
 [[test]]
 name = "msexplore_cli"
 path = "tests/msexplore_cli.rs"
+
+[[test]]
+name = "logging_cli"
+path = "tests/logging_cli.rs"
 
 [[test]]
 name = "pointing_subtable_regression"

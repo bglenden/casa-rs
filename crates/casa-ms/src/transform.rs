@@ -192,6 +192,13 @@ pub enum MsTransformError {
 /// Materialize a selected/channel-subset MeasurementSet.
 pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
+    tracing::info!(
+        input_ms = %request.input_ms.display(),
+        output_ms = %request.output_ms.display(),
+        spw = %request.spw,
+        width = request.width,
+        "mstransform started"
+    );
     if request.input_ms == request.output_ms {
         return Err(MsTransformError::SameInputOutput {
             path: request.input_ms.display().to_string(),
@@ -236,6 +243,10 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         started_at.elapsed(),
     );
     if selected_rows.is_empty() {
+        tracing::warn!(
+            input_ms = %request.input_ms.display(),
+            "mstransform selected no rows"
+        );
         return Err(MsTransformError::EmptySelection {
             path: request.input_ms.display().to_string(),
         });
@@ -317,6 +328,10 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             started_at.elapsed(),
         );
         if selected_rows.is_empty() {
+            tracing::warn!(
+                input_ms = %request.input_ms.display(),
+                "mstransform selected no rows after dropping fully flagged data"
+            );
             return Err(MsTransformError::EmptySelection {
                 path: request.input_ms.display().to_string(),
             });
@@ -600,6 +615,13 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         started_at.elapsed(),
     );
 
+    tracing::info!(
+        input_ms = %request.input_ms.display(),
+        output_ms = %request.output_ms.display(),
+        rows = row_indices.len(),
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "mstransform completed"
+    );
     Ok(MsTransformReport {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),

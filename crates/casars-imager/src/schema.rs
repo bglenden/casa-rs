@@ -3,12 +3,12 @@
 
 use casa_ms::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
-    UiManagedOutputSchema, UiValueKind,
+    UiManagedOutputSchema, UiValueKind, logging_argument_schemas,
 };
 
 /// Build the launcher-facing UI schema for the standalone imager.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    UiCommandSchema {
+    let mut schema = UiCommandSchema {
         schema_version: 1,
         command_id: "imager".to_string(),
         invocation_name: program_name.to_string(),
@@ -918,7 +918,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             raw_stdout_available: true,
             raw_stderr_available: true,
         }),
-    }
+    };
+    schema.arguments.extend(logging_argument_schemas(900));
+    schema
 }
 
 struct OptionArgumentConfig<'a> {

@@ -26,6 +26,10 @@ impl Table {
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
         let profile_open = std::env::var_os("CASA_RS_TABLE_OPEN_PROFILE").is_some();
         let open_started_at = std::time::Instant::now();
+        tracing::info!(
+            path = %options.path.display(),
+            "opening CASA table"
+        );
         if profile_open {
             eprintln!(
                 "table_open_profile path={} stage=start",
@@ -41,7 +45,15 @@ impl Table {
             );
         }
         let storage = CompositeStorage;
-        let snapshot = storage.load_metadata_only(&options.path)?;
+        let snapshot = storage.load_metadata_only(&options.path).map_err(|error| {
+            tracing::error!(
+                casa.priority = "SEVERE",
+                path = %options.path.display(),
+                error = %error,
+                "failed to open CASA table"
+            );
+            error
+        })?;
         if profile_open {
             eprintln!(
                 "table_open_profile path={} stage=load_metadata_only rows={} dm_count={} elapsed_s={:.3}",
@@ -89,6 +101,12 @@ impl Table {
                 open_started_at.elapsed().as_secs_f64(),
             );
         }
+        tracing::info!(
+            path = %options.path.display(),
+            rows = table.row_count(),
+            elapsed_ms = open_started_at.elapsed().as_millis() as u64,
+            "opened CASA table"
+        );
         Ok(table)
     }
 
@@ -156,22 +174,43 @@ impl Table {
     /// Callers that are unsure whether the table state is valid should keep
     /// using [`save`](Table::save).
     pub fn save_assuming_valid(&self, options: TableOptions) -> Result<(), TableError> {
+        tracing::info!(
+            path = %options.path.display(),
+            rows = self.inner.row_count(),
+            "saving CASA table"
+        );
         let storage = CompositeStorage;
-        storage.save_borrowed(
-            &options.path,
-            self.inner.rows()?,
-            self.inner.undefined_cells()?,
-            self.inner.keywords(),
-            self.inner.all_column_keywords(),
-            self.inner.schema(),
-            &self.table_info,
-            &self.virtual_columns,
-            &self.virtual_bindings,
-            options.data_manager,
-            options.endian_format.is_big_endian(),
-            options.tile_shape.as_deref(),
-        )?;
+        storage
+            .save_borrowed(
+                &options.path,
+                self.inner.rows()?,
+                self.inner.undefined_cells()?,
+                self.inner.keywords(),
+                self.inner.all_column_keywords(),
+                self.inner.schema(),
+                &self.table_info,
+                &self.virtual_columns,
+                &self.virtual_bindings,
+                options.data_manager,
+                options.data_manager_group.as_deref(),
+                options.endian_format.is_big_endian(),
+                options.tile_shape.as_deref(),
+            )
+            .map_err(|error| {
+                tracing::error!(
+                    casa.priority = "SEVERE",
+                    path = %options.path.display(),
+                    error = %error,
+                    "failed to save CASA table"
+                );
+                error
+            })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        tracing::info!(
+            path = %options.path.display(),
+            rows = self.inner.row_count(),
+            "saved CASA table"
+        );
         Ok(())
     }
 
@@ -284,25 +323,43 @@ impl Table {
             );
         }
         let storage = CompositeStorage;
-        storage.save_with_bindings_borrowed(
-            &options.path,
-            self.inner.rows()?,
-            self.inner.undefined_cells()?,
-            self.inner.keywords(),
-            self.inner.all_column_keywords(),
-            self.inner.schema(),
-            &self.table_info,
-            &self.virtual_columns,
-            &self.virtual_bindings,
-            options.data_manager,
-            options.endian_format.is_big_endian(),
-            options.tile_shape.as_deref(),
-            bindings,
-        )?;
+        storage
+            .save_with_bindings_borrowed(
+                &options.path,
+                self.inner.rows()?,
+                self.inner.undefined_cells()?,
+                self.inner.keywords(),
+                self.inner.all_column_keywords(),
+                self.inner.schema(),
+                &self.table_info,
+                &self.virtual_columns,
+                &self.virtual_bindings,
+                options.data_manager,
+                options.data_manager_group.as_deref(),
+                options.endian_format.is_big_endian(),
+                options.tile_shape.as_deref(),
+                bindings,
+            )
+            .map_err(|error| {
+                tracing::error!(
+                    casa.priority = "SEVERE",
+                    path = %options.path.display(),
+                    bindings = bindings.len(),
+                    error = %error,
+                    "failed to save CASA table with bindings"
+                );
+                error
+            })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        tracing::info!(
+            path = %options.path.display(),
+            rows = self.inner.row_count(),
+            bindings = bindings.len(),
+            "saved CASA table with bindings"
+        );
         Ok(())
     }
 
@@ -350,26 +407,46 @@ impl Table {
             );
         }
         let storage = CompositeStorage;
-        storage.save_with_bindings_and_column_overrides_borrowed(
-            &options.path,
-            self.inner.rows()?,
-            self.inner.undefined_cells()?,
-            self.inner.keywords(),
-            self.inner.all_column_keywords(),
-            self.inner.schema(),
-            &self.table_info,
-            &self.virtual_columns,
-            &self.virtual_bindings,
-            options.data_manager,
-            options.endian_format.is_big_endian(),
-            options.tile_shape.as_deref(),
-            bindings,
-            column_overrides,
-        )?;
+        storage
+            .save_with_bindings_and_column_overrides_borrowed(
+                &options.path,
+                self.inner.rows()?,
+                self.inner.undefined_cells()?,
+                self.inner.keywords(),
+                self.inner.all_column_keywords(),
+                self.inner.schema(),
+                &self.table_info,
+                &self.virtual_columns,
+                &self.virtual_bindings,
+                options.data_manager,
+                options.data_manager_group.as_deref(),
+                options.endian_format.is_big_endian(),
+                options.tile_shape.as_deref(),
+                bindings,
+                column_overrides,
+            )
+            .map_err(|error| {
+                tracing::error!(
+                    casa.priority = "SEVERE",
+                    path = %options.path.display(),
+                    bindings = bindings.len(),
+                    overrides = column_overrides.len(),
+                    error = %error,
+                    "failed to save CASA table with column overrides"
+                );
+                error
+            })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        tracing::info!(
+            path = %options.path.display(),
+            rows = row_count,
+            bindings = bindings.len(),
+            overrides = column_overrides.len(),
+            "saved CASA table with column overrides"
+        );
         Ok(())
     }
 

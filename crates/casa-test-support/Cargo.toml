@@ -36,6 +36,7 @@ cc = "1.1"
 pkg-config = "0.3"
 
 [dev-dependencies]
+casa-logging = { path = "../casa-logging" }
 casa-ms = { path = "../casa-ms" }
 
 [[test]]
@@ -171,6 +172,11 @@ required-features = ["cpp-interop-tests"]
 [[test]]
 name = "tables_locking_interop"
 path = "tests/tables_locking_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "tables_log_table_interop"
+path = "tests/tables_log_table_interop.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]

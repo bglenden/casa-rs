@@ -795,6 +795,7 @@ fn write_bandpass_caltable(
     table.set_info(TableInfo {
         table_type: TABLE_INFO_TYPE.to_string(),
         sub_type: "B Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         KEY_PAR_TYPE,
@@ -1047,6 +1048,7 @@ fn write_bpoly_caltable(
     table.set_info(TableInfo {
         table_type: TABLE_INFO_TYPE.to_string(),
         sub_type: "BPOLY".to_string(),
+        readme: Vec::new(),
     });
     table
         .keywords_mut()

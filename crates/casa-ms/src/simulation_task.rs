@@ -29,6 +29,7 @@ use crate::simulation::{
 };
 use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
+    logging_argument_schemas,
 };
 
 /// Stable protocol name advertised by `simobserve --protocol-info`.
@@ -208,8 +209,21 @@ impl SimobserveRunTaskRequest {
     pub fn execute(&self) -> Result<SimobserveRunTaskResult, String> {
         let request = self.to_synthetic_request();
         let started = Instant::now();
+        tracing::info!(
+            output_ms = %self.output_ms.display(),
+            overwrite = self.overwrite,
+            worker_policy = ?self.worker_policy,
+            observation_mode = ?self.observation_mode,
+            "simobserve generation started"
+        );
         let report =
             generate_synthetic_observation_ms(&request).map_err(|error| error.to_string())?;
+        tracing::info!(
+            output_ms = %self.output_ms.display(),
+            main_rows = report.main_row_count,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "simobserve generation completed"
+        );
         Ok(SimobserveRunTaskResult {
             report,
             elapsed_millis: started.elapsed().as_millis(),
@@ -1548,7 +1562,7 @@ impl SimobserveTaskSchemaBundle {
 
 /// Return the launcher/TUI compatibility schema.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    UiCommandSchema {
+    let mut schema = UiCommandSchema {
         schema_version: 1,
         command_id: "simobserve".to_string(),
         invocation_name: program_name.to_string(),
@@ -2128,7 +2142,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             ),
         ],
         managed_output: None,
-    }
+    };
+    schema.arguments.extend(logging_argument_schemas(900));
+    schema
 }
 
 /// Execute CLI-style arguments for the `simobserve` binary.

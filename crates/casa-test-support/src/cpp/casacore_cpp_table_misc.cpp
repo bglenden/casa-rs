@@ -377,6 +377,96 @@ void verify_table_info_impl(const std::string& path) {
         throw std::runtime_error("tableInfo subType mismatch: expected 'UVFITS', got '" + subType + "'");
 }
 
+// ===== LOG table =====
+
+void write_log_table_impl(const std::string& path) {
+    casacore::TableDesc desc("", casacore::TableDesc::Scratch);
+    desc.comment() = "Log message table";
+    desc.addColumn(casacore::ScalarColumnDesc<casacore::Double>("TIME", "MJD in seconds"));
+    casacore::ScalarColumnDesc<casacore::String> priorityDesc("PRIORITY");
+    priorityDesc.setMaxLength(9);
+    desc.addColumn(priorityDesc);
+    desc.addColumn(casacore::ScalarColumnDesc<casacore::String>("MESSAGE"));
+    desc.addColumn(casacore::ScalarColumnDesc<casacore::String>("LOCATION"));
+    desc.addColumn(casacore::ScalarColumnDesc<casacore::String>("OBJECT_ID"));
+
+    casacore::SetupNewTable setup(path, desc, casacore::Table::New);
+    casacore::StandardStMan stman("SSM", 32768);
+    setup.bindAll(stman);
+
+    casacore::Table table(setup, 1);
+    table.tableInfo() = casacore::TableInfo(casacore::TableInfo::LOG);
+    table.tableInfo().readmeAddLine("Repository for software-generated logging messages");
+
+    casacore::ScalarColumn<casacore::Double> time(table, "TIME");
+    casacore::ScalarColumn<casacore::String> priority(table, "PRIORITY");
+    casacore::ScalarColumn<casacore::String> message(table, "MESSAGE");
+    casacore::ScalarColumn<casacore::String> location(table, "LOCATION");
+    casacore::ScalarColumn<casacore::String> objectId(table, "OBJECT_ID");
+
+    time.rwKeywordSet().define("UNIT", "s");
+    time.rwKeywordSet().define("MEASURE_TYPE", "EPOCH");
+    time.rwKeywordSet().define("MEASURE_REFERENCE", "UTC");
+
+    time.put(0, 40587.0 * 86400.0);
+    priority.put(0, "INFO");
+    message.put(0, "C++ log row");
+    location.put(0, "cpp::log");
+    objectId.put(0, "cpp-object");
+    table.flush();
+}
+
+void verify_log_table_impl(const std::string& path) {
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() < 1)
+        throw std::runtime_error("expected at least 1 log row, got " + std::to_string(table.nrow()));
+
+    casacore::String type = table.tableInfo().type();
+    if (type != "LOG" && type != "Log message")
+        throw std::runtime_error("tableInfo type mismatch: expected LOG-compatible type, got '" + type + "'");
+
+    casacore::String readme = table.tableInfo().readme();
+    if (readme.find("Repository for software-generated logging messages") == casacore::String::npos)
+        throw std::runtime_error("tableInfo readme missing LOG description");
+
+    if (!table.tableDesc().isColumn("TIME") ||
+        !table.tableDesc().isColumn("PRIORITY") ||
+        !table.tableDesc().isColumn("MESSAGE") ||
+        !table.tableDesc().isColumn("LOCATION") ||
+        !table.tableDesc().isColumn("OBJECT_ID"))
+        throw std::runtime_error("LOG table is missing one or more required columns");
+
+    if (table.tableDesc().columnDesc("TIME").comment() != "MJD in seconds")
+        throw std::runtime_error("TIME column comment mismatch");
+    if (table.tableDesc().columnDesc("PRIORITY").maxLength() != 9)
+        throw std::runtime_error("PRIORITY maxLength mismatch");
+
+    casacore::ScalarColumn<casacore::Double> time(table, "TIME");
+    casacore::ScalarColumn<casacore::String> priority(table, "PRIORITY");
+    casacore::ScalarColumn<casacore::String> message(table, "MESSAGE");
+    casacore::ScalarColumn<casacore::String> location(table, "LOCATION");
+    casacore::ScalarColumn<casacore::String> objectId(table, "OBJECT_ID");
+
+    const casacore::TableRecord& keySet = time.keywordSet();
+    if (!keySet.isDefined("UNIT") || keySet.asString("UNIT") != "s")
+        throw std::runtime_error("TIME UNIT keyword mismatch");
+    if (!keySet.isDefined("MEASURE_TYPE") || keySet.asString("MEASURE_TYPE") != "EPOCH")
+        throw std::runtime_error("TIME MEASURE_TYPE keyword mismatch");
+    if (!keySet.isDefined("MEASURE_REFERENCE") || keySet.asString("MEASURE_REFERENCE") != "UTC")
+        throw std::runtime_error("TIME MEASURE_REFERENCE keyword mismatch");
+
+    casacore::String pri = priority(0);
+    if (pri != "INFO" && pri != "WARN" && pri != "SEVERE" &&
+        pri != "DEBUGGING" && pri != "DEBUG2" && pri != "DEBUG1" &&
+        pri != "INFO5" && pri != "INFO4" && pri != "INFO3" &&
+        pri != "INFO2" && pri != "INFO1")
+        throw std::runtime_error("row 0 priority is not a CASA priority: '" + pri + "'");
+    if (message(0).empty())
+        throw std::runtime_error("row 0 message is empty");
+    (void)location(0);
+    (void)objectId(0);
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -487,6 +577,18 @@ int32_t cpp_table_write_table_info(const char* path, char** out_error) {
 }
 int32_t cpp_table_verify_table_info(const char* path, char** out_error) {
     try { verify_table_info_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+
+// LOG table
+int32_t cpp_table_write_log_table(const char* path, char** out_error) {
+    try { write_log_table_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_log_table(const char* path, char** out_error) {
+    try { verify_log_table_impl(path); return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }

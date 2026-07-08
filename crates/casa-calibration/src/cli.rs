@@ -11,6 +11,7 @@ use casa_ms::msexplore::cli::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
     UiManagedOutputSchema, UiValueKind,
 };
+use casa_ms::ui_schema::logging_argument_schemas;
 
 use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
@@ -188,6 +189,21 @@ enum Command {
 }
 
 impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Apply(_) => "apply",
+            Self::Summarize(_) => "summary",
+            Self::PlanApply(_) => "plan-apply",
+            Self::Stats(_) => "stats",
+            Self::ExportCorrectedData(_) => "export-corrected",
+            Self::ContinuumSubtract(_) => "continuum-subtract",
+            Self::SolveGain(_) => "solve-gain",
+            Self::SolveBandpass(_) => "solve-bandpass",
+            Self::FluxScale(_) => "fluxscale",
+            Self::Gencal(_) => "gencal",
+        }
+    }
+
     fn format(&self) -> OutputFormat {
         match self {
             Self::Apply(options) => options.format,
@@ -374,8 +390,36 @@ struct ToggleArgumentConfig<'a> {
 
 /// Parse environment arguments, run the CLI, and return a process exit code.
 pub fn run_env(program_name: &str) -> i32 {
+    let (logging_guard, args) =
+        match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
+            Ok((guard, args)) => (guard, args),
+            Err(error) => {
+                eprintln!("Error: failed to initialize logging: {error}");
+                return 1;
+            }
+        };
+    tracing::info!("calibrate started");
+    let code = run_with_cli_args(program_name, args);
+    if code == 0 {
+        tracing::info!("calibrate completed");
+    } else {
+        tracing::error!(
+            casa.priority = "SEVERE",
+            exit_code = code,
+            "calibrate failed"
+        );
+    }
+    if let Err(error) = logging_guard.flush() {
+        eprintln!("Error: failed to flush logging: {error}");
+        return 1;
+    }
+    code
+}
+
+/// Run the CLI with already-filtered arguments.
+pub fn run_with_cli_args(program_name: &str, args: impl IntoIterator<Item = OsString>) -> i32 {
     let schema = command_schema(program_name);
-    match parse_args(std::env::args_os().skip(1)) {
+    match parse_args(args) {
         Ok(CliAction::Help) => {
             print!("{}", render_help(&schema));
             0
@@ -438,7 +482,7 @@ pub fn run_env(program_name: &str) -> i32 {
 
 /// Build the machine-readable command schema for the public `calibrate` app.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    UiCommandSchema {
+    let mut schema = UiCommandSchema {
         schema_version: UI_SCHEMA_VERSION,
         command_id: COMMAND_ID.to_string(),
         invocation_name: program_name.to_string(),
@@ -1130,10 +1174,14 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             raw_stdout_available: true,
             raw_stderr_available: true,
         }),
-    }
+    };
+    schema.arguments.extend(logging_argument_schemas(900));
+    schema
 }
 
 fn run(request: RunRequest) -> Result<(), String> {
+    let workflow = request.command.name();
+    tracing::info!(workflow, "calibration workflow started");
     let format = request.command.format();
     let output_path = request.command.output_path().map(Path::to_path_buf);
     let overwrite = request.command.overwrite();
@@ -1142,10 +1190,13 @@ fn run(request: RunRequest) -> Result<(), String> {
         OutputFormat::Text => render_text_task_result(&result),
         OutputFormat::Json => render_json_task_result(request.managed_output, &result)?,
     };
-    write_output(output_path.as_deref(), overwrite, &rendered)
+    write_output(output_path.as_deref(), overwrite, &rendered)?;
+    tracing::info!(workflow, "calibration workflow completed");
+    Ok(())
 }
 
 fn run_json_request(source: &str) -> Result<(), String> {
+    tracing::info!(source, "calibration JSON request started");
     let payload = read_json_request_payload(source)?;
     let request = serde_json::from_str::<CalibrationTaskRequest>(&payload)
         .map_err(|error| format!("failed to parse calibration task request: {error}"))?;
@@ -1153,6 +1204,7 @@ fn run_json_request(source: &str) -> Result<(), String> {
     let rendered = serde_json::to_string_pretty(&result)
         .map_err(|error| format!("failed to serialize calibration task result: {error}"))?;
     println!("{rendered}");
+    tracing::info!(source, "calibration JSON request completed");
     Ok(())
 }
 

@@ -345,7 +345,16 @@ pub fn flagdata(
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
     let ms_path = display_ms_path(ms);
+    tracing::info!(
+        path = %ms_path,
+        mode = ?request.mode,
+        action = ?request.action,
+        "flagdata started"
+    );
     let selected_rows = selected_rows(ms, request)?;
+    if selected_rows.is_empty() {
+        tracing::warn!(path = %ms_path, mode = ?request.mode, "flagdata selected no rows");
+    }
     let channel_selections = request
         .spw
         .as_deref()
@@ -357,14 +366,22 @@ pub fn flagdata(
         })?;
 
     if request.mode == FlagDataMode::Summary {
-        return report_after(
+        let report = report_after(
             ms,
             request,
             selected_rows.len(),
             ChangeSet::default(),
             None,
             None,
+        )?;
+        tracing::info!(
+            path = %ms_path,
+            selected_rows = report.selected_rows,
+            flagged_samples = report.flagged_samples,
+            total_samples = report.total_samples,
+            "flagdata summary completed"
         );
+        return Ok(report);
     }
 
     let backup_version = if request.flagbackup && !selected_rows.is_empty() {
@@ -406,7 +423,7 @@ pub fn flagdata(
                     &changes.changed_row_indices,
                 )
                 .map_err(|source| FlaggingError::MutateFlags {
-                    path: ms_path,
+                    path: ms_path.clone(),
                     reason: format!("save changed MAIN flag rows: {source}"),
                 })?;
         } else {
@@ -416,20 +433,29 @@ pub fn flagdata(
                     &changes.changed_row_indices,
                 )
                 .map_err(|source| FlaggingError::MutateFlags {
-                    path: ms_path,
+                    path: ms_path.clone(),
                     reason: format!("save changed MAIN flag rows: {source}"),
                 })?;
         }
     }
     let thresholds = changes.thresholds;
-    report_after(
+    let report = report_after(
         ms,
         request,
         selected_rows.len(),
         changes,
         backup_version,
         thresholds,
-    )
+    )?;
+    tracing::info!(
+        path = %ms_path,
+        mode = ?report.mode,
+        selected_rows = report.selected_rows,
+        changed_rows = report.changed_rows,
+        changed_samples = report.changed_samples,
+        "flagdata completed"
+    );
+    Ok(report)
 }
 
 /// Open an MS, run native `flagdata`, and save the changed MAIN table.
@@ -438,6 +464,7 @@ pub fn flagdata_path(
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
     let path = ms_path.as_ref();
+    tracing::info!(path = %path.display(), "opening MeasurementSet for flagdata");
     let mut ms =
         MeasurementSet::open(path).map_err(|source| FlaggingError::OpenMeasurementSet {
             path: path.display().to_string(),

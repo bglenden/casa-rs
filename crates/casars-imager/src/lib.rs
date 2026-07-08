@@ -6566,8 +6566,41 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
 
 /// Execute the canonical imager task request.
 pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, String> {
+    tracing::info!(
+        measurement_set = %request.measurement_set.display(),
+        image_name = %request.image_name.display(),
+        spectral_mode = ?request.spectral_mode,
+        deconvolver = ?request.deconvolver,
+        "imager request started"
+    );
     let config = request.to_cli_config()?;
-    run_from_cli_config(&config)
+    let result = run_from_cli_config(&config);
+    match &result {
+        Ok(summary) => {
+            tracing::info!(
+                image_name = %request.image_name.display(),
+                gridded_samples = summary.gridded_samples,
+                major_cycles = summary.major_cycles,
+                minor_iterations = summary.minor_iterations,
+                warnings = summary.warnings.len(),
+                "imager request completed"
+            );
+            for warning in &summary.warnings {
+                tracing::warn!(
+                    image_name = %request.image_name.display(),
+                    warning = %warning,
+                    "imager warning"
+                );
+            }
+        }
+        Err(error) => tracing::error!(
+            casa.priority = "SEVERE",
+            image_name = %request.image_name.display(),
+            error = %error,
+            "imager request failed"
+        ),
+    }
+    result
 }
 
 fn run_from_cli_config(config: &CliConfig) -> Result<RunSummary, String> {

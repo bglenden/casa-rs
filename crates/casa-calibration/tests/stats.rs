@@ -33,6 +33,7 @@ fn create_misc_stats_table(root: &std::path::Path) -> PathBuf {
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "G Jones".to_string(),
+        readme: Vec::new(),
     });
     table
         .add_row(RecordValue::new(vec![
@@ -83,6 +84,7 @@ fn create_grouping_fallback_stats_table(root: &std::path::Path) -> PathBuf {
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "G Jones".to_string(),
+        readme: Vec::new(),
     });
     table
         .add_row(RecordValue::new(vec![

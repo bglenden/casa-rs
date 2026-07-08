@@ -2081,6 +2081,8 @@ impl ColumnDescContents {
         // Record columns have data_type = TpRecord and no primitive type.
         if self.data_type == CasacoreDataType::TpRecord {
             return ColumnSchema::record(&self.col_name)
+                .with_comment(self.comment.clone())
+                .with_max_length(self.max_length)
                 .with_options(options)
                 .map_err(|err| StorageError::FormatMismatch(err.to_string()));
         }
@@ -2096,19 +2098,27 @@ impl ColumnDescContents {
             if self.nrdim > 0 && !self.shape.is_empty() {
                 let shape: Vec<usize> = self.shape.iter().map(|&s| s as usize).collect();
                 ColumnSchema::array_fixed(&self.col_name, pt, shape)
+                    .with_comment(self.comment.clone())
+                    .with_max_length(self.max_length)
                     .with_options(options)
                     .map_err(|err| StorageError::FormatMismatch(err.to_string()))
             } else if self.nrdim > 0 {
                 ColumnSchema::array_variable(&self.col_name, pt, Some(self.nrdim as usize))
+                    .with_comment(self.comment.clone())
+                    .with_max_length(self.max_length)
                     .with_options(options)
                     .map_err(|err| StorageError::FormatMismatch(err.to_string()))
             } else {
                 ColumnSchema::array_variable(&self.col_name, pt, None)
+                    .with_comment(self.comment.clone())
+                    .with_max_length(self.max_length)
                     .with_options(options)
                     .map_err(|err| StorageError::FormatMismatch(err.to_string()))
             }
         } else {
             ColumnSchema::scalar(&self.col_name, pt)
+                .with_comment(self.comment.clone())
+                .with_max_length(self.max_length)
                 .with_options(options)
                 .map_err(|err| StorageError::FormatMismatch(err.to_string()))
         }
@@ -2122,14 +2132,14 @@ impl ColumnDescContents {
             return ColumnDescContents {
                 class_name: RECORD_COLUMN_CLASS_NAME.to_string(),
                 col_name: col.name().to_string(),
-                comment: String::new(),
+                comment: col.comment().to_string(),
                 data_manager_type: "StandardStMan".to_string(),
                 data_manager_group: "StandardStMan".to_string(),
                 data_type: CasacoreDataType::TpRecord,
                 option: 0,
                 nrdim: 0,
                 shape: vec![],
-                max_length: 0,
+                max_length: col.max_length(),
                 keywords: RecordValue::default(),
                 is_array: false,
                 primitive_type: None,
@@ -2185,14 +2195,14 @@ impl ColumnDescContents {
         ColumnDescContents {
             class_name,
             col_name: col.name().to_string(),
-            comment: String::new(),
+            comment: col.comment().to_string(),
             data_manager_type: "StandardStMan".to_string(),
             data_manager_group: "StandardStMan".to_string(),
             data_type: dt,
             option,
             nrdim,
             shape,
-            max_length: 0,
+            max_length: col.max_length(),
             keywords: RecordValue::default(),
             is_array,
             primitive_type: Some(pt),

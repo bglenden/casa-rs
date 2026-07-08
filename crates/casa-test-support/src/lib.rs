@@ -1997,6 +1997,14 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    fn cpp_table_write_log_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    fn cpp_table_verify_log_table(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
 
     fn cpp_table_write_aipsio_all_numeric_scalars(
         path: *const std::ffi::c_char,
@@ -3615,6 +3623,9 @@ pub enum CppTableFixture {
     /// TableInfo metadata: 1-row table (id: Int) with TableInfo set to
     /// type="Measurement", subType="UVFITS". Tests `table.info` file interop.
     TableInfoMetadata,
+    /// CASA LOG table: canonical `TableLogSink` columns and metadata stored
+    /// with `StandardStMan("SSM", 32768)`.
+    LogTable,
     /// AipsIO all numeric scalars: 3 rows × 6 cols (uChar, Short, uShort,
     /// uInt, Float, Int64) stored with `StManAipsIO`.
     AipsioAllNumericScalars,
@@ -3766,6 +3777,7 @@ pub(crate) fn cpp_table_write_unlocked(
             CppTableFixture::TableInfoMetadata => {
                 cpp_table_write_table_info(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::LogTable => cpp_table_write_log_table(c_path.as_ptr(), &mut error),
             CppTableFixture::AipsioAllNumericScalars => {
                 cpp_table_write_aipsio_all_numeric_scalars(c_path.as_ptr(), &mut error)
             }
@@ -3955,6 +3967,7 @@ pub(crate) fn cpp_table_verify_unlocked(
             CppTableFixture::TableInfoMetadata => {
                 cpp_table_verify_table_info(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::LogTable => cpp_table_verify_log_table(c_path.as_ptr(), &mut error),
             CppTableFixture::AipsioAllNumericScalars => {
                 cpp_table_verify_aipsio_all_numeric_scalars(c_path.as_ptr(), &mut error)
             }

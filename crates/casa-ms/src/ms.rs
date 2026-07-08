@@ -91,6 +91,7 @@ impl MeasurementSet {
     /// keywords written by older versions of this crate are also accepted.
     pub fn open(path: impl AsRef<Path>) -> MsResult<Self> {
         let path = path.as_ref().to_path_buf();
+        tracing::info!(path = %path.display(), "opening MeasurementSet");
         let main = Table::open(TableOptions::new(&path))?;
 
         let mut subtables = HashMap::new();
@@ -111,12 +112,19 @@ impl MeasurementSet {
             }
         }
 
-        Ok(Self {
+        let ms = Self {
             main,
             subtables,
             subtable_paths,
             path: Some(path),
-        })
+        };
+        tracing::info!(
+            path = %ms.path.as_ref().expect("path set").display(),
+            rows = ms.row_count(),
+            subtables = ms.subtable_ids().len(),
+            "opened MeasurementSet"
+        );
+        Ok(ms)
     }
 
     /// Save the MS to its path (must have been created with a path or opened from disk).
@@ -129,6 +137,12 @@ impl MeasurementSet {
             .as_ref()
             .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
             .clone();
+        tracing::info!(
+            path = %path.display(),
+            rows = self.row_count(),
+            subtables = self.subtable_ids().len(),
+            "saving MeasurementSet"
+        );
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
@@ -143,6 +157,7 @@ impl MeasurementSet {
             table.save(measurement_set_table_options(&subtable_path))?;
         }
 
+        tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet");
         Ok(())
     }
 
@@ -159,6 +174,12 @@ impl MeasurementSet {
             .as_ref()
             .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
             .clone();
+        tracing::info!(
+            path = %path.display(),
+            rows = self.row_count(),
+            subtables = self.subtable_ids().len(),
+            "saving MeasurementSet without validation"
+        );
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
@@ -173,6 +194,11 @@ impl MeasurementSet {
             table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
         }
 
+        tracing::info!(
+            path = %path.display(),
+            rows = self.row_count(),
+            "saved MeasurementSet without validation"
+        );
         Ok(())
     }
 
@@ -234,10 +260,16 @@ impl MeasurementSet {
             .as_ref()
             .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
             .clone();
+        tracing::info!(
+            path = %path.display(),
+            rows = self.row_count(),
+            "saving MeasurementSet MAIN table"
+        );
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
         save_main_table_with_policy(&self.main, &path, true)?;
+        tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet MAIN table");
         Ok(())
     }
 
@@ -715,6 +747,7 @@ impl MeasurementSet {
         main.set_info(TableInfo {
             table_type: CASACORE_MS_TABLE_TYPE.to_string(),
             sub_type: String::new(),
+            readme: Vec::new(),
         });
         apply_column_metadata(&mut main, crate::schema::main_table::REQUIRED_COLUMNS);
         apply_column_metadata(&mut main, crate::schema::main_table::OPTIONAL_COLUMNS);
@@ -773,6 +806,7 @@ impl MeasurementSet {
         self.main.set_info(TableInfo {
             table_type: CASACORE_MS_TABLE_TYPE.to_string(),
             sub_type: String::new(),
+            readme: Vec::new(),
         });
         apply_column_metadata(&mut self.main, crate::schema::main_table::REQUIRED_COLUMNS);
         apply_column_metadata(&mut self.main, crate::schema::main_table::OPTIONAL_COLUMNS);

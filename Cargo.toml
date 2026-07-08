@@ -14,6 +14,7 @@ members = [
     "crates/casa-values",
     "crates/casa-aipsio",
     "crates/casa-table-read",
+    "crates/casa-logging",
     "crates/casa-calibration",
     "crates/casa-measures-tools",
     "crates/casa-tables",
@@ -43,6 +44,8 @@ ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false,
 rustfft = "6.4"
 sofars = "0.6"
 thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 # Performance benchmarks compare Rust vs C++ (compiled optimized by cc::Build).
 # Without these overrides, Rust tests run at opt-level=0 (debug), producing
