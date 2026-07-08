@@ -3379,6 +3379,43 @@ fn ssm_be_round_trip() {
 }
 
 #[test]
+fn ssm_fixed_length_string_round_trip() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("priority", PrimitiveType::String).with_max_length(9),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "priority",
+            Value::Scalar(ScalarValue::String("INFO".into())),
+        )]))
+        .expect("row 0");
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "priority",
+            Value::Scalar(ScalarValue::String("DEBUGGING".into())),
+        )]))
+        .expect("row 1");
+
+    let root = unique_test_dir("ssm_fixed_string");
+    std::fs::create_dir_all(&root).expect("mkdir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save");
+    let reopened = Table::open(TableOptions::new(&root)).expect("open");
+    assert_eq!(
+        table_scalar(&reopened, 0, "priority"),
+        Ok(&ScalarValue::String("INFO".into()))
+    );
+    assert_eq!(
+        table_scalar(&reopened, 1, "priority"),
+        Ok(&ScalarValue::String("DEBUGGING".into()))
+    );
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
 fn save_with_bindings_keeps_different_tiled_array_dims_in_separate_groups() {
     let schema = TableSchema::new(vec![
         ColumnSchema::array_variable("FLAG", PrimitiveType::Bool, Some(2)),
@@ -5260,6 +5297,7 @@ fn table_info_set_and_get() {
     table.set_info(TableInfo {
         table_type: "MeasurementSet".to_string(),
         sub_type: "UVFITS".to_string(),
+        readme: Vec::new(),
     });
     assert_eq!(table.info().table_type, "MeasurementSet");
     assert_eq!(table.info().sub_type, "UVFITS");
@@ -5276,6 +5314,7 @@ fn table_info_round_trip_disk() {
     table.set_info(TableInfo {
         table_type: "MeasurementSet".to_string(),
         sub_type: "UVFITS".to_string(),
+        readme: Vec::new(),
     });
     table
         .add_row(RecordValue::new(vec![RecordField::new(
@@ -5311,6 +5350,7 @@ fn table_info_preserved_by_to_memory() {
     table.set_info(TableInfo {
         table_type: "Catalog".to_string(),
         sub_type: "".to_string(),
+        readme: Vec::new(),
     });
     let mem = table.to_memory().unwrap();
     assert_eq!(mem.info().table_type, "Catalog");
@@ -5328,6 +5368,7 @@ fn table_info_preserved_by_deep_copy() {
     table.set_info(TableInfo {
         table_type: "Sky".to_string(),
         sub_type: "Model".to_string(),
+        readme: Vec::new(),
     });
     table
         .add_row(RecordValue::new(vec![RecordField::new(
@@ -6220,6 +6261,7 @@ fn copy_info_transfers_metadata() {
     src.set_info(crate::TableInfo {
         table_type: "MeasurementSet".into(),
         sub_type: "".into(),
+        readme: Vec::new(),
     });
 
     let mut dst = Table::with_schema(schema);

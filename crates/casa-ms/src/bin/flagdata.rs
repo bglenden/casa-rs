@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `flagdata` - native CASA-style MeasurementSet flagging.
 
-use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
+    logging_argument_schemas,
 };
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataRequest, QuackMode, flagdata_path,
@@ -24,7 +25,24 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let args = env::args().skip(1).collect::<Vec<_>>();
+    let (logging_guard, args) =
+        casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1))
+            .map_err(|error| format!("failed to initialize logging: {error}"))?;
+    let args = os_args_to_strings(args)?;
+    tracing::info!("flagdata started");
+    let result = run_with_args(args);
+    if result.is_ok() {
+        tracing::info!("flagdata completed");
+    } else if let Err(error) = &result {
+        tracing::error!(casa.priority = "SEVERE", error = %error, "flagdata failed");
+    }
+    logging_guard
+        .flush()
+        .map_err(|error| format!("failed to flush logging: {error}"))?;
+    result
+}
+
+fn run_with_args(args: Vec<String>) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{}", command_schema("flagdata").render_help());
         return Ok(());
@@ -53,6 +71,15 @@ fn run() -> Result<(), String> {
         serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
     );
     Ok(())
+}
+
+fn os_args_to_strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
+    args.into_iter()
+        .map(|arg| {
+            arg.into_string()
+                .map_err(|_| "non-UTF-8 command-line argument".to_string())
+        })
+        .collect()
 }
 
 fn parse_args(args: &[String]) -> Result<(PathBuf, FlagDataRequest), String> {
@@ -236,7 +263,7 @@ fn usage() -> String {
 }
 
 fn command_schema(program_name: &str) -> UiCommandSchema {
-    UiCommandSchema {
+    let mut schema = UiCommandSchema {
         schema_version: 1,
         command_id: "flagdata".to_string(),
         invocation_name: program_name.to_string(),
@@ -479,7 +506,9 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             ),
         ],
         managed_output: None,
-    }
+    };
+    schema.arguments.extend(logging_argument_schemas(900));
+    schema
 }
 
 fn schema_bundle(program_name: &str) -> serde_json::Value {

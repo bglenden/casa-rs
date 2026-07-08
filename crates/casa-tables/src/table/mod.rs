@@ -725,6 +725,7 @@ impl ColumnOverrides {
 pub struct TableOptions {
     path: PathBuf,
     data_manager: DataManagerKind,
+    data_manager_group: Option<String>,
     endian_format: EndianFormat,
     tile_shape: Option<Vec<usize>>,
 }
@@ -737,6 +738,7 @@ impl TableOptions {
         Self {
             path: path.as_ref().to_path_buf(),
             data_manager: DataManagerKind::default(),
+            data_manager_group: None,
             endian_format: EndianFormat::default(),
             tile_shape: None,
         }
@@ -745,6 +747,16 @@ impl TableOptions {
     /// Overrides the data manager, returning the updated options.
     pub fn with_data_manager(mut self, kind: DataManagerKind) -> Self {
         self.data_manager = kind;
+        self
+    }
+
+    /// Overrides the data-manager group name persisted in column descriptors.
+    ///
+    /// Most callers should use the default group matching the manager type.
+    /// This exists for interoperability surfaces, such as casacore
+    /// `TableLogSink`, that use a conventional group name (`"SSM"`).
+    pub fn with_data_manager_group(mut self, group: impl Into<String>) -> Self {
+        self.data_manager_group = Some(group.into());
         self
     }
 

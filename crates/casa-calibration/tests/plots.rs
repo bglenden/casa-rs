@@ -169,6 +169,7 @@ fn create_bandpass_fixture_caltable(root: &Path) -> PathBuf {
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "B Jones".to_string(),
+        readme: Vec::new(),
     });
     for (key, value) in [
         ("ParType", "Complex"),

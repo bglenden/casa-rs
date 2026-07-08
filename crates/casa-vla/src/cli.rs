@@ -16,6 +16,7 @@ use crate::{
 };
 pub use casa_ms::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
+    logging_argument_schemas,
 };
 
 const UI_SCHEMA_VERSION: u32 = 1;
@@ -39,8 +40,36 @@ enum CliAction {
 
 /// Parse environment arguments, run `importvla`, and return a process exit code.
 pub fn run_env(program_name: &str) -> i32 {
+    let (logging_guard, args) =
+        match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
+            Ok((guard, args)) => (guard, args),
+            Err(error) => {
+                eprintln!("Error: failed to initialize logging: {error}");
+                return 1;
+            }
+        };
+    tracing::info!("importvla started");
+    let code = run_with_cli_args(program_name, args);
+    if code == 0 {
+        tracing::info!("importvla completed");
+    } else {
+        tracing::error!(
+            casa.priority = "SEVERE",
+            exit_code = code,
+            "importvla failed"
+        );
+    }
+    if let Err(error) = logging_guard.flush() {
+        eprintln!("Error: failed to flush logging: {error}");
+        return 1;
+    }
+    code
+}
+
+/// Run `importvla` with already-filtered CLI arguments.
+pub fn run_with_cli_args(program_name: &str, args: impl IntoIterator<Item = OsString>) -> i32 {
     let schema = command_schema(program_name);
-    match parse_args(std::env::args_os().skip(1)) {
+    match parse_args(args) {
         Ok(CliAction::Help) => {
             print!("{}", render_help(&schema));
             0
@@ -103,7 +132,7 @@ pub fn run_env(program_name: &str) -> i32 {
 
 /// Build the machine-readable command schema for `importvla`.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    UiCommandSchema {
+    let mut schema = UiCommandSchema {
         schema_version: UI_SCHEMA_VERSION,
         command_id: COMMAND_ID.to_string(),
         invocation_name: program_name.to_string(),
@@ -312,7 +341,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             ),
         ],
         managed_output: None,
-    }
+    };
+    schema.arguments.extend(logging_argument_schemas(900));
+    schema
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, VlaError> {
@@ -469,6 +500,12 @@ fn read_json_source(source: &str) -> Result<String, String> {
 }
 
 fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
+    tracing::info!(
+        archive_count = options.archivefiles.len(),
+        vis = ?options.vis,
+        json_output,
+        "importvla run started"
+    );
     let cleanup_vis = if options.vis.is_none() {
         Some(options.effective_vis_for_import()?)
     } else {
@@ -477,6 +514,12 @@ fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
     let report = match import_archive_files_to_measurement_set_from_options(&options) {
         Ok(report) => report,
         Err(error) => {
+            tracing::error!(
+                casa.priority = "SEVERE",
+                error = %error,
+                cleanup_vis = ?cleanup_vis,
+                "importvla import failed"
+            );
             if let Some(path) = cleanup_vis.as_deref().filter(|path| path.exists()) {
                 cleanup_failed_import_output(path).map_err(|cleanup_error| {
                     VlaError::import(format!(
@@ -504,6 +547,12 @@ fn run(options: ImportVlaOptions, json_output: bool) -> Result<(), VlaError> {
     } else {
         render_import_text(&report);
     }
+    tracing::info!(
+        archive_count = options.archivefiles.len(),
+        vis = ?report.vis,
+        rows = report.main_rows_written,
+        "importvla run completed"
+    );
     Ok(())
 }
 

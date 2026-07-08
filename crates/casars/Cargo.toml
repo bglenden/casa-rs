@@ -16,6 +16,7 @@ arboard = "3"
 casa-calibration = { path = "../casa-calibration" }
 casa-images = { path = "../casa-images" }
 casa-imaging = { path = "../casa-imaging" }
+casa-logging = { path = "../casa-logging" }
 casa-vla = { path = "../casa-vla" }
 casars-imager = { path = "../casars-imager" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
@@ -36,6 +37,7 @@ serde_json = "1"
 thiserror.workspace = true
 toml = "0.8"
 libc = "0.2"
+tracing.workspace = true
 
 [dev-dependencies]
 flate2 = "1"

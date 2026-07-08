@@ -3,6 +3,9 @@
 
 use std::fmt::Write as _;
 
+use casa_logging::{
+    CasaPriority, LOG_STDERR_PRIORITY_FLAG, LOG_TABLE_FLAG, LOG_TABLE_PRIORITY_FLAG,
+};
 use serde::{Deserialize, Serialize};
 
 /// Machine-readable UI schema emitted by `--ui-schema`.
@@ -96,6 +99,74 @@ pub struct UiArgumentSchema {
     pub advanced: bool,
     /// Whether the argument should be hidden from the TUI form.
     pub hidden_in_tui: bool,
+}
+
+/// Return the shared CASA logging options exposed by task-style CLIs.
+pub fn logging_argument_schemas(order_base: usize) -> Vec<UiArgumentSchema> {
+    vec![
+        UiArgumentSchema {
+            id: "log_table".to_string(),
+            label: "Log Table".to_string(),
+            order: order_base,
+            parser: UiArgumentParser::Option {
+                flags: vec![LOG_TABLE_FLAG.to_string()],
+                metavar: "PATH".to_string(),
+                choices: Vec::new(),
+            },
+            value_kind: UiValueKind::Path,
+            required: false,
+            default: None,
+            help: "Write CASA-compatible log records to this table path.".to_string(),
+            group: "Logging".to_string(),
+            advanced: true,
+            hidden_in_tui: false,
+        },
+        UiArgumentSchema {
+            id: "log_table_priority".to_string(),
+            label: "Log Table Priority".to_string(),
+            order: order_base + 1,
+            parser: UiArgumentParser::Option {
+                flags: vec![LOG_TABLE_PRIORITY_FLAG.to_string()],
+                metavar: "PRIORITY".to_string(),
+                choices: casa_log_priority_choices(false),
+            },
+            value_kind: UiValueKind::Choice,
+            required: false,
+            default: Some("INFO".to_string()),
+            help: "Minimum CASA priority written to the log table.".to_string(),
+            group: "Logging".to_string(),
+            advanced: true,
+            hidden_in_tui: false,
+        },
+        UiArgumentSchema {
+            id: "log_stderr_priority".to_string(),
+            label: "Stderr Log Priority".to_string(),
+            order: order_base + 2,
+            parser: UiArgumentParser::Option {
+                flags: vec![LOG_STDERR_PRIORITY_FLAG.to_string()],
+                metavar: "PRIORITY".to_string(),
+                choices: casa_log_priority_choices(true),
+            },
+            value_kind: UiValueKind::Choice,
+            required: false,
+            default: Some("WARN".to_string()),
+            help: "Minimum CASA priority mirrored to stderr; use off to disable.".to_string(),
+            group: "Logging".to_string(),
+            advanced: true,
+            hidden_in_tui: false,
+        },
+    ]
+}
+
+fn casa_log_priority_choices(include_off: bool) -> Vec<String> {
+    let mut choices = CasaPriority::ALL
+        .into_iter()
+        .map(|priority| priority.as_casa_str().to_string())
+        .collect::<Vec<_>>();
+    if include_off {
+        choices.push("off".to_string());
+    }
+    choices
 }
 
 impl UiArgumentSchema {

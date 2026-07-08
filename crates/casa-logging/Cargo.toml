@@ -1,0 +1,21 @@
+[package]
+name = "casa-logging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA-compatible logging sinks and tracing integration"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-tables = { path = "../casa-tables" }
+casa-types = { path = "../casa-types" }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

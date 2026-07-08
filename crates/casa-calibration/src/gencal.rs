@@ -344,6 +344,7 @@ fn write_float_caltable(
     table.set_info(TableInfo {
         table_type: TABLE_INFO_TYPE.to_string(),
         sub_type: subtype.to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         KEY_PAR_TYPE,

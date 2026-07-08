@@ -126,6 +126,8 @@ pub struct ColumnSchema {
     column_type: ColumnType,
     data_type: Option<PrimitiveType>,
     options: ColumnOptions,
+    comment: String,
+    max_length: u32,
 }
 
 impl ColumnSchema {
@@ -139,6 +141,8 @@ impl ColumnSchema {
             column_type: ColumnType::Scalar,
             data_type: Some(data_type),
             options: ColumnOptions::default(),
+            comment: String::new(),
+            max_length: 0,
         }
     }
 
@@ -153,6 +157,8 @@ impl ColumnSchema {
             column_type: ColumnType::Record,
             data_type: None,
             options: ColumnOptions::default(),
+            comment: String::new(),
+            max_length: 0,
         }
     }
 
@@ -172,6 +178,8 @@ impl ColumnSchema {
             column_type: ColumnType::Array(ArrayShapeContract::Fixed { shape }),
             data_type: Some(data_type),
             options: ColumnOptions::default(),
+            comment: String::new(),
+            max_length: 0,
         }
     }
 
@@ -190,6 +198,8 @@ impl ColumnSchema {
             column_type: ColumnType::Array(ArrayShapeContract::Variable { ndim }),
             data_type: Some(data_type),
             options: ColumnOptions::default(),
+            comment: String::new(),
+            max_length: 0,
         }
     }
 
@@ -204,6 +214,25 @@ impl ColumnSchema {
         self.options = options;
         self.validate_options()?;
         Ok(self)
+    }
+
+    /// Attach the column description comment persisted in `table.dat`.
+    ///
+    /// This corresponds to the optional comment argument on casacore
+    /// `ColumnDesc`/`ScalarColumnDesc` constructors.
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = comment.into();
+        self
+    }
+
+    /// Attach the persisted maximum string length for string columns.
+    ///
+    /// Casacore uses zero for variable-length strings. Non-string columns
+    /// ignore this value on the data path, but it is preserved in the column
+    /// descriptor for compatibility.
+    pub fn with_max_length(mut self, max_length: u32) -> Self {
+        self.max_length = max_length;
+        self
     }
 
     /// Return the column name.
@@ -224,6 +253,16 @@ impl ColumnSchema {
     /// Return the storage and behaviour flags for this column.
     pub fn options(&self) -> ColumnOptions {
         self.options
+    }
+
+    /// Return the column description comment persisted in `table.dat`.
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    /// Return the persisted maximum string length from the column descriptor.
+    pub fn max_length(&self) -> u32 {
+        self.max_length
     }
 
     fn validate_options(&self) -> Result<(), SchemaError> {
@@ -416,6 +455,15 @@ mod tests {
                 undefined: false,
             });
         assert!(column.is_ok());
+    }
+
+    #[test]
+    fn column_comment_and_max_length_are_attached() {
+        let column = ColumnSchema::scalar("PRIORITY", PrimitiveType::String)
+            .with_comment("CASA priority string")
+            .with_max_length(9);
+        assert_eq!(column.comment(), "CASA priority string");
+        assert_eq!(column.max_length(), 9);
     }
 
     #[test]

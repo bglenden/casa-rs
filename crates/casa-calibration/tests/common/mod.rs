@@ -40,6 +40,7 @@ pub fn create_minimal_complex_caltable(root: &Path) -> PathBuf {
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "G Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "ParType",
@@ -241,6 +242,7 @@ pub fn create_apply_fixture_caltable(
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "G Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "ParType",
@@ -429,6 +431,7 @@ pub fn create_apply_gain_caltable(
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "G Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "ParType",
@@ -558,6 +561,7 @@ pub fn create_apply_delay_caltable(
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "K Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "ParType",
@@ -683,6 +687,7 @@ pub fn create_apply_bpoly_caltable(root: &Path, rows: &[SyntheticBPolySolutionRo
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "BPOLY".to_string(),
+        readme: Vec::new(),
     });
     table
         .keywords_mut()

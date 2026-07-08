@@ -849,6 +849,7 @@ impl<T: ImagePixel> PagedImage<T> {
         table.set_info(TableInfo {
             table_type: "Image".into(),
             sub_type: "PAGEDIMAGE".into(),
+            readme: Vec::new(),
         });
         table.add_row(RecordValue::new(vec![RecordField::new(
             MAP_COLUMN,
@@ -914,6 +915,7 @@ impl<T: ImagePixel> PagedImage<T> {
         table.set_info(TableInfo {
             table_type: "Image".into(),
             sub_type: "PAGEDIMAGE".into(),
+            readme: Vec::new(),
         });
         // Add a row with a tiny placeholder array.
         // The actual pixel data lives in the tile file.
@@ -994,6 +996,7 @@ impl<T: ImagePixel> PagedImage<T> {
         table.set_info(TableInfo {
             table_type: "Image".into(),
             sub_type: "PAGEDIMAGE".into(),
+            readme: Vec::new(),
         });
         let placeholder = ArrayD::from_elem(IxDyn(&vec![1; shape.len()]), T::default_value());
         table.add_row(RecordValue::new(vec![RecordField::new(
@@ -1106,6 +1109,7 @@ impl<T: ImagePixel> PagedImage<T> {
         table.set_info(TableInfo {
             table_type: "Image".into(),
             sub_type: "PAGEDIMAGE".into(),
+            readme: Vec::new(),
         });
         table.add_row(RecordValue::new(vec![RecordField::new(
             MAP_COLUMN,

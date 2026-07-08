@@ -202,6 +202,8 @@ pub struct TableInfo {
     pub table_type: String,
     /// Table subtype (e.g. `"UVFITS"`). Empty if unset.
     pub sub_type: String,
+    /// Free-form readme lines following the type/subtype header.
+    pub readme: Vec<String>,
 }
 
 impl TableInfo {
@@ -209,8 +211,14 @@ impl TableInfo {
     pub fn parse(contents: &str) -> Self {
         let mut table_type = String::new();
         let mut sub_type = String::new();
+        let mut readme = Vec::new();
+        let mut in_readme = false;
         for line in contents.lines() {
-            if let Some(rest) = line.strip_prefix("Type = ") {
+            if in_readme {
+                readme.push(line.to_string());
+            } else if line.is_empty() {
+                in_readme = true;
+            } else if let Some(rest) = line.strip_prefix("Type = ") {
                 table_type = rest.to_string();
             } else if let Some(rest) = line.strip_prefix("SubType = ") {
                 sub_type = rest.to_string();
@@ -219,6 +227,7 @@ impl TableInfo {
         Self {
             table_type,
             sub_type,
+            readme,
         }
     }
 }
@@ -229,7 +238,14 @@ impl std::fmt::Display for TableInfo {
             f,
             "Type = {}\nSubType = {}\n",
             self.table_type, self.sub_type
-        )
+        )?;
+        if !self.readme.is_empty() {
+            writeln!(f)?;
+            for line in &self.readme {
+                writeln!(f, "{line}")?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -757,6 +773,7 @@ impl CompositeStorage {
         virtual_columns: &HashSet<String>,
         virtual_bindings: &[virtual_engine::VirtualColumnBinding],
         dm_kind: crate::table::DataManagerKind,
+        dm_group_name: Option<&str>,
         big_endian: bool,
         tile_shape: Option<&[usize]>,
     ) -> Result<(), StorageError> {
@@ -817,7 +834,7 @@ impl CompositeStorage {
             DataManagerKind::StManAipsIO => {
                 dm_type_name = "StManAipsIO".to_string();
                 dm_data = Vec::new();
-                let table_dat = if has_virtual {
+                let mut table_dat = if has_virtual {
                     TableDatContents::from_snapshot_with_virtual(
                         schema,
                         keywords,
@@ -840,6 +857,12 @@ impl CompositeStorage {
                         big_endian,
                     )
                 };
+                apply_physical_dm_descriptor_group(
+                    &mut table_dat,
+                    &dm_type_name,
+                    dm_group_name.unwrap_or(&dm_type_name),
+                    virtual_columns,
+                );
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
                 let stored_col_descs: Vec<_> = table_dat
@@ -889,7 +912,7 @@ impl CompositeStorage {
                     .cloned()
                     .collect();
                 dm_data = write_ssm_file(&data_path, &stored_col_descs, rows_for_data, big_endian)?;
-                let table_dat = if has_virtual {
+                let mut table_dat = if has_virtual {
                     TableDatContents::from_snapshot_with_virtual(
                         schema,
                         keywords,
@@ -912,6 +935,12 @@ impl CompositeStorage {
                         big_endian,
                     )
                 };
+                apply_physical_dm_descriptor_group(
+                    &mut table_dat,
+                    &dm_type_name,
+                    dm_group_name.unwrap_or(&dm_type_name),
+                    virtual_columns,
+                );
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
             }
@@ -932,7 +961,7 @@ impl CompositeStorage {
                     rows,
                     big_endian,
                 )?;
-                let table_dat = TableDatContents::from_snapshot(
+                let mut table_dat = TableDatContents::from_snapshot(
                     schema,
                     keywords,
                     column_keywords,
@@ -940,6 +969,12 @@ impl CompositeStorage {
                     &dm_type_name,
                     &dm_data,
                     big_endian,
+                );
+                apply_physical_dm_descriptor_group(
+                    &mut table_dat,
+                    &dm_type_name,
+                    dm_group_name.unwrap_or(&dm_type_name),
+                    virtual_columns,
                 );
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
@@ -966,15 +1001,16 @@ impl CompositeStorage {
                     &dm_data,
                     big_endian,
                 );
-                let dm_group_name = table_dat
+                let default_dm_group_name = table_dat
                     .table_desc
                     .columns
                     .first()
                     .map(|c| c.col_name.clone())
                     .unwrap_or_default();
+                let dm_group_name = dm_group_name.unwrap_or(&default_dm_group_name);
                 for desc in &mut table_dat.table_desc.columns {
                     desc.data_manager_type = dm_type_name.clone();
-                    desc.data_manager_group = dm_group_name.clone();
+                    desc.data_manager_group = dm_group_name.to_string();
                 }
                 let control_path = table_path.join(TABLE_CONTROL_FILE);
                 write_table_dat(&control_path, &table_dat)?;
@@ -2983,6 +3019,7 @@ impl CompositeStorage {
         virtual_columns: &HashSet<String>,
         virtual_bindings: &[virtual_engine::VirtualColumnBinding],
         default_dm: crate::table::DataManagerKind,
+        default_dm_group_name: Option<&str>,
         big_endian: bool,
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
@@ -2999,6 +3036,7 @@ impl CompositeStorage {
             virtual_columns,
             virtual_bindings,
             default_dm,
+            default_dm_group_name,
             big_endian,
             default_tile_shape,
             bindings,
@@ -3019,6 +3057,7 @@ impl CompositeStorage {
         virtual_columns: &HashSet<String>,
         virtual_bindings: &[virtual_engine::VirtualColumnBinding],
         default_dm: crate::table::DataManagerKind,
+        default_dm_group_name: Option<&str>,
         big_endian: bool,
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
@@ -3074,6 +3113,7 @@ impl CompositeStorage {
         struct DmGroup {
             dm_kind: DataManagerKind,
             dm_type_name: String,
+            dm_group_name: String,
             seq_nr: u32,
             col_names: Vec<String>,
             tile_shape: Option<Vec<usize>>,
@@ -3094,6 +3134,9 @@ impl CompositeStorage {
         groups.push(DmGroup {
             dm_kind: default_dm,
             dm_type_name: default_type_name.to_string(),
+            dm_group_name: default_dm_group_name
+                .unwrap_or(default_type_name)
+                .to_string(),
             seq_nr: 0,
             col_names: Vec::new(),
             tile_shape: default_tile_shape.map(|s| s.to_vec()),
@@ -3140,6 +3183,7 @@ impl CompositeStorage {
                     groups.push(DmGroup {
                         dm_kind: binding.data_manager,
                         dm_type_name: dm_type.to_string(),
+                        dm_group_name: dm_type.to_string(),
                         seq_nr: next_seq,
                         col_names: Vec::new(),
                         tile_shape: binding.tile_shape.clone(),
@@ -3237,6 +3281,18 @@ impl CompositeStorage {
                 data: Vec::new(),
             })
             .collect();
+        let group_by_seq: HashMap<u32, &DmGroup> = non_empty_groups
+            .iter()
+            .map(|group| (group.seq_nr, *group))
+            .collect();
+        for desc in &mut table_dat.table_desc.columns {
+            if let Some(seq) = col_dm_map.get(&desc.col_name)
+                && let Some(group) = group_by_seq.get(seq)
+            {
+                desc.data_manager_type = group.dm_type_name.clone();
+                desc.data_manager_group = group.dm_group_name.clone();
+            }
+        }
         table_dat
             .column_set
             .data_managers
@@ -3579,6 +3635,7 @@ impl CompositeStorage {
             &snapshot.virtual_columns,
             &snapshot.virtual_bindings,
             default_dm,
+            None,
             big_endian,
             default_tile_shape,
             bindings,
@@ -4459,6 +4516,21 @@ pub(crate) fn strip_directory(target_path: &Path, from_path: &Path) -> String {
 /// - `"./name"` → `parent_dir(ref_table_path) / name`
 /// - `"././name"` → `ref_table_path / name`
 /// - absolute or plain → used as-is
+fn apply_physical_dm_descriptor_group(
+    table_dat: &mut TableDatContents,
+    dm_type_name: &str,
+    dm_group_name: &str,
+    virtual_columns: &HashSet<String>,
+) {
+    for desc in &mut table_dat.table_desc.columns {
+        if virtual_columns.contains(&desc.col_name) {
+            continue;
+        }
+        desc.data_manager_type = dm_type_name.to_string();
+        desc.data_manager_group = dm_group_name.to_string();
+    }
+}
+
 pub(crate) fn add_directory(
     relative: &str,
     ref_table_path: &Path,
@@ -4543,6 +4615,7 @@ mod tests {
         let info = TableInfo {
             table_type: "MeasurementSet".to_string(),
             sub_type: "UVFITS".to_string(),
+            readme: Vec::new(),
         };
         let text = info.to_string();
         let parsed = TableInfo::parse(&text);
@@ -4560,5 +4633,22 @@ mod tests {
         let parsed = TableInfo::parse("Type = Catalog\n");
         assert_eq!(parsed.table_type, "Catalog");
         assert_eq!(parsed.sub_type, "");
+        assert!(parsed.readme.is_empty());
+    }
+
+    #[test]
+    fn table_info_parse_readme() {
+        let parsed = TableInfo::parse(
+            "Type = LOG\nSubType = \n\nRepository for software-generated logging messages\n",
+        );
+        assert_eq!(parsed.table_type, "LOG");
+        assert_eq!(parsed.sub_type, "");
+        assert_eq!(
+            parsed.readme,
+            vec!["Repository for software-generated logging messages".to_string()]
+        );
+
+        let text = parsed.to_string();
+        assert!(text.contains("\n\nRepository for software-generated logging messages\n"));
     }
 }

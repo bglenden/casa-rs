@@ -24,6 +24,7 @@ fn create_malformed_summary_table(root: &std::path::Path) -> PathBuf {
     table.set_info(TableInfo {
         table_type: "NotCalibration".to_string(),
         sub_type: "X Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "ANTENNA",
@@ -76,6 +77,7 @@ fn create_sparse_unsupported_float_summary_table(root: &std::path::Path) -> Path
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "B Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "ParType",
@@ -163,6 +165,7 @@ fn create_empty_inferred_complex_summary_table(root: &std::path::Path) -> PathBu
     table.set_info(TableInfo {
         table_type: "Calibration".to_string(),
         sub_type: "G Jones".to_string(),
+        readme: Vec::new(),
     });
     table.keywords_mut().upsert(
         "VisCal",
@@ -220,6 +223,7 @@ fn create_invalid_bpoly_summary_table(root: &std::path::Path) -> PathBuf {
     table.set_info(TableInfo {
         table_type: "NotCalibration".to_string(),
         sub_type: "BPOLY".to_string(),
+        readme: Vec::new(),
     });
     table
         .add_row(RecordValue::new(vec![

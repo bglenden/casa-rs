@@ -12,5 +12,6 @@ publish = false
 workspace = true
 
 [dependencies]
+casa-logging = { path = "../casa-logging" }
 casa-vla = { path = "../casa-vla" }
-
+tracing.workspace = true

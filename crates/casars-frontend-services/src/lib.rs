@@ -5357,6 +5357,7 @@ mod tests {
         table.set_info(TableInfo {
             table_type: "Calibration Table".to_string(),
             sub_type: "G Jones".to_string(),
+            readme: Vec::new(),
         });
         table
             .add_row(RecordValue::new(vec![

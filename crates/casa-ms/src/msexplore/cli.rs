@@ -22,7 +22,7 @@ use super::{
 use crate::MeasurementSet;
 pub use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
-    UiManagedOutputSchema, UiValueKind,
+    UiManagedOutputSchema, UiValueKind, logging_argument_schemas,
 };
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
@@ -183,8 +183,36 @@ const fn one() -> usize {
 
 /// Parse environment arguments, run `msexplore`, and return a process exit code.
 pub fn run_env(program_name: &str) -> i32 {
+    let (logging_guard, args) =
+        match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
+            Ok((guard, args)) => (guard, args),
+            Err(error) => {
+                eprintln!("Error: failed to initialize logging: {error}");
+                return 1;
+            }
+        };
+    tracing::info!("msexplore started");
+    let code = run_with_cli_args(program_name, args);
+    if code == 0 {
+        tracing::info!("msexplore completed");
+    } else {
+        tracing::error!(
+            casa.priority = "SEVERE",
+            exit_code = code,
+            "msexplore failed"
+        );
+    }
+    if let Err(error) = logging_guard.flush() {
+        eprintln!("Error: failed to flush logging: {error}");
+        return 1;
+    }
+    code
+}
+
+/// Run `msexplore` with already-filtered CLI arguments.
+pub fn run_with_cli_args(program_name: &str, args: impl IntoIterator<Item = OsString>) -> i32 {
     let schema = command_schema(program_name);
-    match parse_args(std::env::args_os().skip(1)) {
+    match parse_args(args) {
         Ok(CliAction::Help) => {
             print!("{}", render_help(&schema));
             0
@@ -252,6 +280,8 @@ pub fn run_env(program_name: &str) -> i32 {
 pub fn build_explore_spec_from_args(
     args: impl IntoIterator<Item = OsString>,
 ) -> Result<MsExploreSpec, String> {
+    let args = casa_logging::strip_cli_logging_args(args)
+        .map_err(|error| format!("invalid logging argument: {error}"))?;
     match parse_args(args)? {
         CliAction::Run(options) => build_explore_spec(&options),
         CliAction::Help => Err("help actions do not produce an msexplore spec".to_string()),
@@ -266,7 +296,7 @@ pub fn build_explore_spec_from_args(
 
 /// Build the machine-readable command schema for `msexplore`.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    UiCommandSchema {
+    let mut schema = UiCommandSchema {
         schema_version: UI_SCHEMA_VERSION,
         command_id: COMMAND_ID.to_string(),
         invocation_name: program_name.to_string(),
@@ -1273,7 +1303,9 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             raw_stdout_available: true,
             raw_stderr_available: true,
         }),
-    }
+    };
+    schema.arguments.extend(logging_argument_schemas(900));
+    schema
 }
 
 fn run(options: CliOptions) -> Result<(), String> {
@@ -3033,6 +3065,27 @@ mod tests {
             build_explore_spec(&options).unwrap_err().contains(
                 "cannot iterate by spectral window while averaging across spectral windows"
             )
+        );
+    }
+
+    #[test]
+    fn build_explore_spec_strips_shared_logging_controls() {
+        let spec = build_explore_spec_from_args(cli_args(&[
+            "--log-table",
+            "msexplore.log",
+            "--log-table-priority",
+            "INFO",
+            "--log-stderr-priority=off",
+            "--preset",
+            "amp_time",
+            "example.ms",
+        ]))
+        .expect("build spec with logging controls");
+
+        assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
+        assert_eq!(
+            spec.plots.first().expect("plot spec").preset,
+            Some(MsPlotPreset::AmplitudeVsTime)
         );
     }
 

@@ -37,6 +37,7 @@ fn expected_info() -> TableInfo {
     TableInfo {
         table_type: "Measurement".to_string(),
         sub_type: "UVFITS".to_string(),
+        readme: Vec::new(),
     }
 }
 
