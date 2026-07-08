@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["UiActionKind","UiArgumentParser","UiValueKind"],"struct":["UiArgumentSchema","UiCommandSchema","UiInjectedArgument","UiManagedOutputSchema"]};
+window.SIDEBAR_ITEMS = {"enum":["UiActionKind","UiArgumentParser","UiValueKind"],"fn":["logging_argument_schemas"],"struct":["UiArgumentSchema","UiCommandSchema","UiInjectedArgument","UiManagedOutputSchema"]};

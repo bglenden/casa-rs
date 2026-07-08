@@ -3,12 +3,12 @@
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>casa_ms::ui_schema::{
 <a href=#5 id=5 data-nosnippet>5</a>    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiInjectedArgument,
-<a href=#6 id=6 data-nosnippet>6</a>    UiManagedOutputSchema, UiValueKind,
+<a href=#6 id=6 data-nosnippet>6</a>    UiManagedOutputSchema, UiValueKind, logging_argument_schemas,
 <a href=#7 id=7 data-nosnippet>7</a>};
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="doccomment">/// Build the launcher-facing UI schema for the standalone imager.
 <a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">pub fn </span>command_schema(program_name: <span class="kw-2">&amp;</span>str) -&gt; UiCommandSchema {
-<a href=#11 id=11 data-nosnippet>11</a>    UiCommandSchema {
+<a href=#11 id=11 data-nosnippet>11</a>    <span class="kw">let </span><span class="kw-2">mut </span>schema = UiCommandSchema {
 <a href=#12 id=12 data-nosnippet>12</a>        schema_version: <span class="number">1</span>,
 <a href=#13 id=13 data-nosnippet>13</a>        command_id: <span class="string">"imager"</span>.to_string(),
 <a href=#14 id=14 data-nosnippet>14</a>        invocation_name: program_name.to_string(),
@@ -918,237 +918,239 @@
 <a href=#918 id=918 data-nosnippet>918</a>            raw_stdout_available: <span class="bool-val">true</span>,
 <a href=#919 id=919 data-nosnippet>919</a>            raw_stderr_available: <span class="bool-val">true</span>,
 <a href=#920 id=920 data-nosnippet>920</a>        }),
-<a href=#921 id=921 data-nosnippet>921</a>    }
-<a href=#922 id=922 data-nosnippet>922</a>}
-<a href=#923 id=923 data-nosnippet>923</a>
-<a href=#924 id=924 data-nosnippet>924</a><span class="kw">struct </span>OptionArgumentConfig&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#925 id=925 data-nosnippet>925</a>    id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#926 id=926 data-nosnippet>926</a>    label: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#927 id=927 data-nosnippet>927</a>    order: usize,
-<a href=#928 id=928 data-nosnippet>928</a>    flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
-<a href=#929 id=929 data-nosnippet>929</a>    metavar: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#930 id=930 data-nosnippet>930</a>    value_kind: UiValueKind,
-<a href=#931 id=931 data-nosnippet>931</a>    default: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str&gt;,
-<a href=#932 id=932 data-nosnippet>932</a>    choices: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
-<a href=#933 id=933 data-nosnippet>933</a>    help: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#934 id=934 data-nosnippet>934</a>    group: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#935 id=935 data-nosnippet>935</a>    required: bool,
-<a href=#936 id=936 data-nosnippet>936</a>    advanced: bool,
-<a href=#937 id=937 data-nosnippet>937</a>}
-<a href=#938 id=938 data-nosnippet>938</a>
-<a href=#939 id=939 data-nosnippet>939</a><span class="kw">struct </span>ToggleArgumentConfig&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#940 id=940 data-nosnippet>940</a>    id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#941 id=941 data-nosnippet>941</a>    label: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#942 id=942 data-nosnippet>942</a>    order: usize,
-<a href=#943 id=943 data-nosnippet>943</a>    true_flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
-<a href=#944 id=944 data-nosnippet>944</a>    false_flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
-<a href=#945 id=945 data-nosnippet>945</a>    default: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str&gt;,
-<a href=#946 id=946 data-nosnippet>946</a>    help: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#947 id=947 data-nosnippet>947</a>    group: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#948 id=948 data-nosnippet>948</a>    advanced: bool,
-<a href=#949 id=949 data-nosnippet>949</a>}
-<a href=#950 id=950 data-nosnippet>950</a>
-<a href=#951 id=951 data-nosnippet>951</a><span class="kw">fn </span>option_argument(config: OptionArgumentConfig&lt;<span class="lifetime">'_</span>&gt;) -&gt; UiArgumentSchema {
-<a href=#952 id=952 data-nosnippet>952</a>    UiArgumentSchema {
-<a href=#953 id=953 data-nosnippet>953</a>        id: config.id.to_string(),
-<a href=#954 id=954 data-nosnippet>954</a>        label: config.label.to_string(),
-<a href=#955 id=955 data-nosnippet>955</a>        order: config.order,
-<a href=#956 id=956 data-nosnippet>956</a>        parser: UiArgumentParser::Option {
-<a href=#957 id=957 data-nosnippet>957</a>            flags: config
-<a href=#958 id=958 data-nosnippet>958</a>                .flags
-<a href=#959 id=959 data-nosnippet>959</a>                .iter()
-<a href=#960 id=960 data-nosnippet>960</a>                .map(|flag| (<span class="kw-2">*</span>flag).to_string())
-<a href=#961 id=961 data-nosnippet>961</a>                .collect(),
-<a href=#962 id=962 data-nosnippet>962</a>            metavar: config.metavar.to_string(),
-<a href=#963 id=963 data-nosnippet>963</a>            choices: config
-<a href=#964 id=964 data-nosnippet>964</a>                .choices
-<a href=#965 id=965 data-nosnippet>965</a>                .iter()
-<a href=#966 id=966 data-nosnippet>966</a>                .map(|choice| (<span class="kw-2">*</span>choice).to_string())
-<a href=#967 id=967 data-nosnippet>967</a>                .collect(),
-<a href=#968 id=968 data-nosnippet>968</a>        },
-<a href=#969 id=969 data-nosnippet>969</a>        value_kind: config.value_kind,
-<a href=#970 id=970 data-nosnippet>970</a>        required: config.required,
-<a href=#971 id=971 data-nosnippet>971</a>        default: config.default.map(ToString::to_string),
-<a href=#972 id=972 data-nosnippet>972</a>        help: config.help.to_string(),
-<a href=#973 id=973 data-nosnippet>973</a>        group: config.group.to_string(),
-<a href=#974 id=974 data-nosnippet>974</a>        advanced: config.advanced,
-<a href=#975 id=975 data-nosnippet>975</a>        hidden_in_tui: <span class="bool-val">false</span>,
-<a href=#976 id=976 data-nosnippet>976</a>    }
-<a href=#977 id=977 data-nosnippet>977</a>}
-<a href=#978 id=978 data-nosnippet>978</a>
-<a href=#979 id=979 data-nosnippet>979</a><span class="kw">fn </span>toggle_argument(config: ToggleArgumentConfig&lt;<span class="lifetime">'_</span>&gt;) -&gt; UiArgumentSchema {
-<a href=#980 id=980 data-nosnippet>980</a>    UiArgumentSchema {
-<a href=#981 id=981 data-nosnippet>981</a>        id: config.id.to_string(),
-<a href=#982 id=982 data-nosnippet>982</a>        label: config.label.to_string(),
-<a href=#983 id=983 data-nosnippet>983</a>        order: config.order,
-<a href=#984 id=984 data-nosnippet>984</a>        parser: UiArgumentParser::Toggle {
-<a href=#985 id=985 data-nosnippet>985</a>            true_flags: config
-<a href=#986 id=986 data-nosnippet>986</a>                .true_flags
-<a href=#987 id=987 data-nosnippet>987</a>                .iter()
-<a href=#988 id=988 data-nosnippet>988</a>                .map(|flag| (<span class="kw-2">*</span>flag).to_string())
-<a href=#989 id=989 data-nosnippet>989</a>                .collect(),
-<a href=#990 id=990 data-nosnippet>990</a>            false_flags: config
-<a href=#991 id=991 data-nosnippet>991</a>                .false_flags
-<a href=#992 id=992 data-nosnippet>992</a>                .iter()
-<a href=#993 id=993 data-nosnippet>993</a>                .map(|flag| (<span class="kw-2">*</span>flag).to_string())
-<a href=#994 id=994 data-nosnippet>994</a>                .collect(),
-<a href=#995 id=995 data-nosnippet>995</a>        },
-<a href=#996 id=996 data-nosnippet>996</a>        value_kind: UiValueKind::Bool,
-<a href=#997 id=997 data-nosnippet>997</a>        required: <span class="bool-val">false</span>,
-<a href=#998 id=998 data-nosnippet>998</a>        default: config.default.map(ToString::to_string),
-<a href=#999 id=999 data-nosnippet>999</a>        help: config.help.to_string(),
-<a href=#1000 id=1000 data-nosnippet>1000</a>        group: config.group.to_string(),
-<a href=#1001 id=1001 data-nosnippet>1001</a>        advanced: config.advanced,
-<a href=#1002 id=1002 data-nosnippet>1002</a>        hidden_in_tui: <span class="bool-val">false</span>,
-<a href=#1003 id=1003 data-nosnippet>1003</a>    }
-<a href=#1004 id=1004 data-nosnippet>1004</a>}
-<a href=#1005 id=1005 data-nosnippet>1005</a>
-<a href=#1006 id=1006 data-nosnippet>1006</a><span class="kw">fn </span>action_argument(
-<a href=#1007 id=1007 data-nosnippet>1007</a>    order: usize,
-<a href=#1008 id=1008 data-nosnippet>1008</a>    id: <span class="kw-2">&amp;</span>str,
-<a href=#1009 id=1009 data-nosnippet>1009</a>    flags: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
-<a href=#1010 id=1010 data-nosnippet>1010</a>    action: UiActionKind,
-<a href=#1011 id=1011 data-nosnippet>1011</a>) -&gt; UiArgumentSchema {
-<a href=#1012 id=1012 data-nosnippet>1012</a>    UiArgumentSchema {
-<a href=#1013 id=1013 data-nosnippet>1013</a>        id: id.to_string(),
-<a href=#1014 id=1014 data-nosnippet>1014</a>        label: id.to_string(),
-<a href=#1015 id=1015 data-nosnippet>1015</a>        order,
-<a href=#1016 id=1016 data-nosnippet>1016</a>        parser: UiArgumentParser::Action {
-<a href=#1017 id=1017 data-nosnippet>1017</a>            flags: flags.iter().map(|flag| (<span class="kw-2">*</span>flag).to_string()).collect(),
-<a href=#1018 id=1018 data-nosnippet>1018</a>            action,
-<a href=#1019 id=1019 data-nosnippet>1019</a>        },
-<a href=#1020 id=1020 data-nosnippet>1020</a>        value_kind: UiValueKind::None,
-<a href=#1021 id=1021 data-nosnippet>1021</a>        required: <span class="bool-val">false</span>,
-<a href=#1022 id=1022 data-nosnippet>1022</a>        default: <span class="prelude-val">None</span>,
-<a href=#1023 id=1023 data-nosnippet>1023</a>        help: <span class="kw">match </span>action {
-<a href=#1024 id=1024 data-nosnippet>1024</a>            UiActionKind::Help =&gt; <span class="string">"Print this help message"</span>.to_string(),
-<a href=#1025 id=1025 data-nosnippet>1025</a>            UiActionKind::UiSchema =&gt; <span class="string">"Print the machine-readable UI schema"</span>.to_string(),
-<a href=#1026 id=1026 data-nosnippet>1026</a>        },
-<a href=#1027 id=1027 data-nosnippet>1027</a>        group: <span class="string">"Meta"</span>.to_string(),
-<a href=#1028 id=1028 data-nosnippet>1028</a>        advanced: <span class="bool-val">false</span>,
-<a href=#1029 id=1029 data-nosnippet>1029</a>        hidden_in_tui: <span class="bool-val">true</span>,
-<a href=#1030 id=1030 data-nosnippet>1030</a>    }
-<a href=#1031 id=1031 data-nosnippet>1031</a>}
-<a href=#1032 id=1032 data-nosnippet>1032</a>
-<a href=#1033 id=1033 data-nosnippet>1033</a><span class="attr">#[cfg(test)]
-<a href=#1034 id=1034 data-nosnippet>1034</a></span><span class="kw">mod </span>tests {
-<a href=#1035 id=1035 data-nosnippet>1035</a>    <span class="kw">use </span><span class="kw">super</span>::command_schema;
-<a href=#1036 id=1036 data-nosnippet>1036</a>    <span class="kw">use </span>casa_ms::ui_schema::{UiArgumentParser, UiValueKind};
-<a href=#1037 id=1037 data-nosnippet>1037</a>
-<a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="attr">#[test]
-<a href=#1039 id=1039 data-nosnippet>1039</a>    </span><span class="kw">fn </span>schema_exposes_workflow_surface_for_casars() {
-<a href=#1040 id=1040 data-nosnippet>1040</a>        <span class="kw">let </span>schema = command_schema(<span class="string">"casars-imager"</span>);
-<a href=#1041 id=1041 data-nosnippet>1041</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"imager"</span>);
-<a href=#1042 id=1042 data-nosnippet>1042</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"Imager"</span>);
-<a href=#1043 id=1043 data-nosnippet>1043</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Imaging"</span>);
-<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="macro">assert_eq!</span>(
-<a href=#1045 id=1045 data-nosnippet>1045</a>            schema
-<a href=#1046 id=1046 data-nosnippet>1046</a>                .managed_output
-<a href=#1047 id=1047 data-nosnippet>1047</a>                .as_ref()
-<a href=#1048 id=1048 data-nosnippet>1048</a>                .map(|output| output.renderer.as_str()),
-<a href=#1049 id=1049 data-nosnippet>1049</a>            <span class="prelude-val">Some</span>(<span class="string">"imager-run-v1"</span>)
-<a href=#1050 id=1050 data-nosnippet>1050</a>        );
-<a href=#1051 id=1051 data-nosnippet>1051</a>
-<a href=#1052 id=1052 data-nosnippet>1052</a>        <span class="kw">let </span>specmode = schema
-<a href=#1053 id=1053 data-nosnippet>1053</a>            .arguments
-<a href=#1054 id=1054 data-nosnippet>1054</a>            .iter()
-<a href=#1055 id=1055 data-nosnippet>1055</a>            .find(|argument| argument.id == <span class="string">"specmode"</span>)
-<a href=#1056 id=1056 data-nosnippet>1056</a>            .expect(<span class="string">"specmode argument"</span>);
-<a href=#1057 id=1057 data-nosnippet>1057</a>        <span class="macro">assert_eq!</span>(specmode.group, <span class="string">"Stages"</span>);
-<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(specmode.value_kind, UiValueKind::Choice));
-<a href=#1059 id=1059 data-nosnippet>1059</a>
-<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="kw">let </span>usepointing = schema
-<a href=#1061 id=1061 data-nosnippet>1061</a>            .arguments
-<a href=#1062 id=1062 data-nosnippet>1062</a>            .iter()
-<a href=#1063 id=1063 data-nosnippet>1063</a>            .find(|argument| argument.id == <span class="string">"usepointing"</span>)
-<a href=#1064 id=1064 data-nosnippet>1064</a>            .expect(<span class="string">"usepointing argument"</span>);
-<a href=#1065 id=1065 data-nosnippet>1065</a>        <span class="macro">assert_eq!</span>(usepointing.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"false"</span>));
-<a href=#1066 id=1066 data-nosnippet>1066</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(usepointing.value_kind, UiValueKind::Bool));
-<a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="kw">let </span>UiArgumentParser::Toggle { true_flags, .. } = <span class="kw-2">&amp;</span>usepointing.parser <span class="kw">else </span>{
-<a href=#1068 id=1068 data-nosnippet>1068</a>            <span class="macro">panic!</span>(<span class="string">"usepointing should use a toggle parser"</span>);
-<a href=#1069 id=1069 data-nosnippet>1069</a>        };
-<a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="macro">assert!</span>(true_flags.contains(<span class="kw-2">&amp;</span><span class="string">"--usepointing"</span>.to_string()));
-<a href=#1071 id=1071 data-nosnippet>1071</a>
-<a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="kw">let </span>savemodel = schema
-<a href=#1073 id=1073 data-nosnippet>1073</a>            .arguments
-<a href=#1074 id=1074 data-nosnippet>1074</a>            .iter()
-<a href=#1075 id=1075 data-nosnippet>1075</a>            .find(|argument| argument.id == <span class="string">"savemodel"</span>)
-<a href=#1076 id=1076 data-nosnippet>1076</a>            .expect(<span class="string">"savemodel argument"</span>);
-<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="macro">assert_eq!</span>(savemodel.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"none"</span>));
-<a href=#1078 id=1078 data-nosnippet>1078</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>savemodel.parser <span class="kw">else </span>{
-<a href=#1079 id=1079 data-nosnippet>1079</a>            <span class="macro">panic!</span>(<span class="string">"savemodel should use an option parser"</span>);
-<a href=#1080 id=1080 data-nosnippet>1080</a>        };
-<a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"modelcolumn"</span>.to_string()));
-<a href=#1082 id=1082 data-nosnippet>1082</a>
-<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="kw">let </span>startmodel = schema
-<a href=#1084 id=1084 data-nosnippet>1084</a>            .arguments
-<a href=#1085 id=1085 data-nosnippet>1085</a>            .iter()
-<a href=#1086 id=1086 data-nosnippet>1086</a>            .find(|argument| argument.id == <span class="string">"startmodel"</span>)
-<a href=#1087 id=1087 data-nosnippet>1087</a>            .expect(<span class="string">"startmodel argument"</span>);
-<a href=#1088 id=1088 data-nosnippet>1088</a>        <span class="macro">assert_eq!</span>(startmodel.value_kind, UiValueKind::Path);
-<a href=#1089 id=1089 data-nosnippet>1089</a>        <span class="kw">let </span>UiArgumentParser::Option { flags, .. } = <span class="kw-2">&amp;</span>startmodel.parser <span class="kw">else </span>{
-<a href=#1090 id=1090 data-nosnippet>1090</a>            <span class="macro">panic!</span>(<span class="string">"startmodel should use an option parser"</span>);
-<a href=#1091 id=1091 data-nosnippet>1091</a>        };
-<a href=#1092 id=1092 data-nosnippet>1092</a>        <span class="macro">assert!</span>(flags.contains(<span class="kw-2">&amp;</span><span class="string">"--startmodel"</span>.to_string()));
-<a href=#1093 id=1093 data-nosnippet>1093</a>
-<a href=#1094 id=1094 data-nosnippet>1094</a>        <span class="kw">let </span>outlierfile = schema
-<a href=#1095 id=1095 data-nosnippet>1095</a>            .arguments
-<a href=#1096 id=1096 data-nosnippet>1096</a>            .iter()
-<a href=#1097 id=1097 data-nosnippet>1097</a>            .find(|argument| argument.id == <span class="string">"outlierfile"</span>)
-<a href=#1098 id=1098 data-nosnippet>1098</a>            .expect(<span class="string">"outlierfile argument"</span>);
-<a href=#1099 id=1099 data-nosnippet>1099</a>        <span class="macro">assert_eq!</span>(outlierfile.value_kind, UiValueKind::Path);
-<a href=#1100 id=1100 data-nosnippet>1100</a>        <span class="kw">let </span>UiArgumentParser::Option { flags, .. } = <span class="kw-2">&amp;</span>outlierfile.parser <span class="kw">else </span>{
-<a href=#1101 id=1101 data-nosnippet>1101</a>            <span class="macro">panic!</span>(<span class="string">"outlierfile should use an option parser"</span>);
-<a href=#1102 id=1102 data-nosnippet>1102</a>        };
-<a href=#1103 id=1103 data-nosnippet>1103</a>        <span class="macro">assert!</span>(flags.contains(<span class="kw-2">&amp;</span><span class="string">"--outlierfile"</span>.to_string()));
-<a href=#1104 id=1104 data-nosnippet>1104</a>
-<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="kw">let </span>standard_mfs_acceleration = schema
-<a href=#1106 id=1106 data-nosnippet>1106</a>            .arguments
-<a href=#1107 id=1107 data-nosnippet>1107</a>            .iter()
-<a href=#1108 id=1108 data-nosnippet>1108</a>            .find(|argument| argument.id == <span class="string">"standard_mfs_acceleration"</span>)
-<a href=#1109 id=1109 data-nosnippet>1109</a>            .expect(<span class="string">"standard_mfs_acceleration argument"</span>);
-<a href=#1110 id=1110 data-nosnippet>1110</a>        <span class="macro">assert_eq!</span>(standard_mfs_acceleration.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"auto"</span>));
-<a href=#1111 id=1111 data-nosnippet>1111</a>        <span class="macro">assert!</span>(standard_mfs_acceleration.advanced);
-<a href=#1112 id=1112 data-nosnippet>1112</a>        <span class="kw">let </span>UiArgumentParser::Option { flags, choices, .. } = <span class="kw-2">&amp;</span>standard_mfs_acceleration.parser
-<a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="kw">else </span>{
-<a href=#1114 id=1114 data-nosnippet>1114</a>            <span class="macro">panic!</span>(<span class="string">"standard_mfs_acceleration should use an option parser"</span>);
-<a href=#1115 id=1115 data-nosnippet>1115</a>        };
-<a href=#1116 id=1116 data-nosnippet>1116</a>        <span class="macro">assert!</span>(flags.contains(<span class="kw-2">&amp;</span><span class="string">"--standard-mfs-acceleration"</span>.to_string()));
-<a href=#1117 id=1117 data-nosnippet>1117</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"metal"</span>.to_string()));
-<a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"multi-cpu"</span>.to_string()));
-<a href=#1119 id=1119 data-nosnippet>1119</a>
-<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="kw">let </span>polarization = schema
-<a href=#1121 id=1121 data-nosnippet>1121</a>            .arguments
-<a href=#1122 id=1122 data-nosnippet>1122</a>            .iter()
-<a href=#1123 id=1123 data-nosnippet>1123</a>            .find(|argument| argument.id == <span class="string">"polarization"</span>)
-<a href=#1124 id=1124 data-nosnippet>1124</a>            .expect(<span class="string">"polarization argument"</span>);
-<a href=#1125 id=1125 data-nosnippet>1125</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>polarization.parser <span class="kw">else </span>{
-<a href=#1126 id=1126 data-nosnippet>1126</a>            <span class="macro">panic!</span>(<span class="string">"polarization should use an option parser"</span>);
-<a href=#1127 id=1127 data-nosnippet>1127</a>        };
-<a href=#1128 id=1128 data-nosnippet>1128</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"I"</span>.to_string()));
-<a href=#1129 id=1129 data-nosnippet>1129</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"XX"</span>.to_string()));
-<a href=#1130 id=1130 data-nosnippet>1130</a>    }
-<a href=#1131 id=1131 data-nosnippet>1131</a>
-<a href=#1132 id=1132 data-nosnippet>1132</a>    <span class="attr">#[test]
-<a href=#1133 id=1133 data-nosnippet>1133</a>    </span><span class="kw">fn </span>schema_defaults_match_cli_runtime_defaults_for_advanced_controls() {
-<a href=#1134 id=1134 data-nosnippet>1134</a>        <span class="kw">let </span>schema = command_schema(<span class="string">"casars-imager"</span>);
-<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">let </span>default_for = |id: <span class="kw-2">&amp;</span>str| {
-<a href=#1136 id=1136 data-nosnippet>1136</a>            schema
-<a href=#1137 id=1137 data-nosnippet>1137</a>                .arguments
-<a href=#1138 id=1138 data-nosnippet>1138</a>                .iter()
-<a href=#1139 id=1139 data-nosnippet>1139</a>                .find(|argument| argument.id == id)
-<a href=#1140 id=1140 data-nosnippet>1140</a>                .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"missing {id}"</span>))
-<a href=#1141 id=1141 data-nosnippet>1141</a>                .default
-<a href=#1142 id=1142 data-nosnippet>1142</a>                .as_deref()
-<a href=#1143 id=1143 data-nosnippet>1143</a>                .unwrap_or_default()
-<a href=#1144 id=1144 data-nosnippet>1144</a>                .to_string()
-<a href=#1145 id=1145 data-nosnippet>1145</a>        };
-<a href=#1146 id=1146 data-nosnippet>1146</a>
-<a href=#1147 id=1147 data-nosnippet>1147</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"gain"</span>), <span class="string">"0.1"</span>);
-<a href=#1148 id=1148 data-nosnippet>1148</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"pblimit"</span>), <span class="string">"0.2"</span>);
-<a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"minor_cycle_length"</span>), <span class="string">"1000"</span>);
-<a href=#1150 id=1150 data-nosnippet>1150</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"minpsffraction"</span>), <span class="string">"0.05"</span>);
-<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"progress_detail"</span>), <span class="string">"basic"</span>);
-<a href=#1152 id=1152 data-nosnippet>1152</a>    }
-<a href=#1153 id=1153 data-nosnippet>1153</a>}
+<a href=#921 id=921 data-nosnippet>921</a>    };
+<a href=#922 id=922 data-nosnippet>922</a>    schema.arguments.extend(logging_argument_schemas(<span class="number">900</span>));
+<a href=#923 id=923 data-nosnippet>923</a>    schema
+<a href=#924 id=924 data-nosnippet>924</a>}
+<a href=#925 id=925 data-nosnippet>925</a>
+<a href=#926 id=926 data-nosnippet>926</a><span class="kw">struct </span>OptionArgumentConfig&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#927 id=927 data-nosnippet>927</a>    id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#928 id=928 data-nosnippet>928</a>    label: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#929 id=929 data-nosnippet>929</a>    order: usize,
+<a href=#930 id=930 data-nosnippet>930</a>    flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
+<a href=#931 id=931 data-nosnippet>931</a>    metavar: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#932 id=932 data-nosnippet>932</a>    value_kind: UiValueKind,
+<a href=#933 id=933 data-nosnippet>933</a>    default: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str&gt;,
+<a href=#934 id=934 data-nosnippet>934</a>    choices: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
+<a href=#935 id=935 data-nosnippet>935</a>    help: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#936 id=936 data-nosnippet>936</a>    group: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#937 id=937 data-nosnippet>937</a>    required: bool,
+<a href=#938 id=938 data-nosnippet>938</a>    advanced: bool,
+<a href=#939 id=939 data-nosnippet>939</a>}
+<a href=#940 id=940 data-nosnippet>940</a>
+<a href=#941 id=941 data-nosnippet>941</a><span class="kw">struct </span>ToggleArgumentConfig&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#942 id=942 data-nosnippet>942</a>    id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#943 id=943 data-nosnippet>943</a>    label: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#944 id=944 data-nosnippet>944</a>    order: usize,
+<a href=#945 id=945 data-nosnippet>945</a>    true_flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
+<a href=#946 id=946 data-nosnippet>946</a>    false_flags: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str],
+<a href=#947 id=947 data-nosnippet>947</a>    default: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str&gt;,
+<a href=#948 id=948 data-nosnippet>948</a>    help: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#949 id=949 data-nosnippet>949</a>    group: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#950 id=950 data-nosnippet>950</a>    advanced: bool,
+<a href=#951 id=951 data-nosnippet>951</a>}
+<a href=#952 id=952 data-nosnippet>952</a>
+<a href=#953 id=953 data-nosnippet>953</a><span class="kw">fn </span>option_argument(config: OptionArgumentConfig&lt;<span class="lifetime">'_</span>&gt;) -&gt; UiArgumentSchema {
+<a href=#954 id=954 data-nosnippet>954</a>    UiArgumentSchema {
+<a href=#955 id=955 data-nosnippet>955</a>        id: config.id.to_string(),
+<a href=#956 id=956 data-nosnippet>956</a>        label: config.label.to_string(),
+<a href=#957 id=957 data-nosnippet>957</a>        order: config.order,
+<a href=#958 id=958 data-nosnippet>958</a>        parser: UiArgumentParser::Option {
+<a href=#959 id=959 data-nosnippet>959</a>            flags: config
+<a href=#960 id=960 data-nosnippet>960</a>                .flags
+<a href=#961 id=961 data-nosnippet>961</a>                .iter()
+<a href=#962 id=962 data-nosnippet>962</a>                .map(|flag| (<span class="kw-2">*</span>flag).to_string())
+<a href=#963 id=963 data-nosnippet>963</a>                .collect(),
+<a href=#964 id=964 data-nosnippet>964</a>            metavar: config.metavar.to_string(),
+<a href=#965 id=965 data-nosnippet>965</a>            choices: config
+<a href=#966 id=966 data-nosnippet>966</a>                .choices
+<a href=#967 id=967 data-nosnippet>967</a>                .iter()
+<a href=#968 id=968 data-nosnippet>968</a>                .map(|choice| (<span class="kw-2">*</span>choice).to_string())
+<a href=#969 id=969 data-nosnippet>969</a>                .collect(),
+<a href=#970 id=970 data-nosnippet>970</a>        },
+<a href=#971 id=971 data-nosnippet>971</a>        value_kind: config.value_kind,
+<a href=#972 id=972 data-nosnippet>972</a>        required: config.required,
+<a href=#973 id=973 data-nosnippet>973</a>        default: config.default.map(ToString::to_string),
+<a href=#974 id=974 data-nosnippet>974</a>        help: config.help.to_string(),
+<a href=#975 id=975 data-nosnippet>975</a>        group: config.group.to_string(),
+<a href=#976 id=976 data-nosnippet>976</a>        advanced: config.advanced,
+<a href=#977 id=977 data-nosnippet>977</a>        hidden_in_tui: <span class="bool-val">false</span>,
+<a href=#978 id=978 data-nosnippet>978</a>    }
+<a href=#979 id=979 data-nosnippet>979</a>}
+<a href=#980 id=980 data-nosnippet>980</a>
+<a href=#981 id=981 data-nosnippet>981</a><span class="kw">fn </span>toggle_argument(config: ToggleArgumentConfig&lt;<span class="lifetime">'_</span>&gt;) -&gt; UiArgumentSchema {
+<a href=#982 id=982 data-nosnippet>982</a>    UiArgumentSchema {
+<a href=#983 id=983 data-nosnippet>983</a>        id: config.id.to_string(),
+<a href=#984 id=984 data-nosnippet>984</a>        label: config.label.to_string(),
+<a href=#985 id=985 data-nosnippet>985</a>        order: config.order,
+<a href=#986 id=986 data-nosnippet>986</a>        parser: UiArgumentParser::Toggle {
+<a href=#987 id=987 data-nosnippet>987</a>            true_flags: config
+<a href=#988 id=988 data-nosnippet>988</a>                .true_flags
+<a href=#989 id=989 data-nosnippet>989</a>                .iter()
+<a href=#990 id=990 data-nosnippet>990</a>                .map(|flag| (<span class="kw-2">*</span>flag).to_string())
+<a href=#991 id=991 data-nosnippet>991</a>                .collect(),
+<a href=#992 id=992 data-nosnippet>992</a>            false_flags: config
+<a href=#993 id=993 data-nosnippet>993</a>                .false_flags
+<a href=#994 id=994 data-nosnippet>994</a>                .iter()
+<a href=#995 id=995 data-nosnippet>995</a>                .map(|flag| (<span class="kw-2">*</span>flag).to_string())
+<a href=#996 id=996 data-nosnippet>996</a>                .collect(),
+<a href=#997 id=997 data-nosnippet>997</a>        },
+<a href=#998 id=998 data-nosnippet>998</a>        value_kind: UiValueKind::Bool,
+<a href=#999 id=999 data-nosnippet>999</a>        required: <span class="bool-val">false</span>,
+<a href=#1000 id=1000 data-nosnippet>1000</a>        default: config.default.map(ToString::to_string),
+<a href=#1001 id=1001 data-nosnippet>1001</a>        help: config.help.to_string(),
+<a href=#1002 id=1002 data-nosnippet>1002</a>        group: config.group.to_string(),
+<a href=#1003 id=1003 data-nosnippet>1003</a>        advanced: config.advanced,
+<a href=#1004 id=1004 data-nosnippet>1004</a>        hidden_in_tui: <span class="bool-val">false</span>,
+<a href=#1005 id=1005 data-nosnippet>1005</a>    }
+<a href=#1006 id=1006 data-nosnippet>1006</a>}
+<a href=#1007 id=1007 data-nosnippet>1007</a>
+<a href=#1008 id=1008 data-nosnippet>1008</a><span class="kw">fn </span>action_argument(
+<a href=#1009 id=1009 data-nosnippet>1009</a>    order: usize,
+<a href=#1010 id=1010 data-nosnippet>1010</a>    id: <span class="kw-2">&amp;</span>str,
+<a href=#1011 id=1011 data-nosnippet>1011</a>    flags: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+<a href=#1012 id=1012 data-nosnippet>1012</a>    action: UiActionKind,
+<a href=#1013 id=1013 data-nosnippet>1013</a>) -&gt; UiArgumentSchema {
+<a href=#1014 id=1014 data-nosnippet>1014</a>    UiArgumentSchema {
+<a href=#1015 id=1015 data-nosnippet>1015</a>        id: id.to_string(),
+<a href=#1016 id=1016 data-nosnippet>1016</a>        label: id.to_string(),
+<a href=#1017 id=1017 data-nosnippet>1017</a>        order,
+<a href=#1018 id=1018 data-nosnippet>1018</a>        parser: UiArgumentParser::Action {
+<a href=#1019 id=1019 data-nosnippet>1019</a>            flags: flags.iter().map(|flag| (<span class="kw-2">*</span>flag).to_string()).collect(),
+<a href=#1020 id=1020 data-nosnippet>1020</a>            action,
+<a href=#1021 id=1021 data-nosnippet>1021</a>        },
+<a href=#1022 id=1022 data-nosnippet>1022</a>        value_kind: UiValueKind::None,
+<a href=#1023 id=1023 data-nosnippet>1023</a>        required: <span class="bool-val">false</span>,
+<a href=#1024 id=1024 data-nosnippet>1024</a>        default: <span class="prelude-val">None</span>,
+<a href=#1025 id=1025 data-nosnippet>1025</a>        help: <span class="kw">match </span>action {
+<a href=#1026 id=1026 data-nosnippet>1026</a>            UiActionKind::Help =&gt; <span class="string">"Print this help message"</span>.to_string(),
+<a href=#1027 id=1027 data-nosnippet>1027</a>            UiActionKind::UiSchema =&gt; <span class="string">"Print the machine-readable UI schema"</span>.to_string(),
+<a href=#1028 id=1028 data-nosnippet>1028</a>        },
+<a href=#1029 id=1029 data-nosnippet>1029</a>        group: <span class="string">"Meta"</span>.to_string(),
+<a href=#1030 id=1030 data-nosnippet>1030</a>        advanced: <span class="bool-val">false</span>,
+<a href=#1031 id=1031 data-nosnippet>1031</a>        hidden_in_tui: <span class="bool-val">true</span>,
+<a href=#1032 id=1032 data-nosnippet>1032</a>    }
+<a href=#1033 id=1033 data-nosnippet>1033</a>}
+<a href=#1034 id=1034 data-nosnippet>1034</a>
+<a href=#1035 id=1035 data-nosnippet>1035</a><span class="attr">#[cfg(test)]
+<a href=#1036 id=1036 data-nosnippet>1036</a></span><span class="kw">mod </span>tests {
+<a href=#1037 id=1037 data-nosnippet>1037</a>    <span class="kw">use </span><span class="kw">super</span>::command_schema;
+<a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="kw">use </span>casa_ms::ui_schema::{UiArgumentParser, UiValueKind};
+<a href=#1039 id=1039 data-nosnippet>1039</a>
+<a href=#1040 id=1040 data-nosnippet>1040</a>    <span class="attr">#[test]
+<a href=#1041 id=1041 data-nosnippet>1041</a>    </span><span class="kw">fn </span>schema_exposes_workflow_surface_for_casars() {
+<a href=#1042 id=1042 data-nosnippet>1042</a>        <span class="kw">let </span>schema = command_schema(<span class="string">"casars-imager"</span>);
+<a href=#1043 id=1043 data-nosnippet>1043</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"imager"</span>);
+<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"Imager"</span>);
+<a href=#1045 id=1045 data-nosnippet>1045</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Imaging"</span>);
+<a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="macro">assert_eq!</span>(
+<a href=#1047 id=1047 data-nosnippet>1047</a>            schema
+<a href=#1048 id=1048 data-nosnippet>1048</a>                .managed_output
+<a href=#1049 id=1049 data-nosnippet>1049</a>                .as_ref()
+<a href=#1050 id=1050 data-nosnippet>1050</a>                .map(|output| output.renderer.as_str()),
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="prelude-val">Some</span>(<span class="string">"imager-run-v1"</span>)
+<a href=#1052 id=1052 data-nosnippet>1052</a>        );
+<a href=#1053 id=1053 data-nosnippet>1053</a>
+<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="kw">let </span>specmode = schema
+<a href=#1055 id=1055 data-nosnippet>1055</a>            .arguments
+<a href=#1056 id=1056 data-nosnippet>1056</a>            .iter()
+<a href=#1057 id=1057 data-nosnippet>1057</a>            .find(|argument| argument.id == <span class="string">"specmode"</span>)
+<a href=#1058 id=1058 data-nosnippet>1058</a>            .expect(<span class="string">"specmode argument"</span>);
+<a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="macro">assert_eq!</span>(specmode.group, <span class="string">"Stages"</span>);
+<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(specmode.value_kind, UiValueKind::Choice));
+<a href=#1061 id=1061 data-nosnippet>1061</a>
+<a href=#1062 id=1062 data-nosnippet>1062</a>        <span class="kw">let </span>usepointing = schema
+<a href=#1063 id=1063 data-nosnippet>1063</a>            .arguments
+<a href=#1064 id=1064 data-nosnippet>1064</a>            .iter()
+<a href=#1065 id=1065 data-nosnippet>1065</a>            .find(|argument| argument.id == <span class="string">"usepointing"</span>)
+<a href=#1066 id=1066 data-nosnippet>1066</a>            .expect(<span class="string">"usepointing argument"</span>);
+<a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="macro">assert_eq!</span>(usepointing.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"false"</span>));
+<a href=#1068 id=1068 data-nosnippet>1068</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(usepointing.value_kind, UiValueKind::Bool));
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">let </span>UiArgumentParser::Toggle { true_flags, .. } = <span class="kw-2">&amp;</span>usepointing.parser <span class="kw">else </span>{
+<a href=#1070 id=1070 data-nosnippet>1070</a>            <span class="macro">panic!</span>(<span class="string">"usepointing should use a toggle parser"</span>);
+<a href=#1071 id=1071 data-nosnippet>1071</a>        };
+<a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="macro">assert!</span>(true_flags.contains(<span class="kw-2">&amp;</span><span class="string">"--usepointing"</span>.to_string()));
+<a href=#1073 id=1073 data-nosnippet>1073</a>
+<a href=#1074 id=1074 data-nosnippet>1074</a>        <span class="kw">let </span>savemodel = schema
+<a href=#1075 id=1075 data-nosnippet>1075</a>            .arguments
+<a href=#1076 id=1076 data-nosnippet>1076</a>            .iter()
+<a href=#1077 id=1077 data-nosnippet>1077</a>            .find(|argument| argument.id == <span class="string">"savemodel"</span>)
+<a href=#1078 id=1078 data-nosnippet>1078</a>            .expect(<span class="string">"savemodel argument"</span>);
+<a href=#1079 id=1079 data-nosnippet>1079</a>        <span class="macro">assert_eq!</span>(savemodel.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"none"</span>));
+<a href=#1080 id=1080 data-nosnippet>1080</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>savemodel.parser <span class="kw">else </span>{
+<a href=#1081 id=1081 data-nosnippet>1081</a>            <span class="macro">panic!</span>(<span class="string">"savemodel should use an option parser"</span>);
+<a href=#1082 id=1082 data-nosnippet>1082</a>        };
+<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"modelcolumn"</span>.to_string()));
+<a href=#1084 id=1084 data-nosnippet>1084</a>
+<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="kw">let </span>startmodel = schema
+<a href=#1086 id=1086 data-nosnippet>1086</a>            .arguments
+<a href=#1087 id=1087 data-nosnippet>1087</a>            .iter()
+<a href=#1088 id=1088 data-nosnippet>1088</a>            .find(|argument| argument.id == <span class="string">"startmodel"</span>)
+<a href=#1089 id=1089 data-nosnippet>1089</a>            .expect(<span class="string">"startmodel argument"</span>);
+<a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="macro">assert_eq!</span>(startmodel.value_kind, UiValueKind::Path);
+<a href=#1091 id=1091 data-nosnippet>1091</a>        <span class="kw">let </span>UiArgumentParser::Option { flags, .. } = <span class="kw-2">&amp;</span>startmodel.parser <span class="kw">else </span>{
+<a href=#1092 id=1092 data-nosnippet>1092</a>            <span class="macro">panic!</span>(<span class="string">"startmodel should use an option parser"</span>);
+<a href=#1093 id=1093 data-nosnippet>1093</a>        };
+<a href=#1094 id=1094 data-nosnippet>1094</a>        <span class="macro">assert!</span>(flags.contains(<span class="kw-2">&amp;</span><span class="string">"--startmodel"</span>.to_string()));
+<a href=#1095 id=1095 data-nosnippet>1095</a>
+<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="kw">let </span>outlierfile = schema
+<a href=#1097 id=1097 data-nosnippet>1097</a>            .arguments
+<a href=#1098 id=1098 data-nosnippet>1098</a>            .iter()
+<a href=#1099 id=1099 data-nosnippet>1099</a>            .find(|argument| argument.id == <span class="string">"outlierfile"</span>)
+<a href=#1100 id=1100 data-nosnippet>1100</a>            .expect(<span class="string">"outlierfile argument"</span>);
+<a href=#1101 id=1101 data-nosnippet>1101</a>        <span class="macro">assert_eq!</span>(outlierfile.value_kind, UiValueKind::Path);
+<a href=#1102 id=1102 data-nosnippet>1102</a>        <span class="kw">let </span>UiArgumentParser::Option { flags, .. } = <span class="kw-2">&amp;</span>outlierfile.parser <span class="kw">else </span>{
+<a href=#1103 id=1103 data-nosnippet>1103</a>            <span class="macro">panic!</span>(<span class="string">"outlierfile should use an option parser"</span>);
+<a href=#1104 id=1104 data-nosnippet>1104</a>        };
+<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="macro">assert!</span>(flags.contains(<span class="kw-2">&amp;</span><span class="string">"--outlierfile"</span>.to_string()));
+<a href=#1106 id=1106 data-nosnippet>1106</a>
+<a href=#1107 id=1107 data-nosnippet>1107</a>        <span class="kw">let </span>standard_mfs_acceleration = schema
+<a href=#1108 id=1108 data-nosnippet>1108</a>            .arguments
+<a href=#1109 id=1109 data-nosnippet>1109</a>            .iter()
+<a href=#1110 id=1110 data-nosnippet>1110</a>            .find(|argument| argument.id == <span class="string">"standard_mfs_acceleration"</span>)
+<a href=#1111 id=1111 data-nosnippet>1111</a>            .expect(<span class="string">"standard_mfs_acceleration argument"</span>);
+<a href=#1112 id=1112 data-nosnippet>1112</a>        <span class="macro">assert_eq!</span>(standard_mfs_acceleration.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"auto"</span>));
+<a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="macro">assert!</span>(standard_mfs_acceleration.advanced);
+<a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="kw">let </span>UiArgumentParser::Option { flags, choices, .. } = <span class="kw-2">&amp;</span>standard_mfs_acceleration.parser
+<a href=#1115 id=1115 data-nosnippet>1115</a>        <span class="kw">else </span>{
+<a href=#1116 id=1116 data-nosnippet>1116</a>            <span class="macro">panic!</span>(<span class="string">"standard_mfs_acceleration should use an option parser"</span>);
+<a href=#1117 id=1117 data-nosnippet>1117</a>        };
+<a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="macro">assert!</span>(flags.contains(<span class="kw-2">&amp;</span><span class="string">"--standard-mfs-acceleration"</span>.to_string()));
+<a href=#1119 id=1119 data-nosnippet>1119</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"metal"</span>.to_string()));
+<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"multi-cpu"</span>.to_string()));
+<a href=#1121 id=1121 data-nosnippet>1121</a>
+<a href=#1122 id=1122 data-nosnippet>1122</a>        <span class="kw">let </span>polarization = schema
+<a href=#1123 id=1123 data-nosnippet>1123</a>            .arguments
+<a href=#1124 id=1124 data-nosnippet>1124</a>            .iter()
+<a href=#1125 id=1125 data-nosnippet>1125</a>            .find(|argument| argument.id == <span class="string">"polarization"</span>)
+<a href=#1126 id=1126 data-nosnippet>1126</a>            .expect(<span class="string">"polarization argument"</span>);
+<a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>polarization.parser <span class="kw">else </span>{
+<a href=#1128 id=1128 data-nosnippet>1128</a>            <span class="macro">panic!</span>(<span class="string">"polarization should use an option parser"</span>);
+<a href=#1129 id=1129 data-nosnippet>1129</a>        };
+<a href=#1130 id=1130 data-nosnippet>1130</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"I"</span>.to_string()));
+<a href=#1131 id=1131 data-nosnippet>1131</a>        <span class="macro">assert!</span>(choices.contains(<span class="kw-2">&amp;</span><span class="string">"XX"</span>.to_string()));
+<a href=#1132 id=1132 data-nosnippet>1132</a>    }
+<a href=#1133 id=1133 data-nosnippet>1133</a>
+<a href=#1134 id=1134 data-nosnippet>1134</a>    <span class="attr">#[test]
+<a href=#1135 id=1135 data-nosnippet>1135</a>    </span><span class="kw">fn </span>schema_defaults_match_cli_runtime_defaults_for_advanced_controls() {
+<a href=#1136 id=1136 data-nosnippet>1136</a>        <span class="kw">let </span>schema = command_schema(<span class="string">"casars-imager"</span>);
+<a href=#1137 id=1137 data-nosnippet>1137</a>        <span class="kw">let </span>default_for = |id: <span class="kw-2">&amp;</span>str| {
+<a href=#1138 id=1138 data-nosnippet>1138</a>            schema
+<a href=#1139 id=1139 data-nosnippet>1139</a>                .arguments
+<a href=#1140 id=1140 data-nosnippet>1140</a>                .iter()
+<a href=#1141 id=1141 data-nosnippet>1141</a>                .find(|argument| argument.id == id)
+<a href=#1142 id=1142 data-nosnippet>1142</a>                .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"missing {id}"</span>))
+<a href=#1143 id=1143 data-nosnippet>1143</a>                .default
+<a href=#1144 id=1144 data-nosnippet>1144</a>                .as_deref()
+<a href=#1145 id=1145 data-nosnippet>1145</a>                .unwrap_or_default()
+<a href=#1146 id=1146 data-nosnippet>1146</a>                .to_string()
+<a href=#1147 id=1147 data-nosnippet>1147</a>        };
+<a href=#1148 id=1148 data-nosnippet>1148</a>
+<a href=#1149 id=1149 data-nosnippet>1149</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"gain"</span>), <span class="string">"0.1"</span>);
+<a href=#1150 id=1150 data-nosnippet>1150</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"pblimit"</span>), <span class="string">"0.2"</span>);
+<a href=#1151 id=1151 data-nosnippet>1151</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"minor_cycle_length"</span>), <span class="string">"1000"</span>);
+<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"minpsffraction"</span>), <span class="string">"0.05"</span>);
+<a href=#1153 id=1153 data-nosnippet>1153</a>        <span class="macro">assert_eq!</span>(default_for(<span class="string">"progress_detail"</span>), <span class="string">"basic"</span>);
+<a href=#1154 id=1154 data-nosnippet>1154</a>    }
+<a href=#1155 id=1155 data-nosnippet>1155</a>}
 </code></pre></div></section></main></body></html>

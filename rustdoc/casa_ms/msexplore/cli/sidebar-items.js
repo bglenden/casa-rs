@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["build_explore_spec_from_args","command_schema","run_env"]};
+window.SIDEBAR_ITEMS = {"fn":["build_explore_spec_from_args","command_schema","run_env","run_with_cli_args"]};
