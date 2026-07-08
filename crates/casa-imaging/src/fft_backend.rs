@@ -1395,7 +1395,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_keeps_dirty_f64_on_rustfft_because_apple_metal_f64_is_unavailable() {
+    fn auto_keeps_dirty_f64_on_rustfft_with_platform_reason() {
         let spec = Fft2Spec::centered_c2c(
             64,
             64,
@@ -1408,11 +1408,16 @@ mod tests {
         let selection = select_fft_backend(spec);
 
         assert_eq!(selection.selected_backend, FftBackendChoice::RustFft);
-        assert!(selection.fallback_used);
-        assert_eq!(
-            selection.reason,
-            "apple_metal_f64_unavailable_for_dirty_role_using_rustfft"
-        );
+        if cfg!(target_os = "macos") {
+            assert!(selection.fallback_used);
+            assert_eq!(
+                selection.reason,
+                "apple_metal_f64_unavailable_for_dirty_role_using_rustfft"
+            );
+        } else {
+            assert!(!selection.fallback_used);
+            assert_eq!(selection.reason, "rustfft_default");
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -1562,10 +1567,14 @@ mod tests {
             let capability = fft_backend_capability(backend, spec);
 
             assert!(!capability.supported, "{capability:?}");
-            assert!(
-                capability.reason.contains("f64") || capability.reason.contains("double2"),
-                "{capability:?}"
-            );
+            if backend == FftBackendChoice::MetalVkFft && !cfg!(target_os = "macos") {
+                assert_eq!(capability.reason, "metal_vkfft_adapter_not_integrated");
+            } else {
+                assert!(
+                    capability.reason.contains("f64") || capability.reason.contains("double2"),
+                    "{capability:?}"
+                );
+            }
         }
     }
 
