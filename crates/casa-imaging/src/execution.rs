@@ -18604,14 +18604,9 @@ impl StandardMfsDirtyCpuExecutor {
         Ok(())
     }
 
-    /// Return the reusable standard gridder.
-    pub(crate) fn gridder(&self) -> &StandardGridder {
-        &self.gridder
-    }
-
-    /// Return the accumulated dirty PSF and residual grids.
-    pub(crate) fn dirty_grids(&self) -> (&Array2<Complex64>, &Array2<Complex64>) {
-        self.workspace.dirty_grids()
+    /// Consume the executor and return the accumulated dirty PSF and residual grids.
+    pub(crate) fn into_dirty_grids(self) -> (Array2<Complex64>, Array2<Complex64>) {
+        self.workspace.into_dirty_grids()
     }
 
     /// Return the accumulated sample summary.
@@ -18806,9 +18801,9 @@ impl StandardMfsWorkspace {
         (&mut self.psf_grid, &mut self.residual_grid)
     }
 
-    /// Borrow the PSF and residual grids without clearing them.
-    pub(crate) fn dirty_grids(&self) -> (&Array2<Complex64>, &Array2<Complex64>) {
-        (&self.psf_grid, &self.residual_grid)
+    /// Consume the workspace and return the PSF and residual grids.
+    pub(crate) fn into_dirty_grids(self) -> (Array2<Complex64>, Array2<Complex64>) {
+        (self.psf_grid, self.residual_grid)
     }
 }
 

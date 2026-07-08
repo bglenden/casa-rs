@@ -289,6 +289,24 @@ pub(crate) struct StandardGridder {
     density_limit_y: isize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StandardGridderProductCorrection<'a> {
+    pub(crate) grid_shape: [usize; 2],
+    pub(crate) image_shape: [usize; 2],
+    pub(crate) image_blc: [usize; 2],
+    pub(crate) correction_x: &'a [f32],
+    pub(crate) correction_y: &'a [f32],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum GridCorrectionDescriptor<'a> {
+    SeparableStandard(StandardGridderProductCorrection<'a>),
+    #[allow(dead_code)]
+    Unsupported {
+        reason: &'static str,
+    },
+}
+
 impl StandardGridder {
     pub(crate) fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
         Self::new_with_padding(geometry, casa_composite_padded_len)
@@ -366,6 +384,20 @@ impl StandardGridder {
 
     pub(crate) fn grid_shape(&self) -> [usize; 2] {
         self.grid_shape
+    }
+
+    pub(crate) fn product_correction(&self) -> StandardGridderProductCorrection<'_> {
+        StandardGridderProductCorrection {
+            grid_shape: self.grid_shape,
+            image_shape: self.geometry.image_shape,
+            image_blc: self.image_blc,
+            correction_x: &self.correction_x,
+            correction_y: &self.correction_y,
+        }
+    }
+
+    pub(crate) fn product_correction_descriptor(&self) -> GridCorrectionDescriptor<'_> {
+        GridCorrectionDescriptor::SeparableStandard(self.product_correction())
     }
 
     pub(crate) fn geometry(&self) -> ImageGeometry {

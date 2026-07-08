@@ -407,6 +407,107 @@
           "contribution_to_total_saved_wall": 0.709793
         }
       ]
+    },
+    {
+      "workload_id": "wave3-standard-mfs-clark-heavy-wave2",
+      "issue_slice": "352-standard-mfs-dirty-product-gpu-residency",
+      "commit": "d7b7863ec+worktree",
+      "machine": "bg-macbook-air",
+      "mode": "dirty mfs",
+      "gridder": "standard",
+      "deconvolver": "clark",
+      "precision_policy": {
+        "baseline": "f32 rustfft",
+        "candidate": "f32 metal-mpsgraph requested"
+      },
+      "parallel_requested": "multi-cpu",
+      "parallel_effective": "fixed_tile grid_threads=4; dirty product finish reached shared f32 path",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 1264080,
+        "candidate": 1264080
+      },
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["standard_mfs"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": {
+        "baseline": 12.551,
+        "candidate": 12.459
+      },
+      "baseline_total_wall_s": 12.146231,
+      "candidate_total_wall_s": 13.176260,
+      "speedup": 0.921827,
+      "wall_reduction_fraction": -0.084802,
+      "correctness_status": "rust_only_skip_casa; same workload parameters and gridded_samples=197519040; resident-product unit tests compare GPU product finish against CPU f32 finish",
+      "max_abs": null,
+      "rms": null,
+      "notes": "GLENDENNING medium standard-MFS dirty workload. This is negative local GPU evidence: the fixed-tile MFS path now reaches the shared dirty product finisher and records dirty_product_fft_timing, but this host reports metal_device_available=false and the candidate falls back with dirty_product_gpu_resident_fallback reason=metal_mpsgraph_no_default_device. On a Mac with MPSGraph device availability, the same path requests the resident Metal product finish.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233605Z-wave3-standard-mfs-clark-heavy-wave2-f92b935e.json",
+        "candidate": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233445Z-wave3-standard-mfs-clark-heavy-wave2-12de237a.json",
+        "negative_control_before_fixed_tile_hook": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T232825Z-wave3-standard-mfs-clark-heavy-wave2-415f55ff.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 12.146231,
+          "candidate_s": 13.176260,
+          "delta_s": 1.030029,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": -0.084802,
+          "contribution_to_total_saved_wall": 1.0
+        },
+        {
+          "stage": "run_imaging",
+          "baseline_s": 7.279629,
+          "candidate_s": 7.341908,
+          "delta_s": 0.062279,
+          "baseline_wall_fraction": 0.599332,
+          "candidate_wall_fraction": 0.557207,
+          "saved_fraction_of_baseline_wall": -0.005127,
+          "contribution_to_total_saved_wall": 0.060463
+        },
+        {
+          "stage": "dirty_product_fft",
+          "baseline_s": 0.045552,
+          "candidate_s": 0.044984,
+          "delta_s": -0.000568,
+          "baseline_wall_fraction": 0.003750,
+          "candidate_wall_fraction": 0.003414,
+          "saved_fraction_of_baseline_wall": 0.000047,
+          "contribution_to_total_saved_wall": -0.000551
+        },
+        {
+          "stage": "prepare_plane_input",
+          "baseline_s": 9.569735,
+          "candidate_s": 9.623185,
+          "delta_s": 0.053450,
+          "baseline_wall_fraction": 0.787877,
+          "candidate_wall_fraction": 0.730343,
+          "saved_fraction_of_baseline_wall": -0.004401,
+          "contribution_to_total_saved_wall": 0.051892
+        },
+        {
+          "stage": "write_products",
+          "baseline_s": 0.067957,
+          "candidate_s": 0.069935,
+          "delta_s": 0.001978,
+          "baseline_wall_fraction": 0.005595,
+          "candidate_wall_fraction": 0.005308,
+          "saved_fraction_of_baseline_wall": -0.000163,
+          "contribution_to_total_saved_wall": 0.001920
+        }
+      ],
+      "gpu": {
+        "dirty_product_fft_requested_backend": "metal-mpsgraph",
+        "dirty_product_fft_selected_backend": "rustfft",
+        "dirty_product_fft_fallback_used": true,
+        "dirty_product_fft_total_ms": 44.984,
+        "dirty_product_gpu_resident_fallback_reason": "metal_mpsgraph_no_default_device",
+        "metal_device_available": false
+      }
     }
   ]
 }

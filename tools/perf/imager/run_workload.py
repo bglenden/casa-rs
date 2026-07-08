@@ -831,6 +831,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "imaging_source_read_ahead": [],
         "standard_mfs_source_read_ahead": [],
         "dirty_product_fft": [],
+        "dirty_product_gpu_resident": [],
+        "dirty_product_gpu_resident_fallback": [],
         "source_stream_consumer": [],
         "frontend_progress": [],
         "profile_runs": [],
@@ -881,6 +883,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["standard_mfs_source_read_ahead"].append(parsed)
         elif name == "dirty_product_fft_timing":
             buckets["dirty_product_fft"].append(parsed)
+        elif name == "dirty_product_gpu_resident":
+            buckets["dirty_product_gpu_resident"].append(parsed)
+        elif name == "dirty_product_gpu_resident_fallback":
+            buckets["dirty_product_gpu_resident_fallback"].append(parsed)
         elif name == "visibility_source_stream_consumer":
             buckets["source_stream_consumer"].append(parsed)
         elif name == "frontend":
@@ -1014,6 +1020,12 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         and entry.get("fields", {}).get("mode") is not None
     ]
     dirty_product_fft = last_fields(buckets.get("dirty_product_fft", []))
+    dirty_product_gpu_resident = last_fields(
+        buckets.get("dirty_product_gpu_resident", [])
+    )
+    dirty_product_gpu_fallback = last_fields(
+        buckets.get("dirty_product_gpu_resident_fallback", [])
+    )
     profile = last_fields(buckets.get("profile_runs", []))
     single_plane = last_fields(buckets.get("single_plane_execution_plan", []))
     spectral_plan = last_fields(buckets.get("spectral_slab_plans", []))
@@ -1140,6 +1152,17 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "dirty_product_fft_requested_backend": dirty_product_fft.get("requested_backend"),
         "dirty_product_fft_fallback_used": dirty_product_fft.get("fallback_used"),
         "dirty_product_fft_total_ms": dirty_product_fft.get("total_ms"),
+        "dirty_product_gpu_resident_products": dirty_product_gpu_resident.get("products"),
+        "dirty_product_gpu_resident_selected_backend": dirty_product_gpu_resident.get(
+            "selected_backend"
+        ),
+        "dirty_product_gpu_resident_postprocess_ms": dirty_product_gpu_resident.get(
+            "postprocess_ms"
+        ),
+        "dirty_product_gpu_resident_total_ms": dirty_product_gpu_resident.get("total_ms"),
+        "dirty_product_gpu_resident_fallback_reason": dirty_product_gpu_fallback.get(
+            "reason"
+        ),
         "metal_device_available": runtime.get("metal_device_available"),
         "metal_grouped_input_cache": runtime.get("metal_grouped_input_cache"),
         "cube_per_plane_backend": cube_per_plane_backend.get("selected_backend"),

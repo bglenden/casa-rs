@@ -91,9 +91,9 @@ use fft_backend::{
     select_fft_backend,
 };
 use gridder::{
-    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjectSamplePlan,
-    ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason,
-    WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
+    GridCorrectionDescriptor, PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT,
+    ScreenProjectSamplePlan, ScreenProjector, StandardGridder, StandardMfsTapCensus,
+    StandardMfsTapSkipReason, WProjectSamplePlan, WProjector, hetarray_screen_conv_size,
 };
 pub use weighting::{
     StandardMfsStreamingWeightingPlan, accumulate_standard_mfs_density_row_from_arrays,
@@ -1582,12 +1582,6 @@ pub fn finish_standard_mfs_dirty_grid_results(
     if grid_results.is_empty() {
         return Ok(Vec::new());
     }
-    if grid_results.len() <= 1 {
-        return grid_results
-            .into_iter()
-            .map(finish_standard_mfs_dirty_grid_result_single)
-            .collect();
-    }
     let first_shape = grid_results[0].psf_grid.shape().to_vec();
     let uniform_shape = grid_results.iter().all(|result| {
         result.psf_grid.shape() == first_shape.as_slice()
@@ -1687,6 +1681,29 @@ fn finish_standard_mfs_dirty_grid_results_f32_streaming(
             break;
         }
 
+        #[cfg(all(target_os = "macos", not(coverage)))]
+        if let Some(chunk_timing) = finish_standard_mfs_dirty_grid_results_apple_gpu_resident(
+            &mut chunk_metadata,
+            &chunk_inputs,
+            &mut output,
+        )? {
+            let chunk_total = chunk_timing.total;
+            if !saw_chunk {
+                fft_timing.selection = chunk_timing.selection;
+                saw_chunk = true;
+            }
+            fft_timing.plan_cache_hit &= chunk_timing.plan_cache_hit;
+            fft_timing.plan += chunk_timing.plan;
+            fft_timing.pack += chunk_timing.pack;
+            fft_timing.transfer_to_device += chunk_timing.transfer_to_device;
+            fft_timing.exec += chunk_timing.exec;
+            fft_timing.device_exec += chunk_timing.device_exec;
+            fft_timing.transfer_from_device += chunk_timing.transfer_from_device;
+            fft_timing.sync += chunk_timing.sync;
+            fft_timing.total += chunk_total;
+            continue;
+        }
+
         let chunk_fft_started = Instant::now();
         let (mut chunk_outputs, chunk_timing) = centered_ifft2_batch_f64_to_f32_timed_with_backend(
             &chunk_inputs,
@@ -1762,6 +1779,137 @@ fn finish_standard_mfs_dirty_grid_results_f32_streaming(
         transform_chunk_size,
     );
     Ok(output)
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn finish_standard_mfs_dirty_grid_results_apple_gpu_resident(
+    chunk_metadata: &mut [StandardMfsDirtyGridProductMetadata],
+    chunk_inputs: &[Array2<Complex64>],
+    output: &mut Vec<DirtyImagingResult>,
+) -> Result<Option<FftTiming>, ImagingError> {
+    let Some(first_meta) = chunk_metadata.first() else {
+        return Ok(None);
+    };
+    if chunk_inputs.len() != chunk_metadata.len() * 2 {
+        return Ok(None);
+    }
+    let geometry = first_meta.request.geometry;
+    if !chunk_metadata
+        .iter()
+        .all(|meta| meta.request.geometry == geometry)
+    {
+        return Ok(None);
+    }
+    if !apple_gpu_dirty_products_allowed_by_fft_backend_env() {
+        return Ok(None);
+    }
+    let gridder = StandardGridder::new(geometry)?;
+    let normalization_sumwts: Vec<f32> = chunk_metadata
+        .iter()
+        .map(|meta| meta.accumulation.normalization_sumwt as f32)
+        .collect();
+
+    let correction = match gridder.product_correction_descriptor() {
+        GridCorrectionDescriptor::SeparableStandard(correction) => correction,
+        GridCorrectionDescriptor::Unsupported { reason } => {
+            emit_dirty_product_gpu_resident_fallback(reason);
+            return Ok(None);
+        }
+    };
+
+    let (products, timing, postprocess_elapsed) =
+        match crate::apple_fft::dirty_standard_products_f64_to_f32_batch(
+            chunk_inputs,
+            correction,
+            &normalization_sumwts,
+        ) {
+            Ok(result) => result,
+            Err(reason) => {
+                emit_dirty_product_gpu_resident_fallback(reason);
+                return Ok(None);
+            }
+        };
+    if products.len() != chunk_metadata.len() {
+        return Err(ImagingError::Normalization(format!(
+            "resident dirty product path returned {} products for {} metadata rows",
+            products.len(),
+            chunk_metadata.len()
+        )));
+    }
+
+    let per_transform_elapsed = timing.total / chunk_inputs.len() as u32;
+    let per_product_postprocess = postprocess_elapsed / products.len() as u32;
+    for (meta, product) in chunk_metadata.iter_mut().zip(products) {
+        let finish_started = Instant::now();
+        let total_base = meta.stage_timings.total;
+        let max_abs_w_lambda = meta.accumulation.max_abs_w_lambda;
+        meta.stage_timings.psf_fft += per_transform_elapsed;
+        meta.stage_timings.residual_fft += per_transform_elapsed;
+        let postprocess_half = per_product_postprocess / 2;
+        meta.stage_timings.psf_image_correction += postprocess_half;
+        meta.stage_timings.psf_normalize += postprocess_half;
+        meta.stage_timings.residual_image_correction += postprocess_half;
+        meta.stage_timings.residual_normalize += postprocess_half;
+        let psf_state =
+            psf_state_from_apple_dirty_product(product.psf, product.psf_peak, meta.accumulation);
+        output.push(dirty_imaging_result_from_products(
+            meta.request.clone(),
+            psf_state,
+            product.residual,
+            max_abs_w_lambda,
+            meta.stage_timings,
+            finish_started,
+            total_base,
+        )?);
+    }
+
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "dirty_product_gpu_resident products={} selected_backend={} postprocess_ms={:.3} total_ms={:.3}",
+            chunk_metadata.len(),
+            timing.selection.selected_backend,
+            profile::millis(postprocess_elapsed),
+            profile::millis(timing.total),
+        );
+    }
+    Ok(Some(timing))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn emit_dirty_product_gpu_resident_fallback(reason: &str) {
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!("dirty_product_gpu_resident_fallback reason={reason}");
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn psf_state_from_apple_dirty_product(
+    psf: Array2<f32>,
+    psf_peak: f32,
+    accumulation: StandardMfsDirtyAccumulation,
+) -> PsfState {
+    PsfState {
+        psf,
+        normalization_sumwt: accumulation.normalization_sumwt as f32,
+        reported_sumwt: accumulation.reported_sumwt as f32,
+        psf_peak,
+        gridded_samples: accumulation.gridded_samples,
+        skipped_samples: accumulation.skipped_samples,
+    }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn apple_gpu_dirty_products_allowed_by_fft_backend_env() -> bool {
+    match env::var("CASA_RS_IMAGING_FFT_BACKEND") {
+        Ok(value) => value.parse::<FftBackendChoice>().is_ok_and(|choice| {
+            matches!(
+                choice,
+                FftBackendChoice::Auto | FftBackendChoice::MetalMpsGraph
+            )
+        }),
+        Err(env::VarError::NotPresent) => true,
+        Err(env::VarError::NotUnicode(_)) => false,
+    }
 }
 
 fn finish_standard_mfs_dirty_grid_result_single(
@@ -2022,136 +2170,46 @@ impl StandardMfsDirtyAccumulator {
         if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
             return Err(ImagingError::NoUsableSamples);
         }
-        let (psf_grid, residual_grid) = self.executor.dirty_grids();
-        let psf_fft_started = Instant::now();
-        let raw_psf = centered_ifft2_f64(psf_grid);
-        self.stage_timings.psf_fft += psf_fft_started.elapsed();
-        let psf_normalize_started = Instant::now();
-        let mut psf = self
-            .executor
-            .gridder()
-            .corrected_image_from_grid_f64(&raw_psf);
-        psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
-        let psf_peak = peak_abs_value(&psf);
-        if !(psf_peak.is_finite() && psf_peak > 0.0) {
-            return Err(ImagingError::Normalization(
-                "PSF peak is non-finite or zero".to_string(),
-            ));
-        }
-        psf.mapv_inplace(|value| value / psf_peak);
-        self.stage_timings.psf_normalize += psf_normalize_started.elapsed();
-
-        let residual_fft_started = Instant::now();
-        let raw_residual = centered_ifft2_f64(residual_grid);
-        self.stage_timings.residual_fft += residual_fft_started.elapsed();
-        let residual_normalize_started = Instant::now();
-        let mut residual = self
-            .executor
-            .gridder()
-            .corrected_image_from_grid_f64(&raw_residual);
-        residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
-        self.stage_timings.residual_normalize += residual_normalize_started.elapsed();
-
-        let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
-            &psf,
-            self.request.geometry.cell_size_rad,
-            self.request.clean.psf_cutoff,
-        );
         let [nx, ny] = self.request.geometry.image_shape;
-        let model = Array2::<f32>::zeros((nx, ny));
-        let clean_mask_pixels = self
-            .request
-            .clean_mask
-            .as_ref()
-            .map(|mask| mask.iter().filter(|value| **value).count())
-            .unwrap_or(nx * ny);
-        let initial_peak = peak_abs_value_masked(&residual, self.request.clean_mask.as_ref());
-        let mut warnings = Vec::new();
-        let fractional_bandwidth = (self.request.selected_frequency_range_hz[1]
-            - self.request.selected_frequency_range_hz[0])
-            / self.request.reffreq_hz;
-        if fractional_bandwidth > 0.1 {
-            warnings.push(format!(
-                "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
-                fractional_bandwidth
-            ));
-        }
-        let w_phase_metric =
-            accumulation.max_abs_w_lambda * self.request.geometry.field_of_view_rad().powi(2);
-        if w_phase_metric > 0.1 {
-            warnings.push(format!(
-                "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
-                w_phase_metric
-            ));
-        }
-
-        let beam_fit_started = Instant::now();
-        let BeamFitOutcome {
-            beam,
-            warnings: beam_warnings,
-            attempts: beam_fit_attempts,
-            cutoff_used: beam_fit_cutoff_used,
-            debug: beam_fit_debug,
-        } = fit_beam_from_psf(
-            &psf,
-            self.request.geometry.cell_size_rad,
-            self.request.clean.psf_cutoff,
-        );
-        self.stage_timings.beam_fit += beam_fit_started.elapsed();
-        let restore_started = Instant::now();
-        let restored_model = restore_model(&model, self.request.geometry.cell_size_rad, beam);
-        self.stage_timings.restore += restore_started.elapsed();
-        let restored_image = &restored_model + &residual;
-
-        warnings.extend(beam_warnings);
         self.stage_timings.total = self.total_started.elapsed();
+        let request = ImagingRequest {
+            geometry: self.request.geometry,
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: self.request.plane_stokes,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: self.request.reffreq_hz,
+            selected_frequency_range_hz: self.request.selected_frequency_range_hz,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: self.request.clean,
+            clean_mask: self.request.clean_mask,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let (psf_grid, residual_grid) = self.executor.into_dirty_grids();
+        let dirty = finish_standard_mfs_dirty_grid_result(StandardMfsDirtyGridResult::new(
+            request,
+            psf_grid,
+            residual_grid,
+            accumulation,
+            self.stage_timings,
+        ))?;
+        let model = expand_plane(&Array2::<f32>::zeros((nx, ny)));
+        let image = dirty.residual.clone();
 
         Ok(ImagingResult {
-            psf: expand_plane(&psf),
-            residual: expand_plane(&residual),
-            model: expand_plane(&model),
-            image: expand_plane(&restored_image),
-            sumwt: expand_scalar(accumulation.reported_sumwt as f32),
-            beam,
-            diagnostics: ImagingDiagnostics {
-                warnings,
-                gridded_samples: accumulation.gridded_samples,
-                skipped_samples: accumulation.skipped_samples,
-                normalization_sumwt: accumulation.normalization_sumwt as f32,
-                reported_sumwt: accumulation.reported_sumwt as f32,
-                psf_peak_normalization: psf_peak,
-                major_cycles: 0,
-                minor_iterations: 0,
-                clean_stop_reason: None,
-                minor_cycle_traces: Vec::new(),
-                initial_residual_peak_jy_per_beam: initial_peak,
-                final_residual_peak_jy_per_beam: initial_peak,
-                max_abs_w_lambda: accumulation.max_abs_w_lambda,
-                fractional_bandwidth,
-                max_psf_sidelobe_level,
-                final_cycle_threshold_jy_per_beam: self.request.clean.threshold_jy_per_beam,
-                clean_mask_pixels,
-                beam_fit_attempts,
-                beam_fit_cutoff_used,
-                beam_fit_debug,
-                mosaic_weight_image: None,
-                stage_timings: self.stage_timings,
-            },
-            compatibility: CompatibilityMetadata {
-                axis_order: [
-                    AxisKind::RightAscension,
-                    AxisKind::Declination,
-                    AxisKind::Stokes,
-                    AxisKind::Frequency,
-                ],
-                plane_stokes: self.request.plane_stokes,
-                reffreq_hz: self.request.reffreq_hz,
-                channel_frequencies_hz: vec![self.request.reffreq_hz],
-                psf_units: String::new(),
-                residual_units: "Jy/beam".to_string(),
-                model_units: "Jy/pixel".to_string(),
-                image_units: "Jy/beam".to_string(),
-            },
+            psf: dirty.psf,
+            residual: dirty.residual,
+            model,
+            image,
+            sumwt: dirty.sumwt,
+            beam: dirty.beam,
+            diagnostics: dirty.diagnostics,
+            compatibility: dirty.compatibility,
         })
     }
 }
@@ -7799,9 +7857,34 @@ fn dirty_grids_to_psf_and_residual_owned(
         return Err(ImagingError::NoUsableSamples);
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if let Some((psf_state, residual, timing)) = dirty_grids_to_psf_and_residual_apple_gpu_resident(
+        gridder,
+        &psf_grid,
+        &residual_grid,
+        accumulation,
+        stage_timings,
+    )? {
+        maybe_emit_dirty_f32_batch_fft_timing(
+            &timing,
+            psf_grid.shape()[0],
+            psf_grid.shape()[1],
+            2,
+            2,
+        );
+        return Ok((psf_state, residual));
+    }
+
     let (psf_grid, residual_grid) =
         match centered_ifft2_dirty_f64_pair_to_f32(psf_grid, residual_grid) {
             Ok((raw_psf, raw_residual, fft_timing)) => {
+                maybe_emit_dirty_f32_batch_fft_timing(
+                    &fft_timing,
+                    raw_psf.shape()[0],
+                    raw_psf.shape()[1],
+                    2,
+                    2,
+                );
                 let psf_fft_elapsed = fft_timing.total / 2;
                 return dirty_f32_raw_grids_to_psf_and_residual(
                     gridder,
@@ -7886,6 +7969,75 @@ fn dirty_grids_to_psf_and_residual_owned(
         },
         residual,
     ))
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn dirty_grids_to_psf_and_residual_apple_gpu_resident(
+    gridder: &StandardGridder,
+    psf_grid: &Array2<Complex64>,
+    residual_grid: &Array2<Complex64>,
+    accumulation: StandardMfsDirtyAccumulation,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Option<(PsfState, Array2<f32>, FftTiming)>, ImagingError> {
+    if !imaging_demote_dirty_f64_fft_to_f32()
+        || !apple_gpu_dirty_products_allowed_by_fft_backend_env()
+    {
+        return Ok(None);
+    }
+    let correction = match gridder.product_correction_descriptor() {
+        GridCorrectionDescriptor::SeparableStandard(correction) => correction,
+        GridCorrectionDescriptor::Unsupported { reason } => {
+            emit_dirty_product_gpu_resident_fallback(reason);
+            return Ok(None);
+        }
+    };
+    let inputs = [psf_grid.clone(), residual_grid.clone()];
+    let normalization_sumwts = [accumulation.normalization_sumwt as f32];
+    let (mut products, timing, postprocess_elapsed) =
+        match crate::apple_fft::dirty_standard_products_f64_to_f32_batch(
+            &inputs,
+            correction,
+            &normalization_sumwts,
+        ) {
+            Ok(result) => result,
+            Err(reason) => {
+                emit_dirty_product_gpu_resident_fallback(reason);
+                return Ok(None);
+            }
+        };
+    let product = products.pop().ok_or_else(|| {
+        ImagingError::Normalization("resident dirty product path returned no products".to_string())
+    })?;
+    if !products.is_empty() {
+        return Err(ImagingError::Normalization(format!(
+            "resident dirty product path returned {} extra products",
+            products.len()
+        )));
+    }
+
+    let psf_fft_elapsed = timing.total / 2;
+    stage_timings.psf_fft += psf_fft_elapsed;
+    stage_timings.residual_fft += timing.total.saturating_sub(psf_fft_elapsed);
+    let postprocess_half = postprocess_elapsed / 2;
+    stage_timings.psf_image_correction += postprocess_half;
+    stage_timings.psf_normalize += postprocess_half;
+    stage_timings.residual_image_correction += postprocess_half;
+    stage_timings.residual_normalize += postprocess_half;
+
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "dirty_product_gpu_resident products=1 selected_backend={} postprocess_ms={:.3} total_ms={:.3}",
+            timing.selection.selected_backend,
+            profile::millis(postprocess_elapsed),
+            profile::millis(timing.total),
+        );
+    }
+
+    Ok(Some((
+        psf_state_from_apple_dirty_product(product.psf, product.psf_peak, accumulation),
+        product.residual,
+        timing,
+    )))
 }
 
 fn dirty_f32_raw_grids_to_psf_and_residual(
@@ -30720,6 +30872,8 @@ mod tests {
     use ndarray::{Array2, Array4, s};
     use num_complex::{Complex32, Complex64};
     use serial_test::serial;
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    use std::ffi::OsString;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -30732,28 +30886,29 @@ mod tests {
         MultiscaleCandidate, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
         PrimaryBeamProductRequest, PrimaryBeamWeightSample, PsfState, SinglePlaneGridderMetadata,
         SinglePlaneVisibilityBlock, StandardGridder, StandardMfsBackendSelection,
-        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
-        StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
-        StandardMfsMinorCycleProgressReporter, StandardMfsModelPredictor, StandardMfsPlan,
-        StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-        StandardMfsPlannedWeightedSampleRunBlock, StandardMfsProgressCallback,
-        StandardMfsProgressContext, StandardMfsProgressPhase, StandardMfsWeightedSample,
-        VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange, WProjectMetalSample,
-        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
-        add_shifted_kernel_with_support, apply_chauvenet_clipping, apply_weighting,
-        build_direct_components, build_direct_pixel_coordinates, build_image_coordinate_system,
-        build_image_spectral_coordinate, build_multiscale_scale_masks,
-        casa_multiscale_divergence_stop_reason, clean_cycle_threshold, clean_mask_image_product,
-        clean_mask_pixel_count, collapse_primary_beam_weight_samples,
+        StandardMfsDirtyAccumulation, StandardMfsDirtyAccumulator,
+        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
+        StandardMfsMinorCycleBackend, StandardMfsMinorCycleProgressReporter,
+        StandardMfsModelPredictor, StandardMfsPlan, StandardMfsPlannedSampleBuilder,
+        StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+        StandardMfsProgressCallback, StandardMfsProgressContext, StandardMfsProgressPhase,
+        StandardMfsWeightedSample, VisibilityBatch, VisibilityMetadataBatch, VisibilitySampleRange,
+        WProjectMetalSample, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, add_shifted_kernel_with_support, apply_chauvenet_clipping,
+        apply_weighting, build_direct_components, build_direct_pixel_coordinates,
+        build_image_coordinate_system, build_image_spectral_coordinate,
+        build_multiscale_scale_masks, casa_multiscale_divergence_stop_reason,
+        centered_ifft2_batch_f64_to_f32_timed_with_backend, clean_cycle_threshold,
+        clean_mask_image_product, clean_mask_pixel_count, collapse_primary_beam_weight_samples,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        extract_mfs_plane_product, kernel_nonzero_support, make_multiscale_kernel, mean_stddev,
-        mfs_image_product_peak_abs_masked, minor_cycle_stop_reason,
-        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_primary_beam_product_from_weight_product, mosaic_projector_sampling,
-        normalized_weighted_primary_beam_product, parse_standard_mfs_backend_selection,
-        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked,
-        peak_location_masked_in_window, phase_rotate_visibility,
+        dirty_f32_raw_grids_to_psf_and_residual, extract_mfs_plane_product, kernel_nonzero_support,
+        make_multiscale_kernel, mean_stddev, mfs_image_product_peak_abs_masked,
+        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
+        mosaic_pointing_pixel_inside_image, mosaic_primary_beam_product_from_weight_product,
+        mosaic_projector_sampling, normalized_weighted_primary_beam_product,
+        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
+        peak_location_masked, peak_location_masked_in_window, phase_rotate_visibility,
         prepare_standard_mfs_planned_sample_run_block_clean_plane_with_execution_config,
         primary_beam_correct_alpha_product, primary_beam_correct_image_product,
         primary_beam_limited_product, primary_beam_output_products, primary_beam_product,
@@ -30770,6 +30925,7 @@ mod tests {
         trace_cube_channel_residual_refresh_model_channel_lambda, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+    use super::{FftBackendChoice, FftUseCase};
     #[cfg(all(target_os = "macos", not(coverage)))]
     use super::{
         build_multiscale_state, compute_dirty_psf_and_residual_standard_metal, fft_convolve_real,
@@ -30777,6 +30933,38 @@ mod tests {
         run_hogbom_minor_cycle_cpu, run_hogbom_minor_cycle_metal, run_multiscale_cotton_schwab,
         run_multiscale_minor_cycle_metal, standard_mfs_metal_device_available,
     };
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    struct EnvGuard {
+        name: &'static str,
+        previous: Option<OsString>,
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    impl EnvGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(name);
+            // SAFETY: tests using this guard run serially when they alter imaging
+            // policy variables, and the original value is restored on drop.
+            unsafe {
+                std::env::set_var(name, value);
+            }
+            Self { name, previous }
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: this restores the process environment saved by `set`.
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var(self.name, value),
+                    None => std::env::remove_var(self.name),
+                }
+            }
+        }
+    }
 
     #[test]
     fn standard_mfs_thread_count_parser_accepts_numeric_and_auto_values() {
@@ -30787,6 +30975,303 @@ mod tests {
         assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
         assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn apple_gpu_resident_dirty_product_matches_cpu_f32_finish() {
+        if !crate::apple_fft::mpsgraph_f32_available() {
+            return;
+        }
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-6, 1.0e-6],
+        };
+        let gridder = StandardGridder::new(geometry).expect("standard gridder");
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut second_psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        let mut second_residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+        psf_grid[(0, 0)] = Complex64::new((grid_nx * grid_ny) as f64, 0.0);
+        psf_grid[(3, 5)] = Complex64::new(0.25, -0.125);
+        residual_grid[(0, 0)] = Complex64::new(0.5 * (grid_nx * grid_ny) as f64, 0.0);
+        residual_grid[(7, 2)] = Complex64::new(-0.75, 0.375);
+        second_psf_grid[(0, 0)] = Complex64::new(1.25 * (grid_nx * grid_ny) as f64, 0.0);
+        second_psf_grid[(5, 1)] = Complex64::new(-0.5, 0.25);
+        second_residual_grid[(0, 0)] = Complex64::new(-0.25 * (grid_nx * grid_ny) as f64, 0.0);
+        second_residual_grid[(2, 9)] = Complex64::new(0.625, -0.3125);
+        let accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 2.0,
+            reported_sumwt: 2.0,
+            gridded_samples: 8,
+            skipped_samples: 1,
+            max_abs_w_lambda: 0.0,
+        };
+        let second_accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 3.0,
+            reported_sumwt: 3.0,
+            gridded_samples: 13,
+            skipped_samples: 2,
+            max_abs_w_lambda: 0.0,
+        };
+
+        let expected_inputs = [
+            (psf_grid.clone(), residual_grid.clone(), accumulation),
+            (
+                second_psf_grid.clone(),
+                second_residual_grid.clone(),
+                second_accumulation,
+            ),
+        ];
+        let mut expected_products = Vec::new();
+        for (expected_psf_grid, expected_residual_grid, expected_accumulation) in expected_inputs {
+            let raw_outputs = centered_ifft2_batch_f64_to_f32_timed_with_backend(
+                &[expected_psf_grid, expected_residual_grid],
+                FftUseCase::DirtyPsfResidual,
+                FftBackendChoice::RustFft,
+            )
+            .0;
+            let mut cpu_timings = ImagingStageTimings::default();
+            expected_products.push(
+                dirty_f32_raw_grids_to_psf_and_residual(
+                    &gridder,
+                    &raw_outputs[0],
+                    &raw_outputs[1],
+                    expected_accumulation,
+                    &mut cpu_timings,
+                    Duration::ZERO,
+                    Duration::ZERO,
+                )
+                .expect("CPU dirty f32 finish"),
+            );
+        }
+
+        let (products, timing, postprocess_elapsed) =
+            crate::apple_fft::dirty_standard_products_f64_to_f32_batch(
+                &[
+                    psf_grid,
+                    residual_grid,
+                    second_psf_grid,
+                    second_residual_grid,
+                ],
+                gridder.product_correction(),
+                &[
+                    accumulation.normalization_sumwt as f32,
+                    second_accumulation.normalization_sumwt as f32,
+                ],
+            )
+            .expect("resident Apple dirty product finish");
+        assert_eq!(products.len(), 2);
+        assert_eq!(
+            timing.selection.selected_backend,
+            FftBackendChoice::MetalMpsGraph
+        );
+        assert!(postprocess_elapsed > Duration::ZERO);
+        for (product_index, (actual, (expected_psf, expected_residual))) in
+            products.iter().zip(expected_products.iter()).enumerate()
+        {
+            assert!(
+                (actual.psf_peak - expected_psf.psf_peak).abs() < 2.0e-4,
+                "psf peak mismatch product={product_index} gpu={} cpu={}",
+                actual.psf_peak,
+                expected_psf.psf_peak
+            );
+            for (index, (&gpu, &cpu)) in actual.psf.iter().zip(expected_psf.psf.iter()).enumerate()
+            {
+                assert!(
+                    (gpu - cpu).abs() < 2.0e-4,
+                    "psf mismatch product={product_index} at {index}: gpu={gpu} cpu={cpu}"
+                );
+            }
+            for (index, (&gpu, &cpu)) in actual
+                .residual
+                .iter()
+                .zip(expected_residual.iter())
+                .enumerate()
+            {
+                assert!(
+                    (gpu - cpu).abs() < 2.0e-4,
+                    "residual mismatch product={product_index} at {index}: gpu={gpu} cpu={cpu}"
+                );
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial]
+    fn shared_dirty_grid_finisher_uses_resident_f32_policy_without_product_changes() {
+        if !crate::apple_fft::mpsgraph_f32_available() {
+            return;
+        }
+        let _precision = EnvGuard::set("CASA_RS_IMAGING_FFT_PRECISION", "f32");
+        let _backend = EnvGuard::set("CASA_RS_IMAGING_FFT_BACKEND", "metal-mpsgraph");
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-6, 1.0e-6],
+        };
+        let gridder = StandardGridder::new(geometry).expect("standard gridder");
+        let [grid_nx, grid_ny] = gridder.grid_shape();
+        let request = |stokes| ImagingRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: stokes,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: dirty_clean_config(0.35),
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let make_grids = |dc: f64, feature: (usize, usize), value: Complex64| {
+            let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+            let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+            psf_grid[(0, 0)] = Complex64::new(dc * (grid_nx * grid_ny) as f64, 0.0);
+            psf_grid[feature] = value;
+            residual_grid[(0, 0)] = Complex64::new(0.4 * dc * (grid_nx * grid_ny) as f64, 0.0);
+            residual_grid[(feature.0 / 2, (feature.1 + 3) % grid_ny)] =
+                Complex64::new(-value.re, value.im);
+            (psf_grid, residual_grid)
+        };
+        let first_accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 2.0,
+            reported_sumwt: 2.0,
+            gridded_samples: 5,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        let second_accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 3.0,
+            reported_sumwt: 3.0,
+            gridded_samples: 7,
+            skipped_samples: 1,
+            max_abs_w_lambda: 0.0,
+        };
+        let (first_psf_grid, first_residual_grid) =
+            make_grids(1.0, (3, 5), Complex64::new(0.25, -0.125));
+        let (second_psf_grid, second_residual_grid) =
+            make_grids(1.3, (5, 7), Complex64::new(-0.5, 0.25));
+
+        let expected_inputs = [
+            (
+                first_psf_grid.clone(),
+                first_residual_grid.clone(),
+                first_accumulation,
+            ),
+            (
+                second_psf_grid.clone(),
+                second_residual_grid.clone(),
+                second_accumulation,
+            ),
+        ];
+        let mut expected_products = Vec::new();
+        for (expected_psf_grid, expected_residual_grid, expected_accumulation) in expected_inputs {
+            let raw_outputs = centered_ifft2_batch_f64_to_f32_timed_with_backend(
+                &[expected_psf_grid, expected_residual_grid],
+                FftUseCase::DirtyPsfResidual,
+                FftBackendChoice::RustFft,
+            )
+            .0;
+            let mut cpu_timings = ImagingStageTimings::default();
+            expected_products.push(
+                dirty_f32_raw_grids_to_psf_and_residual(
+                    &gridder,
+                    &raw_outputs[0],
+                    &raw_outputs[1],
+                    expected_accumulation,
+                    &mut cpu_timings,
+                    Duration::ZERO,
+                    Duration::ZERO,
+                )
+                .expect("CPU dirty f32 finish"),
+            );
+        }
+
+        let results = super::finish_standard_mfs_dirty_grid_results(vec![
+            super::StandardMfsDirtyGridResult::new(
+                request(PlaneStokes::XX),
+                first_psf_grid.clone(),
+                first_residual_grid.clone(),
+                first_accumulation,
+                ImagingStageTimings::default(),
+            ),
+            super::StandardMfsDirtyGridResult::new(
+                request(PlaneStokes::YY),
+                second_psf_grid,
+                second_residual_grid,
+                second_accumulation,
+                ImagingStageTimings::default(),
+            ),
+        ])
+        .expect("shared dirty finisher");
+        assert_eq!(results.len(), 2);
+        for (product_index, (actual, (expected_psf, expected_residual))) in
+            results.iter().zip(expected_products.iter()).enumerate()
+        {
+            for (index, (&gpu, &cpu)) in actual
+                .psf
+                .iter()
+                .zip(super::expand_plane(&expected_psf.psf).iter())
+                .enumerate()
+            {
+                assert!(
+                    (gpu - cpu).abs() < 2.0e-4,
+                    "shared finisher psf mismatch product={product_index} at {index}: gpu={gpu} cpu={cpu}"
+                );
+            }
+            for (index, (&gpu, &cpu)) in actual
+                .residual
+                .iter()
+                .zip(super::expand_plane(expected_residual).iter())
+                .enumerate()
+            {
+                assert!(
+                    (gpu - cpu).abs() < 2.0e-4,
+                    "shared finisher residual mismatch product={product_index} at {index}: gpu={gpu} cpu={cpu}"
+                );
+            }
+        }
+
+        let single_result =
+            super::finish_standard_mfs_dirty_grid_result(super::StandardMfsDirtyGridResult::new(
+                request(PlaneStokes::XX),
+                first_psf_grid,
+                first_residual_grid,
+                first_accumulation,
+                ImagingStageTimings::default(),
+            ))
+            .expect("single shared dirty finisher");
+        let (single_expected_psf, single_expected_residual) = &expected_products[0];
+        for (index, (&gpu, &cpu)) in single_result
+            .psf
+            .iter()
+            .zip(super::expand_plane(&single_expected_psf.psf).iter())
+            .enumerate()
+        {
+            assert!(
+                (gpu - cpu).abs() < 2.0e-4,
+                "single shared finisher psf mismatch at {index}: gpu={gpu} cpu={cpu}"
+            );
+        }
+        for (index, (&gpu, &cpu)) in single_result
+            .residual
+            .iter()
+            .zip(super::expand_plane(single_expected_residual).iter())
+            .enumerate()
+        {
+            assert!(
+                (gpu - cpu).abs() < 2.0e-4,
+                "single shared finisher residual mismatch at {index}: gpu={gpu} cpu={cpu}"
+            );
+        }
     }
 
     #[test]

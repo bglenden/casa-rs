@@ -29,7 +29,11 @@ use objc2_metal_performance_shaders_graph::{
 };
 
 use crate::fft::{fftshift2, ifftshift2};
-use crate::fft_backend::{Fft2Spec, FftBackendSelection, FftDirection, FftTiming};
+use crate::fft_backend::{
+    Fft2Spec, FftBackendChoice, FftBackendSelection, FftDirection, FftPrecision, FftTiming,
+    FftUseCase, select_fft_backend,
+};
+use crate::gridder::StandardGridderProductCorrection;
 
 type MetalDevice = Retained<ProtocolObject<dyn MTLDevice>>;
 type MetalQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
@@ -161,6 +165,107 @@ kernel void pack_ifftshifted_f64_to_f32(
     output[output_index + 1] = narrow_f64_bits_to_f32(source[source_index + 1]);
 }
 "#;
+const APPLE_DIRTY_PRODUCT_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct DirtyProductParams {
+    uint rows;
+    uint columns;
+    uint image_nx;
+    uint image_ny;
+    uint image_blc_x;
+    uint image_blc_y;
+    uint product_count;
+    uint _pad0;
+};
+
+struct DirtyReduceParams {
+    uint input_count;
+    uint output_count;
+    uint block_size;
+    uint product_count;
+};
+
+kernel void crop_correct_standard_dirty_products(
+    device const float *fft_output [[buffer(0)]],
+    device const float *correction_x [[buffer(1)]],
+    device const float *correction_y [[buffer(2)]],
+    device const float *normalization_sumwt [[buffer(3)]],
+    device float *psf_output [[buffer(4)]],
+    device float *residual_output [[buffer(5)]],
+    constant DirtyProductParams &params [[buffer(6)]],
+    uint3 position [[thread_position_in_grid]]
+) {
+    uint y = position.x;
+    uint x = position.y;
+    uint product = position.z;
+    if (x >= params.image_nx || y >= params.image_ny || product >= params.product_count) {
+        return;
+    }
+    uint grid_x = params.image_blc_x + x;
+    uint grid_y = params.image_blc_y + y;
+    uint source_x = (grid_x + (params.rows >> 1)) % params.rows;
+    uint source_y = (grid_y + (params.columns >> 1)) % params.columns;
+    ulong grid_index = ulong(source_x) * ulong(params.columns) + ulong(source_y);
+    ulong plane_elements = ulong(params.rows) * ulong(params.columns);
+    ulong psf_plane = ulong(product) * 2ul;
+    ulong residual_plane = psf_plane + 1ul;
+    ulong psf_complex = (psf_plane * plane_elements + grid_index) * 2ul;
+    ulong residual_complex = (residual_plane * plane_elements + grid_index) * 2ul;
+    float correction = correction_x[grid_x] * correction_y[grid_y];
+    float inv_sumwt = 1.0f / normalization_sumwt[product];
+    ulong image_index =
+        ulong(product) * ulong(params.image_nx) * ulong(params.image_ny)
+        + ulong(x) * ulong(params.image_ny)
+        + ulong(y);
+    psf_output[image_index] = fft_output[psf_complex] * correction * inv_sumwt;
+    residual_output[image_index] = fft_output[residual_complex] * correction * inv_sumwt;
+}
+
+kernel void reduce_abs_max_f32(
+    device const float *input [[buffer(0)]],
+    device float *output [[buffer(1)]],
+    constant DirtyReduceParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint partial = position.x;
+    uint product = position.y;
+    if (partial >= params.output_count || product >= params.product_count) {
+        return;
+    }
+    uint start = partial * params.block_size;
+    uint end = min(start + params.block_size, params.input_count);
+    float max_abs = 0.0f;
+    ulong input_base = ulong(product) * ulong(params.input_count);
+    for (uint index = start; index < end; index++) {
+        float value = fabs(input[input_base + ulong(index)]);
+        if (isfinite(value) && value > max_abs) {
+            max_abs = value;
+        }
+    }
+    output[ulong(product) * ulong(params.output_count) + ulong(partial)] = max_abs;
+}
+
+kernel void normalize_standard_dirty_products(
+    device float *psf_output [[buffer(0)]],
+    device float *residual_output [[buffer(1)]],
+    device const float *psf_peak [[buffer(2)]],
+    constant DirtyProductParams &params [[buffer(3)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint pixel = position.x;
+    uint product = position.y;
+    uint image_pixels = params.image_nx * params.image_ny;
+    if (pixel >= image_pixels || product >= params.product_count) {
+        return;
+    }
+    float peak = psf_peak[product];
+    ulong index = ulong(product) * ulong(image_pixels) + ulong(pixel);
+    psf_output[index] = psf_output[index] / peak;
+    residual_output[index] = residual_output[index] / peak;
+}
+"#;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MpsGraphPlanKey {
@@ -178,6 +283,7 @@ struct MpsGraphF32Plan {
     output: Retained<MPSGraphTensor>,
     target_tensors: Retained<NSArray<MPSGraphTensor>>,
     fused_pack: Option<FusedPackPipelines>,
+    dirty_product_pipelines: Option<DirtyProductPipelines>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -192,6 +298,41 @@ struct MpsGraphBatchPlanKey {
 struct FusedPackPipelines {
     f32: MetalComputePipeline,
     f64_to_f32: MetalComputePipeline,
+}
+
+#[derive(Clone)]
+struct DirtyProductPipelines {
+    crop_correct: MetalComputePipeline,
+    reduce_abs_max: MetalComputePipeline,
+    normalize: MetalComputePipeline,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct DirtyProductParams {
+    rows: u32,
+    columns: u32,
+    image_nx: u32,
+    image_ny: u32,
+    image_blc_x: u32,
+    image_blc_y: u32,
+    product_count: u32,
+    _pad0: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct DirtyReduceParams {
+    input_count: u32,
+    output_count: u32,
+    block_size: u32,
+    product_count: u32,
+}
+
+pub(crate) struct AppleDirtyStandardProduct {
+    pub(crate) psf: Array2<f32>,
+    pub(crate) residual: Array2<f32>,
+    pub(crate) psf_peak: f32,
 }
 
 struct PendingFusedPack {
@@ -372,6 +513,91 @@ pub(crate) fn centered_transform_f64_to_f32_batch(
     Ok((output, timing))
 }
 
+pub(crate) fn dirty_standard_products_f64_to_f32_batch(
+    inputs: &[Array2<Complex64>],
+    correction: StandardGridderProductCorrection<'_>,
+    normalization_sumwts: &[f32],
+) -> Result<(Vec<AppleDirtyStandardProduct>, FftTiming, Duration), &'static str> {
+    if normalization_sumwts.is_empty() {
+        return Err("dirty_product_requires_non_empty_products");
+    }
+    if inputs.len() != normalization_sumwts.len() * 2 {
+        return Err("dirty_product_requires_psf_residual_pairs");
+    }
+    let rows = correction.grid_shape[0];
+    let columns = correction.grid_shape[1];
+    if rows == 0 || columns == 0 {
+        return Err("dirty_product_requires_non_empty_grid");
+    }
+    if correction.correction_x.len() != rows || correction.correction_y.len() != columns {
+        return Err("dirty_product_correction_shape_mismatch");
+    }
+    for input in inputs {
+        if input.shape() != [rows, columns] {
+            return Err("dirty_product_input_grid_shape_mismatch");
+        }
+        if input.as_slice_memory_order().is_none() {
+            return Err("dirty_product_requires_contiguous_inputs");
+        }
+    }
+    if normalization_sumwts
+        .iter()
+        .any(|sumwt| !(sumwt.is_finite() && *sumwt > 0.0))
+    {
+        return Err("dirty_product_requires_positive_finite_sumwt");
+    }
+
+    let spec = Fft2Spec::centered_c2c_batch(
+        rows,
+        columns,
+        inputs.len(),
+        FftPrecision::F32,
+        FftDirection::Inverse,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::MetalMpsGraph,
+    );
+    let selection = select_fft_backend(spec);
+    if selection.selected_backend != FftBackendChoice::MetalMpsGraph
+        || !selection.requested_backend_supported
+    {
+        return Err(selection.reason);
+    }
+
+    let fused_pack = apple_fft_fused_pack_enabled();
+    let selection = selection_for_fused_pack(selection, fused_pack);
+    let mut timing = FftTiming::new(spec, selection);
+    let key = MpsGraphBatchPlanKey {
+        rows,
+        columns,
+        batch: inputs.len(),
+        direction: FftDirection::Inverse,
+        fused_pack,
+    };
+
+    MPSGRAPH_F32_BATCH_PLANS.with(|plans| {
+        let mut plans = plans.borrow_mut();
+        let plan = match plans.entry(key) {
+            Entry::Occupied(entry) => {
+                timing.plan_cache_hit = true;
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => {
+                let plan_start = Instant::now();
+                let plan = make_batch_plan(key)?;
+                timing.plan += plan_start.elapsed();
+                entry.insert(plan)
+            }
+        };
+        execute_dirty_standard_products_with_plan(
+            plan,
+            inputs,
+            correction,
+            normalization_sumwts,
+            &mut timing,
+        )
+    })
+}
+
 fn make_plan(key: MpsGraphPlanKey) -> Result<MpsGraphF32Plan, &'static str> {
     let device = MTLCreateSystemDefaultDevice().ok_or("mpsgraph_no_default_metal_device")?;
     let queue = device
@@ -411,6 +637,7 @@ fn make_plan(key: MpsGraphPlanKey) -> Result<MpsGraphF32Plan, &'static str> {
         output,
         target_tensors,
         fused_pack: None,
+        dirty_product_pipelines: None,
     })
 }
 
@@ -458,6 +685,7 @@ fn make_batch_plan(key: MpsGraphBatchPlanKey) -> Result<MpsGraphF32Plan, &'stati
         output,
         target_tensors,
         fused_pack,
+        dirty_product_pipelines: None,
     })
 }
 
@@ -739,6 +967,429 @@ fn execute_f64_to_f32_batch_with_plan(
     let outputs = unpack_fftshifted_f32_batch(values, inputs.len(), element_count, rows, columns);
     timing.pack += pack_start.elapsed();
     Ok(outputs)
+}
+
+fn execute_dirty_standard_products_with_plan(
+    plan: &mut MpsGraphF32Plan,
+    inputs: &[Array2<Complex64>],
+    correction: StandardGridderProductCorrection<'_>,
+    normalization_sumwts: &[f32],
+    timing: &mut FftTiming,
+) -> Result<(Vec<AppleDirtyStandardProduct>, FftTiming, Duration), &'static str> {
+    let total_start = Instant::now();
+    let rows = correction.grid_shape[0];
+    let columns = correction.grid_shape[1];
+    let element_count = rows * columns;
+    let packed_len = inputs.len() * element_count * 2;
+
+    let transfer_start = Instant::now();
+    let input_buffer = empty_buffer(&plan.device, packed_len * mem::size_of::<f32>())?;
+    let fft_output_buffer = empty_buffer(&plan.device, packed_len * mem::size_of::<f32>())?;
+    timing.transfer_to_device += transfer_start.elapsed();
+
+    let pending_fused_pack = if let Some(pipelines) = plan.fused_pack.as_ref() {
+        Some(pack_ifftshifted_f64_batch_as_f32_with_metal(
+            plan,
+            &pipelines.f64_to_f32,
+            inputs,
+            rows,
+            columns,
+            &input_buffer,
+            timing,
+        )?)
+    } else {
+        let pack_start = Instant::now();
+        let input_values = unsafe {
+            slice::from_raw_parts_mut(input_buffer.contents().as_ptr().cast::<f32>(), packed_len)
+        };
+        pack_ifftshifted_f64_batch_as_f32_into(inputs, rows, columns, input_values)?;
+        timing.pack += pack_start.elapsed();
+        None
+    };
+
+    let transfer_start = Instant::now();
+    let tensor_data = unsafe {
+        MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+            MPSGraphTensorData::alloc(),
+            &input_buffer,
+            &plan.shape,
+            MPSDataType::ComplexFloat32,
+        )
+    };
+    timing.transfer_to_device += transfer_start.elapsed();
+
+    let exec_start = Instant::now();
+    let feeds: Retained<MPSGraphTensorDataDictionary> =
+        NSDictionary::from_slices(&[&*plan.placeholder], &[&*tensor_data]);
+    let results = unsafe {
+        plan.graph
+            .runWithMTLCommandQueue_feeds_targetTensors_targetOperations(
+                &plan.queue,
+                &feeds,
+                &plan.target_tensors,
+                None,
+            )
+    };
+    timing.exec += exec_start.elapsed();
+
+    let result = results
+        .objectForKey(&plan.output)
+        .ok_or("mpsgraph_fft_missing_output_tensor")?;
+    let export_start = Instant::now();
+    let ndarray = unsafe { result.mpsndarray() };
+    let command_buffer = plan
+        .queue
+        .commandBuffer()
+        .ok_or("mpsgraph_failed_to_create_resident_export_command_buffer")?;
+    unsafe {
+        ndarray.exportDataWithCommandBuffer_toBuffer_destinationDataType_offset_rowStrides(
+            &command_buffer,
+            &fft_output_buffer,
+            MPSDataType::ComplexFloat32,
+            0,
+            null_mut(),
+        );
+    }
+    command_buffer.commit();
+    timing.exec += export_start.elapsed();
+
+    let sync_start = Instant::now();
+    command_buffer.waitUntilCompleted();
+    timing.sync += sync_start.elapsed();
+    ensure_command_buffer_ok(&command_buffer, "mpsgraph_resident_export_command_failed")?;
+    record_command_buffer_device_time(&command_buffer, timing);
+    if let Some(pending) = pending_fused_pack {
+        finish_fused_pack(pending, timing)?;
+    }
+
+    let postprocess_start = Instant::now();
+    let products = finish_dirty_standard_products_on_metal(
+        plan,
+        &fft_output_buffer,
+        correction,
+        normalization_sumwts,
+        timing,
+    )?;
+    let postprocess_elapsed = postprocess_start.elapsed();
+    timing.total = total_start.elapsed();
+    Ok((products, *timing, postprocess_elapsed))
+}
+
+fn finish_dirty_standard_products_on_metal(
+    plan: &mut MpsGraphF32Plan,
+    fft_output_buffer: &MetalBuffer,
+    correction: StandardGridderProductCorrection<'_>,
+    normalization_sumwts: &[f32],
+    timing: &mut FftTiming,
+) -> Result<Vec<AppleDirtyStandardProduct>, &'static str> {
+    let pipelines = dirty_product_pipelines(plan)?;
+    let rows = correction.grid_shape[0];
+    let columns = correction.grid_shape[1];
+    let image_nx = correction.image_shape[0];
+    let image_ny = correction.image_shape[1];
+    let product_count = normalization_sumwts.len();
+    let image_pixels = image_nx * image_ny;
+    let image_values = image_pixels * product_count;
+    let params = DirtyProductParams {
+        rows: u32::try_from(rows).map_err(|_| "dirty_product_rows_exceed_u32")?,
+        columns: u32::try_from(columns).map_err(|_| "dirty_product_columns_exceed_u32")?,
+        image_nx: u32::try_from(image_nx).map_err(|_| "dirty_product_image_nx_exceed_u32")?,
+        image_ny: u32::try_from(image_ny).map_err(|_| "dirty_product_image_ny_exceed_u32")?,
+        image_blc_x: u32::try_from(correction.image_blc[0])
+            .map_err(|_| "dirty_product_image_blc_x_exceed_u32")?,
+        image_blc_y: u32::try_from(correction.image_blc[1])
+            .map_err(|_| "dirty_product_image_blc_y_exceed_u32")?,
+        product_count: u32::try_from(product_count)
+            .map_err(|_| "dirty_product_count_exceed_u32")?,
+        _pad0: 0,
+    };
+
+    let transfer_start = Instant::now();
+    let correction_x_buffer = buffer_from_f32_slice(&plan.device, correction.correction_x)?;
+    let correction_y_buffer = buffer_from_f32_slice(&plan.device, correction.correction_y)?;
+    let normalization_buffer = buffer_from_f32_slice(&plan.device, normalization_sumwts)?;
+    let psf_buffer = empty_buffer(&plan.device, image_values * mem::size_of::<f32>())?;
+    let residual_buffer = empty_buffer(&plan.device, image_values * mem::size_of::<f32>())?;
+    timing.transfer_to_device += transfer_start.elapsed();
+
+    let command_start = Instant::now();
+    let command_buffer = plan
+        .queue
+        .commandBuffer()
+        .ok_or("dirty_product_failed_to_create_crop_command_buffer")?;
+    let encoder = command_buffer
+        .computeCommandEncoder()
+        .ok_or("dirty_product_failed_to_create_crop_encoder")?;
+    encoder.setComputePipelineState(&pipelines.crop_correct);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(fft_output_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(&correction_x_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(&correction_y_buffer), 0, 2);
+        encoder.setBuffer_offset_atIndex(Some(&normalization_buffer), 0, 3);
+        encoder.setBuffer_offset_atIndex(Some(&psf_buffer), 0, 4);
+        encoder.setBuffer_offset_atIndex(Some(&residual_buffer), 0, 5);
+        let pointer = NonNull::new((&params as *const DirtyProductParams).cast_mut().cast())
+            .ok_or("dirty_product_params_pointer_was_null")?;
+        encoder.setBytes_length_atIndex(pointer, mem::size_of::<DirtyProductParams>(), 6);
+    }
+    dispatch_2d_product_threads(
+        &encoder,
+        &pipelines.crop_correct,
+        image_ny,
+        image_nx,
+        product_count,
+    );
+    encoder.endEncoding();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    ensure_command_buffer_ok(&command_buffer, "dirty_product_crop_command_failed")?;
+    record_command_buffer_device_time(&command_buffer, timing);
+    timing.exec += command_start.elapsed();
+
+    let peak_buffer = reduce_product_psf_peaks(
+        plan,
+        &pipelines,
+        &psf_buffer,
+        image_pixels,
+        product_count,
+        timing,
+    )?;
+
+    let normalize_start = Instant::now();
+    let command_buffer = plan
+        .queue
+        .commandBuffer()
+        .ok_or("dirty_product_failed_to_create_normalize_command_buffer")?;
+    let encoder = command_buffer
+        .computeCommandEncoder()
+        .ok_or("dirty_product_failed_to_create_normalize_encoder")?;
+    encoder.setComputePipelineState(&pipelines.normalize);
+    unsafe {
+        encoder.setBuffer_offset_atIndex(Some(&psf_buffer), 0, 0);
+        encoder.setBuffer_offset_atIndex(Some(&residual_buffer), 0, 1);
+        encoder.setBuffer_offset_atIndex(Some(&peak_buffer), 0, 2);
+        let pointer = NonNull::new((&params as *const DirtyProductParams).cast_mut().cast())
+            .ok_or("dirty_product_params_pointer_was_null")?;
+        encoder.setBytes_length_atIndex(pointer, mem::size_of::<DirtyProductParams>(), 3);
+    }
+    dispatch_2d_linear_threads(&encoder, &pipelines.normalize, image_pixels, product_count);
+    encoder.endEncoding();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    ensure_command_buffer_ok(&command_buffer, "dirty_product_normalize_command_failed")?;
+    record_command_buffer_device_time(&command_buffer, timing);
+    timing.exec += normalize_start.elapsed();
+
+    let export_start = Instant::now();
+    let psf_values = unsafe {
+        slice::from_raw_parts(psf_buffer.contents().as_ptr().cast::<f32>(), image_values)
+    };
+    let residual_values = unsafe {
+        slice::from_raw_parts(
+            residual_buffer.contents().as_ptr().cast::<f32>(),
+            image_values,
+        )
+    };
+    let peak_values = unsafe {
+        slice::from_raw_parts(peak_buffer.contents().as_ptr().cast::<f32>(), product_count)
+    };
+    let mut products = Vec::with_capacity(product_count);
+    for (product, &peak) in peak_values.iter().enumerate().take(product_count) {
+        if !(peak.is_finite() && peak > 0.0) {
+            return Err("dirty_product_psf_peak_nonfinite_or_zero");
+        }
+        let start = product * image_pixels;
+        let end = start + image_pixels;
+        let psf = Array2::from_shape_vec((image_nx, image_ny), psf_values[start..end].to_vec())
+            .map_err(|_| "dirty_product_psf_shape_mismatch")?;
+        let residual =
+            Array2::from_shape_vec((image_nx, image_ny), residual_values[start..end].to_vec())
+                .map_err(|_| "dirty_product_residual_shape_mismatch")?;
+        products.push(AppleDirtyStandardProduct {
+            psf,
+            residual,
+            psf_peak: peak,
+        });
+    }
+    timing.transfer_from_device += export_start.elapsed();
+    Ok(products)
+}
+
+fn reduce_product_psf_peaks(
+    plan: &MpsGraphF32Plan,
+    pipelines: &DirtyProductPipelines,
+    input_buffer: &MetalBuffer,
+    image_pixels: usize,
+    product_count: usize,
+    timing: &mut FftTiming,
+) -> Result<MetalBuffer, &'static str> {
+    const REDUCE_BLOCK: usize = 256;
+    let mut input_count = image_pixels;
+    let mut input = input_buffer.clone();
+    let mut keep_alive = Vec::new();
+    loop {
+        let output_count = input_count.div_ceil(REDUCE_BLOCK);
+        let output = empty_buffer(
+            &plan.device,
+            output_count * product_count * mem::size_of::<f32>(),
+        )?;
+        let params = DirtyReduceParams {
+            input_count: u32::try_from(input_count)
+                .map_err(|_| "dirty_product_reduce_input_exceed_u32")?,
+            output_count: u32::try_from(output_count)
+                .map_err(|_| "dirty_product_reduce_output_exceed_u32")?,
+            block_size: u32::try_from(REDUCE_BLOCK)
+                .map_err(|_| "dirty_product_reduce_block_exceed_u32")?,
+            product_count: u32::try_from(product_count)
+                .map_err(|_| "dirty_product_reduce_product_count_exceed_u32")?,
+        };
+        let reduce_start = Instant::now();
+        let command_buffer = plan
+            .queue
+            .commandBuffer()
+            .ok_or("dirty_product_failed_to_create_reduce_command_buffer")?;
+        let encoder = command_buffer
+            .computeCommandEncoder()
+            .ok_or("dirty_product_failed_to_create_reduce_encoder")?;
+        encoder.setComputePipelineState(&pipelines.reduce_abs_max);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&input), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&output), 0, 1);
+            let pointer = NonNull::new((&params as *const DirtyReduceParams).cast_mut().cast())
+                .ok_or("dirty_product_reduce_params_pointer_was_null")?;
+            encoder.setBytes_length_atIndex(pointer, mem::size_of::<DirtyReduceParams>(), 2);
+        }
+        dispatch_2d_linear_threads(
+            &encoder,
+            &pipelines.reduce_abs_max,
+            output_count,
+            product_count,
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        ensure_command_buffer_ok(&command_buffer, "dirty_product_reduce_command_failed")?;
+        record_command_buffer_device_time(&command_buffer, timing);
+        timing.exec += reduce_start.elapsed();
+        if output_count == 1 {
+            return Ok(output);
+        }
+        keep_alive.push(input);
+        input = output;
+        input_count = output_count;
+    }
+}
+
+fn dirty_product_pipelines(
+    plan: &mut MpsGraphF32Plan,
+) -> Result<DirtyProductPipelines, &'static str> {
+    if plan.dirty_product_pipelines.is_none() {
+        plan.dirty_product_pipelines = Some(make_dirty_product_pipelines(&plan.device)?);
+    }
+    Ok(plan
+        .dirty_product_pipelines
+        .as_ref()
+        .expect("dirty product pipelines initialized")
+        .clone())
+}
+
+fn make_dirty_product_pipelines(
+    device: &MetalDevice,
+) -> Result<DirtyProductPipelines, &'static str> {
+    let source = NSString::from_str(APPLE_DIRTY_PRODUCT_SHADER);
+    let library = device
+        .newLibraryWithSource_options_error(&source, None)
+        .map_err(|_| "dirty_product_shader_compile_failed")?;
+    Ok(DirtyProductPipelines {
+        crop_correct: compute_pipeline(device, &library, "crop_correct_standard_dirty_products")?,
+        reduce_abs_max: compute_pipeline(device, &library, "reduce_abs_max_f32")?,
+        normalize: compute_pipeline(device, &library, "normalize_standard_dirty_products")?,
+    })
+}
+
+fn compute_pipeline(
+    device: &MetalDevice,
+    library: &Retained<ProtocolObject<dyn MTLLibrary>>,
+    name: &str,
+) -> Result<MetalComputePipeline, &'static str> {
+    let function_name = NSString::from_str(name);
+    let function = library
+        .newFunctionWithName(&function_name)
+        .ok_or("dirty_product_shader_function_not_found")?;
+    device
+        .newComputePipelineStateWithFunction_error(&function)
+        .map_err(|_| "dirty_product_pipeline_failed")
+}
+
+fn dispatch_2d_product_threads(
+    encoder: &MetalComputePipelineEncoder,
+    pipeline: &MetalComputePipeline,
+    width: usize,
+    height: usize,
+    depth: usize,
+) {
+    let (group_width, group_height) = threadgroup_2d(pipeline, width, height);
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width,
+            height,
+            depth,
+        },
+        MTLSize {
+            width: group_width,
+            height: group_height,
+            depth: 1,
+        },
+    );
+}
+
+fn dispatch_2d_linear_threads(
+    encoder: &MetalComputePipelineEncoder,
+    pipeline: &MetalComputePipeline,
+    width: usize,
+    height: usize,
+) {
+    let (group_width, group_height) = threadgroup_2d(pipeline, width, height);
+    encoder.dispatchThreads_threadsPerThreadgroup(
+        MTLSize {
+            width,
+            height,
+            depth: 1,
+        },
+        MTLSize {
+            width: group_width,
+            height: group_height,
+            depth: 1,
+        },
+    );
+}
+
+type MetalComputePipelineEncoder = Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>;
+
+fn threadgroup_2d(pipeline: &MetalComputePipeline, width: usize, height: usize) -> (usize, usize) {
+    let thread_width = pipeline.threadExecutionWidth().max(1);
+    let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+    let group_width = thread_width.min(width).min(max_threads).max(1);
+    let group_height = (max_threads / group_width).max(1).min(height).max(1);
+    (group_width, group_height)
+}
+
+fn ensure_command_buffer_ok(
+    command_buffer: &MetalCommandBuffer,
+    error: &'static str,
+) -> Result<(), &'static str> {
+    if command_buffer.status() == MTLCommandBufferStatus::Error {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn record_command_buffer_device_time(command_buffer: &MetalCommandBuffer, timing: &mut FftTiming) {
+    let gpu_start = command_buffer.GPUStartTime();
+    let gpu_end = command_buffer.GPUEndTime();
+    if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+        timing.device_exec += Duration::from_secs_f64(gpu_end - gpu_start);
+    }
 }
 
 fn shape_array(rows: usize, columns: usize) -> Retained<NSArray<NSNumber>> {
