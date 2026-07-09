@@ -9378,12 +9378,10 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     let channel_start = effective_cube_channel_start(config)?;
     let (active_planes, worker_count) = mosaic_cube_slab_plane_worker_shape(config, nplanes);
     let slab_manifest = spectral_slab::SpectralSlabManifest::for_planes(nplanes, active_planes);
+    let slab_count = slab_manifest.len();
     eprintln!(
         "mosaic_cube_slab_plan schedule=slab_first executor_capabilities=mosaic_multi_plane_stream nplanes={} active_planes={} slab_count={} worker_count={} source_reuse=shared_columnar_slab_source product_state=product_backed_write_through",
-        nplanes,
-        active_planes,
-        slab_manifest.len(),
-        worker_count,
+        nplanes, active_planes, slab_count, worker_count,
     );
 
     let metadata_started = Instant::now();
@@ -9492,6 +9490,186 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
     let mut minor_iterations = 0usize;
     let mut channel_summaries = Vec::with_capacity(nplanes);
     let mut geometry_cache = VisibilityGeometryCache::new(false, 0);
+    let full_source_reuse = if config.chanchunks.is_some() && slab_count > 1 {
+        let full_source_config = slab_config_for_cube_planes(config, channel_start, 0, nplanes)?;
+        let full_channel_read_range = selected_channel_read_range_for_cube_source_row_blocks(
+            &full_source_config,
+            &table_values,
+            &selection,
+            Some(&derived_engine),
+        )?;
+        let full_selected_channel_count =
+            source_stream_selected_channel_count(&table_values, full_channel_read_range);
+        let full_source_channel_indices =
+            source_channel_indices_for_read_range(&table_values, full_channel_read_range);
+        let source_covers_slabs = slab_manifest.iter().all(|slab| {
+            slab_config_for_cube_planes(config, channel_start, slab.plane_start, slab.plane_end)
+                .and_then(|slab_source_config| {
+                    selected_channel_read_range_for_cube_source_row_blocks(
+                        &slab_source_config,
+                        &table_values,
+                        &selection,
+                        Some(&derived_engine),
+                    )
+                })
+                .map(|slab_channel_read_range| {
+                    let slab_source_channel_indices = source_channel_indices_for_read_range(
+                        &table_values,
+                        slab_channel_read_range,
+                    );
+                    source_channel_indices_cover(
+                        &full_source_channel_indices,
+                        &slab_source_channel_indices,
+                    )
+                })
+                .unwrap_or(false)
+        });
+        let full_source_strategy = standard_mfs_memory_plan_for_ms(
+            &full_source_config,
+            ms,
+            data_column,
+            full_selected_channel_count,
+            active_selected_rows.len(),
+            table_values.corr_types.len(),
+        )?;
+        let full_source_cache_bytes = validate_mosaic_cube_full_source_reuse_memory_shape(
+            config,
+            ms,
+            data_column,
+            active_selected_rows.len(),
+            full_selected_channel_count,
+            table_values.corr_types.len(),
+            active_planes,
+            &full_source_strategy,
+        );
+        match (
+            source_covers_slabs,
+            validate_standard_mfs_memory_plan(&full_source_strategy),
+            full_source_cache_bytes,
+        ) {
+            (true, Ok(()), Ok(full_source_cache_bytes)) => {
+                log_standard_mfs_memory_plan_actual(
+                    &full_source_strategy,
+                    active_selected_rows.len(),
+                    0,
+                    0,
+                    "mosaic_cube_full_source_reuse",
+                );
+                set_imager_progress_standard_mfs_memory(&full_source_strategy, active_planes);
+                let source_prepare_started = Instant::now();
+                let progress_output_cube = progress_output_cube_from_config(config, 0, nplanes);
+                let progress_ms_window = imager_progress_ms_window_from_selection(
+                    ms,
+                    &table_values,
+                    &active_selected_rows,
+                    full_channel_read_range,
+                );
+                let source = Arc::new(with_imager_progress_spectral_stage(
+                    config,
+                    spectral_slab::SpectralEventStage::SourceRead,
+                    None,
+                    0,
+                    nplanes,
+                    worker_count,
+                    "mosaic_multi_plane_stream",
+                    progress_ms_window,
+                    true,
+                    || {
+                        read_shared_columnar_cube_slab_source(
+                            ms,
+                            &full_source_config,
+                            data_column,
+                            true,
+                            &selection,
+                            &table_values,
+                            &ddid_info,
+                            &active_selected_rows,
+                            &derived_engine,
+                            full_channel_read_range,
+                            None,
+                            full_source_strategy.row_block_rows,
+                            source_prepare_started,
+                            spectral_slab::ImagingPassKind::InitialDirty,
+                            0,
+                            0,
+                            nplanes,
+                            worker_count,
+                            "mosaic_multi_plane_stream",
+                            &mut geometry_cache,
+                            progress_output_cube.clone(),
+                        )
+                    },
+                )?);
+                prepare_plane_input += source.elapsed;
+                get_ms_values_into_processing_buffer +=
+                    source.stage_timings.get_ms_values_into_processing_buffer;
+                if standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "mosaic_cube_full_source_reuse_plan enabled=true chanchunks={} slab_count={} active_planes={} row_block_rows={} selected_channels={} visibility_blocks={} read_wall_ms={:.3} resident_source_cache_bytes={} logical_visibility_bytes={} modeled_physical_read_bytes={}",
+                        config.chanchunks.unwrap_or(0),
+                        slab_count,
+                        active_planes,
+                        full_source_strategy.row_block_rows,
+                        full_selected_channel_count,
+                        source.blocks.len(),
+                        duration_ms(source.elapsed),
+                        full_source_cache_bytes,
+                        source.logical_output_bytes,
+                        source.modeled_physical_read_bytes,
+                    );
+                }
+                Some(MosaicCubeFullSourceReuse {
+                    source,
+                    source_channel_indices: full_source_channel_indices,
+                    memory_plan: full_source_strategy,
+                    selected_channel_count: full_selected_channel_count,
+                })
+            }
+            (false, _, _) => {
+                let error = "full selected source does not cover every chanchunk slab source range";
+                warnings.push(format!(
+                    "mosaic cube chanchunks full-source reuse disabled: {error}"
+                ));
+                if standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "mosaic_cube_full_source_reuse_plan enabled=false reason=source_range_not_covering_slabs chanchunks={} slab_count={} active_planes={} selected_channels={} error={:?}",
+                        config.chanchunks.unwrap_or(0),
+                        slab_count,
+                        active_planes,
+                        full_selected_channel_count,
+                        error,
+                    );
+                }
+                None
+            }
+            (_, Err(error), _) | (_, _, Err(error)) => {
+                warnings.push(format!(
+                    "mosaic cube chanchunks full-source reuse disabled: {error}"
+                ));
+                if standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "mosaic_cube_full_source_reuse_plan enabled=false reason=memory_plan_invalid chanchunks={} slab_count={} active_planes={} selected_channels={} error={:?}",
+                        config.chanchunks.unwrap_or(0),
+                        slab_count,
+                        active_planes,
+                        full_selected_channel_count,
+                        error,
+                    );
+                }
+                None
+            }
+        }
+    } else {
+        if standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "mosaic_cube_full_source_reuse_plan enabled=false reason=not_chanchunked_or_single_slab chanchunks={} slab_count={} active_planes={}",
+                config.chanchunks.unwrap_or(0),
+                slab_count,
+                active_planes,
+            );
+        }
+        None
+    };
 
     for slab in slab_manifest {
         let slab_started = Instant::now();
@@ -9521,77 +9699,96 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             ),
             "working_cube_slab",
         );
-        let selected_channel_count =
-            source_stream_selected_channel_count(&table_values, channel_read_range);
-        let source_strategy = standard_mfs_memory_plan_for_ms(
-            &slab_source_config,
-            ms,
-            data_column,
-            selected_channel_count,
-            active_selected_rows.len(),
-            table_values.corr_types.len(),
-        )?;
-        validate_standard_mfs_memory_plan(&source_strategy)?;
-        log_standard_mfs_memory_plan_actual(
-            &source_strategy,
-            active_selected_rows.len(),
-            0,
-            0,
-            "mosaic_cube_shared_columnar_slab_source",
-        );
-        set_imager_progress_standard_mfs_memory(
-            &source_strategy,
-            slab.plane_end.saturating_sub(slab.plane_start),
-        );
-        let source_prepare_started = Instant::now();
-        let progress_output_cube =
-            progress_output_cube_from_config(config, slab.plane_start, slab.plane_end);
-        let progress_ms_window = imager_progress_ms_window_from_selection(
-            ms,
-            &table_values,
-            &active_selected_rows,
-            channel_read_range,
-        );
-        let shared_visibility_source = Arc::new(with_imager_progress_spectral_stage(
-            config,
-            spectral_slab::SpectralEventStage::SourceRead,
-            Some(slab.slab_id),
-            slab.plane_start,
-            slab.plane_end,
-            worker_count,
-            "mosaic_multi_plane_stream",
-            progress_ms_window,
-            true,
-            || {
-                read_shared_columnar_cube_slab_source(
-                    ms,
-                    &slab_source_config,
-                    data_column,
-                    true,
-                    &selection,
-                    &table_values,
-                    &ddid_info,
-                    &active_selected_rows,
-                    &derived_engine,
-                    channel_read_range,
-                    None,
-                    source_strategy.row_block_rows,
-                    source_prepare_started,
-                    spectral_slab::ImagingPassKind::InitialDirty,
-                    slab.slab_id,
-                    slab.plane_start,
-                    slab.plane_end,
-                    worker_count,
-                    "mosaic_multi_plane_stream",
-                    &mut geometry_cache,
-                    progress_output_cube.clone(),
-                )
-            },
-        )?);
-        let shared_source_read_elapsed = shared_visibility_source.elapsed;
-        get_ms_values_into_processing_buffer += shared_visibility_source
-            .stage_timings
-            .get_ms_values_into_processing_buffer;
+        let selected_channel_count;
+        let source_row_block_rows;
+        let shared_visibility_source;
+        let source_channel_indices_for_planes;
+        let source_scope;
+        let source_read_reused;
+        if let Some(reuse) = full_source_reuse.as_ref() {
+            selected_channel_count = reuse.selected_channel_count;
+            source_row_block_rows = reuse.memory_plan.row_block_rows;
+            shared_visibility_source = Arc::clone(&reuse.source);
+            source_channel_indices_for_planes = reuse.source_channel_indices.as_slice();
+            source_scope = "cached_full_source";
+            source_read_reused = true;
+        } else {
+            selected_channel_count =
+                source_stream_selected_channel_count(&table_values, channel_read_range);
+            let slab_source_strategy = standard_mfs_memory_plan_for_ms(
+                &slab_source_config,
+                ms,
+                data_column,
+                selected_channel_count,
+                active_selected_rows.len(),
+                table_values.corr_types.len(),
+            )?;
+            validate_standard_mfs_memory_plan(&slab_source_strategy)?;
+            log_standard_mfs_memory_plan_actual(
+                &slab_source_strategy,
+                active_selected_rows.len(),
+                0,
+                0,
+                "mosaic_cube_shared_columnar_slab_source",
+            );
+            set_imager_progress_standard_mfs_memory(
+                &slab_source_strategy,
+                slab.plane_end.saturating_sub(slab.plane_start),
+            );
+            let source_prepare_started = Instant::now();
+            let progress_output_cube =
+                progress_output_cube_from_config(config, slab.plane_start, slab.plane_end);
+            let progress_ms_window = imager_progress_ms_window_from_selection(
+                ms,
+                &table_values,
+                &active_selected_rows,
+                channel_read_range,
+            );
+            shared_visibility_source = Arc::new(with_imager_progress_spectral_stage(
+                config,
+                spectral_slab::SpectralEventStage::SourceRead,
+                Some(slab.slab_id),
+                slab.plane_start,
+                slab.plane_end,
+                worker_count,
+                "mosaic_multi_plane_stream",
+                progress_ms_window,
+                true,
+                || {
+                    read_shared_columnar_cube_slab_source(
+                        ms,
+                        &slab_source_config,
+                        data_column,
+                        true,
+                        &selection,
+                        &table_values,
+                        &ddid_info,
+                        &active_selected_rows,
+                        &derived_engine,
+                        channel_read_range,
+                        None,
+                        slab_source_strategy.row_block_rows,
+                        source_prepare_started,
+                        spectral_slab::ImagingPassKind::InitialDirty,
+                        slab.slab_id,
+                        slab.plane_start,
+                        slab.plane_end,
+                        worker_count,
+                        "mosaic_multi_plane_stream",
+                        &mut geometry_cache,
+                        progress_output_cube.clone(),
+                    )
+                },
+            )?);
+            prepare_plane_input += shared_visibility_source.elapsed;
+            get_ms_values_into_processing_buffer += shared_visibility_source
+                .stage_timings
+                .get_ms_values_into_processing_buffer;
+            source_row_block_rows = slab_source_strategy.row_block_rows;
+            source_channel_indices_for_planes = &[];
+            source_scope = "per_slab_source";
+            source_read_reused = false;
+        }
         if let Some(slab_center_frequency_hz) = metadata.channel_frequencies_hz
             [slab.plane_start..slab.plane_end]
             .get((slab.plane_end - slab.plane_start) / 2)
@@ -9618,22 +9815,34 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
             );
         }
         let shared_density_source: Option<Arc<SharedColumnarCubeSlabSource>> = None;
-        prepare_plane_input += shared_source_read_elapsed;
         if standard_mfs_profile_detail_enabled() {
             let density_blocks = shared_density_source
                 .as_ref()
                 .map(|source| source.blocks.len())
                 .unwrap_or(0);
+            let visibility_read_ms = if source_read_reused {
+                0.0
+            } else {
+                duration_ms(shared_visibility_source.elapsed)
+            };
+            let reused_visibility_read_ms = if source_read_reused {
+                duration_ms(shared_visibility_source.elapsed)
+            } else {
+                0.0
+            };
             eprintln!(
-                "mosaic_cube_shared_columnar_slab_source_summary slab_id={} plane_start={} plane_end={} row_block_rows={} selected_channels={} visibility_blocks={} density_blocks={} visibility_read_ms={:.3} density_read_ms={:.3} logical_visibility_bytes={} modeled_physical_read_bytes={}",
+                "mosaic_cube_shared_columnar_slab_source_summary slab_id={} plane_start={} plane_end={} source_scope={} source_read_reused={} row_block_rows={} selected_channels={} visibility_blocks={} density_blocks={} visibility_read_ms={:.3} reused_visibility_read_ms={:.3} density_read_ms={:.3} logical_visibility_bytes={} modeled_physical_read_bytes={}",
                 slab.slab_id,
                 slab.plane_start,
                 slab.plane_end,
-                source_strategy.row_block_rows,
+                source_scope,
+                source_read_reused,
+                source_row_block_rows,
                 selected_channel_count,
                 shared_visibility_source.blocks.len(),
                 density_blocks,
-                duration_ms(shared_visibility_source.elapsed),
+                visibility_read_ms,
+                reused_visibility_read_ms,
                 duration_ms(
                     shared_density_source
                         .as_ref()
@@ -9739,10 +9948,15 @@ fn run_mosaic_cube_slab_from_bounded_stream_open_ms(
                             &selection,
                             Some(&derived_engine),
                         )?;
-                    let plane_source_channel_indices = source_channel_indices_for_read_range(
-                        &table_values,
-                        plane_channel_read_range,
-                    );
+                    let plane_source_channel_indices =
+                        if source_channel_indices_for_planes.is_empty() {
+                            source_channel_indices_for_read_range(
+                                &table_values,
+                                plane_channel_read_range,
+                            )
+                        } else {
+                            source_channel_indices_for_planes.to_vec()
+                        };
                     let plane_reusable_plan =
                         cube_row_spectral_reusable_plan.as_ref().and_then(|plan| {
                             plan.local_output_view(plane_index, &plane_source_channel_indices)
@@ -24410,6 +24624,13 @@ struct SharedColumnarCubeSlabSourceBlock {
     row_count: usize,
 }
 
+struct MosaicCubeFullSourceReuse {
+    source: Arc<SharedColumnarCubeSlabSource>,
+    source_channel_indices: Vec<usize>,
+    memory_plan: StandardMfsMemoryPlan,
+    selected_channel_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct VisibilityGeometryCacheKey {
     pass_compatibility: &'static str,
@@ -32393,6 +32614,78 @@ fn validate_source_stream_block_memory_shape(
          reduce image/channel/work-queue size before imaging starts.",
         target.target_bytes, target.source
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_mosaic_cube_full_source_reuse_memory_shape(
+    config: &CliConfig,
+    ms: &MeasurementSet,
+    data_column: VisibilityDataColumn,
+    active_row_count: usize,
+    selected_channel_count: usize,
+    corr_count: usize,
+    active_planes: usize,
+    source_strategy: &StandardMfsMemoryPlan,
+) -> Result<usize, String> {
+    let visibility_shape = visibility_source_shape_for_single_plane_stream(
+        ms,
+        config,
+        data_column,
+        active_row_count,
+        selected_channel_count,
+        corr_count,
+    )?;
+    let resident_source_cache_bytes = visibility_shape
+        .raw_source_buffer_bytes_for_rows(active_row_count.max(1), selected_channel_count.max(1));
+    let per_plane_execution_bytes = source_strategy
+        .image_working_set_bytes
+        .saturating_add(source_strategy.weighting_density_bytes)
+        .saturating_add(source_strategy.gridded_visibility_bytes)
+        .saturating_add(source_strategy.output_image_bytes)
+        .saturating_add(source_strategy.fixed_tile_resident_bytes)
+        .saturating_add(source_strategy.global_grid_bytes)
+        .saturating_add(source_strategy.tile_cell_bin_bytes)
+        .saturating_add(source_strategy.worker_staging_bytes)
+        .saturating_add(source_strategy.gpu_staging_bytes);
+    let extra_active_plane_bytes = active_planes
+        .saturating_sub(1)
+        .saturating_mul(per_plane_execution_bytes);
+    let estimated_active_bytes = source_strategy
+        .planned_active_bytes
+        .saturating_sub(source_strategy.source_stream_buffer_bytes)
+        .saturating_add(resident_source_cache_bytes)
+        .saturating_add(extra_active_plane_bytes);
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "mosaic_cube_full_source_reuse_memory active_rows={} selected_channels={} active_planes={} resident_source_cache_bytes={} replaced_source_stream_buffer_bytes={} per_plane_execution_bytes={} extra_active_plane_bytes={} estimated_active_bytes={} memory_target_bytes={} memory_target_source={}",
+            active_row_count,
+            selected_channel_count,
+            active_planes,
+            resident_source_cache_bytes,
+            source_strategy.source_stream_buffer_bytes,
+            per_plane_execution_bytes,
+            extra_active_plane_bytes,
+            estimated_active_bytes,
+            source_strategy.memory_target_bytes,
+            source_strategy.memory_target_source,
+        );
+    }
+    if estimated_active_bytes <= source_strategy.memory_target_bytes {
+        return Ok(resident_source_cache_bytes);
+    }
+    Err(format!(
+        "mosaic cube chanchunks full-source reuse would retain an estimated \
+         {resident_source_cache_bytes} bytes of all-row source cache and \
+         {estimated_active_bytes} total active bytes for {active_planes} active planes, exceeding \
+         the active memory target {} bytes (source={})",
+        source_strategy.memory_target_bytes, source_strategy.memory_target_source
+    ))
+}
+
+fn source_channel_indices_cover(full: &[usize], required: &[usize]) -> bool {
+    required
+        .iter()
+        .all(|channel| full.binary_search(channel).is_ok())
 }
 
 fn prepared_input_visibility_sample_count(input: &PreparedInput) -> usize {

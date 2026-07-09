@@ -333,7 +333,7 @@
     {
       "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
       "issue_slice": "56-mosaic-cube-chanchunks",
-      "commit": "c5673768b+worktree",
+      "commit": "f541094fa+worktree",
       "machine": "bg-macbook-air",
       "mode": "dirty cube",
       "gridder": "mosaic",
@@ -342,7 +342,7 @@
       "parallel_requested": "multi-cpu",
       "parallel_effective": {
         "baseline": "mosaic shared source slab active_planes=8 worker_count=8",
-        "candidate": "mosaic shared source slab active_planes=2 worker_count=2 slab_count=4"
+        "candidate": "mosaic full-source reuse active_planes=2 worker_count=2 slab_count=4 source_fill_once"
       },
       "chanchunks_requested": {
         "baseline": 1,
@@ -363,65 +363,66 @@
         "candidate": null
       },
       "baseline_total_wall_s": 154.955595,
-      "candidate_total_wall_s": 279.914547,
-      "speedup": 0.553582,
-      "wall_reduction_fraction": -0.806418,
-      "correctness_status": "rust_only_skip_casa; candidate completed all 8 PB-aware mosaic cube planes after slab-local source-channel remap fix; targeted product-invariance tests cover .psf/.residual/.image/.sumwt/.weight/.pb/.image.pbcor",
+      "candidate_total_wall_s": 101.043972,
+      "speedup": 1.533546,
+      "wall_reduction_fraction": 0.347917,
+      "correctness_status": "rust_only_skip_casa; candidate completed all 8 PB-aware mosaic cube planes with full-source reuse; targeted product-invariance tests cover .psf/.residual/.image/.sumwt/.weight/.pb/.image.pbcor",
       "max_abs": null,
       "rms": null,
-      "notes": "GLENDENNING medium mosaic cube bounded dirty workload. chanchunks=4 reduces resident slab memory from planned_active_bytes=10.759GB to 3.122GB but is 80.6% slower than the one-slab baseline on this medium case because each slab rereads and replays the 6.06M-row source. This is bounded-memory evidence, not a default-speedup claim.",
+      "notes": "GLENDENNING medium mosaic cube bounded dirty workload. chanchunks=4 now fills one guarded full-source cache and reuses it across four 2-plane slabs, avoiding the previous repeated 6.06M-row source reads. Final guarded run is 34.8% faster than the one-slab baseline and 63.9% faster than the previous chanchunks=4 implementation while retaining the lower active-plane bound. The reuse gate estimated 1.784GB active bytes against the 16GiB memory target, including a 1.315GB resident source cache. CASA was skipped for timing isolation; targeted product-equivalence tests cover mosaic cube products.",
       "result_paths": {
         "baseline": "/private/tmp/casa-rs-imaging-wave/runs/20260708T192304Z-wave4-mosaic-cube-alma-medium-dirty-bounded-a27d1c5a.json",
-        "candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T193058Z-wave4-mosaic-cube-alma-medium-dirty-bounded-278ad003.json",
+        "candidate": "/private/tmp/casa-rs-imaging-perf-chanchunks-final/results/20260709T032111Z-wave4-mosaic-cube-alma-medium-dirty-bounded-8a206a69.json",
+        "pre_full_source_reuse_candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T193058Z-wave4-mosaic-cube-alma-medium-dirty-bounded-278ad003.json",
         "failed_pre_fix_candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T192707Z-wave4-mosaic-cube-alma-medium-dirty-bounded-aab82699.json"
       },
       "stages": [
         {
           "stage": "frontend_total",
           "baseline_s": 154.955595,
-          "candidate_s": 279.914547,
-          "delta_s": 124.958952,
+          "candidate_s": 101.043972,
+          "delta_s": -53.911623,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": -0.806418,
+          "saved_fraction_of_baseline_wall": 0.347917,
           "contribution_to_total_saved_wall": 1.0
         },
         {
           "stage": "source_read",
           "baseline_s": 15.685784,
-          "candidate_s": 62.094254,
-          "delta_s": 46.408470,
+          "candidate_s": 3.064426,
+          "delta_s": -12.621358,
           "baseline_wall_fraction": 0.101230,
-          "candidate_wall_fraction": 0.221837,
-          "saved_fraction_of_baseline_wall": -0.299499,
-          "contribution_to_total_saved_wall": 0.371383
+          "candidate_wall_fraction": 0.030329,
+          "saved_fraction_of_baseline_wall": 0.081451,
+          "contribution_to_total_saved_wall": 0.234112
         },
         {
           "stage": "run_imaging",
           "baseline_s": 117.178000,
-          "candidate_s": 205.773000,
-          "delta_s": 88.595000,
+          "candidate_s": 90.774000,
+          "delta_s": -26.404000,
           "baseline_wall_fraction": 0.756203,
-          "candidate_wall_fraction": 0.735126,
-          "saved_fraction_of_baseline_wall": -0.571744,
-          "contribution_to_total_saved_wall": 0.709793
+          "candidate_wall_fraction": 0.898361,
+          "saved_fraction_of_baseline_wall": 0.170397,
+          "contribution_to_total_saved_wall": 0.489760
         }
       ]
     },
     {
       "workload_id": "wave3-standard-mfs-clark-heavy-wave2",
       "issue_slice": "352-standard-mfs-dirty-product-gpu-residency",
-      "commit": "d7b7863ec+worktree",
+      "commit": "f541094fa+worktree",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
       "gridder": "standard",
       "deconvolver": "clark",
       "precision_policy": {
         "baseline": "f32 rustfft",
-        "candidate": "f32 metal-mpsgraph requested"
+        "candidate": "f32 metal-mpsgraph unsandboxed"
       },
       "parallel_requested": "multi-cpu",
-      "parallel_effective": "fixed_tile grid_threads=4; dirty product finish reached shared f32 path",
+      "parallel_effective": "fixed_tile grid_threads=4; dirty product finish selected metal-mpsgraph on Apple M4",
       "chanchunks_requested": null,
       "chanchunks_effective": null,
       "row_block_rows": {
@@ -433,80 +434,85 @@
       "memory_target_gb": 16.0,
       "peak_rss_gb": {
         "baseline": 12.551,
-        "candidate": 12.459
+        "candidate": 12.141
       },
       "baseline_total_wall_s": 12.146231,
-      "candidate_total_wall_s": 13.176260,
-      "speedup": 0.921827,
-      "wall_reduction_fraction": -0.084802,
-      "correctness_status": "rust_only_skip_casa; same workload parameters and gridded_samples=197519040; resident-product unit tests compare GPU product finish against CPU f32 finish",
+      "candidate_total_wall_s": 14.172987,
+      "speedup": 0.856999,
+      "wall_reduction_fraction": -0.166863,
+      "correctness_status": "CASA run completed for the candidate timing artifact; no product comparison panel was generated; resident-product unit tests compare GPU product finish against CPU f32 finish",
       "max_abs": null,
       "rms": null,
-      "notes": "GLENDENNING medium standard-MFS dirty workload. This is negative local GPU evidence: the fixed-tile MFS path now reaches the shared dirty product finisher and records dirty_product_fft_timing, but this host reports metal_device_available=false and the candidate falls back with dirty_product_gpu_resident_fallback reason=metal_mpsgraph_no_default_device. On a Mac with MPSGraph device availability, the same path requests the resident Metal product finish.",
+      "notes": "GLENDENNING medium standard-MFS dirty workload. Corrected unsandboxed Metal evidence: sandboxed Swift/Metal checks can hide MTLCreateSystemDefaultDevice, but the same host exposes Apple M4 Metal outside the sandbox and the dirty product finish selects metal-mpsgraph with fallback_used=false. This is still negative wall-clock evidence for this medium 1250x1250 dirty workload: total wall is 16.7% slower than the RustFFT baseline and the release CLI dirty-product FFT is slower despite a 4.1ms device execution time. Metal is functional, but larger product sizes or more GPU-resident work are needed before claiming a speedup.",
       "result_paths": {
         "baseline": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233605Z-wave3-standard-mfs-clark-heavy-wave2-f92b935e.json",
-        "candidate": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233445Z-wave3-standard-mfs-clark-heavy-wave2-12de237a.json",
+        "candidate": "/private/tmp/casa-rs-imaging-metal-unsandboxed/results/20260709T032433Z-wave3-standard-mfs-clark-heavy-wave2-70813543.json",
+        "sandboxed_fallback_candidate": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233445Z-wave3-standard-mfs-clark-heavy-wave2-12de237a.json",
         "negative_control_before_fixed_tile_hook": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T232825Z-wave3-standard-mfs-clark-heavy-wave2-415f55ff.json"
       },
       "stages": [
         {
           "stage": "frontend_total",
           "baseline_s": 12.146231,
-          "candidate_s": 13.176260,
-          "delta_s": 1.030029,
+          "candidate_s": 14.172987,
+          "delta_s": 2.026756,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": -0.084802,
+          "saved_fraction_of_baseline_wall": -0.166863,
           "contribution_to_total_saved_wall": 1.0
         },
         {
           "stage": "run_imaging",
           "baseline_s": 7.279629,
-          "candidate_s": 7.341908,
-          "delta_s": 0.062279,
+          "candidate_s": 7.866000,
+          "delta_s": 0.586371,
           "baseline_wall_fraction": 0.599332,
-          "candidate_wall_fraction": 0.557207,
-          "saved_fraction_of_baseline_wall": -0.005127,
-          "contribution_to_total_saved_wall": 0.060463
+          "candidate_wall_fraction": 0.555014,
+          "saved_fraction_of_baseline_wall": -0.048274,
+          "contribution_to_total_saved_wall": 0.289317
         },
         {
           "stage": "dirty_product_fft",
           "baseline_s": 0.045552,
-          "candidate_s": 0.044984,
-          "delta_s": -0.000568,
+          "candidate_s": 0.231784,
+          "delta_s": 0.186232,
           "baseline_wall_fraction": 0.003750,
-          "candidate_wall_fraction": 0.003414,
-          "saved_fraction_of_baseline_wall": 0.000047,
-          "contribution_to_total_saved_wall": -0.000551
+          "candidate_wall_fraction": 0.016354,
+          "saved_fraction_of_baseline_wall": -0.015332,
+          "contribution_to_total_saved_wall": 0.091883
         },
         {
           "stage": "prepare_plane_input",
           "baseline_s": 9.569735,
-          "candidate_s": 9.623185,
-          "delta_s": 0.053450,
+          "candidate_s": 9.910141,
+          "delta_s": 0.340406,
           "baseline_wall_fraction": 0.787877,
-          "candidate_wall_fraction": 0.730343,
-          "saved_fraction_of_baseline_wall": -0.004401,
-          "contribution_to_total_saved_wall": 0.051892
+          "candidate_wall_fraction": 0.699229,
+          "saved_fraction_of_baseline_wall": -0.028025,
+          "contribution_to_total_saved_wall": 0.167959
         },
         {
           "stage": "write_products",
           "baseline_s": 0.067957,
-          "candidate_s": 0.069935,
-          "delta_s": 0.001978,
+          "candidate_s": 0.067000,
+          "delta_s": -0.000957,
           "baseline_wall_fraction": 0.005595,
-          "candidate_wall_fraction": 0.005308,
-          "saved_fraction_of_baseline_wall": -0.000163,
-          "contribution_to_total_saved_wall": 0.001920
+          "candidate_wall_fraction": 0.004727,
+          "saved_fraction_of_baseline_wall": 0.000079,
+          "contribution_to_total_saved_wall": -0.000472
         }
       ],
       "gpu": {
         "dirty_product_fft_requested_backend": "metal-mpsgraph",
-        "dirty_product_fft_selected_backend": "rustfft",
-        "dirty_product_fft_fallback_used": true,
-        "dirty_product_fft_total_ms": 44.984,
-        "dirty_product_gpu_resident_fallback_reason": "metal_mpsgraph_no_default_device",
-        "metal_device_available": false
+        "dirty_product_fft_selected_backend": "metal-mpsgraph",
+        "dirty_product_fft_fallback_used": false,
+        "dirty_product_fft_total_ms": 231.784,
+        "dirty_product_gpu_resident_fallback_reason": null,
+        "metal_device_available": true,
+        "metal_device_name": "Apple M4",
+        "unsandboxed": true,
+        "profile_dirty_product_fft_total_ms": 70.083,
+        "device_exec_ms": 4.107
       }
     }
   ]
