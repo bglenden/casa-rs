@@ -412,7 +412,7 @@
     {
       "workload_id": "wave3-standard-mfs-clark-heavy-wave2",
       "issue_slice": "352-standard-mfs-dirty-product-gpu-residency",
-      "commit": "a931593a4",
+      "commit": "e8a614379",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
       "gridder": "standard",
