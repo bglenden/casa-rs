@@ -8347,13 +8347,6 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                         plane.batches.len()
                     )));
                 }
-                if !plane.density_batches.is_empty() && plane.density_batches.len() != plane.batches.len() {
-                    return Err(ImagingError::InvalidRequest(format!(
-                        "streaming mosaic MT-MFS produced {} density batches for {} visibility batches",
-                        plane.density_batches.len(),
-                        plane.batches.len()
-                    )));
-                }
                 if mosaic.grouped_metadata_batches.len() != plane.batches.len() {
                     return Err(ImagingError::InvalidRequest(format!(
                         "streaming mosaic MT-MFS produced {} metadata batches for {} visibility batches",
@@ -8361,10 +8354,12 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                         plane.batches.len()
                     )));
                 }
-                let mut density_batches = plane.density_batches.into_iter();
-                for ((batch, frequencies_hz), metadata) in plane
+                let density_batches =
+                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
+                for (((batch, density), frequencies_hz), metadata) in plane
                     .batches
                     .into_iter()
+                    .zip(density_batches)
                     .zip(plane.sample_frequency_batches_hz)
                     .zip(mosaic.grouped_metadata_batches)
                 {
@@ -8378,7 +8373,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                     sample_count += batch.len();
                     consumer(MosaicMtmfsVisibilityBlock {
                         visibility: batch,
-                        density: density_batches.next(),
+                        density,
                         sample_frequencies_hz: frequencies_hz,
                         gridder_metadata: metadata,
                     })?;
@@ -8761,16 +8756,18 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                             .to_string(),
                     ));
                 };
-                let mut density_batches = plane.density_batches.into_iter();
-                for (batch, metadata) in plane
+                let density_batches =
+                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
+                for ((batch, density), metadata) in plane
                     .batches
                     .into_iter()
+                    .zip(density_batches)
                     .zip(mosaic.grouped_metadata_batches)
                 {
                     sample_count += batch.len();
                     consumer(SinglePlaneVisibilityBlock {
                         visibility: batch,
-                        density: density_batches.next(),
+                        density,
                         gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
                     })?;
                 }
@@ -8983,16 +8980,18 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     ));
                 };
                 rows_done = rows_done.saturating_add(block.visibility.row_count());
-                let mut density_batches = plane.density_batches.into_iter();
-                for (batch, metadata) in plane
+                let density_batches =
+                    align_optional_density_batches(&plane.batches, plane.density_batches)?;
+                for ((batch, density), metadata) in plane
                     .batches
                     .into_iter()
+                    .zip(density_batches)
                     .zip(mosaic.grouped_metadata_batches)
                 {
                     sample_count += batch.len();
                     consumer(SinglePlaneVisibilityBlock {
                         visibility: batch,
-                        density: density_batches.next(),
+                        density,
                         gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
                     })?;
                 }
@@ -25261,6 +25260,34 @@ struct PlaneInput {
     gridder_mode: GridderMode,
 }
 
+fn align_optional_density_batches(
+    visibility_batches: &[VisibilityBatch],
+    density_batches: Vec<VisibilityBatch>,
+) -> Result<Vec<Option<VisibilityBatch>>, ImagingError> {
+    if density_batches.is_empty() {
+        return Ok((0..visibility_batches.len()).map(|_| None).collect());
+    }
+    if density_batches.len() != visibility_batches.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "prepared input has {} density batches for {} visibility batches",
+            density_batches.len(),
+            visibility_batches.len()
+        )));
+    }
+    for (index, (visibility, density)) in
+        visibility_batches.iter().zip(&density_batches).enumerate()
+    {
+        if density.len() != visibility.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "prepared input density batch {index} has {} samples for {} visibility samples",
+                density.len(),
+                visibility.len()
+            )));
+        }
+    }
+    Ok(density_batches.into_iter().map(Some).collect())
+}
+
 #[derive(Clone)]
 struct CubeChannelInput {
     channel_frequency_hz: f64,
@@ -36644,7 +36671,7 @@ enum PreparedState {
         plane_stokes: PlaneStokes,
         corr_index: usize,
         batch: VisibilityBatch,
-        density_batch: VisibilityBatch,
+        density_batch: Option<VisibilityBatch>,
         sample_frequency_hz: Vec<f64>,
         mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
     },
@@ -36667,7 +36694,7 @@ enum PreparedState {
         transform: PairCollapseTransform,
         pair: (usize, usize),
         batch: VisibilityBatch,
-        density_batch: VisibilityBatch,
+        density_batch: Option<VisibilityBatch>,
         sample_frequency_hz: Vec<f64>,
         mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
     },
@@ -37146,7 +37173,7 @@ impl PreparedSelection {
                     plane_stokes,
                     corr_index,
                     batch: empty_visibility_batch(max_samples),
-                    density_batch: empty_visibility_batch(max_samples),
+                    density_batch: None,
                     sample_frequency_hz: Vec::with_capacity(max_samples),
                     mosaic_metadata: None,
                 }
@@ -37167,7 +37194,7 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
-                        density_batch: empty_visibility_batch(max_samples),
+                        density_batch: None,
                         sample_frequency_hz: Vec::with_capacity(max_samples),
                         mosaic_metadata: None,
                     }
@@ -37190,7 +37217,7 @@ impl PreparedSelection {
                     transform,
                     pair,
                     batch: empty_visibility_batch(max_samples),
-                    density_batch: empty_visibility_batch(max_samples),
+                    density_batch: None,
                     sample_frequency_hz: Vec::with_capacity(max_samples),
                     mosaic_metadata: None,
                 }
@@ -37265,7 +37292,7 @@ impl PreparedSelection {
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
-                if self.use_density_batches {
+                if let Some(density_batch) = density_batch {
                     reserve_visibility_batch(density_batch, sample_capacity);
                 }
                 sample_frequency_hz.reserve(sample_capacity);
@@ -37287,7 +37314,7 @@ impl PreparedSelection {
                 PreparedTraceState::PairedMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
-                if self.use_density_batches {
+                if let Some(density_batch) = density_batch {
                     reserve_visibility_batch(density_batch, sample_capacity);
                 }
                 sample_frequency_hz.reserve(sample_capacity);
@@ -37629,7 +37656,8 @@ impl PreparedSelection {
                             plane_stokes,
                             corr_index,
                             batch: empty_visibility_batch(max_samples),
-                            density_batch: empty_visibility_batch(max_samples),
+                            density_batch: (trace_free_mfs_mosaic && use_density_batches)
+                                .then(|| empty_visibility_batch(max_samples)),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
                             mosaic_metadata: trace_free_mfs_mosaic
                                 .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
@@ -37670,7 +37698,8 @@ impl PreparedSelection {
                             transform,
                             pair,
                             batch: empty_visibility_batch(max_samples),
-                            density_batch: empty_visibility_batch(max_samples),
+                            density_batch: (trace_free_mfs_mosaic && use_density_batches)
+                                .then(|| empty_visibility_batch(max_samples)),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
                             mosaic_metadata: trace_free_mfs_mosaic
                                 .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
@@ -37732,7 +37761,8 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
-                        density_batch: empty_visibility_batch(max_samples),
+                        density_batch: (trace_free_mfs_mosaic && use_density_batches)
+                            .then(|| empty_visibility_batch(max_samples)),
                         sample_frequency_hz: Vec::with_capacity(max_samples),
                         mosaic_metadata: trace_free_mfs_mosaic
                             .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
@@ -37872,7 +37902,7 @@ impl PreparedSelection {
                     plane_stokes: PlaneStokes::I,
                     corr_index: 0,
                     batch: empty_visibility_batch(0),
-                    density_batch: empty_visibility_batch(0),
+                    density_batch: None,
                     sample_frequency_hz: Vec::new(),
                     mosaic_metadata: None,
                 },
@@ -37974,7 +38004,6 @@ impl PreparedSelection {
         let source_channel_indices = self.source_channel_indices.as_slice();
         let source_channel_frequencies_hz = self.source_channel_frequencies_hz.as_slice();
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
-        let use_density_batches = self.use_density_batches;
         let use_cube_visibility_grid_assignments =
             use_casa_cube_grid_interpolation || self.cube_visibility_grid_assignments;
         let casa_cube_briggs_density_uvw_m = geometry_row.gridft_density_uvw_m;
@@ -38059,7 +38088,7 @@ impl PreparedSelection {
                             batch.gridable.push(is_cross);
                             batch.visibility.push(zero_visibility);
                             sample_frequency_hz.push(imaging_frequency_hz);
-                            if use_density_batches && mosaic_metadata.is_some() {
+                            if let Some(density_batch) = density_batch.as_mut() {
                                 push_mfs_density_sample(
                                     density_batch,
                                     imaging_frequency_hz,
@@ -38110,7 +38139,7 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(zero_visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
-                        if use_density_batches && mosaic_metadata.is_some() {
+                        if let Some(density_batch) = density_batch.as_mut() {
                             push_mfs_density_sample(
                                 density_batch,
                                 imaging_frequency_hz,
@@ -38180,7 +38209,7 @@ impl PreparedSelection {
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(zero_visibility);
                                 sample_frequency_hz.push(imaging_frequency_hz);
-                                if use_density_batches && mosaic_metadata.is_some() {
+                                if let Some(density_batch) = density_batch.as_mut() {
                                     push_mfs_density_sample(
                                         density_batch,
                                         imaging_frequency_hz,
@@ -38245,7 +38274,7 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(zero_visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
-                        if use_density_batches && mosaic_metadata.is_some() {
+                        if let Some(density_batch) = density_batch.as_mut() {
                             push_mfs_density_sample(
                                 density_batch,
                                 imaging_frequency_hz,
@@ -38846,7 +38875,7 @@ impl PreparedSelection {
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
                     sample_frequency_hz.push(imaging_frequency_hz);
-                    if use_density_batches && mosaic_metadata.is_some() {
+                    if let Some(density_batch) = density_batch.as_mut() {
                         push_mfs_density_sample(
                             density_batch,
                             imaging_frequency_hz,
@@ -39278,7 +39307,7 @@ impl PreparedSelection {
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(visibility);
                                 sample_frequency_hz.push(imaging_frequency_hz);
-                                if use_density_batches && mosaic_metadata.is_some() {
+                                if let Some(density_batch) = density_batch.as_mut() {
                                     push_mfs_density_sample(
                                         density_batch,
                                         imaging_frequency_hz,
@@ -39356,7 +39385,7 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
-                        if use_density_batches && mosaic_metadata.is_some() {
+                        if let Some(density_batch) = density_batch.as_mut() {
                             push_mfs_density_sample(
                                 density_batch,
                                 imaging_frequency_hz,
@@ -40908,7 +40937,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
             casa_cube_briggs_preweighting: _,
-            use_density_batches,
+            use_density_batches: _,
             build_cube_briggs_density_samples: _,
             use_model_interpolation_batches: _,
             mosaic_pb_limit,
@@ -40918,7 +40947,8 @@ impl PreparedSelection {
             trace_enabled: _,
         } = self;
         let phase_center_direction_rad = phase_center.angles_rad;
-        match state {
+        let (plane_stokes, batch, density_batch, sample_frequency_hz, mosaic_metadata) = match state
+        {
             PreparedState::ExplicitMfs {
                 plane_stokes,
                 batch,
@@ -40926,92 +40956,60 @@ impl PreparedSelection {
                 sample_frequency_hz,
                 mosaic_metadata: Some(mosaic_metadata),
                 ..
-            } => {
-                let frequency_metadata = mfs_output_frequency_metadata(
-                    freq_ref,
-                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]),
-                    selected_frequency_range_hz,
-                    selected_frequency_edge_range_hz,
-                    mfs_output_frequency_edge_range_hz,
-                    &sample_frequency_hz,
-                )?;
-                let mosaic_batch_size = batch.len().max(1);
-                let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
-                    ms,
-                    phase_center_direction_rad,
-                    mosaic_pb_limit,
-                    &sample_frequency_hz,
-                    &mosaic_metadata,
-                    mosaic_batch_size,
-                )?;
-                Ok(PreparedInput::Mfs(PlaneInput {
-                    phase_center,
-                    freq_ref: frequency_metadata.freq_ref,
-                    reffreq_hz: frequency_metadata.reffreq_hz,
-                    selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
-                    spectral_frequency_edge_range_hz: frequency_metadata
-                        .spectral_frequency_edge_range_hz,
-                    plane_stokes,
-                    batches: vec![batch],
-                    density_batches: chunk_density_batch(
-                        density_batch,
-                        use_density_batches,
-                        mosaic_batch_size,
-                    ),
-                    sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
-                    sample_frequency_batches_hz: vec![sample_frequency_hz],
-                    gridder_mode,
-                }))
             }
-            PreparedState::CollapsedMfs {
+            | PreparedState::CollapsedMfs {
                 plane_stokes,
                 batch,
                 density_batch,
                 sample_frequency_hz,
                 mosaic_metadata: Some(mosaic_metadata),
                 ..
-            } => {
-                let frequency_metadata = mfs_output_frequency_metadata(
-                    freq_ref,
-                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]),
-                    selected_frequency_range_hz,
-                    selected_frequency_edge_range_hz,
-                    mfs_output_frequency_edge_range_hz,
-                    &sample_frequency_hz,
-                )?;
-                let mosaic_batch_size = batch.len().max(1);
-                let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
-                    ms,
-                    phase_center_direction_rad,
-                    mosaic_pb_limit,
-                    &sample_frequency_hz,
-                    &mosaic_metadata,
-                    mosaic_batch_size,
-                )?;
-                Ok(PreparedInput::Mfs(PlaneInput {
-                    phase_center,
-                    freq_ref: frequency_metadata.freq_ref,
-                    reffreq_hz: frequency_metadata.reffreq_hz,
-                    selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
-                    spectral_frequency_edge_range_hz: frequency_metadata
-                        .spectral_frequency_edge_range_hz,
-                    plane_stokes,
-                    batches: vec![batch],
-                    density_batches: chunk_density_batch(
-                        density_batch,
-                        use_density_batches,
-                        mosaic_batch_size,
-                    ),
-                    sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
-                    sample_frequency_batches_hz: vec![sample_frequency_hz],
-                    gridder_mode,
-                }))
-            }
-            _ => Err(
-                "internal error: trace-free mosaic prepare requires MFS mosaic metadata"
-                    .to_string(),
+            } => (
+                plane_stokes,
+                batch,
+                density_batch,
+                sample_frequency_hz,
+                mosaic_metadata,
             ),
-        }
+            _ => {
+                return Err(
+                    "internal error: trace-free mosaic prepare requires MFS mosaic metadata"
+                        .to_string(),
+                );
+            }
+        };
+        let frequency_metadata = mfs_output_frequency_metadata(
+            freq_ref,
+            0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]),
+            selected_frequency_range_hz,
+            selected_frequency_edge_range_hz,
+            mfs_output_frequency_edge_range_hz,
+            &sample_frequency_hz,
+        )?;
+        let mosaic_batch_size = batch.len().max(1);
+        let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
+            ms,
+            phase_center_direction_rad,
+            mosaic_pb_limit,
+            &sample_frequency_hz,
+            &mosaic_metadata,
+            mosaic_batch_size,
+        )?;
+        Ok(PreparedInput::Mfs(PlaneInput {
+            phase_center,
+            freq_ref: frequency_metadata.freq_ref,
+            reffreq_hz: frequency_metadata.reffreq_hz,
+            selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
+            spectral_frequency_edge_range_hz: frequency_metadata.spectral_frequency_edge_range_hz,
+            plane_stokes,
+            batches: vec![batch],
+            density_batches: density_batch
+                .map(|batch| chunk_visibility_batch(batch, mosaic_batch_size))
+                .unwrap_or_default(),
+            sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
+            sample_frequency_batches_hz: vec![sample_frequency_hz],
+            gridder_mode,
+        }))
     }
 
     fn finish_standard_mfs_without_trace_with_batch_size(
@@ -54703,6 +54701,32 @@ mod tests {
         assert_eq!(batch.weight, vec![2.0]);
         assert_eq!(batch.sumwt_factor, vec![0.5]);
         assert_eq!(batch.gridable, vec![true]);
+    }
+
+    #[test]
+    fn optional_density_batches_require_exact_visibility_alignment() {
+        let visibility_batches = vec![test_visibility_batch(1.0), test_visibility_batch(2.0)];
+        let absent = align_optional_density_batches(&visibility_batches, Vec::new()).unwrap();
+        assert_eq!(absent, vec![None, None]);
+
+        let aligned = align_optional_density_batches(
+            &visibility_batches,
+            vec![test_visibility_batch(3.0), test_visibility_batch(4.0)],
+        )
+        .unwrap();
+        assert!(aligned.iter().all(Option::is_some));
+
+        assert!(
+            align_optional_density_batches(&visibility_batches, vec![test_visibility_batch(3.0)])
+                .is_err()
+        );
+        assert!(
+            align_optional_density_batches(
+                &visibility_batches[..1],
+                vec![empty_visibility_batch(0)]
+            )
+            .is_err()
+        );
     }
 
     #[test]

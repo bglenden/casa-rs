@@ -360,7 +360,6 @@ pub use trace::{
 };
 
 pub use error::ImagingError;
-use gridder::DensityCellConvention;
 pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
@@ -9003,21 +9002,12 @@ impl MosaicStreamingWeightingPlan {
         selected_frequency_range_hz: [f64; 2],
         weight_density_mode: WeightDensityMode,
     ) -> Result<Self, ImagingError> {
-        let density_convention = match weight_density_mode {
-            WeightDensityMode::Combined => DensityCellConvention::MosaicVisImagingWeight,
-            WeightDensityMode::PerPlane => DensityCellConvention::CubeBriggsWeightorLookup,
-        };
-        let density_build_convention = match weight_density_mode {
-            WeightDensityMode::Combined => DensityCellConvention::MosaicVisImagingWeight,
-            WeightDensityMode::PerPlane => DensityCellConvention::CubeBriggsWeightorDensity,
-        };
         Ok(Self::Standard(
-            StandardMfsStreamingWeightingPlan::new_with_density_conventions(
+            StandardMfsStreamingWeightingPlan::new_with_density_mode(
                 geometry,
                 weighting,
                 selected_frequency_range_hz,
-                density_convention,
-                density_build_convention,
+                weight_density_mode,
             )?,
         ))
     }

@@ -38,7 +38,6 @@ fn release_allocator_pressure() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DensityCellConvention {
     VisImagingWeight,
-    MosaicVisImagingWeight,
     CubeBriggsWeightorDensity,
     CubeBriggsWeightorLookup,
 }
@@ -1720,8 +1719,7 @@ impl StandardGridder {
         convention: DensityCellConvention,
     ) -> Option<(usize, usize)> {
         let (x, y) = match convention {
-            DensityCellConvention::VisImagingWeight
-            | DensityCellConvention::MosaicVisImagingWeight => {
+            DensityCellConvention::VisImagingWeight => {
                 let u = u_lambda as f32;
                 let v = v_lambda as f32;
                 (
@@ -1741,8 +1739,7 @@ impl StandardGridder {
             return None;
         }
         let (anchor_x, anchor_y) = match convention {
-            DensityCellConvention::VisImagingWeight
-            | DensityCellConvention::MosaicVisImagingWeight => (x as isize, y as isize),
+            DensityCellConvention::VisImagingWeight => (x as isize, y as isize),
             DensityCellConvention::CubeBriggsWeightorDensity
             | DensityCellConvention::CubeBriggsWeightorLookup => {
                 (x.round() as isize, y.round() as isize)
@@ -3834,7 +3831,7 @@ mod tests {
             gridder.density_cell_index_with_convention(
                 u_lambda,
                 0.0,
-                DensityCellConvention::MosaicVisImagingWeight,
+                DensityCellConvention::VisImagingWeight,
             ),
             Some((2, 640))
         );

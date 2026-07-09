@@ -106,22 +106,6 @@ impl StandardMfsStreamingWeightingPlan {
         let density_convention = density_cell_convention(weighting, weight_density_mode);
         let density_build_convention =
             density_build_cell_convention(weighting, weight_density_mode);
-        Self::new_with_density_conventions(
-            geometry,
-            weighting,
-            selected_frequency_range_hz,
-            density_convention,
-            density_build_convention,
-        )
-    }
-
-    pub(crate) fn new_with_density_conventions(
-        geometry: ImageGeometry,
-        weighting: WeightingMode,
-        selected_frequency_range_hz: [f64; 2],
-        density_convention: DensityCellConvention,
-        density_build_convention: DensityCellConvention,
-    ) -> Result<Self, crate::ImagingError> {
         let gridder = StandardGridder::new(geometry)?;
         let density = match weighting {
             WeightingMode::Natural => None,
@@ -1408,7 +1392,6 @@ fn density_build_cell_convention(
 fn density_includes_conjugates(convention: DensityCellConvention) -> bool {
     match convention {
         DensityCellConvention::VisImagingWeight
-        | DensityCellConvention::MosaicVisImagingWeight
         | DensityCellConvention::CubeBriggsWeightorDensity => true,
         DensityCellConvention::CubeBriggsWeightorLookup => false,
     }

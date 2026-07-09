@@ -16179,9 +16179,7 @@ fn metal_error(
 #[cfg(all(target_os = "macos", not(coverage)))]
 fn metal_density_convention_code(convention: DensityCellConvention) -> u32 {
     match convention {
-        DensityCellConvention::VisImagingWeight | DensityCellConvention::MosaicVisImagingWeight => {
-            0
-        }
+        DensityCellConvention::VisImagingWeight => 0,
         DensityCellConvention::CubeBriggsWeightorDensity => 1,
         DensityCellConvention::CubeBriggsWeightorLookup => 2,
     }
