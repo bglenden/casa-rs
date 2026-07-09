@@ -30,6 +30,12 @@ imager.
     medium, and stress rows plus the review evidence contract used by #273
 - `tools/perf/imager/wave3_matrix.py`
   - validates and enumerates the Wave 3 matrix without requiring local datasets
+- `tools/perf/imager/imaging_performance_ledger.json`
+  - records accepted, guarded, neutral, and rejected imaging-performance runs,
+    including exact workload/artifact handles, correctness gates, stage metrics,
+    and speedup or slowdown fractions
+- `tools/perf/imager/imaging_performance_ledger.py`
+  - validates and summarizes the performance ledger
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -108,6 +114,82 @@ The #276 standard-MFS smoke row is available as:
 ```sh
 tools/perf/imager/run_workload.py --dry-run wave3-standard-mfs-single-term-smoke
 ```
+
+The bounded large mosaic MT-MFS sentinel is available as:
+
+```sh
+tools/perf/imager/run_workload.py --dry-run \
+  tools/perf/imager/workloads/wave3-mosaic-mtmfs-alma-large-bounded.json
+```
+
+## Imaging runtime controls and telemetry
+
+`casars-imager` task protocol v3 carries the performance controls used by the
+current workload harness:
+
+- `parallel` selects normal planned local execution or the serial CPU
+  comparison surface. `parallel=false` forces CPU acceleration, one grid and
+  prepare worker, one live source block, RustFFT product transforms, and no
+  Metal grouped-input cache.
+- `chanchunks` is the CASA-like top-level spectral channel chunk count. The
+  planner may reuse a bounded resident source cache across chunks when that
+  fits the memory plan; it does not imply repeated full-MS reads.
+- `imaging_memory_target_mb`, `imaging_prepare_buffer_mb`,
+  `imaging_row_block_rows`, and `imaging_prepare_workers` control the shared
+  source-stream plan.
+- `imaging_read_ahead_blocks` is the maximum number of live row blocks, not
+  queue capacity. It is currently capped at two. The two-block configuration
+  accounts for one producer-owned block and one consumer-owned block and uses
+  a zero-capacity rendezvous channel (`queue_capacity = max_live - 2`), so no
+  third block can wait in the queue. One block is synchronous. Full-slab
+  spectral modes default to one and reject the overlap plan when it would cost
+  modeled plane residency or row locality.
+- `imaging_fft_precision` and `imaging_fft_backend` select dirty/PSF/residual
+  product transform policy independently from visibility-grid acceleration.
+
+The shared source read-ahead path is used by standard MFS, mosaic MFS replay,
+the supported mosaic MT-MFS replay path, standard and mosaic cube slabs,
+cubedata preparation, and trace preparation. Its summary line reports mode,
+enabled state, max-live count, queue capacity, observed handoff high water,
+row blocks and rows per block, producer/consumer blocked time, measured overlap,
+source read/route/consumer time, source bytes, effective read bandwidth, and
+streamed samples. Protocol-v3 diagnostic progress also reports planned and
+tracked memory, worker/queue states, stage timings, GPU eligibility/selection,
+host/device bytes, command/kernel time, and CPU fallback reasons. The task
+protocol version is 3; its newline-delimited progress event schema is version 1
+and the embedded observability snapshot schema is version 2.
+
+## Apple GPU product finishing
+
+On Apple platforms, eligible f32 dirty-product batches can keep standard or
+mosaic PSF/residual/weight grids resident through MPSGraph FFT, grid correction,
+normalization, and peak reduction. An explicit `metal-mpsgraph` request uses the
+resident path when supported. `auto` selects it only when the batch shape and
+work size pass the profitability guard; small batches, f64 products,
+unsupported shapes, unavailable devices, and resident command failures use the
+shared CPU finisher. The fallback preserves the same product set and is emitted
+in detailed backend telemetry.
+
+The performance ledger is authoritative for acceptance. In the current wave,
+the explicit Metal standard dirty-product stage improved from `45.552 ms` to
+`30.544 ms` (`1.49x`, `33.0%` lower), but the paired medium end-to-end run was
+still `8.4%` slower than CPU. Auto therefore keeps that small batch on CPU.
+Similarly, a proposed large-mosaic Metal command fusion was `8.7%` slower in
+the product FFT stage and was rejected. Kernel/stage wins are not promoted as
+end-to-end wins without a guarded retained-path comparison.
+
+Read-ahead is also mode- and workload-sensitive. The standard MFS medium
+workload improved from `155.579 s` to `122.826 s` (`1.27x`, `21.1%` lower),
+while the bounded large mosaic MT-MFS sentinel was neutral within noise
+(`108.202 s` without versus `108.410 s` with read-ahead). The latter is kept as
+a negative control rather than reported as a speedup.
+
+For the large spectral workload, guarded source-cache reuse made
+`chanchunks=4` faster than both comparison points: `101.044 s` versus
+`154.956 s` for one slab (`1.53x`, `34.8%` lower) and `279.915 s` for the old
+four-chunk path (`2.77x`, `63.9%` lower). Source-read time fell from `62.094 s`
+to `3.064 s` (`20.3x` lower). This is the accepted #56 behavior; repeated
+full-source reads across channel chunks are a regression.
 
 To compare native `simobserve` with CASA on a selected dataset:
 
@@ -279,6 +361,10 @@ fail before timing claims if requested as real runs.
   table and panels for the mode ticket
 - a clear `dry_run`, `completed`, or `failed` status
 
+The workload result's `schema_version: 1` is the benchmark artifact schema. It
+is independent of `casars-imager` task protocol v3 and the progress/
+observability schema versions emitted by the application.
+
 ### Failure semantics
 
 Unsupported modes, missing dataset roots or paths, missing CASA Python, invalid
@@ -351,3 +437,10 @@ The Rust profiler reports medians for:
 - `beam_fit`
 - `restore`
 - `total`
+
+Detailed runs additionally emit `imaging_source_read_ahead_summary`,
+`dirty_product_fft_timing`, `dirty_product_gpu_resident`,
+`mosaic_dirty_product_gpu_resident`, and
+`dirty_product_gpu_resident_fallback` records. Keep source overlap/bandwidth and
+GPU fallback metrics with the wall-clock result when adding a ledger entry; do
+not infer a speedup from stage timing alone.

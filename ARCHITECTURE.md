@@ -97,6 +97,54 @@ explorer tabs, and dirty-imaging artifacts are grouped under their originating
 in-memory run state so generated products can be reopened without adding a
 project-history persistence format or background service.
 
+### Imaging execution
+
+`casars-imager` owns MeasurementSet selection, bounded source streaming, mode
+dispatch, runtime policy, protocol telemetry, and persisted product writing.
+`casa-imaging` remains the prepared-visibility computation boundary for
+weighting, gridding/degridding, FFTs, normalization, deconvolution, restoration,
+and product semantics.
+
+The app uses one shared bounded producer/consumer primitive for source
+read-ahead across standard MFS, mosaic MFS replay, supported mosaic MT-MFS,
+standard and mosaic cube slabs, cubedata preparation, and trace preparation.
+`imaging_read_ahead_blocks` is a maximum live row-block count, not a queue-depth
+request. The current implementation caps it at two: one producer-owned block
+and one consumer-owned block. Queue capacity is `max_live_row_blocks - 2`, so
+the two-block case uses a rendezvous channel and cannot retain a third queued
+block. A value of one runs synchronously. Full-slab spectral routes remain
+single-block by default and accept explicit two-block read-ahead only when the
+memory planner does not lose plane residency or row locality.
+
+The first bounded mosaic MT-MFS slice supports one MeasurementSet,
+`specmode='mfs'`, `gridder='mosaic'`, `nterms <= 2`, no W term, natural,
+uniform, or Briggs weighting, user masks, clean or dirty products, and optional
+PB/PB-corrected products. Each weighting, initial-dirty, and residual-refresh
+pass replays the same bounded row stream; Briggs density uses a raw-UVW sidecar
+so CASA's density cell conventions remain independent of mosaic projection
+coordinates. Broader W/AW, pointing, start-model, outlier, multi-MS, and
+higher-term combinations still reject during planning.
+
+Imager task protocol v3 carries the local execution controls (`parallel`,
+`chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
+dirty-product FFT precision/backend policy). Diagnostic progress events expose
+planned and measured memory, source bytes and read bandwidth, read/prepare
+overlap, producer/consumer blocking, live-block high water, worker/queue state,
+stage timings, and backend selection or fallback reasons. The task protocol is
+v3, the newline-delimited progress event schema is v1, and the embedded
+observability snapshot schema is v2. `parallel=false` selects the serial CPU
+comparison surface, including one live source block and RustFFT product
+transforms.
+
+On Apple platforms, eligible f32 dirty/PSF/residual transforms can keep grids
+resident through MPSGraph FFT, correction, normalization, and peak reduction
+for standard and mosaic products. Explicit `metal-mpsgraph` requests select
+that path when supported. `auto` applies a work-size/batch-shape profitability
+guard and keeps small batches on the CPU; unsupported shapes, unavailable
+devices, resident-command failures, and f64 product transforms use the shared
+CPU product finisher. Backend and fallback decisions are reported in diagnostic
+telemetry rather than changing product membership or persistence semantics.
+
 ## Persistence / external systems
 
 - casacore-compatible table trees and image tables on local disk

@@ -1,7 +1,7 @@
 # Imaging Public API Consolidation Inventory
 
 Truth class: implementation inventory
-Last reality check: 2026-07-03
+Last reality check: 2026-07-09
 Verification: targeted `rg` call-site searches; `python3 -m py_compile tools/perf/imager/imaging_interface_metrics.py`; `python3 tools/perf/imager/imaging_interface_metrics.py --base origin/main --format markdown`; `cargo fmt --all -- --check`; `cargo check -p casa-imaging -p casa-ms -p casars-imager`; focused `casa-imaging`, `casa-ms`, and `casars-imager` regression tests for source views, auto-multithresh, PB products, coordinate systems, density translation, product-plane helpers, cube-Briggs formulas, clean-cycle/Hogbom helpers, and standard-MFS/mosaic/PB app routes; `just quick`; `just docs-check`; `just verify`; `tools/perf/imager/run_workload.py --artifact-root target/imperformance-interface-consolidation-final-r3/artifacts --repeats 3 --run-label imaging-interface-consolidation-final-r3 --storage-label local-testdata --output-dir target/imperformance-interface-consolidation-final-r3/smoke wave1-standard-mfs-dirty-smoke`; same three-repeat workload at `origin/main` commit `e5df883d1b465f87661322fec875dacd05e5fc0f` in `/private/tmp/casa-rs-origin-imaging-interface-20260702`
 
 ## Scope
@@ -17,8 +17,10 @@ grown around implementation variants instead of domain concepts:
 - `crates/casa-ms/src/visibility_buffer.rs`
 - `crates/casa-ms/src/spectral_selection.rs`
 
-Provider contracts, persisted image/MS formats, CLI flags, task JSON, output
-product names, and numerical algorithms are unchanged.
+Persisted image/MS formats and output product names are unchanged. The current
+imaging-performance wave extends the canonical task JSON/CLI surface through
+protocol v3 controls and telemetry, and adds a bounded mosaic MT-MFS concept
+entrypoint to the core API; those changes are inventoried below.
 
 ## Audit Method
 
@@ -109,6 +111,24 @@ planning and single-plane execution/product/capability planning have moved to
 `casa-imaging`; the app maps CLI flags and runtime facts into those contracts.
 App code keeps the MS/source grouping and streaming orchestration.
 
+The imaging-performance wave also consolidated source overlap behind one
+app-private bounded producer/consumer primitive. Standard MFS, mosaic MFS and
+MT-MFS replay, standard/mosaic cube, cubedata, and trace preparation use the
+same read-ahead ownership rule: the public `imaging_read_ahead_blocks` control
+names the maximum live row blocks, while the private queue capacity is
+`max_live_row_blocks - 2`. The implementation currently caps the value at two,
+accounting for one producer-owned and one consumer-owned block; it does not
+expose a queue or source-thread implementation type as library API.
+
+The first mosaic MT-MFS slice adds
+`run_mosaic_mtmfs_from_single_plane_stream` and
+`MosaicMtmfsVisibilityBlock`. It reuses `SinglePlaneStreamPass` and the existing
+MFS/mosaic metadata contracts, while carrying an optional raw-UVW density
+sidecar separately from the projected visibility batch so Briggs/uniform
+weighting can preserve CASA density-cell semantics. The task edge limits this
+entrypoint to the supported single-MS, MFS, `nterms <= 2`, no-W-term mosaic
+slice; the core validates the same projection and weighting constraints.
+
 ## Current Public Surface Snapshot
 
 ### `casa-imaging`
@@ -143,20 +163,29 @@ App code keeps the MS/source grouping and streaming orchestration.
 | `clean_cycle_threshold` and `run_hogbom_plane_minor_cycle` | Public | `casars-imager`, tests | Transitional public | Shared clean-control policy and the finite masked Hogbom plane loop now live with the deconvolution code; a future concept-level clean session should absorb these helpers. |
 | `build_image_coordinate_system` | Public | `casars-imager`, tests | Keep public | CASA-compatible image coordinate metadata belongs with imaging product semantics, not the application writer. |
 | `accumulate_standard_mfs_density_row_from_arrays` / `accumulate_standard_mfs_density_row_from_visibility_block` | Public | `casars-imager`, tests | Transitional public | Standard-MFS density row math is library computation; app still owns MS streaming and worker scheduling until the neutral source boundary moves farther down. |
-| `SinglePlaneVisibilityBlock`, `SinglePlaneStreamPass`, `SinglePlaneGridderMetadata` | Public | `casars-imager` mosaic/cube paths | Keep public | User-meaningful stream boundary for single-plane imaging. |
+| `SinglePlaneVisibilityBlock`, `SinglePlaneStreamPass`, `SinglePlaneGridderMetadata` | Public | `casars-imager` mosaic/cube paths | Keep public | User-meaningful replay boundary for single-plane imaging; the optional density sidecar separates raw-UVW weighting coordinates from projected gridding coordinates. |
 | `run_mosaic_mfs_from_single_plane_stream` | Public | `casars-imager` mosaic path | Keep public | Current concept API for mosaic MFS streaming. |
-| `run_mtmfs` | Public | `casars-imager` MT-MFS path | Keep public | Current concept API for MT-MFS. |
+| `run_mtmfs` | Public | `casars-imager` standard-gridder MT-MFS path | Keep public | Current concept API for standard-gridder MT-MFS. |
+| `run_mosaic_mtmfs_from_single_plane_stream` / `MosaicMtmfsVisibilityBlock` | Public | `casars-imager` supported mosaic MT-MFS path | Keep public | Replayable first-slice mosaic MT-MFS boundary; shares `SinglePlaneStreamPass` and carries sample frequencies, projected mosaic metadata, and optional raw-UVW density input per block. |
 | `standard_mfs_metal_device_available` | Public | `casars-imager` policy/export paths | Keep public for now | Capability query, not an implementation duplicate; broader execution-capability API remains future work. |
 
 ### `casars-imager`
 
-`casars-imager` still exports user-facing config, task contract, oracle,
-managed-output, and run-summary types. It no longer calls the old
+`casars-imager` still exports user-facing config, protocol-v3 task contract,
+oracle, managed-output, and run-summary types. It no longer calls the old
 route-specific standard-MFS public functions. It still owns substantial
 essentials/routed source shaping, density planning, routed visibility grouping,
 product assembly, and writer-policy code; physical MAIN-row selection now lives
 in `casa-ms`, and single-plane execution/product planning now lives in
 `casa-imaging`.
+
+Protocol v3 exposes `parallel`, `chanchunks`, shared imaging memory/prepare/
+row-block/read-ahead controls, and dirty-product FFT precision/backend policy.
+Diagnostic progress telemetry reports memory-ledger categories, source read
+bytes and bandwidth, producer/consumer overlap and blocking, worker/queue state,
+stage timing, and backend selection/fallback data. These are task/runtime
+contracts; the producer channel, FFT policy guard, and Apple resident-product
+implementation remain private.
 
 | Item or family | Current status | Disposition | Replacement guidance |
 |---|---:|---|---|

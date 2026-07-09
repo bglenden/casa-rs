@@ -1,7 +1,7 @@
 # Imaging Dataflow Comparison
 
 Truth class: exploratory descriptive
-Last reality check: 2026-05-14
+Last reality check: 2026-07-09
 Verification:
 - source inspection only for external CASA C++ and LibRA trees
 - `just docs-check`
@@ -78,14 +78,14 @@ layer, not in the pure core boundary.
 ```mermaid
 flowchart TB
     surface["Task/API surfaces<br/>Python mfs(), CLI/JSON, GUI task tab"] --> runconfig["Canonical request validation and mode dispatch<br/>casars-imager::run_from_request()"]
-    runconfig --> readms["Bounded MS source stream<br/>read_visibility_source_columns()<br/>DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW"]
+    runconfig --> readms["Bounded MS source stream<br/>shared read-ahead, at most two live blocks<br/>DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM, UVW"]
     readms --> prep["Bounded visibility blocks<br/>MFS or cube adapters<br/>uvw, frequency, Stokes, PB metadata"]
     prep --> dispatch["Processing-mode dispatch<br/>adapter-owned control-flow split"]
 
     dispatch --> mfs["MFS imaging operations<br/>run_imaging()<br/>standard/W-term path and mosaic branch"]
-    dispatch --> mtmfs["MTMFS Taylor-term operations<br/>run_mtmfs()<br/>separate core entrypoint, standard gridder only"]
-    dispatch --> cube["Standard cube consumers<br/>bounded one-plane stream adapters<br/>unsupported retained routes reject before MS reads"]
-    dispatch --> mcube["Mosaic cube consumers<br/>bounded one-plane stream adapters<br/>unsupported retained routes reject before MS reads"]
+    dispatch --> mtmfs["MTMFS Taylor-term operations<br/>run_mtmfs() plus bounded mosaic stream<br/>standard and first-slice mosaic gridders"]
+    dispatch --> cube["Standard cube/cubedata consumers<br/>bounded row-block and slab adapters<br/>unsupported retained routes reject before MS reads"]
+    dispatch --> mcube["Mosaic cube consumers<br/>bounded row-block and slab adapters<br/>unsupported retained routes reject before MS reads"]
 
     cube --> mfs
     mcube --> mfs
@@ -93,7 +93,7 @@ flowchart TB
     mtmfs --> weighting
     weighting --> stdproj["Standard/W projection gridding<br/>StandardGridder + WTermMode<br/>none, direct, wproject"]
     weighting --> mosaicproj["Mosaic PB projection gridding<br/>MosaicGridderConfig + ScreenProjector<br/>homogeneous PB, beam buckets, pblimit"]
-    stdproj --> fft["FFT and gridded image transforms<br/>centered_fft2 / centered_ifft2"]
+    stdproj --> fft["FFT and gridded image transforms<br/>CPU backends or guarded Apple GPU resident finish"]
     mosaicproj --> fft
     fft --> normalize["Normalization and image products<br/>sumwt, PSF, residual, model, restored image"]
     normalize --> deconv["Deconvolution controller<br/>Cotton-Schwab major/minor loop<br/>Hogbom, Clark, Multiscale"]
@@ -121,10 +121,29 @@ Refactoring signals visible here:
   construction, masks, product writing, and bounded model-column writeback.
   That is a large adapter surface even though the pure core boundary is clean.
 - The old retained full-visibility preparation route has been removed from
-  production dispatch. Standard MFS, W-projection, mosaic MFS, and supported
-  one-plane cube consumers must read through the bounded source stream; modes
-  without a stream consumer fail during planning before large visibility-column
-  reads.
+  production dispatch. Standard MFS, W-projection, mosaic MFS, supported
+  standard/mosaic MT-MFS, and supported cube/cubedata/mosaic-cube consumers
+  must read through the bounded source stream; modes without a stream consumer
+  fail during planning before large visibility-column reads.
+- Shared source read-ahead overlaps MS reads with downstream preparation for
+  standard MFS, mosaic MFS and MT-MFS replays, cube/cubedata, and mosaic cube.
+  The live-block control is currently capped at two and counts the block being
+  filled by the producer plus the block owned by the consumer. Its channel has
+  capacity `max_live_row_blocks - 2`, so the two-block case is a rendezvous and
+  cannot retain an additional queued block. Full-slab spectral routes default
+  to one block and disable requested read-ahead when it would reduce modeled
+  plane residency or row locality.
+- The supported mosaic MT-MFS slice is a replayable, single-MS MFS path with
+  `nterms <= 2`, `gridder='mosaic'`, no W term, natural/uniform/Briggs
+  weighting, clean or dirty products, and optional PB/PB-corrected output.
+  Weight-density replay carries raw UVW separately from mosaic-projected UVW;
+  unsupported higher-term, W/AW, pointing, start-model, outlier, and multi-MS
+  combinations reject before visibility materialization.
+- On Apple platforms, f32 standard and mosaic dirty products can keep FFT,
+  correction, normalization, and peak reduction on the GPU. Explicit Metal
+  requests use the resident MPSGraph path when supported; `auto` uses a
+  profitability guard and CPU fallback for small batches, f64 work, unsupported
+  shapes, unavailable devices, or resident command failures.
 - Gridder terminology is split across Python task input (`standard`,
   `wproject`, `mosaic`, `awproject`, `awp2`, `awphpg`) and the Rust core
   (`GridderMode::Standard`, `GridderMode::Mosaic`, plus `WTermMode`). That split
@@ -266,18 +285,18 @@ Refactoring signals visible here:
 | Stage | `casa-rs` owner | CASA C++ owner | LibRA owner | Refactoring / optimization signal |
 |---|---|---|---|---|
 | Task/API input | `casars-python`, `casars-imager` JSON/CLI, GUI subprocess | `task_tclean.py`, `ImagerParameters` | `htcimager.py`, Slurm/HTCondor ImageSolver wrappers | Keep user/task compatibility at the edge; do not let task syntax leak into the pure core. |
-| MS selection and column I/O | `casars-imager` bounded source stream readers | `SynthesisImager::selectData`, `VisibilityIterator`, helpers | `ReadMSAlgorithm`, per-job MS staging | I/O overlap work belongs here, before gridder optimization. |
+| MS selection and column I/O | `casars-imager` bounded source stream plus shared producer/consumer read-ahead | `SynthesisImager::selectData`, `VisibilityIterator`, helpers | `ReadMSAlgorithm`, per-job MS staging | Read/prepare overlap is implemented with an exact two-live-block ceiling and mode-specific planner guards. |
 | Sample shape | `VisibilityBatch`, `VisibilityMetadataBatch`, frontend-private cube channel inputs | `VisBuffer`, `SIMapper`, `FTMachine` input contracts | `VisBuffer`, Applicator records, algorithm payloads | A typed sample/prepared-plane model is a good Rust boundary; avoid spreading it across writers and mode routers. |
 | Weighting | `apply_weighting*`, density diagnostics | `setweighting`, normalizer and imaging weights | weight job modes and algorithm payloads | Hot enough for profiling; also a correctness boundary because CASA modes normalize differently. |
 | Gridder/projection mode | `StandardGridder`, `WProjector`, `ScreenProjector`, `GridderMode`, `WTermMode` | `FTMachine` subclasses plus convolution-function families | `TransformMachines` plus threaded resamplers | Strong candidate for explicit trait/planning boundary before GPU work. |
 | MFS dirty/clean path | `run_imaging()` | `SynthesisImager::makePSF/runMajorCycle` plus deconvolver | residual/model jobs plus sky-model solvers | Dataflow is simple enough to benchmark first. |
-| MTMFS path | `run_mtmfs()` with standard gridder only | `MultiTermFT`, multi-term image stores, deconvolver/normalizer helpers | wide-band and multi-term transform/sky-model classes | Rust currently has a narrow mode; expansion should avoid duplicating product-writing branches. |
-| Cube path | bounded one-plane stream consumers where implemented; unsupported retained routes reject before visibility reads | parallel cube helper and cube C++ algorithms | SPW partitioning and image-solver workflow | Multi-channel cube still needs a stream-native runner rather than a retained full-materialization fallback. |
+| MTMFS path | `run_mtmfs()` for standard gridding; `run_mosaic_mtmfs_from_single_plane_stream()` for the supported `nterms <= 2` mosaic slice | `MultiTermFT`, multi-term image stores, deconvolver/normalizer helpers | wide-band and multi-term transform/sky-model classes | The mosaic path reuses the bounded single-plane stream and shared product writer rather than adding retained visibility state. |
+| Cube path | bounded row-block/slab consumers for supported cube, cubedata, and mosaic-cube modes; unsupported retained routes reject before visibility reads | parallel cube helper and cube C++ algorithms | SPW partitioning and image-solver workflow | Shared read-ahead and spectral residency guards now apply here; remaining work is unsupported mode breadth, not a retained full-materialization fallback. |
 | Mosaic/A/AW path | `MosaicGridderConfig`, `ScreenProjector`, PB products; AW-family rejected at task edge | `MosaicFT`, `AWProjectFT`, `AWProjectWBFT`, PB/CF families | `MosaicFT`, `AWProjectFT`, `PBMosaicFT`, `nPBWProjectFT` | CASA/LibRA show the likely future class family; Rust should first stabilize a smaller projection-plan abstraction. |
 | Minor cycle | `run_cotton_schwab_controller`, Hogbom/Clark/Multiscale variants | `synthesisdeconvolver`, image-store family | `CleanImageSkyModel` family | Keep algorithm choice distinct from task routing and product writing. |
 | Residual refresh / prediction | core major-cycle refresh plus bounded stream model prediction/writeback where implemented | `runMajorCycle`, `predictModel`, `VisibilityIterator::Model` writes | `ResidualAlgorithm`, `PredictAlgorithm`, `WriteMSAlgorithm` | This is the bridge where I/O, degrid, grid, and MS writes collide. |
 | Product writing | `write_products()`, coordinate builder, previews | image-store plus normalizer/deconvolver helpers and task history | gather/normalize/restore jobs | Product writing is correctness-heavy but should be isolated from mode execution. |
-| Parallel/resource model | mostly in-process today | serial and parallel helper variants, MPI release path | local, Slurm, HTCondor, GPU/no-GPU job modes | LibRA is the better contrast for resource scheduling than CASA C++. |
+| Parallel/resource model | protocol-v3 local controls, bounded read-ahead, CPU workers, and guarded Apple Metal product finishing | serial and parallel helper variants, MPI release path | local, Slurm, HTCondor, GPU/no-GPU job modes | Diagnostics report live-block, overlap, bandwidth, queue/worker, memory, and backend/fallback facts; distributed execution is still outside the current Rust runtime. |
 
 ## How To Read Split Pressure
 
@@ -320,22 +339,26 @@ hypothesis is:
 Once the shape is stable, this same diagram can be annotated with timings and
 resource ownership.
 
-Likely `casa-rs` measurement points:
+Current `casa-rs` measurement points include:
 
-- MS column loads in the bounded source stream readers
+- MS column loads, source bytes, effective bandwidth, producer/consumer
+  blocking, and read/prepare overlap in the bounded source stream readers
 - weighting density construction
 - standard gridder and W/screen projector sample loops
-- FFT and normalization
+- CPU or Apple GPU-resident FFT, correction, normalization, transfer, device,
+  and fallback timings
 - residual refresh/degrid during major cycles
 - CASA image-table product writes and preview generation
 - optional `MODEL_DATA` writes
 
-Likely optimization experiments:
+Current and next optimization experiments:
 
 - streaming or chunked prepared batches to reduce peak memory
-- overlap MS column reads with weighting or gridding
+- tune shared bounded read-ahead only where overlap exceeds its residency and
+  locality cost
 - Rayon or scoped-worker parallelism behind gridder/projector traits
-- GPU kernels behind a projection-plan boundary, not inside task routing
+- extend the guarded Apple GPU resident-product boundary only after medium and
+  large product-equivalence and no-slowdown evidence
 - separate product emission workers after core results are available
 - reuse of LibRA-style resampler/worklet ideas for grid/degrid hot loops
 
@@ -345,7 +368,7 @@ The diagrams were checked against local source snapshots rather than inferred
 only from package names. For circulation, the relevant repo anchors are:
 
 - `casa-rs`: <https://github.com/bglenden/casa-rs.git> at
-  `93ae5633c5533a2de65598bc64ba4c9bfa1fd308`
+  `3ed73fc6dac066c8f3f63c6dbbf79e6aee390151`
 - CASA C++/CASA6: <https://open-bitbucket.nrao.edu/scm/casa/casa6.git> at
   `61020062cee290f5466cffed5ec5032e0c7a3434`
 - LibRA fork: <https://github.com/bglenden/libRA> at
