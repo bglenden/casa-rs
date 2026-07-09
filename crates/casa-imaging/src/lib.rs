@@ -81,10 +81,11 @@ use execution::{
     StandardMfsVisibilityPlan, finite_visibility,
 };
 use fft::{
-    centered_fft2, centered_ifft2, centered_ifft2_batch_f64_to_f32_timed_with_backend,
-    centered_ifft2_dirty_f64_owned, centered_ifft2_dirty_f64_owned_unshifted_even,
-    centered_ifft2_dirty_f64_pair_to_f32, centered_ifft2_f64, dirty_f32_fft_batch_chunk_size,
-    imaging_demote_dirty_f64_fft_to_f32, maybe_emit_dirty_f32_batch_fft_timing,
+    centered_fft2, centered_ifft2, centered_ifft2_batch_f32_timed_with_backend,
+    centered_ifft2_batch_f64_to_f32_timed_with_backend, centered_ifft2_dirty_f64_owned,
+    centered_ifft2_dirty_f64_owned_unshifted_even, centered_ifft2_dirty_f64_pair_to_f32,
+    centered_ifft2_f64, dirty_f32_fft_batch_chunk_size, imaging_demote_dirty_f64_fft_to_f32,
+    maybe_emit_dirty_f32_batch_fft_timing,
 };
 use fft_backend::{
     Fft2Spec, FftBackendChoice, FftDirection, FftPrecision, FftTiming, FftUseCase,
@@ -22845,6 +22846,17 @@ fn mtmfs_worker_threads(work_items: usize) -> usize {
     standard_mfs_grid_threads().min(work_items).max(1)
 }
 
+fn centered_ifft2_mtmfs_term_batch(
+    grids: &[Array2<Complex32>],
+) -> (Vec<Array2<Complex32>>, Duration) {
+    let (terms, timing) = centered_ifft2_batch_f32_timed_with_backend(
+        grids,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::Auto,
+    );
+    (terms, timing.total)
+}
+
 #[allow(clippy::needless_range_loop)]
 fn compute_mtmfs_psf_terms(
     request: &MtmfsRequest,
@@ -22915,9 +22927,8 @@ fn compute_mtmfs_psf_terms(
         return Err(ImagingError::NoUsableSamples);
     }
 
-    let fft_started = Instant::now();
-    let raw_terms = psf_grids.iter().map(centered_ifft2).collect::<Vec<_>>();
-    timings.fft = fft_started.elapsed();
+    let (raw_terms, fft_duration) = centered_ifft2_mtmfs_term_batch(&psf_grids);
+    timings.fft = fft_duration;
     let normalize_started = Instant::now();
     let mut psf_terms = raw_terms
         .iter()
@@ -23175,9 +23186,8 @@ fn compute_mtmfs_psf_terms_w_project(
         return Err(ImagingError::NoUsableSamples);
     }
 
-    let fft_started = Instant::now();
-    let raw_terms = psf_grids.iter().map(centered_ifft2).collect::<Vec<_>>();
-    timings.fft = fft_started.elapsed();
+    let (raw_terms, fft_duration) = centered_ifft2_mtmfs_term_batch(&psf_grids);
+    timings.fft = fft_duration;
     let normalize_started = Instant::now();
     let mut psf_terms = raw_terms
         .iter()
@@ -23307,12 +23317,8 @@ fn compute_mtmfs_residual_terms(
     };
     timings.degrid_grid = degrid_grid_started.elapsed();
 
-    let fft_started = Instant::now();
-    let raw_terms = residual_grids
-        .iter()
-        .map(centered_ifft2)
-        .collect::<Vec<_>>();
-    timings.fft = fft_started.elapsed();
+    let (raw_terms, fft_duration) = centered_ifft2_mtmfs_term_batch(&residual_grids);
+    timings.fft = fft_duration;
     let normalize_started = Instant::now();
     let residual_terms = raw_terms
         .iter()
@@ -23414,12 +23420,8 @@ fn compute_mtmfs_residual_terms_w_project(
     }
     timings.degrid_grid += degrid_started.elapsed();
 
-    let fft_started = Instant::now();
-    let raw_terms = residual_grids
-        .iter()
-        .map(centered_ifft2)
-        .collect::<Vec<_>>();
-    timings.fft = fft_started.elapsed();
+    let (raw_terms, fft_duration) = centered_ifft2_mtmfs_term_batch(&residual_grids);
+    timings.fft = fft_duration;
     let normalize_started = Instant::now();
     let residual_terms = raw_terms
         .iter()
