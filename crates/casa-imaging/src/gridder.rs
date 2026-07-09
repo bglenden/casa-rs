@@ -290,6 +290,7 @@ pub(crate) struct StandardGridder {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) struct StandardGridderProductCorrection<'a> {
     pub(crate) grid_shape: [usize; 2],
     pub(crate) image_shape: [usize; 2],
@@ -299,6 +300,7 @@ pub(crate) struct StandardGridderProductCorrection<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) enum GridCorrectionDescriptor<'a> {
     SeparableStandard(StandardGridderProductCorrection<'a>),
     #[allow(dead_code)]
@@ -386,6 +388,7 @@ impl StandardGridder {
         self.grid_shape
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn product_correction(&self) -> StandardGridderProductCorrection<'_> {
         StandardGridderProductCorrection {
             grid_shape: self.grid_shape,
@@ -396,6 +399,7 @@ impl StandardGridder {
         }
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn product_correction_descriptor(&self) -> GridCorrectionDescriptor<'_> {
         GridCorrectionDescriptor::SeparableStandard(self.product_correction())
     }
