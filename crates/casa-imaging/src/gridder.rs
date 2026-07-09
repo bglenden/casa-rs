@@ -299,6 +299,15 @@ pub(crate) struct StandardGridderProductCorrection<'a> {
     pub(crate) correction_y: &'a [f32],
 }
 
+#[derive(Clone, Debug)]
+#[cfg(all(target_os = "macos", not(coverage)))]
+pub(crate) struct StandardGridderMosaicProductCorrection {
+    pub(crate) grid_shape: [usize; 2],
+    pub(crate) image_shape: [usize; 2],
+    pub(crate) image_blc: [usize; 2],
+    pub(crate) sinc: Vec<f32>,
+}
+
 #[derive(Clone, Copy, Debug)]
 #[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) enum GridCorrectionDescriptor<'a> {
@@ -402,6 +411,19 @@ impl StandardGridder {
     #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn product_correction_descriptor(&self) -> GridCorrectionDescriptor<'_> {
         GridCorrectionDescriptor::SeparableStandard(self.product_correction())
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    pub(crate) fn mosaic_product_correction(
+        &self,
+        conv_sampling: usize,
+    ) -> StandardGridderMosaicProductCorrection {
+        StandardGridderMosaicProductCorrection {
+            grid_shape: self.grid_shape,
+            image_shape: self.geometry.image_shape,
+            image_blc: self.image_blc,
+            sinc: build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling),
+        }
     }
 
     pub(crate) fn geometry(&self) -> ImageGeometry {

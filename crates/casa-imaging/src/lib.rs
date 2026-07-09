@@ -3280,7 +3280,6 @@ where
     }
 
     let weight_image_for_mask = pointing_weights.build_image(request.geometry, &config)?;
-    let fft_started = Instant::now();
     dump_mosaic_complex_grid("psf_prefft", request.reffreq_hz, &psf_grid);
     dump_mosaic_complex_grid(
         "residual_prefft",
@@ -3292,31 +3291,26 @@ where
         request.reffreq_hz,
         &accumulated_mosaic_weight_grid,
     );
-    let raw_psf = centered_ifft2_f64(&psf_grid);
-    let raw_residual = centered_ifft2_f64(&accumulated_residual_grid);
-    let raw_weight = centered_ifft2_f64(&accumulated_mosaic_weight_grid);
-    stage_timings.psf_fft += fft_started.elapsed();
-
-    let normalize_started = Instant::now();
-    let mut accumulated_psf = gridder.corrected_mosaic_image_from_grid_f64(&raw_psf, conv_sampling);
-    let mut accumulated_residual =
-        gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
-    let normalization_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_weight);
-    let fft_sumwt_scale = (nx * ny) as f32 / normalization_sumwt as f32;
-    accumulated_residual.mapv_inplace(|value| value * fft_sumwt_scale);
-    accumulated_psf.mapv_inplace(|value| value * fft_sumwt_scale);
-    let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
-    trace_mosaic_weight_image("rust_stream_pre_scale_weight", &normalization_weight_image);
-    trace_mosaic_weight_image("rust_stream_weight", &weight_image);
-    normalize_mosaic_residual_by_weight(&mut accumulated_residual, &weight_image, config.pb_limit)?;
-    let psf_peak = peak_abs_value(&accumulated_psf);
-    if !(psf_peak.is_finite() && psf_peak > 0.0) {
-        return Err(ImagingError::Normalization(
-            "streaming mosaic PSF peak is non-finite or zero".to_string(),
-        ));
-    }
-    accumulated_psf.mapv_inplace(|value| value / psf_peak);
-    stage_timings.psf_normalize += normalize_started.elapsed();
+    let MosaicDirtyProductImages {
+        psf: accumulated_psf,
+        residual: accumulated_residual,
+        weight_image,
+        psf_peak,
+        ..
+    } = finish_mosaic_dirty_products_from_centered_grids(
+        &gridder,
+        &psf_grid,
+        &accumulated_residual_grid,
+        &accumulated_mosaic_weight_grid,
+        conv_sampling,
+        normalization_sumwt,
+        config.pb_limit,
+        &mut stage_timings,
+        "streaming mosaic residual weight peak is non-finite or zero",
+        "streaming mosaic PSF peak is non-finite or zero",
+        "rust_stream_pre_scale_weight",
+        "rust_stream_weight",
+    )?;
 
     let reported_sumwt = reported_sumwt as f32;
     let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
@@ -4933,14 +4927,27 @@ fn normalize_mosaic_residual_by_weight(
     weight_image: &Array2<f32>,
     pb_limit: f32,
 ) -> Result<(), ImagingError> {
+    normalize_mosaic_residual_by_weight_with_error(
+        residual,
+        weight_image,
+        pb_limit,
+        "streaming mosaic residual weight peak is non-finite or zero",
+    )
+    .map(|_| ())
+}
+
+fn normalize_mosaic_residual_by_weight_with_error(
+    residual: &mut Array2<f32>,
+    weight_image: &Array2<f32>,
+    pb_limit: f32,
+    weight_peak_error: &'static str,
+) -> Result<f32, ImagingError> {
     let weight_peak = weight_image
         .iter()
         .copied()
         .fold(0.0f32, |peak, value| peak.max(value));
     if !(weight_peak.is_finite() && weight_peak > 0.0) {
-        return Err(ImagingError::Normalization(
-            "streaming mosaic residual weight peak is non-finite or zero".to_string(),
-        ));
+        return Err(ImagingError::Normalization(weight_peak_error.to_string()));
     }
     let pb_limit_threshold = pb_limit.abs() * pb_limit.abs() * weight_peak;
     for ((x, y), weight_value) in weight_image.indexed_iter() {
@@ -4951,7 +4958,143 @@ fn normalize_mosaic_residual_by_weight(
             residual[(x, y)] = 0.0;
         }
     }
-    Ok(())
+    Ok(weight_peak)
+}
+
+struct MosaicDirtyProductImages {
+    psf: Array2<f32>,
+    residual: Array2<f32>,
+    weight_image: Array2<f32>,
+    psf_peak: f32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_mosaic_dirty_products_from_centered_grids(
+    gridder: &StandardGridder,
+    psf_grid: &Array2<Complex64>,
+    residual_grid: &Array2<Complex64>,
+    weight_grid: &Array2<Complex64>,
+    conv_sampling: usize,
+    normalization_sumwt: f64,
+    pb_limit: f32,
+    stage_timings: &mut ImagingStageTimings,
+    weight_peak_error: &'static str,
+    psf_peak_error: &'static str,
+    pre_scale_weight_trace_label: &str,
+    weight_trace_label: &str,
+) -> Result<MosaicDirtyProductImages, ImagingError> {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    if imaging_demote_dirty_f64_fft_to_f32()
+        && apple_gpu_dirty_products_allowed_by_fft_backend_env()
+        && !mosaic_trace_enabled()
+        && !mosaic_weight_trace_enabled()
+    {
+        let correction = gridder.mosaic_product_correction(conv_sampling);
+        let inputs = [psf_grid.clone(), residual_grid.clone(), weight_grid.clone()];
+        match crate::apple_fft::dirty_mosaic_products_f64_to_f32_batch(
+            &inputs,
+            &correction,
+            normalization_sumwt as f32,
+            pb_limit,
+        ) {
+            Ok((mut products, timing, postprocess_elapsed)) => {
+                let product = products.pop().ok_or_else(|| {
+                    ImagingError::Normalization(
+                        "resident mosaic dirty product path returned no products".to_string(),
+                    )
+                })?;
+                if !products.is_empty() {
+                    return Err(ImagingError::Normalization(format!(
+                        "resident mosaic dirty product path returned {} extra products",
+                        products.len()
+                    )));
+                }
+                stage_timings.psf_fft += timing.total;
+                stage_timings.psf_normalize += postprocess_elapsed;
+                if profile::standard_mfs_profile_detail_enabled() {
+                    eprintln!(
+                        "mosaic_dirty_product_gpu_resident products=1 selected_backend={} postprocess_ms={:.3} total_ms={:.3}",
+                        timing.selection.selected_backend,
+                        profile::millis(postprocess_elapsed),
+                        profile::millis(timing.total),
+                    );
+                }
+                return Ok(MosaicDirtyProductImages {
+                    psf: product.psf,
+                    residual: product.residual,
+                    weight_image: product.weight_image,
+                    psf_peak: product.psf_peak,
+                });
+            }
+            Err(reason) => emit_dirty_product_gpu_resident_fallback(reason),
+        }
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(psf_grid);
+    let raw_residual = centered_ifft2_f64(residual_grid);
+    let raw_weight = centered_ifft2_f64(weight_grid);
+    stage_timings.psf_fft += fft_started.elapsed();
+
+    let normalize_started = Instant::now();
+    let products = finish_mosaic_dirty_products_from_raw_grids(
+        gridder,
+        &raw_psf,
+        &raw_residual,
+        &raw_weight,
+        conv_sampling,
+        normalization_sumwt,
+        pb_limit,
+        weight_peak_error,
+        psf_peak_error,
+        pre_scale_weight_trace_label,
+        weight_trace_label,
+    )?;
+    stage_timings.psf_normalize += normalize_started.elapsed();
+    Ok(products)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_mosaic_dirty_products_from_raw_grids(
+    gridder: &StandardGridder,
+    raw_psf: &Array2<Complex64>,
+    raw_residual: &Array2<Complex64>,
+    raw_weight: &Array2<Complex64>,
+    conv_sampling: usize,
+    normalization_sumwt: f64,
+    pb_limit: f32,
+    weight_peak_error: &'static str,
+    psf_peak_error: &'static str,
+    pre_scale_weight_trace_label: &str,
+    weight_trace_label: &str,
+) -> Result<MosaicDirtyProductImages, ImagingError> {
+    let fft_sumwt_scale =
+        (gridder.geometry().nx() * gridder.geometry().ny()) as f32 / normalization_sumwt as f32;
+    let mut psf = gridder.corrected_mosaic_image_from_grid_f64(raw_psf, conv_sampling);
+    let mut residual = gridder.corrected_mosaic_image_from_grid_f64(raw_residual, conv_sampling);
+    let normalization_weight_image = gridder.mosaic_weight_image_from_grid_f64(raw_weight);
+    residual.mapv_inplace(|value| value * fft_sumwt_scale);
+    psf.mapv_inplace(|value| value * fft_sumwt_scale);
+    let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+    trace_mosaic_weight_image(pre_scale_weight_trace_label, &normalization_weight_image);
+    trace_mosaic_weight_image(weight_trace_label, &weight_image);
+    normalize_mosaic_residual_by_weight_with_error(
+        &mut residual,
+        &weight_image,
+        pb_limit,
+        weight_peak_error,
+    )?;
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(psf_peak_error.to_string()));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    Ok(MosaicDirtyProductImages {
+        psf,
+        residual,
+        weight_image,
+        psf_peak,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
