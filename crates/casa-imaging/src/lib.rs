@@ -31246,12 +31246,12 @@ mod tests {
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
-    fn apple_gpu_resident_dirty_product_matches_cpu_f32_finish() {
+    fn apple_gpu_resident_odd_shape_batched_products_match_cpu_f32_finish() {
         if !crate::apple_fft::mpsgraph_f32_available() {
             return;
         }
         let geometry = ImageGeometry {
-            image_shape: [16, 16],
+            image_shape: [15, 17],
             cell_size_rad: [1.0e-6, 1.0e-6],
         };
         let gridder = StandardGridder::new(geometry).expect("standard gridder");
@@ -31338,6 +31338,8 @@ mod tests {
         for (product_index, (actual, (expected_psf, expected_residual))) in
             products.iter().zip(expected_products.iter()).enumerate()
         {
+            assert_eq!(actual.psf.dim(), (15, 17));
+            assert_eq!(actual.residual.dim(), (15, 17));
             assert!(
                 (actual.psf_peak - expected_psf.psf_peak).abs() < 2.0e-4,
                 "psf peak mismatch product={product_index} gpu={} cpu={}",

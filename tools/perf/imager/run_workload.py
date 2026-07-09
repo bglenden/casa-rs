@@ -1315,6 +1315,12 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "source_read_ahead_producer_send_blocked_ms": source_read_ahead.get(
             "producer_send_blocked_ms"
         ),
+        "source_read_ahead_producer_consumer_overlap_ms": source_read_ahead.get(
+            "producer_consumer_overlap_ms"
+        ),
+        "source_read_ahead_live_row_block_high_water": source_read_ahead.get(
+            "live_row_block_high_water"
+        ),
         "source_read_ahead_source_read_ms": source_read_ahead.get("source_read_ms"),
         "source_read_ahead_source_route_ms": source_read_ahead.get("source_route_ms"),
         "source_read_ahead_consumer_ms": source_read_ahead.get("consumer_ms"),
@@ -1323,6 +1329,10 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         ),
         "source_read_ahead_streamed_samples": source_read_ahead.get(
             "streamed_samples"
+        ),
+        "source_read_ahead_source_bytes": source_read_ahead.get("source_bytes"),
+        "source_read_ahead_effective_read_bandwidth_mib_s": source_read_ahead.get(
+            "effective_read_bandwidth_mib_s"
         ),
         "visibility_row_channel_bytes": memory.get("visibility_row_channel_bytes"),
         "visibility_row_fixed_bytes": memory.get("visibility_row_fixed_bytes"),
@@ -1754,22 +1764,36 @@ def aggregate_source_read_ahead_fields(entries: list[dict[str, Any]]) -> dict[st
         "row_blocks",
         "consumer_recv_blocked_ms",
         "producer_send_blocked_ms",
+        "producer_consumer_overlap_ms",
         "source_read_ms",
         "source_route_ms",
         "consumer_ms",
         "source_prepare_ms",
         "streamed_samples",
+        "source_bytes",
     ):
         total = sum_int_or_float_field(entry_fields, field)
         if total is not None:
             fields[field] = total
-    for field in ("max_live_row_blocks", "queue_capacity"):
+    for field in (
+        "max_live_row_blocks",
+        "queue_capacity",
+        "live_row_block_high_water",
+    ):
         maximum = max_int_or_float_field(entry_fields, field)
         if maximum is not None:
             fields[field] = maximum
     enabled = [entry.get("enabled") for entry in entry_fields if "enabled" in entry]
     if enabled:
         fields["enabled"] = any(value is True for value in enabled)
+    source_bytes = fields.get("source_bytes")
+    source_read_ms = fields.get("source_read_ms")
+    if isinstance(source_bytes, (int, float)) and isinstance(source_read_ms, (int, float)):
+        fields["effective_read_bandwidth_mib_s"] = (
+            source_bytes / (1024.0 * 1024.0) / (source_read_ms / 1000.0)
+            if source_bytes > 0 and source_read_ms > 0
+            else 0.0
+        )
     return fields
 
 
@@ -1984,6 +2008,12 @@ def build_benchmark_feature_summary(
             "source_read_ahead_producer_send_blocked_ms": backend_summary.get(
                 "source_read_ahead_producer_send_blocked_ms"
             ),
+            "source_read_ahead_producer_consumer_overlap_ms": backend_summary.get(
+                "source_read_ahead_producer_consumer_overlap_ms"
+            ),
+            "source_read_ahead_live_row_block_high_water": backend_summary.get(
+                "source_read_ahead_live_row_block_high_water"
+            ),
             "source_read_ahead_source_read_ms": backend_summary.get(
                 "source_read_ahead_source_read_ms"
             ),
@@ -1995,6 +2025,12 @@ def build_benchmark_feature_summary(
             ),
             "source_read_ahead_source_prepare_ms": backend_summary.get(
                 "source_read_ahead_source_prepare_ms"
+            ),
+            "source_read_ahead_source_bytes": backend_summary.get(
+                "source_read_ahead_source_bytes"
+            ),
+            "source_read_ahead_effective_read_bandwidth_mib_s": backend_summary.get(
+                "source_read_ahead_effective_read_bandwidth_mib_s"
             ),
             "peak_rss_bytes": backend_summary.get("peak_rss_bytes"),
             "metal_device": backend_summary.get("metal_device_available"),

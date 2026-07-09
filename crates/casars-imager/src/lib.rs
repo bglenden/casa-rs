@@ -18,7 +18,7 @@ use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -7663,11 +7663,13 @@ where
             )?;
             let read_elapsed = stage_started_at.elapsed();
             let row_count = row_chunk.len();
+            let source_bytes = source_block.fill_report.modeled_physical_read_bytes;
             Ok(Some(ImagingSourceReadAheadBlock::new(
                 (source_block, read_elapsed, row_count),
                 read_elapsed,
                 Duration::ZERO,
                 row_count.saturating_mul(selected_channel_count),
+                source_bytes,
             )))
         },
         |(source_block, read_elapsed, row_count)| {
@@ -22078,6 +22080,7 @@ pub(crate) fn apply_parallel_runtime_control(
     config.standard_mfs_grid_threads = Some("1".to_string());
     config.imaging_prepare_workers = Some(1);
     config.imaging_read_ahead_blocks = Some(1);
+    config.imaging_fft_backend = ImagingFftBackendPolicy::RustFft;
     config.standard_mfs_metal_grouped_input_cache = Some(false);
     Ok(())
 }
@@ -30666,6 +30669,7 @@ where
             )?;
             let prepare_processing_elapsed = stage_started_at.elapsed();
             let sample_count = plane_input_sample_count(&plane);
+            let source_bytes = columnar_source.fill_report.modeled_physical_read_bytes;
             Ok(Some(ImagingSourceReadAheadBlock::new(
                 StandardMfsPreparedPlaneBlock {
                     plane,
@@ -30677,6 +30681,7 @@ where
                 get_ms_values_elapsed,
                 prepare_processing_elapsed,
                 sample_count,
+                source_bytes,
             )))
         },
         |block| {
@@ -30834,9 +30839,10 @@ struct StandardMfsRoutedPreparedVisibilityBlock {
     block_candidate_samples: usize,
     block_planned_samples: usize,
     block_detail: StandardMfsPlannedRowSampleDetailTimings,
+    source_bytes: u64,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct ImagingSourceReadAheadSummary {
     row_blocks: usize,
     source_read_elapsed: Duration,
@@ -30844,7 +30850,12 @@ struct ImagingSourceReadAheadSummary {
     producer_send_blocked: Duration,
     consumer_recv_blocked: Duration,
     consumer_elapsed: Duration,
+    producer_consumer_overlap: Duration,
     streamed_samples: usize,
+    source_bytes: u64,
+    live_row_block_high_water: usize,
+    producer_intervals: Vec<(Instant, Instant)>,
+    consumer_intervals: Vec<(Instant, Instant)>,
 }
 
 struct ImagingSourceReadAheadBlock<T> {
@@ -30852,6 +30863,7 @@ struct ImagingSourceReadAheadBlock<T> {
     source_read_elapsed: Duration,
     source_route_elapsed: Duration,
     streamed_samples: usize,
+    source_bytes: u64,
 }
 
 impl<T> ImagingSourceReadAheadBlock<T> {
@@ -30860,19 +30872,45 @@ impl<T> ImagingSourceReadAheadBlock<T> {
         source_read_elapsed: Duration,
         source_route_elapsed: Duration,
         streamed_samples: usize,
+        source_bytes: u64,
     ) -> Self {
         Self {
             block,
             source_read_elapsed,
             source_route_elapsed,
             streamed_samples,
+            source_bytes,
         }
     }
 }
 
 enum ImagingSourceReadAheadMessage<T> {
-    Block(Box<ImagingSourceReadAheadBlock<T>>),
+    Block(TrackedImagingSourceReadAheadBlock<T>),
     Error(String),
+}
+
+struct TrackedImagingSourceReadAheadBlock<T> {
+    block: Option<Box<ImagingSourceReadAheadBlock<T>>>,
+    live_row_blocks: Arc<AtomicUsize>,
+}
+
+impl<T> TrackedImagingSourceReadAheadBlock<T> {
+    fn new(block: ImagingSourceReadAheadBlock<T>, live_row_blocks: Arc<AtomicUsize>) -> Self {
+        Self {
+            block: Some(Box::new(block)),
+            live_row_blocks,
+        }
+    }
+
+    fn take_block(&mut self) -> ImagingSourceReadAheadBlock<T> {
+        *self.block.take().expect("tracked read-ahead block")
+    }
+}
+
+impl<T> Drop for TrackedImagingSourceReadAheadBlock<T> {
+    fn drop(&mut self) {
+        self.live_row_blocks.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn log_imaging_source_read_ahead_summary(
@@ -30884,15 +30922,17 @@ fn log_imaging_source_read_ahead_summary(
     summary: &ImagingSourceReadAheadSummary,
 ) {
     eprintln!(
-        "imaging_source_read_ahead_summary mode={} enabled={} max_live_row_blocks={} queue_capacity={} row_blocks={} row_block_rows={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} streamed_samples={}",
+        "imaging_source_read_ahead_summary mode={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} row_block_rows={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} source_bytes={} effective_read_bandwidth_mib_s={:.3} streamed_samples={}",
         mode,
         enabled,
         max_live_row_blocks,
         queue_capacity,
+        summary.live_row_block_high_water,
         summary.row_blocks,
         row_block_rows,
         duration_ms(summary.consumer_recv_blocked),
         duration_ms(summary.producer_send_blocked),
+        duration_ms(summary.producer_consumer_overlap),
         duration_ms(summary.source_read_elapsed),
         duration_ms(summary.source_route_elapsed),
         duration_ms(summary.consumer_elapsed),
@@ -30901,8 +30941,46 @@ fn log_imaging_source_read_ahead_summary(
                 .source_route_elapsed
                 .saturating_add(summary.consumer_elapsed)
         ),
+        summary.source_bytes,
+        effective_read_bandwidth_mib_s(summary.source_bytes, summary.source_read_elapsed),
         summary.streamed_samples,
     );
+}
+
+fn effective_read_bandwidth_mib_s(source_bytes: u64, source_read_elapsed: Duration) -> f64 {
+    let seconds = source_read_elapsed.as_secs_f64();
+    if source_bytes == 0 || seconds == 0.0 {
+        return 0.0;
+    }
+    source_bytes as f64 / (1024.0 * 1024.0) / seconds
+}
+
+fn overlapping_interval_duration(
+    left: &[(Instant, Instant)],
+    right: &[(Instant, Instant)],
+) -> Duration {
+    let mut overlap = Duration::ZERO;
+    let mut left_index = 0usize;
+    let mut right_index = 0usize;
+    while left_index < left.len() && right_index < right.len() {
+        let (left_start, left_end) = left[left_index];
+        let (right_start, right_end) = right[right_index];
+        let start = left_start.max(right_start);
+        let end = left_end.min(right_end);
+        if end > start {
+            overlap += end.duration_since(start);
+        }
+        if left_end <= right_end {
+            left_index += 1;
+        } else {
+            right_index += 1;
+        }
+    }
+    overlap
+}
+
+fn imaging_source_read_ahead_queue_capacity(max_live_row_blocks: usize) -> usize {
+    max_live_row_blocks.saturating_sub(2)
 }
 
 fn imaging_source_read_ahead_max_live_row_blocks(config: &CliConfig) -> usize {
@@ -30931,6 +31009,7 @@ fn add_source_read_ahead_producer_metrics<T>(
     summary.streamed_samples = summary
         .streamed_samples
         .saturating_add(block.streamed_samples);
+    summary.source_bytes = summary.source_bytes.saturating_add(block.source_bytes);
 }
 
 #[allow(clippy::type_complexity)]
@@ -30948,21 +31027,37 @@ where
     C: FnMut(T) -> Result<Duration, String>,
 {
     let max_live_row_blocks = max_live_row_blocks.max(1);
-    let queue_capacity = max_live_row_blocks.saturating_sub(1);
-    let read_ahead_enabled = queue_capacity > 0 && row_block_count > 1;
+    let queue_capacity = imaging_source_read_ahead_queue_capacity(max_live_row_blocks);
+    let read_ahead_enabled = max_live_row_blocks > 1 && row_block_count > 1;
     let mut summary = ImagingSourceReadAheadSummary::default();
     if read_ahead_enabled {
         thread::scope(|scope| -> Result<(), String> {
             let (tx, rx) = mpsc::sync_channel::<ImagingSourceReadAheadMessage<T>>(queue_capacity);
+            let live_row_blocks = Arc::new(AtomicUsize::new(0));
+            let live_row_block_high_water = Arc::new(AtomicUsize::new(0));
+            let producer_live_row_blocks = Arc::clone(&live_row_blocks);
+            let producer_live_row_block_high_water = Arc::clone(&live_row_block_high_water);
             let producer = scope.spawn(move || {
                 let mut producer_summary = ImagingSourceReadAheadSummary::default();
                 loop {
-                    match produce_next() {
+                    let live = producer_live_row_blocks.fetch_add(1, Ordering::AcqRel) + 1;
+                    producer_live_row_block_high_water.fetch_max(live, Ordering::AcqRel);
+                    let producer_started_at = Instant::now();
+                    let produced = produce_next();
+                    let producer_finished_at = Instant::now();
+                    match produced {
                         Ok(Some(block)) => {
+                            producer_summary
+                                .producer_intervals
+                                .push((producer_started_at, producer_finished_at));
                             add_source_read_ahead_producer_metrics(&mut producer_summary, &block);
+                            let block = TrackedImagingSourceReadAheadBlock::new(
+                                block,
+                                Arc::clone(&producer_live_row_blocks),
+                            );
                             let send_started_at = Instant::now();
                             if tx
-                                .send(ImagingSourceReadAheadMessage::Block(Box::new(block)))
+                                .send(ImagingSourceReadAheadMessage::Block(block))
                                 .is_err()
                             {
                                 producer_summary.producer_send_blocked += send_started_at.elapsed();
@@ -30970,8 +31065,12 @@ where
                             }
                             producer_summary.producer_send_blocked += send_started_at.elapsed();
                         }
-                        Ok(None) => return producer_summary,
+                        Ok(None) => {
+                            producer_live_row_blocks.fetch_sub(1, Ordering::AcqRel);
+                            return producer_summary;
+                        }
                         Err(error) => {
+                            producer_live_row_blocks.fetch_sub(1, Ordering::AcqRel);
                             let _ = tx.send(ImagingSourceReadAheadMessage::Error(error));
                             return producer_summary;
                         }
@@ -30985,12 +31084,22 @@ where
                 let message = rx.recv();
                 summary.consumer_recv_blocked += recv_started_at.elapsed();
                 match message {
-                    Ok(ImagingSourceReadAheadMessage::Block(block)) => {
-                        match consume_block(block.block) {
+                    Ok(ImagingSourceReadAheadMessage::Block(mut tracked)) => {
+                        let block = tracked.take_block();
+                        let consumer_started_at = Instant::now();
+                        let consumed = consume_block(block.block);
+                        drop(tracked);
+                        match consumed {
                             Ok(consumer_elapsed) => {
                                 summary.consumer_elapsed += consumer_elapsed;
+                                summary
+                                    .consumer_intervals
+                                    .push((consumer_started_at, Instant::now()));
                             }
                             Err(error) => {
+                                summary
+                                    .consumer_intervals
+                                    .push((consumer_started_at, Instant::now()));
                                 consumer_result = Err(error);
                                 break;
                             }
@@ -31012,12 +31121,20 @@ where
             summary.source_route_elapsed = producer_summary.source_route_elapsed;
             summary.producer_send_blocked = producer_summary.producer_send_blocked;
             summary.streamed_samples = producer_summary.streamed_samples;
+            summary.source_bytes = producer_summary.source_bytes;
+            summary.producer_intervals = producer_summary.producer_intervals;
+            summary.live_row_block_high_water = live_row_block_high_water.load(Ordering::Acquire);
+            summary.producer_consumer_overlap = overlapping_interval_duration(
+                &summary.producer_intervals,
+                &summary.consumer_intervals,
+            );
             consumer_result
         })?;
     } else {
         while let Some(block) = produce_next()? {
             add_source_read_ahead_producer_metrics(&mut summary, &block);
             summary.consumer_elapsed += consume_block(block.block)?;
+            summary.live_row_block_high_water = 1;
         }
     }
     log_imaging_source_read_ahead_summary(
@@ -31070,6 +31187,7 @@ fn prepare_standard_mfs_routed_visibility_essentials_block(
         row_chunk,
         channel_read_range,
     )?;
+    let source_bytes = block.logical_bytes() as u64;
     let get_ms_values_elapsed = stage_started_at.elapsed();
     emit_imager_progress_ms_window(
         ms,
@@ -31133,6 +31251,7 @@ fn prepare_standard_mfs_routed_visibility_essentials_block(
         block_candidate_samples,
         block_planned_samples,
         block_detail,
+        source_bytes,
     })
 }
 
@@ -31255,11 +31374,13 @@ where
             let source_read_elapsed = block.get_ms_values_elapsed;
             let source_route_elapsed = block.route_processing_elapsed;
             let block_planned_samples = block.block_planned_samples;
+            let source_bytes = block.source_bytes;
             Ok(Some(ImagingSourceReadAheadBlock::new(
                 block,
                 source_read_elapsed,
                 source_route_elapsed,
                 block_planned_samples,
+                source_bytes,
             )))
         },
         |block| {
@@ -31684,11 +31805,13 @@ fn prepare_mfs_mosaic_without_trace_in_source_row_blocks(
             let read_timings = columnar_source.read_timings;
             let read_elapsed = stage_started_at.elapsed();
             let row_count = row_chunk.len();
+            let source_bytes = columnar_source.fill_report.modeled_physical_read_bytes;
             Ok(Some(ImagingSourceReadAheadBlock::new(
                 (columnar_source, read_timings, read_elapsed, row_count),
                 read_elapsed,
                 Duration::ZERO,
                 row_count.saturating_mul(selected_channel_count),
+                source_bytes,
             )))
         },
         |(columnar_source, read_timings, read_elapsed, row_count)| {
@@ -32044,6 +32167,7 @@ fn read_shared_columnar_cube_slab_source(
                 read_elapsed,
                 Duration::ZERO,
                 logical as usize,
+                modeled,
             )))
         },
         |block| {
@@ -32311,11 +32435,13 @@ fn prepare_cube_without_trace_in_source_row_blocks(
             let read_timings = columnar_source.read_timings;
             let read_elapsed = stage_started_at.elapsed();
             let row_count = row_chunk.len();
+            let source_bytes = columnar_source.fill_report.modeled_physical_read_bytes;
             Ok(Some(ImagingSourceReadAheadBlock::new(
                 (columnar_source, read_timings, read_elapsed, row_count),
                 read_elapsed,
                 Duration::ZERO,
                 row_count.saturating_mul(selected_channel_count),
+                source_bytes,
             )))
         },
         |(columnar_source, read_timings, read_elapsed, row_count)| {
@@ -32538,11 +32664,13 @@ fn prepare_trace_in_source_row_blocks(
             let read_elapsed = stage_started_at.elapsed();
             let read_timings = source_block.read_timings;
             let row_count = row_chunk.len();
+            let source_bytes = source_block.fill_report.modeled_physical_read_bytes;
             Ok(Some(ImagingSourceReadAheadBlock::new(
                 (source_block, read_timings, read_elapsed, row_count),
                 read_elapsed,
                 Duration::ZERO,
                 row_count.saturating_mul(selected_channel_count),
+                source_bytes,
             )))
         },
         |(source_block, read_timings, read_elapsed, row_count)| {
@@ -49719,6 +49847,8 @@ mod tests {
         );
         assert_eq!(config.standard_mfs_grid_threads.as_deref(), Some("1"));
         assert_eq!(config.imaging_prepare_workers, Some(1));
+        assert_eq!(config.imaging_read_ahead_blocks, Some(1));
+        assert_eq!(config.imaging_fft_backend, ImagingFftBackendPolicy::RustFft);
         assert_eq!(config.standard_mfs_metal_grouped_input_cache, Some(false));
         assert_eq!(config.chanchunks, Some(4));
     }
@@ -52289,6 +52419,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn source_read_ahead_bounds_all_live_blocks_and_measures_overlap() {
+        assert_eq!(imaging_source_read_ahead_queue_capacity(1), 0);
+        assert_eq!(imaging_source_read_ahead_queue_capacity(2), 0);
+        assert_eq!(imaging_source_read_ahead_queue_capacity(3), 1);
+
+        let mut next = 0usize;
+        let mut consumed = Vec::new();
+        let summary = stream_imaging_source_read_ahead_blocks(
+            "test",
+            2,
+            1,
+            4,
+            move || {
+                if next == 4 {
+                    return Ok(None);
+                }
+                let value = next;
+                next += 1;
+                thread::sleep(Duration::from_millis(3));
+                Ok(Some(ImagingSourceReadAheadBlock::new(
+                    value,
+                    Duration::from_millis(3),
+                    Duration::ZERO,
+                    1,
+                    1024 * 1024,
+                )))
+            },
+            |value| {
+                consumed.push(value);
+                thread::sleep(Duration::from_millis(5));
+                Ok(Duration::from_millis(5))
+            },
+        )
+        .expect("bounded read-ahead");
+
+        assert_eq!(consumed, vec![0, 1, 2, 3]);
+        assert_eq!(summary.row_blocks, 4);
+        assert_eq!(summary.live_row_block_high_water, 2);
+        assert!(summary.producer_consumer_overlap > Duration::ZERO);
+        assert_eq!(summary.source_bytes, 4 * 1024 * 1024);
+        assert!(
+            effective_read_bandwidth_mib_s(summary.source_bytes, summary.source_read_elapsed) > 0.0
+        );
+    }
+
+    #[test]
+    fn source_read_ahead_propagates_producer_and_consumer_errors() {
+        let mut next = 0usize;
+        let producer_error = stream_imaging_source_read_ahead_blocks(
+            "producer_error",
+            2,
+            1,
+            2,
+            move || {
+                if next == 0 {
+                    next += 1;
+                    return Ok(Some(ImagingSourceReadAheadBlock::new(
+                        1usize,
+                        Duration::ZERO,
+                        Duration::ZERO,
+                        1,
+                        1,
+                    )));
+                }
+                Err("source read failed".to_string())
+            },
+            |_| Ok(Duration::ZERO),
+        )
+        .expect_err("producer error should be preserved");
+        assert_eq!(producer_error, "source read failed");
+
+        let mut next = 0usize;
+        let consumer_error = stream_imaging_source_read_ahead_blocks(
+            "consumer_error",
+            2,
+            1,
+            3,
+            move || {
+                if next == 3 {
+                    return Ok(None);
+                }
+                next += 1;
+                Ok(Some(ImagingSourceReadAheadBlock::new(
+                    next,
+                    Duration::ZERO,
+                    Duration::ZERO,
+                    1,
+                    1,
+                )))
+            },
+            |_| Err("consumer failed".to_string()),
+        )
+        .expect_err("consumer error should be preserved");
+        assert_eq!(consumer_error, "consumer failed");
+    }
+
     fn reread_all_source_slab_shapes_for_test(
         nplanes: usize,
         full_source_channels: usize,
@@ -54715,6 +54942,8 @@ mod tests {
         )
         .unwrap();
         assert!(aligned.iter().all(Option::is_some));
+        assert_eq!(aligned[0].as_ref().unwrap().u_lambda, vec![3.0]);
+        assert_eq!(aligned[1].as_ref().unwrap().u_lambda, vec![4.0]);
 
         assert!(
             align_optional_density_batches(&visibility_batches, vec![test_visibility_batch(3.0)])
@@ -60073,6 +60302,29 @@ deconvolver=mtmfs
             );
         }
 
+        let serial_prefix = tmp.path().join("tiny_mosaic_cube_serial_image");
+        let mut serial_config = config.clone();
+        serial_config.imagename = serial_prefix.clone();
+        apply_parallel_runtime_control(Some(false), &mut serial_config)
+            .expect("serial runtime control");
+        let serial_summary = run_from_config(&serial_config).unwrap();
+        assert_eq!(serial_summary.channel_summaries.len(), 2);
+        for suffix in [
+            "psf",
+            "residual",
+            "image",
+            "sumwt",
+            "weight",
+            "pb",
+            "image.pbcor",
+        ] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", serial_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
         let read_ahead_prefix = tmp.path().join("tiny_mosaic_cube_read_ahead_image");
         let mut read_ahead_config = config.clone();
         read_ahead_config.imagename = read_ahead_prefix.clone();
@@ -60845,6 +61097,21 @@ deconvolver=mtmfs
             );
         }
 
+        let serial_prefix = tmp.path().join("tiny_cube_serial_image");
+        let mut serial_config = dirty_config.clone();
+        serial_config.imagename = serial_prefix.clone();
+        apply_parallel_runtime_control(Some(false), &mut serial_config)
+            .expect("serial cube runtime control");
+        let serial_summary = run_from_config(&serial_config).unwrap();
+        assert_eq!(serial_summary.channel_summaries.len(), 4);
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", serial_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
         let read_ahead_prefix = tmp.path().join("tiny_cube_read_ahead_image");
         let mut read_ahead_config = dirty_config.clone();
         read_ahead_config.imagename = read_ahead_prefix.clone();
@@ -61178,6 +61445,21 @@ deconvolver=mtmfs
             assert_f32_images_close(
                 format!("{}.{}", image_prefix.display(), suffix),
                 format!("{}.{}", slab1_prefix.display(), suffix),
+                1.0e-5,
+            );
+        }
+
+        let serial_prefix = tmp.path().join("tiny_cubedata_serial_image");
+        let mut serial_config = dirty_config.clone();
+        serial_config.imagename = serial_prefix.clone();
+        apply_parallel_runtime_control(Some(false), &mut serial_config)
+            .expect("serial cubedata runtime control");
+        let serial_summary = run_from_config(&serial_config).unwrap();
+        assert_eq!(serial_summary.channel_summaries.len(), 3);
+        for suffix in ["psf", "residual", "image", "sumwt"] {
+            assert_f32_images_close(
+                format!("{}.{}", image_prefix.display(), suffix),
+                format!("{}.{}", serial_prefix.display(), suffix),
                 1.0e-5,
             );
         }
