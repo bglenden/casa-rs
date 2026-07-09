@@ -9689,6 +9689,7 @@ fn run_mosaic_dirty_imaging(
     let mut model = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_residual_image = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_weight_image = Array2::<f32>::zeros((nx, ny));
+    let mut mosaic_dirty_products = None::<MosaicDirtyProductImages>;
     let dump_grids = mosaic_grid_dump_enabled();
     let mut accumulated_residual_grid =
         dump_grids.then(|| Array2::<Complex64>::zeros((grid_nx, grid_ny)));
@@ -9742,15 +9743,20 @@ fn run_mosaic_dirty_imaging(
             None,
         )?;
         psf_grid = parallel.psf_grid;
-        let fft_started = Instant::now();
-        let raw_residual = centered_ifft2_f64(&parallel.residual_grid);
-        let raw_weight = centered_ifft2_f64(&parallel.weight_grid);
-        stage_timings.psf_fft += fft_started.elapsed();
-        let normalize_started = Instant::now();
-        accumulated_residual_image =
-            gridder.corrected_mosaic_image_from_grid_f64(&raw_residual, conv_sampling);
-        accumulated_weight_image = gridder.mosaic_weight_image_from_grid_f64(&raw_weight);
-        stage_timings.psf_normalize += normalize_started.elapsed();
+        mosaic_dirty_products = Some(finish_mosaic_dirty_products_from_centered_grids(
+            &gridder,
+            &psf_grid,
+            &parallel.residual_grid,
+            &parallel.weight_grid,
+            conv_sampling,
+            parallel.normalization_sumwt,
+            config.pb_limit,
+            &mut stage_timings,
+            "mosaic weight peak is non-finite or zero",
+            "mosaic PSF peak is non-finite or zero",
+            "rust_pre_scale_weight",
+            "rust_weight",
+        )?);
         reported_sumwt = parallel.reported_sumwt;
         normalization_sumwt = parallel.normalization_sumwt;
         gridded_samples = parallel.gridded_samples;
@@ -10090,108 +10096,126 @@ fn run_mosaic_dirty_imaging(
         ));
     }
 
-    let fft_started = Instant::now();
-    dump_mosaic_complex_grid("psf_prefft", request.reffreq_hz, &psf_grid);
-    if let Some(residual_grid) = accumulated_residual_grid.as_ref() {
-        dump_mosaic_complex_grid("residual_prefft", request.reffreq_hz, residual_grid);
-    }
-    if let Some(weight_grid) = accumulated_mosaic_weight_grid.as_ref() {
-        dump_mosaic_complex_grid("weight_prefft", request.reffreq_hz, weight_grid);
-    }
-    let raw_psf = centered_ifft2_f64(&psf_grid);
-    stage_timings.psf_fft += fft_started.elapsed();
-
-    let normalize_started = Instant::now();
-    let mut accumulated_psf = gridder.corrected_mosaic_image_from_grid_f64(&raw_psf, conv_sampling);
-    let mut accumulated_residual = accumulated_residual_image;
-    let normalization_weight_image = accumulated_weight_image;
-    let fft_sumwt_scale =
-        (request.geometry.nx() * request.geometry.ny()) as f32 / normalization_sumwt as f32;
-    accumulated_residual.mapv_inplace(|value| value * fft_sumwt_scale);
-    accumulated_psf.mapv_inplace(|value| value * fft_sumwt_scale);
-    if trace_enabled {
-        append_mosaic_trace(format!(
-            "{{\"event\":\"pre_normalize\",\"normalization_sumwt\":{:.17e},\"reported_sumwt\":{:.17e},\"raw_residual_peak\":{:.17e},\"raw_psf_peak\":{:.17e},\"normalization_weight_peak\":{:.17e},\"pixels\":{}}}",
-            normalization_sumwt,
-            reported_sumwt,
-            peak_abs_value(&accumulated_residual),
-            peak_abs_value(&accumulated_psf),
-            peak_abs_value(&normalization_weight_image),
-            mosaic_trace_pixels_json(
-                &accumulated_residual,
-                &accumulated_psf,
-                &normalization_weight_image,
-                None
-            ),
-        ));
-    }
-    let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
-    trace_mosaic_weight_image("rust_pre_scale_weight", &normalization_weight_image);
-    trace_mosaic_weight_image("rust_weight", &weight_image);
-    if profile::standard_mfs_profile_block_detail_enabled() {
-        eprintln!(
-            "mosaic_weight_normalization reported_sumwt={:.9e} normalization_sumwt={:.9e} fft_sumwt_scale={:.9e} pre_scale_weight_peak={:.9e} post_scale_weight_peak={:.9e}",
-            reported_sumwt,
-            normalization_sumwt,
-            fft_sumwt_scale,
-            peak_abs_value(&normalization_weight_image),
-            peak_abs_value(&weight_image),
-        );
-    }
-    if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
-        let pre_weight_peak = peak_abs_value(&accumulated_residual);
-        let pre_weight_peak_loc = peak_location_masked(&accumulated_residual, None);
-        eprintln!(
-            "mosaic pre-weight residual peak={pre_weight_peak:.9e} loc={pre_weight_peak_loc:?}"
-        );
-    }
-    if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
-        let weight_peak = peak_abs_value(&normalization_weight_image);
-        let weight_peak_loc = peak_location_masked(&normalization_weight_image, None);
-        eprintln!("mosaic weight peak={weight_peak:.9e} loc={weight_peak_loc:?}");
-    }
-
-    let weight_peak = weight_image
-        .iter()
-        .copied()
-        .fold(0.0f32, |peak, value| peak.max(value));
-    if !(weight_peak.is_finite() && weight_peak > 0.0) {
-        return Err(ImagingError::Normalization(
-            "mosaic weight peak is non-finite or zero".to_string(),
-        ));
-    }
-    let pb_limit_threshold = config.pb_limit.abs() * config.pb_limit.abs() * weight_peak;
-    for ((x, y), weight_value) in weight_image.indexed_iter() {
-        let sensitivity = weight_value.max(0.0);
-        if sensitivity > pb_limit_threshold {
-            accumulated_residual[(x, y)] /= (sensitivity * weight_peak).sqrt();
-        } else {
-            accumulated_residual[(x, y)] = 0.0;
+    let (accumulated_psf, accumulated_residual, weight_image, psf_peak) = if let Some(products) =
+        mosaic_dirty_products
+    {
+        (
+            products.psf,
+            products.residual,
+            products.weight_image,
+            products.psf_peak,
+        )
+    } else {
+        let fft_started = Instant::now();
+        dump_mosaic_complex_grid("psf_prefft", request.reffreq_hz, &psf_grid);
+        if let Some(residual_grid) = accumulated_residual_grid.as_ref() {
+            dump_mosaic_complex_grid("residual_prefft", request.reffreq_hz, residual_grid);
         }
-    }
+        if let Some(weight_grid) = accumulated_mosaic_weight_grid.as_ref() {
+            dump_mosaic_complex_grid("weight_prefft", request.reffreq_hz, weight_grid);
+        }
+        let raw_psf = centered_ifft2_f64(&psf_grid);
+        stage_timings.psf_fft += fft_started.elapsed();
 
-    let psf_peak = peak_abs_value(&accumulated_psf);
-    if !(psf_peak.is_finite() && psf_peak > 0.0) {
-        return Err(ImagingError::Normalization(
-            "mosaic PSF peak is non-finite or zero".to_string(),
-        ));
-    }
-    accumulated_psf.mapv_inplace(|value| value / psf_peak);
-    if trace_enabled {
-        append_mosaic_trace(format!(
-            "{{\"event\":\"post_normalize\",\"psf_peak\":{:.17e},\"weight_peak\":{:.17e},\"pb_limit_threshold\":{:.17e},\"pixels\":{}}}",
+        let normalize_started = Instant::now();
+        let mut accumulated_psf =
+            gridder.corrected_mosaic_image_from_grid_f64(&raw_psf, conv_sampling);
+        let mut accumulated_residual = accumulated_residual_image;
+        let normalization_weight_image = accumulated_weight_image;
+        let fft_sumwt_scale =
+            (request.geometry.nx() * request.geometry.ny()) as f32 / normalization_sumwt as f32;
+        accumulated_residual.mapv_inplace(|value| value * fft_sumwt_scale);
+        accumulated_psf.mapv_inplace(|value| value * fft_sumwt_scale);
+        if trace_enabled {
+            append_mosaic_trace(format!(
+                "{{\"event\":\"pre_normalize\",\"normalization_sumwt\":{:.17e},\"reported_sumwt\":{:.17e},\"raw_residual_peak\":{:.17e},\"raw_psf_peak\":{:.17e},\"normalization_weight_peak\":{:.17e},\"pixels\":{}}}",
+                normalization_sumwt,
+                reported_sumwt,
+                peak_abs_value(&accumulated_residual),
+                peak_abs_value(&accumulated_psf),
+                peak_abs_value(&normalization_weight_image),
+                mosaic_trace_pixels_json(
+                    &accumulated_residual,
+                    &accumulated_psf,
+                    &normalization_weight_image,
+                    None
+                ),
+            ));
+        }
+        let weight_image = normalization_weight_image.mapv(|value| value * fft_sumwt_scale);
+        trace_mosaic_weight_image("rust_pre_scale_weight", &normalization_weight_image);
+        trace_mosaic_weight_image("rust_weight", &weight_image);
+        if profile::standard_mfs_profile_block_detail_enabled() {
+            eprintln!(
+                "mosaic_weight_normalization reported_sumwt={:.9e} normalization_sumwt={:.9e} fft_sumwt_scale={:.9e} pre_scale_weight_peak={:.9e} post_scale_weight_peak={:.9e}",
+                reported_sumwt,
+                normalization_sumwt,
+                fft_sumwt_scale,
+                peak_abs_value(&normalization_weight_image),
+                peak_abs_value(&weight_image),
+            );
+        }
+        if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+            let pre_weight_peak = peak_abs_value(&accumulated_residual);
+            let pre_weight_peak_loc = peak_location_masked(&accumulated_residual, None);
+            eprintln!(
+                "mosaic pre-weight residual peak={pre_weight_peak:.9e} loc={pre_weight_peak_loc:?}"
+            );
+        }
+        if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
+            let weight_peak = peak_abs_value(&normalization_weight_image);
+            let weight_peak_loc = peak_location_masked(&normalization_weight_image, None);
+            eprintln!("mosaic weight peak={weight_peak:.9e} loc={weight_peak_loc:?}");
+        }
+
+        let weight_peak = weight_image
+            .iter()
+            .copied()
+            .fold(0.0f32, |peak, value| peak.max(value));
+        if !(weight_peak.is_finite() && weight_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "mosaic weight peak is non-finite or zero".to_string(),
+            ));
+        }
+        let pb_limit_threshold = config.pb_limit.abs() * config.pb_limit.abs() * weight_peak;
+        for ((x, y), weight_value) in weight_image.indexed_iter() {
+            let sensitivity = weight_value.max(0.0);
+            if sensitivity > pb_limit_threshold {
+                accumulated_residual[(x, y)] /= (sensitivity * weight_peak).sqrt();
+            } else {
+                accumulated_residual[(x, y)] = 0.0;
+            }
+        }
+
+        let psf_peak = peak_abs_value(&accumulated_psf);
+        if !(psf_peak.is_finite() && psf_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "mosaic PSF peak is non-finite or zero".to_string(),
+            ));
+        }
+        accumulated_psf.mapv_inplace(|value| value / psf_peak);
+        if trace_enabled {
+            append_mosaic_trace(format!(
+                "{{\"event\":\"post_normalize\",\"psf_peak\":{:.17e},\"weight_peak\":{:.17e},\"pb_limit_threshold\":{:.17e},\"pixels\":{}}}",
+                psf_peak,
+                weight_peak,
+                pb_limit_threshold,
+                mosaic_trace_pixels_json(
+                    &accumulated_residual,
+                    &accumulated_psf,
+                    &normalization_weight_image,
+                    Some(&weight_image)
+                ),
+            ));
+        }
+        stage_timings.psf_normalize += normalize_started.elapsed();
+        (
+            accumulated_psf,
+            accumulated_residual,
+            weight_image,
             psf_peak,
-            weight_peak,
-            pb_limit_threshold,
-            mosaic_trace_pixels_json(
-                &accumulated_residual,
-                &accumulated_psf,
-                &normalization_weight_image,
-                Some(&weight_image)
-            ),
-        ));
-    }
-    stage_timings.psf_normalize += normalize_started.elapsed();
+        )
+    };
     if env::var_os("CASA_RS_DEBUG_MOSAIC").is_some() {
         eprintln!(
             "mosaic totals: gridded={gridded_samples} skipped={skipped_samples} normalization_sumwt={normalization_sumwt:.9e} reported_sumwt={reported_sumwt:.9e}"
