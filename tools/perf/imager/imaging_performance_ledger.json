@@ -532,6 +532,101 @@
         "prefusion_dirty_product_fft_total_ms": 231.784,
         "prefusion_profile_dirty_product_fft_total_ms": 70.083
       }
+    },
+    {
+      "workload_id": "wave3-mosaic-mfs-alma-large-dirty-metal",
+      "issue_slice": "352-mosaic-dirty-product-command-fusion-rejected",
+      "commit": "80a89d776+reverted-worktree-probe",
+      "machine": "bg-macbook-air",
+      "mode": "dirty mfs",
+      "gridder": "mosaic",
+      "deconvolver": "multiscale",
+      "precision_policy": {
+        "baseline": "pre-probe metal row-run grouped + mosaic product finisher",
+        "candidate": "fused mosaic MPSGraph export/crop/reduce/normalize command buffer"
+      },
+      "parallel_requested": null,
+      "parallel_effective": "mosaic single-grid-owner with Metal row-run grouped accumulation",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 4975555,
+        "candidate": 4975555
+      },
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["mfs_mosaic_replay"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": {
+        "baseline": 18.309,
+        "candidate": 18.401
+      },
+      "baseline_total_wall_s": 20.252158,
+      "candidate_total_wall_s": 20.276223,
+      "speedup": 0.998813,
+      "wall_reduction_fraction": -0.001188,
+      "correctness_status": "Benchmark-only experiment was reverted after performance review; no product comparison was generated for the rejected candidate; focused MPSGraph, resident, and mosaic tests passed before the revert.",
+      "max_abs": null,
+      "rms": null,
+      "decision_status": "rejected_candidate_not_retained",
+      "notes": "GLENDENNING large ALMA mosaic MFS dirty Metal diagnostic. A fused mosaic product command buffer was tested after the standard-product Metal fusion, but the product-finish slice regressed: profile psf_fft_ms changed from 67.930ms to 73.851ms, an 8.7% slowdown / 0.92x speedup. End-to-end wall was effectively flat but slightly worse, 20.252s to 20.276s. The probe was reverted and should not be counted as an accepted improvement. The sandboxed companion run reported metal_device_available=false and is retained only as a negative control for sandbox-hidden Metal.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-imaging-mosaic-metal-before-unsandboxed/results/20260709T045212Z-wave3-mosaic-mfs-alma-large-dirty-metal-35fe4665.json",
+        "rejected_candidate": "/private/tmp/casa-rs-imaging-mosaic-metal-fused-unsandboxed/results/20260709T044925Z-wave3-mosaic-mfs-alma-large-dirty-metal-12c4189f.json",
+        "sandboxed_negative_control": "/private/tmp/casa-rs-imaging-mosaic-metal-fused/results/20260709T044744Z-wave3-mosaic-mfs-alma-large-dirty-metal-20710f66.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 18.462678,
+          "candidate_s": 17.650948,
+          "delta_s": -0.811730,
+          "baseline_wall_fraction": 0.911635,
+          "candidate_wall_fraction": 0.870520,
+          "saved_fraction_of_baseline_wall": 0.040081,
+          "contribution_to_total_saved_wall": -33.730729
+        },
+        {
+          "stage": "run_imaging",
+          "baseline_s": 14.790403,
+          "candidate_s": 14.222571,
+          "delta_s": -0.567832,
+          "baseline_wall_fraction": 0.730321,
+          "candidate_wall_fraction": 0.701443,
+          "saved_fraction_of_baseline_wall": 0.028038,
+          "contribution_to_total_saved_wall": -23.595761
+        },
+        {
+          "stage": "psf_fft",
+          "baseline_s": 0.067930,
+          "candidate_s": 0.073851,
+          "delta_s": 0.005921,
+          "baseline_wall_fraction": 0.003354,
+          "candidate_wall_fraction": 0.003642,
+          "saved_fraction_of_baseline_wall": -0.000292,
+          "contribution_to_total_saved_wall": 0.246042
+        },
+        {
+          "stage": "write_products",
+          "baseline_s": 0.168873,
+          "candidate_s": 0.189349,
+          "delta_s": 0.020476,
+          "baseline_wall_fraction": 0.008338,
+          "candidate_wall_fraction": 0.009338,
+          "saved_fraction_of_baseline_wall": -0.001011,
+          "contribution_to_total_saved_wall": 0.850862
+        }
+      ],
+      "gpu": {
+        "metal_device_available": true,
+        "metal_device_name": "Apple M4",
+        "unsandboxed": true,
+        "mosaic_product_candidate_retained": false,
+        "profile_baseline_psf_fft_ms": 67.930,
+        "profile_candidate_psf_fft_ms": 73.851,
+        "profile_psf_fft_speedup": 0.919825,
+        "profile_psf_fft_reduction_fraction": -0.087163,
+        "sandboxed_negative_control_metal_device_available": false
+      }
     }
   ]
 }
