@@ -179,10 +179,12 @@ the product FFT stage and was rejected. Kernel/stage wins are not promoted as
 end-to-end wins without a guarded retained-path comparison.
 
 Read-ahead is also mode- and workload-sensitive. The standard MFS medium
-workload improved from `155.579 s` to `122.826 s` (`1.27x`, `21.1%` lower),
-while the bounded large mosaic MT-MFS sentinel was neutral within noise
-(`108.202 s` without versus `108.410 s` with read-ahead). The latter is kept as
-a negative control rather than reported as a speedup.
+workload improved from `129.408 s` to `108.572 s` (`1.19x`, `16.1%` lower)
+with `39.041 s` of measured producer/consumer overlap. The bounded large
+mosaic MT-MFS sentinel improved from `119.203 s` to `111.821 s` (`1.066x`,
+`6.19%` lower) with `4.384 s` of overlap. Both final pairs enforce an exact
+two-live-block ceiling and compare read-ahead-disabled versus enabled products
+as `good`; standard-MFS products are bit-identical.
 
 For the large spectral workload, guarded source-cache reuse made
 `chanchunks=4` faster than both comparison points: `101.044 s` versus

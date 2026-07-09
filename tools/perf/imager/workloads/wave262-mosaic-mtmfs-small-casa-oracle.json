@@ -1,0 +1,54 @@
+{
+  "id": "wave262-mosaic-mtmfs-small-casa-oracle",
+  "mode_id": "mosaic-mtmfs-first-slice",
+  "description": "Issue #262 final CASA oracle for the first supported mosaic MT-MFS slice at the intended 1280-pixel geometry.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-small",
+    "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 8,
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "mtmfs",
+    "nterms": 2,
+    "niter": 1,
+    "minor_cycle_length": 1,
+    "gain": 0.1,
+    "threshold_jy": 0.0,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "auto",
+    "imaging_read_ahead_blocks": 2
+  },
+  "run": {
+    "repeats": 1,
+    "profile_repeats": 1,
+    "run_label": "wave262-mosaic-mtmfs-small-casa-oracle",
+    "storage_label": "external-ssd-wave1-small",
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "skip_profile": "1",
+    "evidence_role": "casa_oracle"
+  },
+  "comparison": {
+    "products": [
+      ".image.tt0",
+      ".residual.tt0",
+      ".psf.tt0"
+    ],
+    "max_elements_per_product": 1000000
+  }
+}

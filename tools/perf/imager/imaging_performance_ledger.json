@@ -5,6 +5,7 @@
   "summary_columns": [
     "workload_id",
     "issue_slice",
+    "evidence_roles",
     "commit",
     "machine",
     "mode",
@@ -63,6 +64,13 @@
     "gpu_device_memory_high_water_bytes",
     "fallback_reason"
   ],
+  "casa_columns": [
+    "oracle_result_path",
+    "comparison_result_path",
+    "comparison_status",
+    "max_abs",
+    "rms"
+  ],
   "formulas": {
     "speedup": "baseline_total_wall_s / candidate_total_wall_s",
     "wall_reduction_fraction": "(baseline_total_wall_s - candidate_total_wall_s) / baseline_total_wall_s",
@@ -73,14 +81,10 @@
   },
   "workload_groups": [
     {
-      "group_id": "standard_cube_medium_controls",
-      "owner_issues": [56, 343],
-      "workloads": [
-        "wave4-standard-cube-line-medium.json",
-        "wave4-standard-cube-line-medium-clean-clark.json",
-        "wave4-standard-cube-line-medium-clean-multiscale.json"
-      ],
-      "required_roles": ["serial_cpu", "parallel_auto", "parallel_chanchunks", "read_ahead_disabled", "read_ahead_enabled"]
+      "group_id": "standard_mfs_medium_overlap",
+      "owner_issues": [343],
+      "workloads": ["wave3-standard-mfs-single-term-heavy-wave2.json"],
+      "required_roles": ["read_ahead_disabled", "read_ahead_enabled"]
     },
     {
       "group_id": "standard_cubedata_medium_large_controls",
@@ -89,7 +93,7 @@
         "wave4-standard-cubedata-line-medium.json",
         "wave4-standard-cubedata-line-large-bounded.json"
       ],
-      "required_roles": ["serial_cpu", "parallel_auto", "parallel_chanchunks", "read_ahead_disabled", "read_ahead_enabled"]
+      "required_roles": ["read_ahead_negative_control"]
     },
     {
       "group_id": "mosaic_cube_large_overlap",
@@ -97,9 +101,10 @@
       "workloads": [
         "wave3-mosaic-cube-alma-large-stress-serial.json",
         "wave3-mosaic-cube-alma-large-stress-auto.json",
+        "wave4-mosaic-cube-alma-medium-dirty-bounded.json",
         "wave4-mosaic-cube-alma-large-dirty-bounded.json"
       ],
-      "required_roles": ["serial_cpu", "parallel_auto", "read_ahead_disabled", "read_ahead_enabled"]
+      "required_roles": ["parallel_auto", "parallel_chanchunks"]
     },
     {
       "group_id": "mosaic_mfs_large_overlap",
@@ -108,9 +113,10 @@
         "wave3-mosaic-mfs-alma-large-stress-serial.json",
         "wave3-mosaic-mfs-alma-large-stress-multicpu.json",
         "wave3-mosaic-mfs-alma-large-stress-auto.json",
-        "wave3-mosaic-mfs-alma-large-stress-metal.json"
+        "wave3-mosaic-mfs-alma-large-stress-metal.json",
+        "wave3-mosaic-mfs-alma-large-dirty-metal.json"
       ],
-      "required_roles": ["serial_cpu", "parallel_auto", "read_ahead_disabled", "read_ahead_enabled", "metal_f32_candidate"]
+      "required_roles": ["rejected_metal_negative_control"]
     },
     {
       "group_id": "mtmfs_mosaic_medium_correctness_perf",
@@ -118,26 +124,32 @@
       "workloads": [
         "wave3-mtmfs-heavy-wave1-medium-serial.json",
         "wave3-mtmfs-heavy-wave1-medium-multicpu.json",
-        "wave3-mosaic-mtmfs-alma-large-bounded.json"
+        "wave3-mosaic-mtmfs-alma-large-bounded.json",
+        "wave262-mosaic-mtmfs-small-casa-oracle.json"
       ],
-      "required_roles": ["standard_mtmfs_baseline", "mosaic_mtmfs_candidate", "read_ahead_disabled", "read_ahead_enabled", "casa_oracle"]
+      "required_roles": ["mosaic_mtmfs_candidate", "read_ahead_disabled", "read_ahead_enabled", "casa_oracle"]
     },
     {
       "group_id": "gpu_residency_medium_large",
       "owner_issues": [352],
       "workloads": [
+        "wave3-standard-mfs-clark-heavy-wave2.json",
         "wave4-standard-cube-line-medium.json",
         "wave4-standard-cubedata-line-medium.json",
         "wave3-mosaic-mfs-alma-large-stress-auto.json"
       ],
-      "required_roles": ["cpu_f64_parity", "cpu_f32_baseline", "metal_f32_candidate"]
+      "required_roles": ["cpu_f32_baseline", "metal_f32_candidate"]
     }
   ],
   "runs": [
     {
       "workload_id": "wave3-standard-mfs-single-term-heavy-wave2",
       "issue_slice": "343-standard-mfs-read-ahead",
-      "commit": "c5673768b+worktree",
+      "evidence_roles": [
+        {"group_id": "standard_mfs_medium_overlap", "role": "read_ahead_disabled"},
+        {"group_id": "standard_mfs_medium_overlap", "role": "read_ahead_enabled"}
+      ],
+      "commit": "1f624ad9d",
       "machine": "bg-macbook-air",
       "mode": "clean mfs",
       "gridder": "standard",
@@ -158,87 +170,51 @@
       "source_read_ahead_modes": ["standard_mfs"],
       "memory_target_gb": 16.0,
       "peak_rss_gb": {
-        "baseline": 14.529,
-        "candidate": null
+        "baseline": 14.314316,
+        "candidate": 12.339081
       },
-      "baseline_total_wall_s": 155.578507,
-      "candidate_total_wall_s": 122.825994,
-      "speedup": 1.266658,
-      "wall_reduction_fraction": 0.21052081,
-      "correctness_status": "not_run_rust_only_skip_casa; same gridded_samples=197519040, major_cycles=10, minor_iterations=510",
-      "max_abs": null,
-      "rms": null,
-      "notes": "GLENDENNING medium Wave 3 standard-MFS clean workload. Baseline run used imaging_read_ahead_blocks=1; candidate used 2. CASA was skipped for timing isolation.",
+      "baseline_total_wall_s": 129.408320,
+      "candidate_total_wall_s": 108.571609,
+      "speedup": 1.191917,
+      "wall_reduction_fraction": 0.16101523,
+      "correctness_status": "Read-ahead disabled versus enabled product comparison is overall good; .image, .model, .psf, and .residual are bit-identical.",
+      "max_abs": 0.0,
+      "rms": 0.0,
+      "notes": "Final GLENDENNING medium standard-MFS clean pair after correcting max-live ownership. The producer acquires its memory permit before building a block; max_live_row_blocks=2 includes consumer-owned and producer-in-flight blocks. CASA was skipped for timing isolation.",
       "result_paths": {
-        "baseline": "/private/tmp/casa-rs-imager-perf-medium/runs/20260708T175142Z-wave3-standard-mfs-single-term-heavy-wave2-26ddffdf.json",
-        "candidate": "/private/tmp/casa-rs-imager-perf-medium/runs/20260708T175725Z-wave3-standard-mfs-single-term-heavy-wave2-adf9056a.json"
+        "baseline": "/private/tmp/casa-rs-wave343-standard-final-baseline/20260709T193312Z-wave3-standard-mfs-single-term-heavy-wave2-0388d03c.json",
+        "candidate": "/private/tmp/casa-rs-wave343-standard-final-candidate3/20260709T194937Z-wave3-standard-mfs-single-term-heavy-wave2-58dd109d.json",
+        "product_comparison": "/private/tmp/casa-rs-wave343-standard-final-comparison.json"
       },
       "stages": [
         {
           "stage": "frontend_total",
-          "baseline_s": 155.578507,
-          "candidate_s": 122.825994,
-          "delta_s": -32.752513,
+          "baseline_s": 129.408320,
+          "candidate_s": 108.571609,
+          "delta_s": -20.836711,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": 0.21052081,
+          "saved_fraction_of_baseline_wall": 0.16101523,
           "contribution_to_total_saved_wall": 1.0
-        },
-        {
-          "stage": "prepare_plane_input",
-          "baseline_s": 112.818782,
-          "candidate_s": 102.190230,
-          "delta_s": -10.628552,
-          "baseline_wall_fraction": 0.725157,
-          "candidate_wall_fraction": 0.831991,
-          "saved_fraction_of_baseline_wall": 0.068316,
-          "contribution_to_total_saved_wall": 0.324510
-        },
-        {
-          "stage": "source_read",
-          "baseline_s": 61.902895,
-          "candidate_s": 50.266542,
-          "delta_s": -11.636353,
-          "baseline_wall_fraction": 0.397887,
-          "candidate_wall_fraction": 0.409250,
-          "saved_fraction_of_baseline_wall": 0.074792,
-          "contribution_to_total_saved_wall": 0.355287
-        },
-        {
-          "stage": "source_prepare",
-          "baseline_s": 50.915888,
-          "candidate_s": 51.923688,
-          "delta_s": 1.007800,
-          "baseline_wall_fraction": 0.327263,
-          "candidate_wall_fraction": 0.422742,
-          "saved_fraction_of_baseline_wall": -0.006478,
-          "contribution_to_total_saved_wall": -0.030771
-        },
-        {
-          "stage": "core_total",
-          "baseline_s": 147.217979,
-          "candidate_s": 118.576573,
-          "delta_s": -28.641406,
-          "baseline_wall_fraction": 0.946262,
-          "candidate_wall_fraction": 0.965403,
-          "saved_fraction_of_baseline_wall": 0.184096,
-          "contribution_to_total_saved_wall": 0.874473
         }
       ],
       "overlap": {
-        "producer_active_s": 7.304020,
-        "consumer_active_s": 2.123856,
-        "producer_consumer_overlap_s": null,
-        "consumer_blocked_on_input_s": 5.372655,
-        "producer_blocked_on_capacity_s": 0.000012,
-        "queue_high_water_blocks": 1,
-        "queue_high_water_bytes": null,
-        "effective_read_bandwidth_mb_s": null
+        "producer_active_s": 161.715712,
+        "consumer_active_s": 41.665278,
+        "producer_consumer_overlap_s": 39.040761,
+        "consumer_blocked_on_input_s": 119.767823,
+        "producer_blocked_on_capacity_s": 0.000339,
+        "queue_high_water_blocks": 2,
+        "queue_high_water_bytes": 17058080079,
+        "effective_read_bandwidth_mb_s": 792.449986
       }
     },
     {
       "workload_id": "wave4-standard-cubedata-line-medium",
       "issue_slice": "343-cubedata-slab-read-ahead",
+      "evidence_roles": [
+        {"group_id": "standard_cubedata_medium_large_controls", "role": "read_ahead_negative_control"}
+      ],
       "commit": "6bc3c373+worktree",
       "machine": "bg-macbook-air",
       "mode": "dirty cubedata",
@@ -334,6 +310,10 @@
     {
       "workload_id": "wave4-mosaic-cube-alma-medium-dirty-bounded",
       "issue_slice": "56-mosaic-cube-chanchunks",
+      "evidence_roles": [
+        {"group_id": "mosaic_cube_large_overlap", "role": "parallel_auto"},
+        {"group_id": "mosaic_cube_large_overlap", "role": "parallel_chanchunks"}
+      ],
       "commit": "f541094fa+worktree",
       "machine": "bg-macbook-air",
       "mode": "dirty cube",
@@ -413,6 +393,10 @@
     {
       "workload_id": "wave3-standard-mfs-clark-heavy-wave2",
       "issue_slice": "352-standard-mfs-dirty-product-gpu-residency",
+      "evidence_roles": [
+        {"group_id": "gpu_residency_medium_large", "role": "cpu_f32_baseline"},
+        {"group_id": "gpu_residency_medium_large", "role": "metal_f32_candidate"}
+      ],
       "commit": "e8a614379",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
@@ -509,6 +493,10 @@
         }
       ],
       "gpu": {
+        "device_fft_s": 0.005008,
+        "device_product_assembly_s": 0.000606,
+        "device_to_host_final_export_s": 0.000598,
+        "fallback_reason": "not_applicable_metal_selected",
         "dirty_product_fft_requested_backend": "metal-mpsgraph",
         "dirty_product_fft_selected_backend": "metal-mpsgraph",
         "dirty_product_fft_fallback_used": false,
@@ -537,6 +525,9 @@
     {
       "workload_id": "wave3-mosaic-mfs-alma-large-dirty-metal",
       "issue_slice": "352-mosaic-dirty-product-command-fusion-rejected",
+      "evidence_roles": [
+        {"group_id": "mosaic_mfs_large_overlap", "role": "rejected_metal_negative_control"}
+      ],
       "commit": "80a89d776+reverted-worktree-probe",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
@@ -632,7 +623,11 @@
     {
       "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded",
       "issue_slice": "343-mosaic-mtmfs-large-read-ahead-negative-control",
-      "commit": "182ffdf3c+worktree",
+      "evidence_roles": [
+        {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "read_ahead_disabled"},
+        {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "read_ahead_enabled"}
+      ],
+      "commit": "1f624ad9d",
       "machine": "bg-macbook-air",
       "mode": "clean mfs niter=0",
       "gridder": "mosaic",
@@ -653,67 +648,124 @@
       "source_read_ahead_modes": ["mosaic_mtmfs_replay"],
       "memory_target_gb": 4.0,
       "peak_rss_gb": null,
-      "baseline_total_wall_s": 108.202399,
-      "candidate_total_wall_s": 108.409784,
-      "speedup": 0.998087,
-      "wall_reduction_fraction": -0.001917,
-      "correctness_status": "Read-ahead disabled versus enabled comparison is overall good. Maximum normalized RMS difference across Taylor image, residual, and PSF products is 3.0e-11; image TT1 and residual TT1 are bit-identical.",
+      "baseline_total_wall_s": 119.202559,
+      "candidate_total_wall_s": 111.820536,
+      "speedup": 1.066017,
+      "wall_reduction_fraction": 0.06192839,
+      "correctness_status": "Read-ahead disabled versus enabled comparison is overall good. Maximum normalized RMS difference across Taylor image, residual, and PSF products is 2.9993e-11; image TT1 and residual TT1 are bit-identical.",
       "max_abs": 1.862645149230957e-9,
       "rms": 3.0e-11,
-      "decision_status": "neutral_compute_dominated_negative_control",
-      "notes": "GLENDENNING large seven-field ALMA mosaic MT-MFS bounded-memory row with 6.06M active rows and 16 channels. Read-ahead is effectively neutral: 108.202s disabled versus 108.410s enabled, a 0.19% slowdown within single-run noise. Source reads account for only 4.4-5.0s while replay/gridding consumes about 99-104s; the enabled producer spends 72.954s blocked behind compute. The mode-general read-ahead path is retained because products are invariant and it can overlap I/O on slower storage, but this compute-dominated workload is not counted as a speedup claim.",
+      "decision_status": "retained_bounded_read_ahead_speedup",
+      "notes": "Final GLENDENNING large seven-field ALMA mosaic MT-MFS bounded-memory pair with 6.06M active rows and 16 channels. Correctly bounded read-ahead improves wall time by 6.19%. The path remains compute-dominated: measured overlap is 4.384s and the producer spends 92.033s blocked behind the consumer, but the retained path is now a measured speedup rather than a neutral negative control.",
       "result_paths": {
-        "baseline": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-read-ahead-1/20260709T184713Z-wave343-mosaic-mtmfs-large-bounded-46d63bc9.json",
-        "candidate": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-read-ahead-2/20260709T185003Z-wave343-mosaic-mtmfs-large-bounded-54143bba.json",
-        "product_comparison": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-read-ahead-comparison.json"
+        "baseline": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-baseline/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.json",
+        "candidate": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-candidate/20260709T195437Z-wave3-mosaic-mtmfs-alma-large-bounded-ad12286b.json",
+        "product_comparison": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-comparison.json"
       },
       "stages": [
         {
           "stage": "frontend_total",
-          "baseline_s": 108.202399,
-          "candidate_s": 108.409784,
-          "delta_s": 0.207385,
+          "baseline_s": 119.202559,
+          "candidate_s": 111.820536,
+          "delta_s": -7.382023,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": -0.001917,
+          "saved_fraction_of_baseline_wall": 0.06192839,
           "contribution_to_total_saved_wall": 1.0
         },
         {
           "stage": "source_read",
-          "baseline_s": 5.030764,
-          "candidate_s": 4.380381,
-          "delta_s": -0.650383,
-          "baseline_wall_fraction": 0.046494,
-          "candidate_wall_fraction": 0.040406,
-          "saved_fraction_of_baseline_wall": 0.006011,
-          "contribution_to_total_saved_wall": -3.136114
+          "baseline_s": 4.916346,
+          "candidate_s": 5.865759,
+          "delta_s": 0.949413,
+          "baseline_wall_fraction": 0.041243628,
+          "candidate_wall_fraction": 0.052456903,
+          "saved_fraction_of_baseline_wall": -0.007964703,
+          "contribution_to_total_saved_wall": -0.128611493
         },
         {
           "stage": "source_prepare_and_consume",
-          "baseline_s": 98.625760,
-          "candidate_s": 103.977423,
-          "delta_s": 5.351663,
-          "baseline_wall_fraction": 0.911493,
-          "candidate_wall_fraction": 0.959115,
-          "saved_fraction_of_baseline_wall": -0.049460,
-          "contribution_to_total_saved_wall": 25.805449
+          "baseline_s": 110.272099,
+          "candidate_s": 106.726447,
+          "delta_s": -3.545652,
+          "baseline_wall_fraction": 0.925081642,
+          "candidate_wall_fraction": 0.954444066,
+          "saved_fraction_of_baseline_wall": 0.029744764,
+          "contribution_to_total_saved_wall": 0.480308988
         }
       ],
       "overlap": {
-        "producer_active_s": 4.380381,
-        "consumer_active_s": 103.977423,
-        "producer_consumer_overlap_s": null,
-        "queue_high_water_bytes": null,
-        "queue_capacity_blocks": 1,
+        "producer_active_s": 5.865759,
+        "consumer_active_s": 106.726447,
+        "producer_consumer_overlap_s": 4.384404,
+        "queue_high_water_bytes": 3855351456,
+        "effective_read_bandwidth_mb_s": 685.813055,
+        "queue_high_water_blocks": 2,
+        "queue_capacity_blocks": 0,
         "max_live_row_blocks": 2,
-        "producer_send_blocked_s": 72.954140,
-        "consumer_recv_blocked_s": 0.979515
+        "producer_send_blocked_s": 92.032930,
+        "consumer_recv_blocked_s": 1.481509
       },
       "gpu": {
         "metal_device_available": true,
         "metal_device_name": "Apple M4",
         "selected_backend": "cpu",
         "selection_reason": "mosaic-screen-projector-metal-single-grid-owner"
+      }
+    },
+    {
+      "workload_id": "wave262-mosaic-mtmfs-small-casa-oracle",
+      "issue_slice": "262-mosaic-mtmfs-final-head-casa-oracle",
+      "evidence_roles": [
+        {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "mosaic_mtmfs_candidate"},
+        {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "casa_oracle"}
+      ],
+      "commit": "1f624ad9d",
+      "machine": "bg-macbook-air",
+      "mode": "clean mfs niter=1",
+      "gridder": "mosaic",
+      "deconvolver": "mtmfs",
+      "precision_policy": "CASA-compatible f32 Briggs and Taylor weights with f64 mosaic grids",
+      "parallel_requested": "CASA serial versus casa-rs auto",
+      "parallel_effective": "CASA serial; casa-rs CPU sample-range full-grid",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": null,
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["mosaic_mtmfs_replay"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 14.859600,
+      "candidate_total_wall_s": 10.559692,
+      "speedup": 1.407200,
+      "wall_reduction_fraction": 0.28936903,
+      "correctness_status": "Final-head CASA oracle is green for primary products. Full comparison has only cancellation-dominated investigate labels for near-zero residual TT1 and sumwt TT1; all scientifically meaningful image, model, PSF, PB, PBCOR, alpha, and alpha-error products are good.",
+      "max_abs": 0.140625,
+      "rms": 0.000005922918326059648,
+      "notes": "Exact final runtime commit. All seven per-field density statistics and robust f2 match CASA. Model TT0 and sumwt TT0/TT2 are bit-identical; PB TT1 is zero in both implementations.",
+      "result_paths": {
+        "oracle": "/private/tmp/casa-rs-wave262-final-head-oracle/20260709T200728Z-wave262-mosaic-mtmfs-small-casa-oracle-2eebb403.json",
+        "primary_comparison": "/private/tmp/casa-rs-wave262-final-head-oracle/20260709T200728Z-wave262-mosaic-mtmfs-small-casa-oracle-2eebb403.comparison.json",
+        "all_product_comparison": "/private/tmp/casa-rs-wave262-final-head-oracle/comparison-all.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 14.859600,
+          "candidate_s": 10.559692,
+          "delta_s": -4.299908,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.28936903,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ],
+      "casa": {
+        "oracle_result_path": "/private/tmp/casa-rs-wave262-final-head-oracle/20260709T200728Z-wave262-mosaic-mtmfs-small-casa-oracle-2eebb403.json",
+        "comparison_result_path": "/private/tmp/casa-rs-wave262-final-head-oracle/comparison-all.json",
+        "comparison_status": "good_with_cancellation_only_investigate",
+        "max_abs": 0.140625,
+        "rms": 0.000005922918326059648
       }
     }
   ]
