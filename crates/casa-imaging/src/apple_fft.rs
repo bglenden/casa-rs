@@ -701,7 +701,7 @@ pub(crate) fn dirty_standard_products_f64_to_f32_batch(
         return Err(selection.reason);
     }
 
-    let fused_pack = apple_fft_fused_pack_enabled();
+    let fused_pack = apple_fft_dirty_product_fused_pack_enabled();
     let selection = selection_for_fused_pack(selection, fused_pack);
     let mut timing = FftTiming::new(spec, selection);
     let key = MpsGraphBatchPlanKey {
@@ -787,7 +787,7 @@ pub(crate) fn dirty_mosaic_products_f64_to_f32_batch(
         return Err(selection.reason);
     }
 
-    let fused_pack = apple_fft_fused_pack_enabled();
+    let fused_pack = apple_fft_dirty_product_fused_pack_enabled();
     let selection = selection_for_fused_pack(selection, fused_pack);
     let mut timing = FftTiming::new(spec, selection);
     let key = MpsGraphBatchPlanKey {
@@ -1260,7 +1260,7 @@ fn execute_dirty_standard_products_with_plan(
     let result = results
         .objectForKey(&plan.output)
         .ok_or("mpsgraph_fft_missing_output_tensor")?;
-    let export_start = Instant::now();
+    let export_postprocess_start = Instant::now();
     let ndarray = unsafe { result.mpsndarray() };
     let command_buffer = plan
         .queue
@@ -1275,26 +1275,31 @@ fn execute_dirty_standard_products_with_plan(
             null_mut(),
         );
     }
+    let encoded_products = encode_dirty_standard_products_on_metal(
+        plan,
+        &command_buffer,
+        &fft_output_buffer,
+        correction,
+        normalization_sumwts,
+        timing,
+    )?;
     command_buffer.commit();
-    timing.exec += export_start.elapsed();
+    timing.exec += export_postprocess_start.elapsed();
 
     let sync_start = Instant::now();
     command_buffer.waitUntilCompleted();
     timing.sync += sync_start.elapsed();
-    ensure_command_buffer_ok(&command_buffer, "mpsgraph_resident_export_command_failed")?;
+    ensure_command_buffer_ok(
+        &command_buffer,
+        "mpsgraph_resident_export_and_dirty_product_command_failed",
+    )?;
     record_command_buffer_device_time(&command_buffer, timing);
     if let Some(pending) = pending_fused_pack {
         finish_fused_pack(pending, timing)?;
     }
 
     let postprocess_start = Instant::now();
-    let products = finish_dirty_standard_products_on_metal(
-        plan,
-        &fft_output_buffer,
-        correction,
-        normalization_sumwts,
-        timing,
-    )?;
+    let products = collect_dirty_standard_products_from_metal(encoded_products, timing)?;
     let postprocess_elapsed = postprocess_start.elapsed();
     timing.total = total_start.elapsed();
     Ok((products, *timing, postprocess_elapsed))
@@ -1412,13 +1417,26 @@ fn execute_dirty_mosaic_products_with_plan(
     Ok((products, *timing, postprocess_elapsed))
 }
 
-fn finish_dirty_standard_products_on_metal(
+struct EncodedDirtyStandardProducts {
+    psf_buffer: MetalBuffer,
+    residual_buffer: MetalBuffer,
+    peak_buffer: MetalBuffer,
+    image_nx: usize,
+    image_ny: usize,
+    image_pixels: usize,
+    image_values: usize,
+    product_count: usize,
+    _reduce_keep_alive: Vec<MetalBuffer>,
+}
+
+fn encode_dirty_standard_products_on_metal(
     plan: &mut MpsGraphF32Plan,
+    command_buffer: &MetalCommandBuffer,
     fft_output_buffer: &MetalBuffer,
     correction: StandardGridderProductCorrection<'_>,
     normalization_sumwts: &[f32],
     timing: &mut FftTiming,
-) -> Result<Vec<AppleDirtyStandardProduct>, &'static str> {
+) -> Result<EncodedDirtyStandardProducts, &'static str> {
     let pipelines = dirty_product_pipelines(plan)?;
     let rows = correction.grid_shape[0];
     let columns = correction.grid_shape[1];
@@ -1449,11 +1467,6 @@ fn finish_dirty_standard_products_on_metal(
     let residual_buffer = empty_buffer(&plan.device, image_values * mem::size_of::<f32>())?;
     timing.transfer_to_device += transfer_start.elapsed();
 
-    let command_start = Instant::now();
-    let command_buffer = plan
-        .queue
-        .commandBuffer()
-        .ok_or("dirty_product_failed_to_create_crop_command_buffer")?;
     let encoder = command_buffer
         .computeCommandEncoder()
         .ok_or("dirty_product_failed_to_create_crop_encoder")?;
@@ -1480,7 +1493,7 @@ fn finish_dirty_standard_products_on_metal(
 
     let mut reduce_keep_alive = Vec::new();
     let peak_buffer = encode_product_peak_reduction(
-        &command_buffer,
+        command_buffer,
         &pipelines,
         &plan.device,
         DirtyProductReduction {
@@ -1506,37 +1519,60 @@ fn finish_dirty_standard_products_on_metal(
     }
     dispatch_2d_linear_threads(&encoder, &pipelines.normalize, image_pixels, product_count);
     encoder.endEncoding();
-    command_buffer.commit();
-    command_buffer.waitUntilCompleted();
-    ensure_command_buffer_ok(&command_buffer, "dirty_product_standard_command_failed")?;
-    record_command_buffer_device_time(&command_buffer, timing);
-    timing.exec += command_start.elapsed();
 
+    Ok(EncodedDirtyStandardProducts {
+        psf_buffer,
+        residual_buffer,
+        peak_buffer,
+        image_nx,
+        image_ny,
+        image_pixels,
+        image_values,
+        product_count,
+        _reduce_keep_alive: reduce_keep_alive,
+    })
+}
+
+fn collect_dirty_standard_products_from_metal(
+    encoded: EncodedDirtyStandardProducts,
+    timing: &mut FftTiming,
+) -> Result<Vec<AppleDirtyStandardProduct>, &'static str> {
     let export_start = Instant::now();
     let psf_values = unsafe {
-        slice::from_raw_parts(psf_buffer.contents().as_ptr().cast::<f32>(), image_values)
+        slice::from_raw_parts(
+            encoded.psf_buffer.contents().as_ptr().cast::<f32>(),
+            encoded.image_values,
+        )
     };
     let residual_values = unsafe {
         slice::from_raw_parts(
-            residual_buffer.contents().as_ptr().cast::<f32>(),
-            image_values,
+            encoded.residual_buffer.contents().as_ptr().cast::<f32>(),
+            encoded.image_values,
         )
     };
     let peak_values = unsafe {
-        slice::from_raw_parts(peak_buffer.contents().as_ptr().cast::<f32>(), product_count)
+        slice::from_raw_parts(
+            encoded.peak_buffer.contents().as_ptr().cast::<f32>(),
+            encoded.product_count,
+        )
     };
-    let mut products = Vec::with_capacity(product_count);
-    for (product, &peak) in peak_values.iter().enumerate().take(product_count) {
+    let mut products = Vec::with_capacity(encoded.product_count);
+    for (product, &peak) in peak_values.iter().enumerate().take(encoded.product_count) {
         if !(peak.is_finite() && peak > 0.0) {
             return Err("dirty_product_psf_peak_nonfinite_or_zero");
         }
-        let start = product * image_pixels;
-        let end = start + image_pixels;
-        let psf = Array2::from_shape_vec((image_nx, image_ny), psf_values[start..end].to_vec())
-            .map_err(|_| "dirty_product_psf_shape_mismatch")?;
-        let residual =
-            Array2::from_shape_vec((image_nx, image_ny), residual_values[start..end].to_vec())
-                .map_err(|_| "dirty_product_residual_shape_mismatch")?;
+        let start = product * encoded.image_pixels;
+        let end = start + encoded.image_pixels;
+        let psf = Array2::from_shape_vec(
+            (encoded.image_nx, encoded.image_ny),
+            psf_values[start..end].to_vec(),
+        )
+        .map_err(|_| "dirty_product_psf_shape_mismatch")?;
+        let residual = Array2::from_shape_vec(
+            (encoded.image_nx, encoded.image_ny),
+            residual_values[start..end].to_vec(),
+        )
+        .map_err(|_| "dirty_product_residual_shape_mismatch")?;
         products.push(AppleDirtyStandardProduct {
             psf,
             residual,
@@ -1798,6 +1834,7 @@ fn encode_product_peak_reduction(
         dispatch_2d_linear_threads(&encoder, pipeline, output_count, request.product_count);
         encoder.endEncoding();
         if output_count == 1 {
+            keep_alive.push(input);
             return Ok(output);
         }
         keep_alive.push(input);
@@ -2524,7 +2561,17 @@ fn apple_fft_pack_threads(work_items: usize) -> usize {
 }
 
 fn apple_fft_fused_pack_enabled() -> bool {
-    env::var_os(APPLE_FFT_FUSED_PACK_ENV).is_some()
+    apple_fft_fused_pack_env_override().unwrap_or(false)
+}
+
+fn apple_fft_dirty_product_fused_pack_enabled() -> bool {
+    apple_fft_fused_pack_env_override().unwrap_or(true)
+}
+
+fn apple_fft_fused_pack_env_override() -> Option<bool> {
+    let value = env::var(APPLE_FFT_FUSED_PACK_ENV).ok()?;
+    let normalized = value.trim().to_ascii_lowercase();
+    Some(!matches!(normalized.as_str(), "0" | "false" | "off" | "no"))
 }
 
 fn selection_for_fused_pack(
@@ -2533,7 +2580,7 @@ fn selection_for_fused_pack(
 ) -> FftBackendSelection {
     if fused_pack {
         FftBackendSelection {
-            reason: "metal_mpsgraph_complex_f32_host_batch_fused_pack_experiment",
+            reason: "metal_mpsgraph_complex_f32_host_batch_fused_pack",
             ..selection
         }
     } else {
