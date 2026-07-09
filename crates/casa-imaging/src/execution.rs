@@ -11274,7 +11274,6 @@ fn mtmfs_metal_sample(
             ImagingError::InvalidRequest("MTMFS Metal negative y center exceeds u32".to_string())
         })?,
     ];
-    let scaled = (frequency_hz - reffreq_hz) / reffreq_hz;
     Ok(Some(MetalMtmfsSample {
         positive_center_x: positive_center[0],
         positive_center_y: positive_center[1],
@@ -11286,7 +11285,7 @@ fn mtmfs_metal_sample(
         negative_y_weight_base: mtmfs_metal_weight_base(negative_taps.y)?,
         weight,
         sumwt_factor,
-        taylor_x: scaled as f32,
+        taylor_x: crate::mtmfs_casa_taylor_x(frequency_hz, reffreq_hz),
         _pad0: 0.0,
         visibility_re: visibility.re,
         visibility_im: visibility.im,
@@ -16180,7 +16179,9 @@ fn metal_error(
 #[cfg(all(target_os = "macos", not(coverage)))]
 fn metal_density_convention_code(convention: DensityCellConvention) -> u32 {
     match convention {
-        DensityCellConvention::VisImagingWeight => 0,
+        DensityCellConvention::VisImagingWeight | DensityCellConvention::MosaicVisImagingWeight => {
+            0
+        }
         DensityCellConvention::CubeBriggsWeightorDensity => 1,
         DensityCellConvention::CubeBriggsWeightorLookup => 2,
     }

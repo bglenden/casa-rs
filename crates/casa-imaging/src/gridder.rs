@@ -38,6 +38,7 @@ fn release_allocator_pressure() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DensityCellConvention {
     VisImagingWeight,
+    MosaicVisImagingWeight,
     CubeBriggsWeightorDensity,
     CubeBriggsWeightorLookup,
 }
@@ -1719,12 +1720,15 @@ impl StandardGridder {
         convention: DensityCellConvention,
     ) -> Option<(usize, usize)> {
         let (x, y) = match convention {
-            DensityCellConvention::VisImagingWeight => {
-                let u = f64::from(u_lambda as f32);
-                let v = f64::from(v_lambda as f32);
+            DensityCellConvention::VisImagingWeight
+            | DensityCellConvention::MosaicVisImagingWeight => {
+                let u = u_lambda as f32;
+                let v = v_lambda as f32;
                 (
-                    -u * self.density_u_scale + self.density_center_x,
-                    v * self.density_v_scale + self.density_center_y,
+                    f64::from(
+                        (-u).mul_add(self.density_u_scale as f32, self.density_center_x as f32),
+                    ),
+                    f64::from(v.mul_add(self.density_v_scale as f32, self.density_center_y as f32)),
                 )
             }
             DensityCellConvention::CubeBriggsWeightorDensity
@@ -1737,7 +1741,8 @@ impl StandardGridder {
             return None;
         }
         let (anchor_x, anchor_y) = match convention {
-            DensityCellConvention::VisImagingWeight => (x as isize, y as isize),
+            DensityCellConvention::VisImagingWeight
+            | DensityCellConvention::MosaicVisImagingWeight => (x as isize, y as isize),
             DensityCellConvention::CubeBriggsWeightorDensity
             | DensityCellConvention::CubeBriggsWeightorLookup => {
                 (x.round() as isize, y.round() as isize)
@@ -3810,6 +3815,28 @@ mod tests {
         assert_eq!(
             gridder.density_cell_index(-1.01 * du, 1.01 * dv),
             Some((center.0 + 1, center.1 + 1))
+        );
+    }
+
+    #[test]
+    fn visibility_weight_density_cell_uses_casa_float_fused_arithmetic() {
+        let geometry = ImageGeometry {
+            image_shape: [1280, 1280],
+            cell_size_rad: [0.08 / 206_264.806_247; 2],
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let u_lambda = f64::from(f32::from_bits(0x499c_a142));
+        let u = u_lambda as f32;
+        let separate = -u * gridder.density_u_scale as f32 + gridder.density_center_x as f32;
+
+        assert_eq!(separate as isize, 3);
+        assert_eq!(
+            gridder.density_cell_index_with_convention(
+                u_lambda,
+                0.0,
+                DensityCellConvention::MosaicVisImagingWeight,
+            ),
+            Some((2, 640))
         );
     }
 

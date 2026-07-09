@@ -117,7 +117,8 @@
       "owner_issues": [262],
       "workloads": [
         "wave3-mtmfs-heavy-wave1-medium-serial.json",
-        "wave3-mtmfs-heavy-wave1-medium-multicpu.json"
+        "wave3-mtmfs-heavy-wave1-medium-multicpu.json",
+        "wave3-mosaic-mtmfs-alma-large-bounded.json"
       ],
       "required_roles": ["standard_mtmfs_baseline", "mosaic_mtmfs_candidate", "read_ahead_disabled", "read_ahead_enabled", "casa_oracle"]
     },
@@ -626,6 +627,93 @@
         "profile_psf_fft_speedup": 0.919825,
         "profile_psf_fft_reduction_fraction": -0.087163,
         "sandboxed_negative_control_metal_device_available": false
+      }
+    },
+    {
+      "workload_id": "wave3-mosaic-mtmfs-alma-large-bounded",
+      "issue_slice": "343-mosaic-mtmfs-large-read-ahead-negative-control",
+      "commit": "182ffdf3c+worktree",
+      "machine": "bg-macbook-air",
+      "mode": "clean mfs niter=0",
+      "gridder": "mosaic",
+      "deconvolver": "mtmfs",
+      "precision_policy": "CASA-compatible f32 Briggs and Taylor weights with f64 mosaic grids",
+      "parallel_requested": "auto",
+      "parallel_effective": "CPU sample-range full-grid with 4 grid threads; Apple M4 Metal visible but mosaic MT-MFS gridding is not Metal-eligible",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 2023806,
+        "candidate": 1120416
+      },
+      "read_ahead_blocks": {
+        "baseline": 1,
+        "candidate": 2
+      },
+      "source_read_ahead_modes": ["mosaic_mtmfs_replay"],
+      "memory_target_gb": 4.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 108.202399,
+      "candidate_total_wall_s": 108.409784,
+      "speedup": 0.998087,
+      "wall_reduction_fraction": -0.001917,
+      "correctness_status": "Read-ahead disabled versus enabled comparison is overall good. Maximum normalized RMS difference across Taylor image, residual, and PSF products is 3.0e-11; image TT1 and residual TT1 are bit-identical.",
+      "max_abs": 1.862645149230957e-9,
+      "rms": 3.0e-11,
+      "decision_status": "neutral_compute_dominated_negative_control",
+      "notes": "GLENDENNING large seven-field ALMA mosaic MT-MFS bounded-memory row with 6.06M active rows and 16 channels. Read-ahead is effectively neutral: 108.202s disabled versus 108.410s enabled, a 0.19% slowdown within single-run noise. Source reads account for only 4.4-5.0s while replay/gridding consumes about 99-104s; the enabled producer spends 72.954s blocked behind compute. The mode-general read-ahead path is retained because products are invariant and it can overlap I/O on slower storage, but this compute-dominated workload is not counted as a speedup claim.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-read-ahead-1/20260709T184713Z-wave343-mosaic-mtmfs-large-bounded-46d63bc9.json",
+        "candidate": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-read-ahead-2/20260709T185003Z-wave343-mosaic-mtmfs-large-bounded-54143bba.json",
+        "product_comparison": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-read-ahead-comparison.json"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 108.202399,
+          "candidate_s": 108.409784,
+          "delta_s": 0.207385,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": -0.001917,
+          "contribution_to_total_saved_wall": 1.0
+        },
+        {
+          "stage": "source_read",
+          "baseline_s": 5.030764,
+          "candidate_s": 4.380381,
+          "delta_s": -0.650383,
+          "baseline_wall_fraction": 0.046494,
+          "candidate_wall_fraction": 0.040406,
+          "saved_fraction_of_baseline_wall": 0.006011,
+          "contribution_to_total_saved_wall": -3.136114
+        },
+        {
+          "stage": "source_prepare_and_consume",
+          "baseline_s": 98.625760,
+          "candidate_s": 103.977423,
+          "delta_s": 5.351663,
+          "baseline_wall_fraction": 0.911493,
+          "candidate_wall_fraction": 0.959115,
+          "saved_fraction_of_baseline_wall": -0.049460,
+          "contribution_to_total_saved_wall": 25.805449
+        }
+      ],
+      "overlap": {
+        "producer_active_s": 4.380381,
+        "consumer_active_s": 103.977423,
+        "producer_consumer_overlap_s": null,
+        "queue_high_water_bytes": null,
+        "queue_capacity_blocks": 1,
+        "max_live_row_blocks": 2,
+        "producer_send_blocked_s": 72.954140,
+        "consumer_recv_blocked_s": 0.979515
+      },
+      "gpu": {
+        "metal_device_available": true,
+        "metal_device_name": "Apple M4",
+        "selected_backend": "cpu",
+        "selection_reason": "mosaic-screen-projector-metal-single-grid-owner"
       }
     }
   ]

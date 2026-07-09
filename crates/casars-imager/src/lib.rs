@@ -7733,6 +7733,7 @@ fn one_channel_cube_plane_input_to_streaming_plane(
         spectral_frequency_edge_range_hz: None,
         plane_stokes,
         batches: channel.visibility_batches,
+        density_batches: Vec::new(),
         sample_frequency_range_hz: Some([reffreq_hz, reffreq_hz]),
         sample_frequency_batches_hz: Vec::new(),
         gridder_mode,
@@ -8237,9 +8238,15 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
         ..Default::default()
     };
+    let full_selection_frequency_metadata = mfs_output_frequency_metadata_for_config_selection(
+        config,
+        &table_values,
+        &active_selected_rows,
+        derived_engine.as_ref(),
+    )?;
 
     let first_rows_len = row_block_rows.min(active_selected_rows.len());
-    let first_plane = prepare_mfs_mosaic_source_row_block_plane(
+    let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
         config,
         data_column,
@@ -8259,6 +8266,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
         &mut accumulate_timings,
         None,
     )?;
+    apply_mfs_output_frequency_metadata(&mut first_plane, full_selection_frequency_metadata);
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
     let spectral_frequency_edge_range_hz = first_plane.spectral_frequency_edge_range_hz;
@@ -8339,6 +8347,13 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                         plane.batches.len()
                     )));
                 }
+                if !plane.density_batches.is_empty() && plane.density_batches.len() != plane.batches.len() {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "streaming mosaic MT-MFS produced {} density batches for {} visibility batches",
+                        plane.density_batches.len(),
+                        plane.batches.len()
+                    )));
+                }
                 if mosaic.grouped_metadata_batches.len() != plane.batches.len() {
                     return Err(ImagingError::InvalidRequest(format!(
                         "streaming mosaic MT-MFS produced {} metadata batches for {} visibility batches",
@@ -8346,6 +8361,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                         plane.batches.len()
                     )));
                 }
+                let mut density_batches = plane.density_batches.into_iter();
                 for ((batch, frequencies_hz), metadata) in plane
                     .batches
                     .into_iter()
@@ -8362,6 +8378,7 @@ fn run_mosaic_mtmfs_from_single_plane_stream_open_ms(
                     sample_count += batch.len();
                     consumer(MosaicMtmfsVisibilityBlock {
                         visibility: batch,
+                        density: density_batches.next(),
                         sample_frequencies_hz: frequencies_hz,
                         gridder_metadata: metadata,
                     })?;
@@ -8641,9 +8658,15 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
         ..Default::default()
     };
+    let full_selection_frequency_metadata = mfs_output_frequency_metadata_for_config_selection(
+        read_config,
+        &table_values,
+        &active_selected_rows,
+        derived_engine.as_ref(),
+    )?;
 
     let first_rows_len = row_block_rows.min(active_selected_rows.len());
-    let first_plane = prepare_mfs_mosaic_source_row_block_plane(
+    let mut first_plane = prepare_mfs_mosaic_source_row_block_plane(
         ms,
         read_config,
         data_column,
@@ -8663,6 +8686,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
         &mut accumulate_timings,
         None,
     )?;
+    apply_mfs_output_frequency_metadata(&mut first_plane, full_selection_frequency_metadata);
     let phase_center = first_plane.phase_center.clone();
     let prepared_freq_ref = first_plane.freq_ref;
     let cube_metadata =
@@ -8737,6 +8761,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                             .to_string(),
                     ));
                 };
+                let mut density_batches = plane.density_batches.into_iter();
                 for (batch, metadata) in plane
                     .batches
                     .into_iter()
@@ -8745,6 +8770,7 @@ fn run_mfs_mosaic_single_plane_stream_products_open_ms_with_output_config(
                     sample_count += batch.len();
                     consumer(SinglePlaneVisibilityBlock {
                         visibility: batch,
+                        density: density_batches.next(),
                         gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
                     })?;
                 }
@@ -8957,6 +8983,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     ));
                 };
                 rows_done = rows_done.saturating_add(block.visibility.row_count());
+                let mut density_batches = plane.density_batches.into_iter();
                 for (batch, metadata) in plane
                     .batches
                     .into_iter()
@@ -8965,6 +8992,7 @@ fn run_mfs_mosaic_single_plane_stream_products_from_shared_sources(
                     sample_count += batch.len();
                     consumer(SinglePlaneVisibilityBlock {
                         visibility: batch,
+                        density: density_batches.next(),
                         gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
                     })?;
                 }
@@ -10211,6 +10239,7 @@ fn one_channel_mosaic_cube_metadata_plane(cube: &CubePlaneInput) -> Result<Plane
         spectral_frequency_edge_range_hz: None,
         plane_stokes: cube.plane_stokes,
         batches: Vec::new(),
+        density_batches: Vec::new(),
         sample_frequency_range_hz: Some([reffreq_hz, reffreq_hz]),
         sample_frequency_batches_hz: Vec::new(),
         gridder_mode: mosaic_stream_request_gridder_mode(&cube.gridder_modes[0])?,
@@ -10893,6 +10922,7 @@ fn run_mosaic_cube_one_channel_from_bounded_stream_open_ms(
                     {
                         consumer(SinglePlaneVisibilityBlock {
                             visibility: batch,
+                            density: None,
                             gridder_metadata: SinglePlaneGridderMetadata::Mosaic(metadata),
                         })?;
                     }
@@ -25225,6 +25255,7 @@ struct PlaneInput {
     spectral_frequency_edge_range_hz: Option<[f64; 2]>,
     plane_stokes: PlaneStokes,
     batches: Vec<VisibilityBatch>,
+    density_batches: Vec<VisibilityBatch>,
     sample_frequency_range_hz: Option<[f64; 2]>,
     sample_frequency_batches_hz: Vec<Vec<f64>>,
     gridder_mode: GridderMode,
@@ -25282,6 +25313,180 @@ impl PreparedInput {
             Self::Cube(cube) => &cube.phase_center,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MfsOutputFrequencyMetadata {
+    freq_ref: FrequencyRef,
+    reffreq_hz: f64,
+    selected_frequency_range_hz: [f64; 2],
+    spectral_frequency_edge_range_hz: Option<[f64; 2]>,
+    sample_frequency_range_hz: Option<[f64; 2]>,
+}
+
+fn mfs_output_frequency_metadata(
+    source_freq_ref: FrequencyRef,
+    source_reffreq_hz: f64,
+    source_selected_frequency_range_hz: [f64; 2],
+    source_selected_frequency_edge_range_hz: [f64; 2],
+    output_frequency_edge_range_hz: Option<[f64; 2]>,
+    sample_frequency_hz: &[f64],
+) -> Result<MfsOutputFrequencyMetadata, String> {
+    let sample_frequency_range_hz = if sample_frequency_hz.is_empty() {
+        None
+    } else {
+        Some(frequency_range_hz(sample_frequency_hz)?)
+    };
+    let mut metadata = MfsOutputFrequencyMetadata {
+        freq_ref: source_freq_ref,
+        reffreq_hz: source_reffreq_hz,
+        selected_frequency_range_hz: source_selected_frequency_range_hz,
+        spectral_frequency_edge_range_hz: output_frequency_edge_range_hz
+            .or(Some(source_selected_frequency_edge_range_hz)),
+        sample_frequency_range_hz,
+    };
+    if let Some(range) = sample_frequency_range_hz {
+        metadata.freq_ref = FrequencyRef::LSRK;
+        metadata.reffreq_hz = 0.5 * (range[0] + range[1]);
+        metadata.selected_frequency_range_hz = range;
+    }
+    Ok(metadata)
+}
+
+fn mfs_output_frequency_metadata_for_selected_rows(
+    source_freq_ref: FrequencyRef,
+    source_channel_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+    selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<MfsOutputFrequencyMetadata, String> {
+    let source_selected_frequency_range_hz = frequency_range_hz(source_channel_frequencies_hz)?;
+    let source_selected_frequency_edge_range_hz =
+        frequency_edge_range_hz(source_channel_frequencies_hz, source_channel_widths_hz)?;
+    if selected_rows.is_empty() {
+        return Err("MFS row metadata resolved to no selected rows".to_string());
+    }
+    if source_freq_ref == FrequencyRef::LSRK {
+        return mfs_output_frequency_metadata(
+            source_freq_ref,
+            0.5 * (source_selected_frequency_range_hz[0] + source_selected_frequency_range_hz[1]),
+            source_selected_frequency_range_hz,
+            source_selected_frequency_edge_range_hz,
+            Some(source_selected_frequency_edge_range_hz),
+            source_channel_frequencies_hz,
+        );
+    }
+
+    let reference_frequency_hz = source_channel_frequencies_hz
+        .first()
+        .copied()
+        .ok_or_else(|| "MFS row metadata resolved to no source frequencies".to_string())?;
+    let mut frequency_range_hz = None::<[f64; 2]>;
+    let mut edge_range_hz = None::<[f64; 2]>;
+    let mut scale_cache = HashMap::<(u64, usize), f64>::new();
+    for selected_row in selected_rows {
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for MFS frequency-frame conversion".to_string()
+        })?;
+        let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+        let scale = if let Some(scale) = scale_cache.get(&cache_key) {
+            *scale
+        } else {
+            let scale = mfs_imaging_frequency_scale(
+                source_freq_ref,
+                reference_frequency_hz,
+                selected_row,
+                derived_engine,
+            )?;
+            scale_cache.insert(cache_key, scale);
+            scale
+        };
+        let converted_range = [
+            source_selected_frequency_range_hz[0] * scale,
+            source_selected_frequency_range_hz[1] * scale,
+        ];
+        extend_frequency_range_hz(
+            &mut frequency_range_hz,
+            [
+                converted_range[0].min(converted_range[1]),
+                converted_range[0].max(converted_range[1]),
+            ],
+        );
+        let converted_edge_range = [
+            source_selected_frequency_edge_range_hz[0] * scale,
+            source_selected_frequency_edge_range_hz[1] * scale,
+        ];
+        extend_frequency_range_hz(
+            &mut edge_range_hz,
+            [
+                converted_edge_range[0].min(converted_edge_range[1]),
+                converted_edge_range[0].max(converted_edge_range[1]),
+            ],
+        );
+    }
+    let frequency_range_hz = frequency_range_hz
+        .ok_or_else(|| "MFS row metadata resolved to no selected rows".to_string())?;
+    let edge_range_hz = edge_range_hz
+        .ok_or_else(|| "MFS row metadata resolved to no spectral edges".to_string())?;
+    Ok(MfsOutputFrequencyMetadata {
+        freq_ref: FrequencyRef::LSRK,
+        reffreq_hz: 0.5 * (frequency_range_hz[0] + frequency_range_hz[1]),
+        selected_frequency_range_hz: frequency_range_hz,
+        spectral_frequency_edge_range_hz: Some(edge_range_hz),
+        sample_frequency_range_hz: Some(frequency_range_hz),
+    })
+}
+
+fn mfs_output_frequency_metadata_for_config_selection(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+    selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<MfsOutputFrequencyMetadata, String> {
+    let explicit_channel_selector = selected_spw_channel_selector(config, table_values.spw_id)?;
+    let source_channel_selection = match explicit_channel_selector.as_ref() {
+        Some(selector) => resolve_channel_selector_selection(&table_values.spw_freqs_hz, selector)
+            .map_err(|error| error.to_string())?,
+        None => {
+            let (channel_start, channel_count) = shared_single_plane_channel_window(config)?;
+            resolve_contiguous_channel_selection(
+                &table_values.spw_freqs_hz,
+                channel_start,
+                channel_count,
+            )
+            .map_err(|error| error.to_string())?
+        }
+    };
+    let source_channel_widths_hz = source_channel_selection
+        .indices
+        .iter()
+        .map(|&index| {
+            table_values.spw_widths_hz.get(index).copied().ok_or_else(|| {
+                format!(
+                    "channel width selection index {index} is outside SPW width array with {} channels",
+                    table_values.spw_widths_hz.len()
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    mfs_output_frequency_metadata_for_selected_rows(
+        table_values.freq_ref,
+        &source_channel_selection.frequencies_hz,
+        &source_channel_widths_hz,
+        selected_rows,
+        derived_engine,
+    )
+}
+
+fn apply_mfs_output_frequency_metadata(
+    plane: &mut PlaneInput,
+    metadata: MfsOutputFrequencyMetadata,
+) {
+    plane.freq_ref = metadata.freq_ref;
+    plane.reffreq_hz = metadata.reffreq_hz;
+    plane.selected_frequency_range_hz = metadata.selected_frequency_range_hz;
+    plane.spectral_frequency_edge_range_hz = metadata.spectral_frequency_edge_range_hz;
+    plane.sample_frequency_range_hz = metadata.sample_frequency_range_hz;
 }
 
 #[cfg(test)]
@@ -25484,6 +25689,9 @@ fn merge_prepared_inputs_with_density_merge(
                 + merged_plane.selected_frequency_range_hz[1]);
         merged_plane.batches.append(&mut plane.batches);
         merged_plane
+            .density_batches
+            .append(&mut plane.density_batches);
+        merged_plane
             .sample_frequency_batches_hz
             .append(&mut plane.sample_frequency_batches_hz);
     }
@@ -25547,6 +25755,7 @@ fn merge_two_prepared_inputs(
             left.reffreq_hz =
                 0.5 * (left.selected_frequency_range_hz[0] + left.selected_frequency_range_hz[1]);
             left.batches.extend(right.batches);
+            left.density_batches.extend(right.density_batches);
             left.sample_frequency_batches_hz
                 .extend(right.sample_frequency_batches_hz);
             Ok(PreparedInput::Mfs(left))
@@ -32728,6 +32937,9 @@ fn merge_mfs_mosaic_prepared_inputs(inputs: Vec<PreparedInput>) -> Result<Prepar
         }
         merged_plane.batches.append(&mut plane.batches);
         merged_plane
+            .density_batches
+            .append(&mut plane.density_batches);
+        merged_plane
             .sample_frequency_batches_hz
             .append(&mut plane.sample_frequency_batches_hz);
         let mut mosaic = match plane.gridder_mode {
@@ -33843,6 +34055,7 @@ fn standard_one_channel_cube_input_to_plane(cube: CubePlaneInput) -> Result<Plan
         spectral_frequency_edge_range_hz: None,
         plane_stokes,
         batches: channel.visibility_batches,
+        density_batches: Vec::new(),
         sample_frequency_range_hz: None,
         sample_frequency_batches_hz: Vec::new(),
         gridder_mode: GridderMode::Standard,
@@ -36431,6 +36644,7 @@ enum PreparedState {
         plane_stokes: PlaneStokes,
         corr_index: usize,
         batch: VisibilityBatch,
+        density_batch: VisibilityBatch,
         sample_frequency_hz: Vec<f64>,
         mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
     },
@@ -36453,6 +36667,7 @@ enum PreparedState {
         transform: PairCollapseTransform,
         pair: (usize, usize),
         batch: VisibilityBatch,
+        density_batch: VisibilityBatch,
         sample_frequency_hz: Vec<f64>,
         mosaic_metadata: Option<MfsMosaicMetadataAccumulator>,
     },
@@ -36931,6 +37146,7 @@ impl PreparedSelection {
                     plane_stokes,
                     corr_index,
                     batch: empty_visibility_batch(max_samples),
+                    density_batch: empty_visibility_batch(max_samples),
                     sample_frequency_hz: Vec::with_capacity(max_samples),
                     mosaic_metadata: None,
                 }
@@ -36951,6 +37167,7 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
+                        density_batch: empty_visibility_batch(max_samples),
                         sample_frequency_hz: Vec::with_capacity(max_samples),
                         mosaic_metadata: None,
                     }
@@ -36973,6 +37190,7 @@ impl PreparedSelection {
                     transform,
                     pair,
                     batch: empty_visibility_batch(max_samples),
+                    density_batch: empty_visibility_batch(max_samples),
                     sample_frequency_hz: Vec::with_capacity(max_samples),
                     mosaic_metadata: None,
                 }
@@ -37039,6 +37257,7 @@ impl PreparedSelection {
             (
                 PreparedState::ExplicitMfs {
                     batch,
+                    density_batch,
                     sample_frequency_hz,
                     mosaic_metadata,
                     ..
@@ -37046,6 +37265,9 @@ impl PreparedSelection {
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
+                if self.use_density_batches {
+                    reserve_visibility_batch(density_batch, sample_capacity);
+                }
                 sample_frequency_hz.reserve(sample_capacity);
                 if let Some(metadata) = mosaic_metadata {
                     metadata.reserve(sample_capacity);
@@ -37057,6 +37279,7 @@ impl PreparedSelection {
             (
                 PreparedState::CollapsedMfs {
                     batch,
+                    density_batch,
                     sample_frequency_hz,
                     mosaic_metadata,
                     ..
@@ -37064,6 +37287,9 @@ impl PreparedSelection {
                 PreparedTraceState::PairedMfs { samples },
             ) => {
                 reserve_visibility_batch(batch, sample_capacity);
+                if self.use_density_batches {
+                    reserve_visibility_batch(density_batch, sample_capacity);
+                }
                 sample_frequency_hz.reserve(sample_capacity);
                 if let Some(metadata) = mosaic_metadata {
                     metadata.reserve(sample_capacity);
@@ -37403,6 +37629,7 @@ impl PreparedSelection {
                             plane_stokes,
                             corr_index,
                             batch: empty_visibility_batch(max_samples),
+                            density_batch: empty_visibility_batch(max_samples),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
                             mosaic_metadata: trace_free_mfs_mosaic
                                 .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
@@ -37443,6 +37670,7 @@ impl PreparedSelection {
                             transform,
                             pair,
                             batch: empty_visibility_batch(max_samples),
+                            density_batch: empty_visibility_batch(max_samples),
                             sample_frequency_hz: Vec::with_capacity(max_samples),
                             mosaic_metadata: trace_free_mfs_mosaic
                                 .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
@@ -37504,6 +37732,7 @@ impl PreparedSelection {
                         transform,
                         pair,
                         batch: empty_visibility_batch(max_samples),
+                        density_batch: empty_visibility_batch(max_samples),
                         sample_frequency_hz: Vec::with_capacity(max_samples),
                         mosaic_metadata: trace_free_mfs_mosaic
                             .then(|| MfsMosaicMetadataAccumulator::with_capacity(max_samples)),
@@ -37643,6 +37872,7 @@ impl PreparedSelection {
                     plane_stokes: PlaneStokes::I,
                     corr_index: 0,
                     batch: empty_visibility_batch(0),
+                    density_batch: empty_visibility_batch(0),
                     sample_frequency_hz: Vec::new(),
                     mosaic_metadata: None,
                 },
@@ -37722,6 +37952,7 @@ impl PreparedSelection {
         let is_cross = geometry_row.is_cross;
         let transform = geometry_row.transform;
         let uvw_m = transform.uvw_m;
+        let raw_uvw_m = geometry_row.raw_uvw_m;
         let baseline_pointing_direction_rad = combine_pointing_direction_rad(
             geometry_row.antenna1_pointing.angles_rad,
             geometry_row.antenna2_pointing.angles_rad,
@@ -37743,6 +37974,7 @@ impl PreparedSelection {
         let source_channel_indices = self.source_channel_indices.as_slice();
         let source_channel_frequencies_hz = self.source_channel_frequencies_hz.as_slice();
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
+        let use_density_batches = self.use_density_batches;
         let use_cube_visibility_grid_assignments =
             use_casa_cube_grid_interpolation || self.cube_visibility_grid_assignments;
         let casa_cube_briggs_density_uvw_m = geometry_row.gridft_density_uvw_m;
@@ -37800,6 +38032,7 @@ impl PreparedSelection {
             PreparedState::ExplicitMfs {
                 corr_index,
                 batch,
+                density_batch,
                 sample_frequency_hz,
                 mosaic_metadata,
                 ..
@@ -37826,6 +38059,16 @@ impl PreparedSelection {
                             batch.gridable.push(is_cross);
                             batch.visibility.push(zero_visibility);
                             sample_frequency_hz.push(imaging_frequency_hz);
+                            if use_density_batches && mosaic_metadata.is_some() {
+                                push_mfs_density_sample(
+                                    density_batch,
+                                    imaging_frequency_hz,
+                                    raw_uvw_m,
+                                    weight,
+                                    1.0,
+                                    is_cross,
+                                );
+                            }
                             if let Some(metadata) = mosaic_metadata {
                                 if !recorded_mosaic_antennas {
                                     metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -37867,6 +38110,16 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(zero_visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
+                        if use_density_batches && mosaic_metadata.is_some() {
+                            push_mfs_density_sample(
+                                density_batch,
+                                imaging_frequency_hz,
+                                raw_uvw_m,
+                                weight,
+                                1.0,
+                                is_cross,
+                            );
+                        }
                         if let Some(metadata) = mosaic_metadata {
                             if !recorded_mosaic_antennas {
                                 metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -37889,6 +38142,7 @@ impl PreparedSelection {
                 plane_stokes,
                 pair,
                 batch,
+                density_batch,
                 sample_frequency_hz,
                 mosaic_metadata,
                 ..
@@ -37926,6 +38180,16 @@ impl PreparedSelection {
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(zero_visibility);
                                 sample_frequency_hz.push(imaging_frequency_hz);
+                                if use_density_batches && mosaic_metadata.is_some() {
+                                    push_mfs_density_sample(
+                                        density_batch,
+                                        imaging_frequency_hz,
+                                        raw_uvw_m,
+                                        combined_weight,
+                                        sumwt_factor,
+                                        is_cross,
+                                    );
+                                }
                                 if let Some(metadata) = mosaic_metadata {
                                     if !recorded_mosaic_antennas {
                                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -37981,6 +38245,16 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(zero_visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
+                        if use_density_batches && mosaic_metadata.is_some() {
+                            push_mfs_density_sample(
+                                density_batch,
+                                imaging_frequency_hz,
+                                raw_uvw_m,
+                                combined_weight,
+                                sumwt_factor,
+                                is_cross,
+                            );
+                        }
                         if let Some(metadata) = mosaic_metadata {
                             if !recorded_mosaic_antennas {
                                 metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -38534,6 +38808,7 @@ impl PreparedSelection {
                 PreparedState::ExplicitMfs {
                     corr_index,
                     batch,
+                    density_batch,
                     sample_frequency_hz,
                     mosaic_metadata,
                     ..
@@ -38571,6 +38846,16 @@ impl PreparedSelection {
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
                     sample_frequency_hz.push(imaging_frequency_hz);
+                    if use_density_batches && mosaic_metadata.is_some() {
+                        push_mfs_density_sample(
+                            density_batch,
+                            imaging_frequency_hz,
+                            casa_cube_briggs_lookup_uvw_m,
+                            weight,
+                            1.0,
+                            is_cross,
+                        );
+                    }
                     if let Some(metadata) = mosaic_metadata {
                         if !recorded_mosaic_antennas {
                             metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -38939,6 +39224,7 @@ impl PreparedSelection {
                     transform: pair_transform,
                     pair,
                     batch,
+                    density_batch,
                     sample_frequency_hz,
                     mosaic_metadata,
                 },
@@ -38992,6 +39278,16 @@ impl PreparedSelection {
                                 batch.gridable.push(is_cross);
                                 batch.visibility.push(visibility);
                                 sample_frequency_hz.push(imaging_frequency_hz);
+                                if use_density_batches && mosaic_metadata.is_some() {
+                                    push_mfs_density_sample(
+                                        density_batch,
+                                        imaging_frequency_hz,
+                                        raw_uvw_m,
+                                        combined_weight,
+                                        sumwt_factor,
+                                        is_cross,
+                                    );
+                                }
                                 if let Some(metadata) = mosaic_metadata {
                                     if !recorded_mosaic_antennas {
                                         metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -39060,6 +39356,16 @@ impl PreparedSelection {
                         batch.gridable.push(is_cross);
                         batch.visibility.push(visibility);
                         sample_frequency_hz.push(imaging_frequency_hz);
+                        if use_density_batches && mosaic_metadata.is_some() {
+                            push_mfs_density_sample(
+                                density_batch,
+                                imaging_frequency_hz,
+                                raw_uvw_m,
+                                combined_weight,
+                                sumwt_factor,
+                                is_cross,
+                            );
+                        }
                         if let Some(metadata) = mosaic_metadata {
                             if !recorded_mosaic_antennas {
                                 metadata.record_selected_antennas(antenna1_id, antenna2_id);
@@ -40602,7 +40908,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             cube_visibility_grid_assignments: _,
             casa_cube_briggs_preweighting: _,
-            use_density_batches: _,
+            use_density_batches,
             build_cube_briggs_density_samples: _,
             use_model_interpolation_batches: _,
             mosaic_pb_limit,
@@ -40616,14 +40922,19 @@ impl PreparedSelection {
             PreparedState::ExplicitMfs {
                 plane_stokes,
                 batch,
+                density_batch,
                 sample_frequency_hz,
                 mosaic_metadata: Some(mosaic_metadata),
                 ..
             } => {
-                let selected_frequency_range_hz =
-                    frequency_range_hz(&sample_frequency_hz).unwrap_or(selected_frequency_range_hz);
-                let reffreq_hz =
-                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+                let frequency_metadata = mfs_output_frequency_metadata(
+                    freq_ref,
+                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]),
+                    selected_frequency_range_hz,
+                    selected_frequency_edge_range_hz,
+                    mfs_output_frequency_edge_range_hz,
+                    &sample_frequency_hz,
+                )?;
                 let mosaic_batch_size = batch.len().max(1);
                 let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
                     ms,
@@ -40635,14 +40946,19 @@ impl PreparedSelection {
                 )?;
                 Ok(PreparedInput::Mfs(PlaneInput {
                     phase_center,
-                    freq_ref,
-                    reffreq_hz,
-                    selected_frequency_range_hz,
-                    spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
-                        .or(Some(selected_frequency_edge_range_hz)),
+                    freq_ref: frequency_metadata.freq_ref,
+                    reffreq_hz: frequency_metadata.reffreq_hz,
+                    selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: frequency_metadata
+                        .spectral_frequency_edge_range_hz,
                     plane_stokes,
                     batches: vec![batch],
-                    sample_frequency_range_hz: Some(selected_frequency_range_hz),
+                    density_batches: chunk_density_batch(
+                        density_batch,
+                        use_density_batches,
+                        mosaic_batch_size,
+                    ),
+                    sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
                     sample_frequency_batches_hz: vec![sample_frequency_hz],
                     gridder_mode,
                 }))
@@ -40650,14 +40966,19 @@ impl PreparedSelection {
             PreparedState::CollapsedMfs {
                 plane_stokes,
                 batch,
+                density_batch,
                 sample_frequency_hz,
                 mosaic_metadata: Some(mosaic_metadata),
                 ..
             } => {
-                let selected_frequency_range_hz =
-                    frequency_range_hz(&sample_frequency_hz).unwrap_or(selected_frequency_range_hz);
-                let reffreq_hz =
-                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+                let frequency_metadata = mfs_output_frequency_metadata(
+                    freq_ref,
+                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]),
+                    selected_frequency_range_hz,
+                    selected_frequency_edge_range_hz,
+                    mfs_output_frequency_edge_range_hz,
+                    &sample_frequency_hz,
+                )?;
                 let mosaic_batch_size = batch.len().max(1);
                 let gridder_mode = build_mfs_mosaic_gridder_mode_without_trace(
                     ms,
@@ -40669,14 +40990,19 @@ impl PreparedSelection {
                 )?;
                 Ok(PreparedInput::Mfs(PlaneInput {
                     phase_center,
-                    freq_ref,
-                    reffreq_hz,
-                    selected_frequency_range_hz,
-                    spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
-                        .or(Some(selected_frequency_edge_range_hz)),
+                    freq_ref: frequency_metadata.freq_ref,
+                    reffreq_hz: frequency_metadata.reffreq_hz,
+                    selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: frequency_metadata
+                        .spectral_frequency_edge_range_hz,
                     plane_stokes,
                     batches: vec![batch],
-                    sample_frequency_range_hz: Some(selected_frequency_range_hz),
+                    density_batches: chunk_density_batch(
+                        density_batch,
+                        use_density_batches,
+                        mosaic_batch_size,
+                    ),
+                    sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
                     sample_frequency_batches_hz: vec![sample_frequency_hz],
                     gridder_mode,
                 }))
@@ -40729,22 +41055,33 @@ impl PreparedSelection {
                 batch,
                 sample_frequency_hz,
                 ..
-            } => Ok(PreparedInput::Mfs(PlaneInput {
-                phase_center,
-                freq_ref,
-                reffreq_hz,
-                selected_frequency_range_hz,
-                spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
-                    .or(Some(selected_frequency_edge_range_hz)),
-                plane_stokes,
-                batches: chunk_visibility_batch(batch, max_batch_size),
-                sample_frequency_range_hz: frequency_range_hz(&sample_frequency_hz).ok(),
-                sample_frequency_batches_hz: chunk_sample_frequencies_hz(
-                    sample_frequency_hz,
-                    max_batch_size,
-                ),
-                gridder_mode: GridderMode::Standard,
-            })),
+            } => {
+                let frequency_metadata = mfs_output_frequency_metadata(
+                    freq_ref,
+                    reffreq_hz,
+                    selected_frequency_range_hz,
+                    selected_frequency_edge_range_hz,
+                    mfs_output_frequency_edge_range_hz,
+                    &sample_frequency_hz,
+                )?;
+                Ok(PreparedInput::Mfs(PlaneInput {
+                    phase_center,
+                    freq_ref: frequency_metadata.freq_ref,
+                    reffreq_hz: frequency_metadata.reffreq_hz,
+                    selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: frequency_metadata
+                        .spectral_frequency_edge_range_hz,
+                    plane_stokes,
+                    batches: chunk_visibility_batch(batch, max_batch_size),
+                    density_batches: Vec::new(),
+                    sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
+                    sample_frequency_batches_hz: chunk_sample_frequencies_hz(
+                        sample_frequency_hz,
+                        max_batch_size,
+                    ),
+                    gridder_mode: GridderMode::Standard,
+                }))
+            }
             PreparedState::PairedMfs {
                 plane_stokes,
                 paired,
@@ -40763,6 +41100,7 @@ impl PreparedSelection {
                         .or(Some(selected_frequency_edge_range_hz)),
                     plane_stokes,
                     batches: chunk_visibility_batch(collapsed, max_batch_size),
+                    density_batches: Vec::new(),
                     sample_frequency_range_hz: None,
                     sample_frequency_batches_hz: Vec::new(),
                     gridder_mode: GridderMode::Standard,
@@ -40773,22 +41111,33 @@ impl PreparedSelection {
                 batch,
                 sample_frequency_hz,
                 ..
-            } => Ok(PreparedInput::Mfs(PlaneInput {
-                phase_center,
-                freq_ref,
-                reffreq_hz,
-                selected_frequency_range_hz,
-                spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
-                    .or(Some(selected_frequency_edge_range_hz)),
-                plane_stokes,
-                batches: chunk_visibility_batch(batch, max_batch_size),
-                sample_frequency_range_hz: frequency_range_hz(&sample_frequency_hz).ok(),
-                sample_frequency_batches_hz: chunk_sample_frequencies_hz(
-                    sample_frequency_hz,
-                    max_batch_size,
-                ),
-                gridder_mode: GridderMode::Standard,
-            })),
+            } => {
+                let frequency_metadata = mfs_output_frequency_metadata(
+                    freq_ref,
+                    reffreq_hz,
+                    selected_frequency_range_hz,
+                    selected_frequency_edge_range_hz,
+                    mfs_output_frequency_edge_range_hz,
+                    &sample_frequency_hz,
+                )?;
+                Ok(PreparedInput::Mfs(PlaneInput {
+                    phase_center,
+                    freq_ref: frequency_metadata.freq_ref,
+                    reffreq_hz: frequency_metadata.reffreq_hz,
+                    selected_frequency_range_hz: frequency_metadata.selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: frequency_metadata
+                        .spectral_frequency_edge_range_hz,
+                    plane_stokes,
+                    batches: chunk_visibility_batch(batch, max_batch_size),
+                    density_batches: Vec::new(),
+                    sample_frequency_range_hz: frequency_metadata.sample_frequency_range_hz,
+                    sample_frequency_batches_hz: chunk_sample_frequencies_hz(
+                        sample_frequency_hz,
+                        max_batch_size,
+                    ),
+                    gridder_mode: GridderMode::Standard,
+                }))
+            }
             _ => Err("internal error: fast trace-free prepare requires MFS state".to_string()),
         }
     }
@@ -41118,6 +41467,7 @@ impl PreparedSelection {
                         spectral_frequency_edge_range_hz,
                         plane_stokes,
                         batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                        density_batches: Vec::new(),
                         sample_frequency_range_hz: Some(selected_frequency_range_hz),
                         sample_frequency_batches_hz: chunk_sample_frequencies_hz_from_samples(
                             &samples,
@@ -41167,6 +41517,7 @@ impl PreparedSelection {
                         spectral_frequency_edge_range_hz,
                         plane_stokes,
                         batches: chunk_visibility_batch(collapsed, DEFAULT_BATCH_SIZE),
+                        density_batches: Vec::new(),
                         sample_frequency_range_hz: Some(selected_frequency_range_hz),
                         sample_frequency_batches_hz: chunk_sample_frequencies_hz_from_samples(
                             &accepted,
@@ -45667,6 +46018,35 @@ fn push_casa_cube_briggs_density_sample(
     batch.w_lambda.push(uvw_m[2] * lambda_scale);
     batch.weight.push(weight);
     batch.sumwt_factor.push(1.0);
+    batch.gridable.push(is_cross);
+    batch.visibility.push(Complex32::new(0.0, 0.0));
+}
+
+fn push_mfs_density_sample(
+    batch: &mut VisibilityBatch,
+    frequency_hz: f64,
+    uvw_m: [f64; 3],
+    weight: f32,
+    sumwt_factor: f32,
+    is_cross: bool,
+) {
+    if !(frequency_hz.is_finite() && frequency_hz > 0.0 && weight.is_finite() && weight > 0.0) {
+        return;
+    }
+    // VisImagingWeight stores frequency/c and the resulting UV coordinates as
+    // Float before assigning the density cell. Preserve both rounding steps.
+    let lambda_scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
+    batch
+        .u_lambda
+        .push(f64::from((uvw_m[0] * lambda_scale) as f32));
+    batch
+        .v_lambda
+        .push(f64::from((uvw_m[1] * lambda_scale) as f32));
+    batch
+        .w_lambda
+        .push(f64::from((uvw_m[2] * lambda_scale) as f32));
+    batch.weight.push(weight);
+    batch.sumwt_factor.push(sumwt_factor);
     batch.gridable.push(is_cross);
     batch.visibility.push(Complex32::new(0.0, 0.0));
 }
@@ -52390,6 +52770,7 @@ mod tests {
             spectral_frequency_edge_range_hz: Some([113.9e9, 115.1e9]),
             plane_stokes: PlaneStokes::I,
             batches: vec![test_visibility_batch(10.0)],
+            density_batches: Vec::new(),
             sample_frequency_range_hz: Some([114.5e9, 114.5e9]),
             sample_frequency_batches_hz: vec![vec![114.5e9]],
             gridder_mode: test_mosaic_gridder(114.5e9),
@@ -52402,6 +52783,7 @@ mod tests {
             spectral_frequency_edge_range_hz: Some([114.9e9, 116.1e9]),
             plane_stokes: PlaneStokes::I,
             batches: vec![test_visibility_batch(20.0)],
+            density_batches: Vec::new(),
             sample_frequency_range_hz: Some([115.5e9, 115.5e9]),
             sample_frequency_batches_hz: vec![vec![115.5e9]],
             gridder_mode: test_mosaic_gridder(115.5e9),
@@ -54306,6 +54688,24 @@ mod tests {
     }
 
     #[test]
+    fn mfs_density_sample_preserves_casa_float_frequency_rounding() {
+        let frequency_hz = 235_257_709_676.661_4;
+        let uvw_m = [579.495_274_923_526_5, -127.25, 42.0];
+        let mut batch = empty_visibility_batch(1);
+
+        push_mfs_density_sample(&mut batch, frequency_hz, uvw_m, 2.0, 0.5, true);
+
+        let casa_lambda_scale = (frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32;
+        let expected_u = (uvw_m[0] * f64::from(casa_lambda_scale)) as f32;
+        let one_rounding_step = (uvw_m[0] * (frequency_hz / SPEED_OF_LIGHT_M_PER_S)) as f32;
+        assert_ne!(expected_u.to_bits(), one_rounding_step.to_bits());
+        assert_eq!(batch.u_lambda, vec![f64::from(expected_u)]);
+        assert_eq!(batch.weight, vec![2.0]);
+        assert_eq!(batch.sumwt_factor, vec![0.5]);
+        assert_eq!(batch.gridable, vec![true]);
+    }
+
+    #[test]
     fn spherical_direction_helpers_handle_ra_wrap_and_antipodal_fallback() {
         let left = [std::f64::consts::TAU - 1.0e-4, 0.1];
         let right = [1.0e-4, 0.1];
@@ -54656,6 +55056,138 @@ mod tests {
         );
         assert!(frequency_range_hz(&[]).is_err());
         assert!(frequency_range_hz(&[1.0e9, f64::NAN]).is_err());
+    }
+
+    #[test]
+    fn mfs_output_frequency_metadata_uses_lsrk_sample_range_when_converted() {
+        let metadata = mfs_output_frequency_metadata(
+            FrequencyRef::TOPO,
+            100.0,
+            [99.0, 101.0],
+            [98.0, 102.0],
+            Some([198.0, 202.0]),
+            &[204.0, 200.0, 202.0],
+        )
+        .unwrap();
+
+        assert_eq!(metadata.freq_ref, FrequencyRef::LSRK);
+        assert_eq!(metadata.reffreq_hz, 202.0);
+        assert_eq!(metadata.selected_frequency_range_hz, [200.0, 204.0]);
+        assert_eq!(
+            metadata.spectral_frequency_edge_range_hz,
+            Some([198.0, 202.0])
+        );
+        assert_eq!(metadata.sample_frequency_range_hz, Some([200.0, 204.0]));
+    }
+
+    #[test]
+    fn mfs_output_frequency_metadata_preserves_source_frame_without_samples() {
+        let metadata = mfs_output_frequency_metadata(
+            FrequencyRef::TOPO,
+            100.0,
+            [99.0, 101.0],
+            [98.0, 102.0],
+            None,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(metadata.freq_ref, FrequencyRef::TOPO);
+        assert_eq!(metadata.reffreq_hz, 100.0);
+        assert_eq!(metadata.selected_frequency_range_hz, [99.0, 101.0]);
+        assert_eq!(
+            metadata.spectral_frequency_edge_range_hz,
+            Some([98.0, 102.0])
+        );
+        assert_eq!(metadata.sample_frequency_range_hz, None);
+    }
+
+    #[test]
+    fn mfs_output_frequency_metadata_for_selected_rows_uses_full_converted_range() {
+        let observatory = MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z);
+        let engine = MsCalEngine::from_parts(
+            vec![observatory.clone()],
+            vec![
+                MDirection::from_angles(1.0, 0.5, DirectionRef::J2000),
+                MDirection::from_angles(1.01, 0.48, DirectionRef::J2000),
+            ],
+            observatory,
+        );
+        let rows = vec![
+            SelectedMainRow {
+                row_index: 0,
+                field_id: 0,
+                ddid: 0,
+                spw_id: 0,
+                polarization_id: 0,
+                antenna1_id: 0,
+                antenna2_id: 1,
+                time_mjd_seconds: Some(TEST_TIME_MJD_SEC),
+            },
+            SelectedMainRow {
+                row_index: 1,
+                field_id: 1,
+                ddid: 0,
+                spw_id: 0,
+                polarization_id: 0,
+                antenna1_id: 0,
+                antenna2_id: 1,
+                time_mjd_seconds: Some(TEST_TIME_MJD_SEC + 1200.0),
+            },
+        ];
+        let source_frequencies_hz = [230.000e9, 230.014e9];
+        let source_widths_hz = [2.0e6, 2.0e6];
+
+        let metadata = mfs_output_frequency_metadata_for_selected_rows(
+            FrequencyRef::TOPO,
+            &source_frequencies_hz,
+            &source_widths_hz,
+            &rows,
+            Some(&engine),
+        )
+        .unwrap();
+
+        let source_range_hz = frequency_range_hz(&source_frequencies_hz).unwrap();
+        let source_edge_range_hz =
+            frequency_edge_range_hz(&source_frequencies_hz, &source_widths_hz).unwrap();
+        let reference_frequency_hz = source_frequencies_hz[0];
+        let mut expected_range_hz = None::<[f64; 2]>;
+        let mut expected_edge_range_hz = None::<[f64; 2]>;
+        for row in &rows {
+            let scale = mfs_imaging_frequency_scale(
+                FrequencyRef::TOPO,
+                reference_frequency_hz,
+                row,
+                Some(&engine),
+            )
+            .unwrap();
+            extend_frequency_range_hz(
+                &mut expected_range_hz,
+                [source_range_hz[0] * scale, source_range_hz[1] * scale],
+            );
+            extend_frequency_range_hz(
+                &mut expected_edge_range_hz,
+                [
+                    source_edge_range_hz[0] * scale,
+                    source_edge_range_hz[1] * scale,
+                ],
+            );
+        }
+        let expected_range_hz = expected_range_hz.unwrap();
+        let expected_edge_range_hz = expected_edge_range_hz.unwrap();
+
+        assert_eq!(metadata.freq_ref, FrequencyRef::LSRK);
+        assert_eq!(metadata.sample_frequency_range_hz, Some(expected_range_hz));
+        assert!(
+            (metadata.reffreq_hz - 0.5 * (expected_range_hz[0] + expected_range_hz[1])).abs()
+                < 1.0e-3
+        );
+        assert!((metadata.selected_frequency_range_hz[0] - expected_range_hz[0]).abs() < 1.0e-3);
+        assert!((metadata.selected_frequency_range_hz[1] - expected_range_hz[1]).abs() < 1.0e-3);
+        assert_eq!(
+            metadata.spectral_frequency_edge_range_hz,
+            Some(expected_edge_range_hz)
+        );
     }
 
     #[test]

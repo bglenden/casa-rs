@@ -103,10 +103,26 @@ impl StandardMfsStreamingWeightingPlan {
         selected_frequency_range_hz: [f64; 2],
         weight_density_mode: WeightDensityMode,
     ) -> Result<Self, crate::ImagingError> {
-        let gridder = StandardGridder::new(geometry)?;
         let density_convention = density_cell_convention(weighting, weight_density_mode);
         let density_build_convention =
             density_build_cell_convention(weighting, weight_density_mode);
+        Self::new_with_density_conventions(
+            geometry,
+            weighting,
+            selected_frequency_range_hz,
+            density_convention,
+            density_build_convention,
+        )
+    }
+
+    pub(crate) fn new_with_density_conventions(
+        geometry: ImageGeometry,
+        weighting: WeightingMode,
+        selected_frequency_range_hz: [f64; 2],
+        density_convention: DensityCellConvention,
+        density_build_convention: DensityCellConvention,
+    ) -> Result<Self, crate::ImagingError> {
+        let gridder = StandardGridder::new(geometry)?;
         let density = match weighting {
             WeightingMode::Natural => None,
             WeightingMode::Uniform
@@ -1392,6 +1408,7 @@ fn density_build_cell_convention(
 fn density_includes_conjugates(convention: DensityCellConvention) -> bool {
     match convention {
         DensityCellConvention::VisImagingWeight
+        | DensityCellConvention::MosaicVisImagingWeight
         | DensityCellConvention::CubeBriggsWeightorDensity => true,
         DensityCellConvention::CubeBriggsWeightorLookup => false,
     }
@@ -2948,6 +2965,71 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn briggs_per_plane_density_source_preserves_aligned_sample_order() {
+        let request = request_for(WeightingMode::Briggs { robust: 0.5 });
+        let gridder = StandardGridder::new(request.geometry).unwrap();
+        let target_batch = VisibilityBatch {
+            u_lambda: vec![40.0, 140.0, 260.0],
+            v_lambda: vec![10.0, -20.0, 35.0],
+            w_lambda: vec![0.0; 3],
+            weight: vec![1.0; 3],
+            sumwt_factor: vec![1.0; 3],
+            gridable: vec![true; 3],
+            visibility: vec![Complex32::new(1.0, 0.0); 3],
+        };
+        let density_batch = VisibilityBatch {
+            u_lambda: vec![0.0, 0.0, 260.0],
+            v_lambda: vec![0.0, 0.0, 35.0],
+            w_lambda: target_batch.w_lambda.clone(),
+            weight: target_batch.weight.clone(),
+            sumwt_factor: target_batch.sumwt_factor.clone(),
+            gridable: target_batch.gridable.clone(),
+            visibility: target_batch.visibility.clone(),
+        };
+
+        let sidecar_trace = trace_weighting_with_density_source(
+            WeightingMode::Briggs { robust: 0.5 },
+            WeightDensityMode::PerPlane,
+            None,
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
+            std::slice::from_ref(&target_batch),
+            std::slice::from_ref(&density_batch),
+            &gridder,
+        )
+        .unwrap();
+        let target_trace = trace_weighting_with_density_source(
+            WeightingMode::Briggs { robust: 0.5 },
+            WeightDensityMode::PerPlane,
+            None,
+            fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
+            std::slice::from_ref(&target_batch),
+            std::slice::from_ref(&target_batch),
+            &gridder,
+        )
+        .unwrap();
+
+        assert_eq!(sidecar_trace.samples.len(), 3);
+        for (index, sample) in sidecar_trace.samples.iter().enumerate() {
+            assert_eq!(sample.batch_index, 0);
+            assert_eq!(sample.sample_index, index);
+            assert_eq!(sample.u_lambda, target_batch.u_lambda[index]);
+            assert_eq!(sample.v_lambda, target_batch.v_lambda[index]);
+        }
+        assert_eq!(
+            sidecar_trace.samples[0].density_weight,
+            sidecar_trace.samples[1].density_weight
+        );
+        assert_ne!(
+            sidecar_trace.samples[1].density_weight,
+            target_trace.samples[1].density_weight
+        );
+        assert_ne!(
+            sidecar_trace.weighted_batches[0].weight[1],
+            target_trace.weighted_batches[0].weight[1]
+        );
     }
 
     #[test]

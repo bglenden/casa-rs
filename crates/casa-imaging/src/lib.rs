@@ -360,6 +360,7 @@ pub use trace::{
 };
 
 pub use error::ImagingError;
+use gridder::DensityCellConvention;
 pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
     CompatibilityMode, CubeAutoMultiThresholdConfig, CubeImagingDiagnostics, CubeImagingResult,
@@ -3055,6 +3056,8 @@ pub enum SinglePlaneGridderMetadata {
 pub struct SinglePlaneVisibilityBlock {
     /// Scalar visibility samples prepared from a bounded MS row block.
     pub visibility: VisibilityBatch,
+    /// Optional weighting-density coordinates aligned with `visibility`.
+    pub density: Option<VisibilityBatch>,
     /// Optional gridder metadata aligned with this block.
     pub gridder_metadata: SinglePlaneGridderMetadata,
 }
@@ -3064,6 +3067,8 @@ pub struct SinglePlaneVisibilityBlock {
 pub struct MosaicMtmfsVisibilityBlock {
     /// Scalar visibility samples prepared from a bounded MS row block.
     pub visibility: VisibilityBatch,
+    /// Optional weighting-density coordinates aligned with `visibility`.
+    pub density: Option<VisibilityBatch>,
     /// Per-sample world frequencies in Hz aligned with `visibility`.
     pub sample_frequencies_hz: Vec<f64>,
     /// Mosaic PB/pointing metadata aligned with this block.
@@ -3176,6 +3181,7 @@ where
             accumulate_mosaic_streaming_density(
                 &density_context,
                 &block.visibility,
+                block.density.as_ref(),
                 &metadata,
                 &mut weighting_plans,
                 mosaic_parallel_threads,
@@ -3592,6 +3598,7 @@ where
             accumulate_mosaic_streaming_density(
                 &density_context,
                 &block.visibility,
+                block.density.as_ref(),
                 &block.gridder_metadata,
                 &mut weighting_plans,
                 mosaic_parallel_threads,
@@ -4074,6 +4081,7 @@ where
         let weighted = weight_mosaic_streaming_batch(
             weighting_request,
             block.visibility,
+            block.density.as_ref(),
             &block.gridder_metadata,
             weighting_plans,
         )?;
@@ -4222,14 +4230,16 @@ fn accumulate_mosaic_mtmfs_metadata_group(
                 .enumerate()
                 .take(2 * request.nterms - 1)
             {
-                let factor = f64::from(taylor_weight);
+                // CASA updates its Matrix<Float> imaging weights with the
+                // Taylor factor before the mosaic gridder promotes them.
+                let term_grid_weight64 = f64::from(grid_weight * taylor_weight);
                 projector.grid_sample_planned_f64(
                     &mut accumulation.psf_grids[order],
                     &plan,
-                    Complex64::new(grid_weight64 * factor, 0.0),
+                    Complex64::new(term_grid_weight64, 0.0),
                 );
                 if plan.center_in_bounds {
-                    accumulation.reported_sumwt_terms[order] += grid_weight64 * factor;
+                    accumulation.reported_sumwt_terms[order] += term_grid_weight64;
                 }
             }
             predicted_terms.clear();
@@ -4250,13 +4260,14 @@ fn accumulate_mosaic_mtmfs_metadata_group(
             for (residual_order, &taylor_weight) in
                 taylor_weights.iter().enumerate().take(request.nterms)
             {
-                let factor = f64::from(taylor_weight);
+                let weighted_residual = residual_visibility * (grid_weight * taylor_weight);
                 projector.grid_sample_planned_f64(
                     &mut accumulation.residual_grids[residual_order],
                     &plan,
-                    Complex64::new(residual_visibility.re as f64, residual_visibility.im as f64)
-                        * grid_weight64
-                        * factor,
+                    Complex64::new(
+                        f64::from(weighted_residual.re),
+                        f64::from(weighted_residual.im),
+                    ),
                 );
             }
             add_mosaic_weight_support_sample(
@@ -4272,11 +4283,12 @@ fn accumulate_mosaic_mtmfs_metadata_group(
             accumulation.gridded_samples += 1;
         }
     }
+    let support_sums = weight_support_sums.support_sums();
     add_mosaic_center_weight_grid_from_support_sums(
         &weight_projector,
         &weight_plan,
         &mut accumulation.weight_grid,
-        &weight_support_sums.support_sums(),
+        &support_sums,
     );
     Ok(())
 }
@@ -4465,15 +4477,24 @@ struct MosaicStreamingDensityContext<'a> {
 fn accumulate_mosaic_streaming_density(
     context: &MosaicStreamingDensityContext<'_>,
     batch: &VisibilityBatch,
+    density_batch: Option<&VisibilityBatch>,
     metadata: &GroupedVisibilityMetadataBatch,
     weighting_plans: &mut BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
     thread_count: usize,
 ) -> Result<(), ImagingError> {
     metadata.validate_len(batch.len())?;
+    let density_batch = density_batch.unwrap_or(batch);
+    if density_batch.len() != batch.len() {
+        return Err(ImagingError::InvalidRequest(format!(
+            "streaming mosaic density batch has {} samples for {} visibility samples",
+            density_batch.len(),
+            batch.len()
+        )));
+    }
     if context.weight_density_mode == WeightDensityMode::PerPlane {
         return accumulate_mosaic_streaming_density_serial(
             context,
-            batch,
+            density_batch,
             metadata.groups.as_slice(),
             weighting_plans,
         );
@@ -4482,7 +4503,7 @@ fn accumulate_mosaic_streaming_density(
     if actual_threads == 1 {
         return accumulate_mosaic_streaming_density_serial(
             context,
-            batch,
+            density_batch,
             metadata.groups.as_slice(),
             weighting_plans,
         );
@@ -4495,8 +4516,13 @@ fn accumulate_mosaic_streaming_density(
         for groups in metadata.groups.chunks(chunk_len) {
             handles.push(scope.spawn(move || {
                 let mut local = BTreeMap::<(u64, u64), MosaicStreamingWeightingPlan>::new();
-                accumulate_mosaic_streaming_density_serial(context, batch, groups, &mut local)
-                    .map(|()| local)
+                accumulate_mosaic_streaming_density_serial(
+                    context,
+                    density_batch,
+                    groups,
+                    &mut local,
+                )
+                .map(|()| local)
             }));
         }
         for handle in handles {
@@ -4553,12 +4579,22 @@ fn accumulate_mosaic_streaming_density_serial(
 fn weight_mosaic_streaming_batch(
     request: &ImagingRequest,
     batch: VisibilityBatch,
+    density_batch: Option<&VisibilityBatch>,
     metadata: &GroupedVisibilityMetadataBatch,
     weighting_plans: &BTreeMap<(u64, u64), MosaicStreamingWeightingPlan>,
 ) -> Result<VisibilityBatch, ImagingError> {
     metadata.validate_len(batch.len())?;
     if request.weighting == WeightingMode::Natural {
         return Ok(batch);
+    }
+    if let Some(density_batch) = density_batch
+        && density_batch.len() != batch.len()
+    {
+        return Err(ImagingError::InvalidRequest(format!(
+            "streaming mosaic density batch has {} samples for {} visibility samples",
+            density_batch.len(),
+            batch.len()
+        )));
     }
     let mut weighted = batch;
     for group in &metadata.groups {
@@ -4575,9 +4611,19 @@ fn weight_mosaic_streaming_batch(
                 ));
             }
             for sample_index in range.start..range.end {
+                let (lookup_u_lambda, lookup_v_lambda) = match density_batch {
+                    Some(density_batch) => (
+                        density_batch.u_lambda[sample_index],
+                        density_batch.v_lambda[sample_index],
+                    ),
+                    None => (
+                        weighted.u_lambda[sample_index],
+                        weighted.v_lambda[sample_index],
+                    ),
+                };
                 weighted.weight[sample_index] = plan.weight_sample(
-                    weighted.u_lambda[sample_index],
-                    weighted.v_lambda[sample_index],
+                    lookup_u_lambda,
+                    lookup_v_lambda,
                     weighted.weight[sample_index],
                 )?;
             }
@@ -4620,6 +4666,7 @@ where
             let weighted = weight_mosaic_streaming_batch(
                 request,
                 block.visibility,
+                block.density.as_ref(),
                 &metadata,
                 weighting_plans,
             )?;
@@ -8956,12 +9003,21 @@ impl MosaicStreamingWeightingPlan {
         selected_frequency_range_hz: [f64; 2],
         weight_density_mode: WeightDensityMode,
     ) -> Result<Self, ImagingError> {
+        let density_convention = match weight_density_mode {
+            WeightDensityMode::Combined => DensityCellConvention::MosaicVisImagingWeight,
+            WeightDensityMode::PerPlane => DensityCellConvention::CubeBriggsWeightorLookup,
+        };
+        let density_build_convention = match weight_density_mode {
+            WeightDensityMode::Combined => DensityCellConvention::MosaicVisImagingWeight,
+            WeightDensityMode::PerPlane => DensityCellConvention::CubeBriggsWeightorDensity,
+        };
         Ok(Self::Standard(
-            StandardMfsStreamingWeightingPlan::new_with_density_mode(
+            StandardMfsStreamingWeightingPlan::new_with_density_conventions(
                 geometry,
                 weighting,
                 selected_frequency_range_hz,
-                weight_density_mode,
+                density_convention,
+                density_build_convention,
             )?,
         ))
     }
@@ -22872,12 +22928,17 @@ fn fill_mtmfs_taylor_weights(
     count: usize,
 ) {
     weights.clear();
-    let scaled = ((frequency_hz - reffreq_hz) / reffreq_hz) as f32;
+    let scaled = mtmfs_casa_taylor_x(frequency_hz, reffreq_hz);
     let mut value = 1.0f32;
     for _ in 0..count {
         weights.push(value);
         value *= scaled;
     }
+}
+
+pub(crate) fn mtmfs_casa_taylor_x(frequency_hz: f64, reffreq_hz: f64) -> f32 {
+    let casa_frequency_hz = f64::from(frequency_hz as f32);
+    ((casa_frequency_hz - reffreq_hz) / reffreq_hz) as f32
 }
 
 fn mtmfs_worker_threads(work_items: usize) -> usize {
@@ -23086,9 +23147,9 @@ fn accumulate_mtmfs_psf_grid_range(
                 skipped_samples += 1;
                 continue;
             };
-            let scaled = ((frequency_hz - request.reffreq_hz) / request.reffreq_hz) as f32;
             normalization_sumwt += 2.0 * f64::from(weight);
             if term_count == 3 {
+                let scaled = mtmfs_casa_taylor_x(frequency_hz, request.reffreq_hz);
                 for (order, factor) in [1.0, scaled, scaled * scaled].into_iter().enumerate() {
                     let psf_weight = Complex32::new(weight * factor, 0.0);
                     gridder.grid_sample_product_planned(
@@ -23567,7 +23628,7 @@ fn accumulate_mtmfs_residual_grid_range(
                 continue;
             };
             if request.nterms == 2 {
-                let scaled = ((frequency_hz - request.reffreq_hz) / request.reffreq_hz) as f32;
+                let scaled = mtmfs_casa_taylor_x(frequency_hz, request.reffreq_hz);
                 let taylor0 = 1.0f32;
                 let taylor1 = scaled;
                 let taylor2 = scaled * scaled;
@@ -33981,6 +34042,7 @@ mod tests {
             |_, consumer| {
                 consumer(SinglePlaneVisibilityBlock {
                     visibility: batch.clone(),
+                    density: None,
                     gridder_metadata: SinglePlaneGridderMetadata::Mosaic(grouped_metadata.clone()),
                 })
             },
@@ -34084,6 +34146,7 @@ mod tests {
             |_, consumer| {
                 consumer(SinglePlaneVisibilityBlock {
                     visibility: batch.clone(),
+                    density: None,
                     gridder_metadata: SinglePlaneGridderMetadata::Mosaic(grouped_metadata.clone()),
                 })
             },
@@ -34113,6 +34176,7 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: batch.clone(),
+                    density: None,
                     sample_frequencies_hz: sample_frequencies_hz.clone(),
                     gridder_metadata: grouped_metadata.clone(),
                 })
@@ -34206,6 +34270,7 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: batch.clone(),
+                    density: None,
                     sample_frequencies_hz: sample_frequencies_hz.clone(),
                     gridder_metadata: metadata_for_len(batch.len()),
                 })
@@ -34219,11 +34284,13 @@ mod tests {
             |_, consumer| {
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: slice_batch(0, 3),
+                    density: None,
                     sample_frequencies_hz: sample_frequencies_hz[0..3].to_vec(),
                     gridder_metadata: metadata_for_len(3),
                 })?;
                 consumer(MosaicMtmfsVisibilityBlock {
                     visibility: slice_batch(3, 6),
+                    density: None,
                     sample_frequencies_hz: sample_frequencies_hz[3..6].to_vec(),
                     gridder_metadata: metadata_for_len(3),
                 })
@@ -34249,6 +34316,148 @@ mod tests {
         if let (Some(actual), Some(expected)) = (&split.alpha, &full.alpha) {
             assert_array4_close(actual, expected, 1.0e-5);
         }
+    }
+
+    #[test]
+    fn streaming_mosaic_mtmfs_briggs_density_sidecar_is_block_invariant() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let batch = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (34.0, 30.0),
+            1.0,
+        );
+        let mut density_batch = batch.clone();
+        for (index, (u_lambda, v_lambda)) in density_batch
+            .u_lambda
+            .iter_mut()
+            .zip(density_batch.v_lambda.iter_mut())
+            .enumerate()
+        {
+            *u_lambda += 5.0 + index as f64;
+            *v_lambda -= 3.0;
+        }
+        let sample_frequencies_hz = vec![1.35e9, 1.38e9, 1.4e9, 1.42e9, 1.45e9, 1.47e9];
+        let primary_beam_model = PrimaryBeamModel::Airy {
+            dish_diameter_m: 25.0,
+            blockage_diameter_m: 0.0,
+        };
+        let metadata_for_len = |len| GroupedVisibilityMetadataBatch {
+            sample_count: len,
+            groups: vec![GroupedVisibilityMetadata {
+                beam_frequency_hz: 1.4e9,
+                primary_beam_model,
+                pointing_direction_rad: [0.0, 0.0],
+                sample_ranges: vec![VisibilitySampleRange { start: 0, end: len }],
+            }],
+        };
+        let slice_batch = |source: &VisibilityBatch, start: usize, end: usize| VisibilityBatch {
+            u_lambda: source.u_lambda[start..end].to_vec(),
+            v_lambda: source.v_lambda[start..end].to_vec(),
+            w_lambda: source.w_lambda[start..end].to_vec(),
+            weight: source.weight[start..end].to_vec(),
+            sumwt_factor: source.sumwt_factor[start..end].to_vec(),
+            gridable: source.gridable[start..end].to_vec(),
+            visibility: source.visibility[start..end].to_vec(),
+        };
+        let gridder_mode = GridderMode::Mosaic(MosaicGridderConfig {
+            phase_center_direction_rad: [0.0, 0.0],
+            primary_beam_model,
+            pb_limit: 0.1,
+            metadata_batches: Vec::new(),
+            grouped_metadata_batches: vec![metadata_for_len(batch.len())],
+        });
+        let request = MtmfsRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            sample_frequency_batches_hz: Vec::new(),
+            gridder_mode,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.35e9, 1.47e9],
+            nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            clean: CleanConfig {
+                niter: 0,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let full = run_mosaic_mtmfs_from_single_plane_stream(
+            request.clone(),
+            StandardMfsExecutionConfig::default(),
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: batch.clone(),
+                    density: Some(density_batch.clone()),
+                    sample_frequencies_hz: sample_frequencies_hz.clone(),
+                    gridder_metadata: metadata_for_len(batch.len()),
+                })
+            },
+        )
+        .unwrap();
+        let split = run_mosaic_mtmfs_from_single_plane_stream(
+            request,
+            StandardMfsExecutionConfig::default(),
+            WeightDensityMode::Combined,
+            |_, consumer| {
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: slice_batch(&batch, 0, 3),
+                    density: Some(slice_batch(&density_batch, 0, 3)),
+                    sample_frequencies_hz: sample_frequencies_hz[0..3].to_vec(),
+                    gridder_metadata: metadata_for_len(3),
+                })?;
+                consumer(MosaicMtmfsVisibilityBlock {
+                    visibility: slice_batch(&batch, 3, 6),
+                    density: Some(slice_batch(&density_batch, 3, 6)),
+                    sample_frequencies_hz: sample_frequencies_hz[3..6].to_vec(),
+                    gridder_metadata: metadata_for_len(3),
+                })
+            },
+        )
+        .unwrap();
+
+        for (actual, expected) in split.psf_terms.iter().zip(full.psf_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        for (actual, expected) in split.residual_terms.iter().zip(full.residual_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        for (actual, expected) in split.image_terms.iter().zip(full.image_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        for (actual, expected) in split.sumwt_terms.iter().zip(full.sumwt_terms.iter()) {
+            assert_array4_close(actual, expected, 1.0e-5);
+        }
+        assert_eq!(
+            split.diagnostics.gridded_samples,
+            full.diagnostics.gridded_samples
+        );
+        assert!(
+            (split.diagnostics.normalization_sumwt - full.diagnostics.normalization_sumwt).abs()
+                < 1.0e-5
+        );
+        assert!(
+            (split.diagnostics.reported_sumwt - full.diagnostics.reported_sumwt).abs() < 1.0e-5
+        );
     }
 
     #[test]
