@@ -1803,7 +1803,9 @@ fn finish_standard_mfs_dirty_grid_results_apple_gpu_resident(
     {
         return Ok(None);
     }
-    if !apple_gpu_dirty_products_allowed_by_fft_backend_env() {
+    let rows = chunk_inputs[0].shape()[0];
+    let columns = chunk_inputs[0].shape()[1];
+    if !apple_gpu_dirty_products_allowed_by_fft_backend_policy(rows, columns, chunk_inputs.len()) {
         return Ok(None);
     }
     let gridder = StandardGridder::new(geometry)?;
@@ -1902,17 +1904,51 @@ fn psf_state_from_apple_dirty_product(
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
-fn apple_gpu_dirty_products_allowed_by_fft_backend_env() -> bool {
+fn apple_gpu_dirty_products_allowed_by_fft_backend_policy(
+    rows: usize,
+    columns: usize,
+    transform_count: usize,
+) -> bool {
     match env::var("CASA_RS_IMAGING_FFT_BACKEND") {
-        Ok(value) => value.parse::<FftBackendChoice>().is_ok_and(|choice| {
-            matches!(
-                choice,
-                FftBackendChoice::Auto | FftBackendChoice::MetalMpsGraph
-            )
-        }),
-        Err(env::VarError::NotPresent) => true,
+        Ok(value) => value
+            .parse::<FftBackendChoice>()
+            .is_ok_and(|choice| match choice {
+                FftBackendChoice::MetalMpsGraph => true,
+                FftBackendChoice::Auto => {
+                    apple_gpu_dirty_products_auto_selected_for_shape(rows, columns, transform_count)
+                }
+                _ => false,
+            }),
+        Err(env::VarError::NotPresent) => {
+            apple_gpu_dirty_products_auto_selected_for_shape(rows, columns, transform_count)
+        }
         Err(env::VarError::NotUnicode(_)) => false,
     }
+}
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+fn apple_gpu_dirty_products_auto_selected_for_shape(
+    rows: usize,
+    columns: usize,
+    transform_count: usize,
+) -> bool {
+    let spec = Fft2Spec::centered_c2c_batch(
+        rows,
+        columns,
+        transform_count,
+        FftPrecision::F32,
+        FftDirection::Inverse,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::Auto,
+    );
+    let selection = select_fft_backend(spec);
+    let allowed = selection.selected_backend == FftBackendChoice::MetalMpsGraph
+        && selection.requested_backend_supported
+        && !selection.fallback_used;
+    if !allowed {
+        emit_dirty_product_gpu_resident_fallback(selection.reason);
+    }
+    allowed
 }
 
 fn finish_standard_mfs_dirty_grid_result_single(
@@ -4986,7 +5022,11 @@ fn finish_mosaic_dirty_products_from_centered_grids(
 ) -> Result<MosaicDirtyProductImages, ImagingError> {
     #[cfg(all(target_os = "macos", not(coverage)))]
     if imaging_demote_dirty_f64_fft_to_f32()
-        && apple_gpu_dirty_products_allowed_by_fft_backend_env()
+        && apple_gpu_dirty_products_allowed_by_fft_backend_policy(
+            psf_grid.shape()[0],
+            psf_grid.shape()[1],
+            3,
+        )
         && !mosaic_trace_enabled()
         && !mosaic_weight_trace_enabled()
     {
@@ -8126,7 +8166,11 @@ fn dirty_grids_to_psf_and_residual_apple_gpu_resident(
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Option<(PsfState, Array2<f32>, FftTiming)>, ImagingError> {
     if !imaging_demote_dirty_f64_fft_to_f32()
-        || !apple_gpu_dirty_products_allowed_by_fft_backend_env()
+        || !apple_gpu_dirty_products_allowed_by_fft_backend_policy(
+            psf_grid.shape()[0],
+            psf_grid.shape()[1],
+            2,
+        )
     {
         return Ok(None);
     }

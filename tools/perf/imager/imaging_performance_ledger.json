@@ -412,7 +412,7 @@
     {
       "workload_id": "wave3-standard-mfs-clark-heavy-wave2",
       "issue_slice": "352-standard-mfs-dirty-product-gpu-residency",
-      "commit": "f541094fa+worktree",
+      "commit": "408fa953b+worktree",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
       "gridder": "standard",
@@ -434,19 +434,21 @@
       "memory_target_gb": 16.0,
       "peak_rss_gb": {
         "baseline": 12.551,
-        "candidate": 12.141
+        "candidate": 12.598
       },
       "baseline_total_wall_s": 12.146231,
-      "candidate_total_wall_s": 14.172987,
-      "speedup": 0.856999,
-      "wall_reduction_fraction": -0.166863,
+      "candidate_total_wall_s": 13.200921,
+      "speedup": 0.920105,
+      "wall_reduction_fraction": -0.086833,
       "correctness_status": "CASA run completed for the candidate timing artifact; no product comparison panel was generated; resident-product unit tests compare GPU product finish against CPU f32 finish",
       "max_abs": null,
       "rms": null,
-      "notes": "GLENDENNING medium standard-MFS dirty workload. Corrected unsandboxed Metal evidence: sandboxed Swift/Metal checks can hide MTLCreateSystemDefaultDevice, but the same host exposes Apple M4 Metal outside the sandbox and the dirty product finish selects metal-mpsgraph with fallback_used=false. This is still negative wall-clock evidence for this medium 1250x1250 dirty workload: total wall is 16.7% slower than the RustFFT baseline and the release CLI dirty-product FFT is slower despite a 4.1ms device execution time. Metal is functional, but larger product sizes or more GPU-resident work are needed before claiming a speedup.",
+      "notes": "GLENDENNING medium standard-MFS dirty workload. Corrected unsandboxed Metal evidence: sandboxed Swift/Metal checks can hide MTLCreateSystemDefaultDevice, but the same host exposes Apple M4 Metal outside the sandbox. Auto now guards the losing 1250x1250x2 dirty-product case and selects RustFFT with reason metal_mpsgraph_auto_guard_small_dirty_product_batch, preventing accidental default Metal slowdown. Explicit metal-mpsgraph remains available and fuses crop, PSF peak reduction, and normalize into one standard dirty-product command buffer. That reduced the release dirty-product section from 231.784ms to 40.588ms and the profile section from 70.083ms to 37.246ms, but end-to-end explicit Metal is still 8.7% slower than the RustFFT CPU wall baseline on this medium row. Larger product sizes or more GPU-resident work are still needed before claiming a total GPU speedup.",
       "result_paths": {
         "baseline": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233605Z-wave3-standard-mfs-clark-heavy-wave2-f92b935e.json",
-        "candidate": "/private/tmp/casa-rs-imaging-metal-unsandboxed/results/20260709T032433Z-wave3-standard-mfs-clark-heavy-wave2-70813543.json",
+        "candidate": "/private/tmp/casa-rs-imaging-metal-fused/results/20260709T035347Z-wave3-standard-mfs-clark-heavy-wave2-8d661149.json",
+        "auto_guard_candidate": "/private/tmp/casa-rs-imaging-metal-auto-guard/results/20260709T034926Z-wave3-standard-mfs-clark-heavy-wave2-bb471bc5.json",
+        "unsandboxed_prefusion_candidate": "/private/tmp/casa-rs-imaging-metal-unsandboxed/results/20260709T032433Z-wave3-standard-mfs-clark-heavy-wave2-70813543.json",
         "sandboxed_fallback_candidate": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233445Z-wave3-standard-mfs-clark-heavy-wave2-12de237a.json",
         "negative_control_before_fixed_tile_hook": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T232825Z-wave3-standard-mfs-clark-heavy-wave2-415f55ff.json"
       },
@@ -454,65 +456,71 @@
         {
           "stage": "frontend_total",
           "baseline_s": 12.146231,
-          "candidate_s": 14.172987,
-          "delta_s": 2.026756,
+          "candidate_s": 13.200921,
+          "delta_s": 1.054690,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": -0.166863,
+          "saved_fraction_of_baseline_wall": -0.086833,
           "contribution_to_total_saved_wall": 1.0
         },
         {
           "stage": "run_imaging",
           "baseline_s": 7.279629,
-          "candidate_s": 7.866000,
-          "delta_s": 0.586371,
+          "candidate_s": 7.209193,
+          "delta_s": -0.070436,
           "baseline_wall_fraction": 0.599332,
-          "candidate_wall_fraction": 0.555014,
-          "saved_fraction_of_baseline_wall": -0.048274,
-          "contribution_to_total_saved_wall": 0.289317
+          "candidate_wall_fraction": 0.546113,
+          "saved_fraction_of_baseline_wall": 0.005799,
+          "contribution_to_total_saved_wall": -0.066784
         },
         {
           "stage": "dirty_product_fft",
           "baseline_s": 0.045552,
-          "candidate_s": 0.231784,
-          "delta_s": 0.186232,
+          "candidate_s": 0.040588,
+          "delta_s": -0.004964,
           "baseline_wall_fraction": 0.003750,
-          "candidate_wall_fraction": 0.016354,
-          "saved_fraction_of_baseline_wall": -0.015332,
-          "contribution_to_total_saved_wall": 0.091883
+          "candidate_wall_fraction": 0.003075,
+          "saved_fraction_of_baseline_wall": 0.000409,
+          "contribution_to_total_saved_wall": -0.004707
         },
         {
           "stage": "prepare_plane_input",
           "baseline_s": 9.569735,
-          "candidate_s": 9.910141,
-          "delta_s": 0.340406,
+          "candidate_s": 9.711840,
+          "delta_s": 0.142105,
           "baseline_wall_fraction": 0.787877,
-          "candidate_wall_fraction": 0.699229,
-          "saved_fraction_of_baseline_wall": -0.028025,
-          "contribution_to_total_saved_wall": 0.167959
+          "candidate_wall_fraction": 0.735694,
+          "saved_fraction_of_baseline_wall": -0.011700,
+          "contribution_to_total_saved_wall": 0.134736
         },
         {
           "stage": "write_products",
           "baseline_s": 0.067957,
-          "candidate_s": 0.067000,
-          "delta_s": -0.000957,
+          "candidate_s": 0.068421,
+          "delta_s": 0.000464,
           "baseline_wall_fraction": 0.005595,
-          "candidate_wall_fraction": 0.004727,
-          "saved_fraction_of_baseline_wall": 0.000079,
-          "contribution_to_total_saved_wall": -0.000472
+          "candidate_wall_fraction": 0.005183,
+          "saved_fraction_of_baseline_wall": -0.000038,
+          "contribution_to_total_saved_wall": 0.000440
         }
       ],
       "gpu": {
         "dirty_product_fft_requested_backend": "metal-mpsgraph",
         "dirty_product_fft_selected_backend": "metal-mpsgraph",
         "dirty_product_fft_fallback_used": false,
-        "dirty_product_fft_total_ms": 231.784,
+        "dirty_product_fft_total_ms": 40.588,
         "dirty_product_gpu_resident_fallback_reason": null,
         "metal_device_available": true,
         "metal_device_name": "Apple M4",
         "unsandboxed": true,
-        "profile_dirty_product_fft_total_ms": 70.083,
-        "device_exec_ms": 4.107
+        "profile_dirty_product_fft_total_ms": 37.246,
+        "device_exec_ms": 3.441,
+        "auto_guard_selected_backend": "rustfft",
+        "auto_guard_reason": "metal_mpsgraph_auto_guard_small_dirty_product_batch",
+        "auto_guard_total_wall_s": 13.194858,
+        "auto_guard_dirty_product_fft_total_ms": 45.278,
+        "prefusion_dirty_product_fft_total_ms": 231.784,
+        "prefusion_profile_dirty_product_fft_total_ms": 70.083
       }
     }
   ]

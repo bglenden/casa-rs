@@ -15,6 +15,8 @@ use num_complex::{Complex32, Complex64};
 
 use crate::fft;
 
+const MPSGRAPH_DIRTY_PRODUCT_AUTO_MIN_WORK_ITEMS: usize = 6_000_000;
+
 /// Imaging role that is asking for a 2-D complex FFT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FftUseCase {
@@ -581,9 +583,7 @@ fn select_auto_fft_backend(spec: Fft2Spec) -> FftBackendSelection {
         } else {
             None
         };
-        let metal_is_likely_profitable = spec.shape.batch > 1
-            || !spec.shape.is_power_of_two_2d()
-            || spec.shape.rows.saturating_mul(spec.shape.columns) >= 2048 * 2048;
+        let metal_is_likely_profitable = metal_mpsgraph_dirty_product_auto_profitable(spec);
         if metal_is_likely_profitable
             && let Some(capability) = metal_capability
             && capability.supported
@@ -604,6 +604,15 @@ fn select_auto_fft_backend(spec: Fft2Spec) -> FftBackendSelection {
                 requested_backend_supported: true,
                 fallback_used: false,
                 reason: capability.reason,
+            };
+        }
+        if !metal_is_likely_profitable {
+            return FftBackendSelection {
+                requested_backend: spec.backend_choice,
+                selected_backend: FftBackendChoice::RustFft,
+                requested_backend_supported: true,
+                fallback_used: true,
+                reason: "metal_mpsgraph_auto_guard_small_dirty_product_batch",
             };
         }
         if let Some(metal_capability) = metal_capability
@@ -867,6 +876,21 @@ pub(crate) fn transform_f64(
             Err("backend_is_not_a_concrete_implemented_f64_transform")
         }
     }
+}
+
+fn metal_mpsgraph_dirty_product_auto_profitable(spec: Fft2Spec) -> bool {
+    if spec.precision != FftPrecision::F32
+        || spec.use_case != FftUseCase::DirtyPsfResidual
+        || spec.shape.batch == 0
+    {
+        return false;
+    }
+    let plane_elements = spec.shape.rows.saturating_mul(spec.shape.columns);
+    let work_items = plane_elements.saturating_mul(spec.shape.batch);
+    work_items >= MPSGRAPH_DIRTY_PRODUCT_AUTO_MIN_WORK_ITEMS
+        && (spec.shape.batch > 1
+            || !spec.shape.is_power_of_two_2d()
+            || plane_elements >= 2048 * 2048)
 }
 
 fn metal_vkfft_unavailable_reason(spec: Fft2Spec) -> &'static str {
@@ -1500,6 +1524,55 @@ mod tests {
             let accelerate_capability = fft_backend_capability(FftBackendChoice::Accelerate, spec);
             assert_eq!(selection.selected_backend, FftBackendChoice::Accelerate);
             assert_eq!(selection.reason, accelerate_capability.reason);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn auto_avoids_mpsgraph_for_small_dirty_f32_product_batches() {
+        let spec = Fft2Spec::centered_c2c_batch(
+            1250,
+            1250,
+            2,
+            FftPrecision::F32,
+            FftDirection::Inverse,
+            FftUseCase::DirtyPsfResidual,
+            FftBackendChoice::Auto,
+        );
+
+        let selection = select_fft_backend(spec);
+
+        assert_eq!(selection.selected_backend, FftBackendChoice::RustFft);
+        assert!(selection.fallback_used);
+        assert_eq!(
+            selection.reason,
+            "metal_mpsgraph_auto_guard_small_dirty_product_batch"
+        );
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    fn explicit_mpsgraph_request_bypasses_small_dirty_f32_product_auto_guard() {
+        let spec = Fft2Spec::centered_c2c_batch(
+            1250,
+            1250,
+            2,
+            FftPrecision::F32,
+            FftDirection::Inverse,
+            FftUseCase::DirtyPsfResidual,
+            FftBackendChoice::MetalMpsGraph,
+        );
+
+        let capability = fft_backend_capability(FftBackendChoice::MetalMpsGraph, spec);
+        let selection = select_fft_backend(spec);
+
+        if capability.supported {
+            assert_eq!(selection.selected_backend, FftBackendChoice::MetalMpsGraph);
+            assert!(selection.requested_backend_supported);
+            assert!(!selection.fallback_used);
+        } else {
+            assert_eq!(selection.selected_backend, FftBackendChoice::MetalMpsGraph);
+            assert!(!selection.requested_backend_supported);
         }
     }
 

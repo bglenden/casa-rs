@@ -1477,26 +1477,21 @@ fn finish_dirty_standard_products_on_metal(
         product_count,
     );
     encoder.endEncoding();
-    command_buffer.commit();
-    command_buffer.waitUntilCompleted();
-    ensure_command_buffer_ok(&command_buffer, "dirty_product_crop_command_failed")?;
-    record_command_buffer_device_time(&command_buffer, timing);
-    timing.exec += command_start.elapsed();
 
-    let peak_buffer = reduce_product_psf_peaks(
-        plan,
+    let mut reduce_keep_alive = Vec::new();
+    let peak_buffer = encode_product_peak_reduction(
+        &command_buffer,
         &pipelines,
-        &psf_buffer,
-        image_pixels,
-        product_count,
-        timing,
+        &plan.device,
+        DirtyProductReduction {
+            input_buffer: &psf_buffer,
+            image_pixels,
+            product_count,
+            absolute: true,
+        },
+        &mut reduce_keep_alive,
     )?;
 
-    let normalize_start = Instant::now();
-    let command_buffer = plan
-        .queue
-        .commandBuffer()
-        .ok_or("dirty_product_failed_to_create_normalize_command_buffer")?;
     let encoder = command_buffer
         .computeCommandEncoder()
         .ok_or("dirty_product_failed_to_create_normalize_encoder")?;
@@ -1513,9 +1508,9 @@ fn finish_dirty_standard_products_on_metal(
     encoder.endEncoding();
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
-    ensure_command_buffer_ok(&command_buffer, "dirty_product_normalize_command_failed")?;
+    ensure_command_buffer_ok(&command_buffer, "dirty_product_standard_command_failed")?;
     record_command_buffer_device_time(&command_buffer, timing);
-    timing.exec += normalize_start.elapsed();
+    timing.exec += command_start.elapsed();
 
     let export_start = Instant::now();
     let psf_values = unsafe {
@@ -1749,6 +1744,66 @@ fn finish_dirty_mosaic_products_on_metal(
     }
     timing.transfer_from_device += export_start.elapsed();
     Ok(products)
+}
+
+struct DirtyProductReduction<'a> {
+    input_buffer: &'a MetalBuffer,
+    image_pixels: usize,
+    product_count: usize,
+    absolute: bool,
+}
+
+fn encode_product_peak_reduction(
+    command_buffer: &MetalCommandBuffer,
+    pipelines: &DirtyProductPipelines,
+    device: &MetalDevice,
+    request: DirtyProductReduction<'_>,
+    keep_alive: &mut Vec<MetalBuffer>,
+) -> Result<MetalBuffer, &'static str> {
+    const REDUCE_BLOCK: usize = 256;
+    let mut input_count = request.image_pixels;
+    let mut input = request.input_buffer.clone();
+    loop {
+        let output_count = input_count.div_ceil(REDUCE_BLOCK);
+        let output = empty_buffer(
+            device,
+            output_count * request.product_count * mem::size_of::<f32>(),
+        )?;
+        let params = DirtyReduceParams {
+            input_count: u32::try_from(input_count)
+                .map_err(|_| "dirty_product_reduce_input_exceed_u32")?,
+            output_count: u32::try_from(output_count)
+                .map_err(|_| "dirty_product_reduce_output_exceed_u32")?,
+            block_size: u32::try_from(REDUCE_BLOCK)
+                .map_err(|_| "dirty_product_reduce_block_exceed_u32")?,
+            product_count: u32::try_from(request.product_count)
+                .map_err(|_| "dirty_product_reduce_product_count_exceed_u32")?,
+        };
+        let encoder = command_buffer
+            .computeCommandEncoder()
+            .ok_or("dirty_product_failed_to_create_reduce_encoder")?;
+        let pipeline = if request.absolute {
+            &pipelines.reduce_abs_max
+        } else {
+            &pipelines.reduce_max
+        };
+        encoder.setComputePipelineState(pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&input), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&output), 0, 1);
+            let pointer = NonNull::new((&params as *const DirtyReduceParams).cast_mut().cast())
+                .ok_or("dirty_product_reduce_params_pointer_was_null")?;
+            encoder.setBytes_length_atIndex(pointer, mem::size_of::<DirtyReduceParams>(), 2);
+        }
+        dispatch_2d_linear_threads(&encoder, pipeline, output_count, request.product_count);
+        encoder.endEncoding();
+        if output_count == 1 {
+            return Ok(output);
+        }
+        keep_alive.push(input);
+        input = output;
+        input_count = output_count;
+    }
 }
 
 fn reduce_product_psf_peaks(
