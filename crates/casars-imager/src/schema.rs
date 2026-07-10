@@ -133,6 +133,23 @@ mod tests {
         assert_eq!(default_for("pblimit"), "0.2");
         assert_eq!(default_for("minor_cycle_length"), "1000");
         assert_eq!(default_for("minpsffraction"), "0.05");
+        assert_eq!(default_for("chanchunks"), "none");
+        assert_eq!(default_for("parallel"), "none");
+        assert_eq!(default_for("imaging_read_ahead_blocks"), "none");
+        assert_eq!(default_for("imaging_fft_backend"), "auto");
+        for id in [
+            "chanchunks",
+            "parallel",
+            "imaging_read_ahead_blocks",
+            "imaging_fft_backend",
+        ] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == id)
+                .unwrap_or_else(|| panic!("missing {id}"));
+            assert!(argument.advanced, "{id} should remain an advanced control");
+        }
         assert!(
             schema
                 .arguments
@@ -142,4 +159,3 @@ mod tests {
         );
     }
 }
-

@@ -2003,6 +2003,34 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.chanchunks",
+      "semantic_revision": 1,
+      "casa_name": "chanchunks",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits",
+        "details": null,
+        "examples": [
+          "4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.channel_count",
       "semantic_revision": 1,
       "casa_name": "channel_count",
@@ -4133,6 +4161,34 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.imaging_fft_backend",
+      "semantic_revision": 1,
+      "casa_name": "imaging_fft_backend",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "accelerate",
+          "auto",
+          "metal-mpsgraph",
+          "rustfft"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Backend policy for dirty and residual product FFT transforms",
+        "details": null,
+        "examples": [
+          "auto"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.imaging_mode",
       "semantic_revision": 1,
       "casa_name": "imaging_mode",
@@ -4164,6 +4220,34 @@
         "details": null,
         "examples": [
           "mfs"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.imaging_read_ahead_blocks",
+      "semantic_revision": 1,
+      "casa_name": "imaging_read_ahead_blocks",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Maximum number of live source row blocks used for bounded read and prepare overlap",
+        "details": null,
+        "examples": [
+          "2"
         ]
       },
       "persistence_class": "profile"
@@ -5728,6 +5812,34 @@
         "summary": "Load a JSON multi-plot page spec instead of the single-plot axis/preset flags",
         "details": null,
         "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.parallel",
+      "semantic_revision": 1,
+      "casa_name": "parallel",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "bool"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface",
+        "details": null,
+        "examples": [
+          "true"
+        ]
       },
       "persistence_class": "profile"
     },

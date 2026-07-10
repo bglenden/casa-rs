@@ -312,6 +312,10 @@ def imager(
     wterm: Literal['direct', 'none', 'wproject'] | object = _UNSET,
     gridder: Literal['awp2', 'awphpg', 'awproject', 'mosaic', 'standard', 'widefield', 'wproject'] | object = _UNSET,
     standard_mfs_acceleration: Literal['auto', 'cpu', 'metal', 'multi-cpu'] | object = _UNSET,
+    parallel: bool | Literal['none'] | object = _UNSET,
+    imaging_read_ahead_blocks: int | Literal['none'] | object = _UNSET,
+    imaging_fft_backend: Literal['accelerate', 'auto', 'metal-mpsgraph', 'rustfft'] | object = _UNSET,
+    chanchunks: int | Literal['none'] | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -325,7 +329,7 @@ def imager(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet"""
-    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'startmodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'polarization', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'fullsummary', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'uvtaper', 'write_preview_pngs', 'write_pb', 'pbcor', 'pblimit', 'wterm', 'gridder', 'standard_mfs_acceleration'))
+    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'startmodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'polarization', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'fullsummary', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'uvtaper', 'write_preview_pngs', 'write_pb', 'pbcor', 'pblimit', 'wterm', 'gridder', 'standard_mfs_acceleration', 'parallel', 'imaging_read_ahead_blocks', 'imaging_fft_backend', 'chanchunks'))
     return _run(
         "imager",
         parameters=parameters,
