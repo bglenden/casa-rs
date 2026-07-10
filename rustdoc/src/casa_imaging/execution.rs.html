@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging/src/execution.rs`."><title>execution.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging" data-themes="" data-resource-suffix="" data-rustdoc-version="1.96.1 (31fca3adb 2026-06-26)" data-channel="1.96.1" data-search-js="search-b5634cc7.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging/</div>execution.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-5"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging/src/execution.rs`."><title>execution.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0 (2d8144b78 2026-07-07)" data-channel="1.97.0" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging/</div>execution.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-5"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Internal imaging execution plans and CPU workspaces.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
@@ -17,7 +17,7 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>ndarray::Array2;
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>num_complex::{Complex32, Complex64};
 <a href=#19 id=19 data-nosnippet>19</a>
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>crate::{
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use crate</span>::{
 <a href=#21 id=21 data-nosnippet>21</a>    ImageGeometry, ImagingError, StandardMfsExecutionConfig, StandardMfsObservabilityCallback,
 <a href=#22 id=22 data-nosnippet>22</a>    StandardMfsObservabilityEvent, StandardMfsPairCollapseTransform,
 <a href=#23 id=23 data-nosnippet>23</a>    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a>    types::{StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock},
 <a href=#33 id=33 data-nosnippet>33</a>};
 <a href=#34 id=34 data-nosnippet>34</a><span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
-<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">use </span>crate::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">use crate</span>::{gridder::DensityCellConvention, weighting::StandardMfsStreamingReweightPlan};
 <a href=#36 id=36 data-nosnippet>36</a>
 <a href=#37 id=37 data-nosnippet>37</a><span class="doccomment">/// Internal backend selection for standard MFS execution.
 <a href=#38 id=38 data-nosnippet>38</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3832,7 +3832,7 @@
 <a href=#3832 id=3832 data-nosnippet>3832</a>                <span class="kw">loop </span>{
 <a href=#3833 id=3833 data-nosnippet>3833</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(work) = shared.pop_work()<span class="question-mark">? </span><span class="kw">else </span>{
 <a href=#3834 id=3834 data-nosnippet>3834</a>                        worker_profile.finish(worker_started);
-<a href=#3835 id=3835 data-nosnippet>3835</a>                        <span class="kw">return </span>Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
+<a href=#3835 id=3835 data-nosnippet>3835</a>                        <span class="kw">return </span><span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
 <a href=#3836 id=3836 data-nosnippet>3836</a>                    };
 <a href=#3837 id=3837 data-nosnippet>3837</a>                    <span class="kw">let </span>task = work.task();
 <a href=#3838 id=3838 data-nosnippet>3838</a>                    <span class="kw">let </span>execution = execute_work(work.tile_id, <span class="kw-2">&amp;</span>work.samples);
@@ -3858,7 +3858,7 @@
 <a href=#3858 id=3858 data-nosnippet>3858</a>                            )<span class="question-mark">?</span>;
 <a href=#3859 id=3859 data-nosnippet>3859</a>                            shared.abort_with(error)<span class="question-mark">?</span>;
 <a href=#3860 id=3860 data-nosnippet>3860</a>                            worker_profile.finish(worker_started);
-<a href=#3861 id=3861 data-nosnippet>3861</a>                            <span class="kw">return </span>Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
+<a href=#3861 id=3861 data-nosnippet>3861</a>                            <span class="kw">return </span><span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
 <a href=#3862 id=3862 data-nosnippet>3862</a>                        }
 <a href=#3863 id=3863 data-nosnippet>3863</a>                    }
 <a href=#3864 id=3864 data-nosnippet>3864</a>                }
@@ -4223,14 +4223,14 @@
 <a href=#4223 id=4223 data-nosnippet>4223</a>                        })<span class="question-mark">?</span>;
 <a href=#4224 id=4224 data-nosnippet>4224</a>                        <span class="kw">loop </span>{
 <a href=#4225 id=4225 data-nosnippet>4225</a>                            <span class="kw">if </span>guard.error.is_some() {
-<a href=#4226 id=4226 data-nosnippet>4226</a>                                <span class="kw">return </span>Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
+<a href=#4226 id=4226 data-nosnippet>4226</a>                                <span class="kw">return </span><span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
 <a href=#4227 id=4227 data-nosnippet>4227</a>                            }
 <a href=#4228 id=4228 data-nosnippet>4228</a>                            <span class="kw">if let </span><span class="prelude-val">Some</span>(task) = guard.pop_ready() {
 <a href=#4229 id=4229 data-nosnippet>4229</a>                                <span class="kw">break </span>task;
 <a href=#4230 id=4230 data-nosnippet>4230</a>                            }
 <a href=#4231 id=4231 data-nosnippet>4231</a>                            <span class="kw">if </span>guard.closed &amp;&amp; guard.active_tasks == <span class="number">0 </span>&amp;&amp; guard.ready.is_empty() {
 <a href=#4232 id=4232 data-nosnippet>4232</a>                                worker_profile.finish(worker_started);
-<a href=#4233 id=4233 data-nosnippet>4233</a>                                <span class="kw">return </span>Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
+<a href=#4233 id=4233 data-nosnippet>4233</a>                                <span class="kw">return </span><span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((outputs, worker_profile));
 <a href=#4234 id=4234 data-nosnippet>4234</a>                            }
 <a href=#4235 id=4235 data-nosnippet>4235</a>                            guard = cvar.wait(guard).map_err(|<span class="kw">_</span>| {
 <a href=#4236 id=4236 data-nosnippet>4236</a>                                ImagingError::InvalidRequest(
@@ -5212,7 +5212,7 @@
 <a href=#5212 id=5212 data-nosnippet>5212</a>                        worker_outputs.push(output);
 <a href=#5213 id=5213 data-nosnippet>5213</a>                    }
 <a href=#5214 id=5214 data-nosnippet>5214</a>                    worker_profile.finish(worker_started);
-<a href=#5215 id=5215 data-nosnippet>5215</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
+<a href=#5215 id=5215 data-nosnippet>5215</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
 <a href=#5216 id=5216 data-nosnippet>5216</a>                }));
 <a href=#5217 id=5217 data-nosnippet>5217</a>            }
 <a href=#5218 id=5218 data-nosnippet>5218</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -5224,7 +5224,7 @@
 <a href=#5224 id=5224 data-nosnippet>5224</a>                outputs.push(worker_outputs);
 <a href=#5225 id=5225 data-nosnippet>5225</a>                worker_profiles.push(worker_profile);
 <a href=#5226 id=5226 data-nosnippet>5226</a>            }
-<a href=#5227 id=5227 data-nosnippet>5227</a>            Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(())
+<a href=#5227 id=5227 data-nosnippet>5227</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(())
 <a href=#5228 id=5228 data-nosnippet>5228</a>        })<span class="question-mark">?</span>;
 <a href=#5229 id=5229 data-nosnippet>5229</a>
 <a href=#5230 id=5230 data-nosnippet>5230</a>        <span class="kw">let </span>merge_started = Instant::now();
@@ -7026,7 +7026,7 @@
 <a href=#7026 id=7026 data-nosnippet>7026</a>                        worker_outputs.push(output);
 <a href=#7027 id=7027 data-nosnippet>7027</a>                    }
 <a href=#7028 id=7028 data-nosnippet>7028</a>                    worker_profile.finish(worker_started);
-<a href=#7029 id=7029 data-nosnippet>7029</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
+<a href=#7029 id=7029 data-nosnippet>7029</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
 <a href=#7030 id=7030 data-nosnippet>7030</a>                }));
 <a href=#7031 id=7031 data-nosnippet>7031</a>            }
 <a href=#7032 id=7032 data-nosnippet>7032</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -7038,7 +7038,7 @@
 <a href=#7038 id=7038 data-nosnippet>7038</a>                outputs.push(worker_outputs);
 <a href=#7039 id=7039 data-nosnippet>7039</a>                worker_profiles.push(worker_profile);
 <a href=#7040 id=7040 data-nosnippet>7040</a>            }
-<a href=#7041 id=7041 data-nosnippet>7041</a>            Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(())
+<a href=#7041 id=7041 data-nosnippet>7041</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(())
 <a href=#7042 id=7042 data-nosnippet>7042</a>        })<span class="question-mark">?</span>;
 <a href=#7043 id=7043 data-nosnippet>7043</a>
 <a href=#7044 id=7044 data-nosnippet>7044</a>        <span class="kw">let </span><span class="kw-2">mut </span>task_timing = StandardMfsTileTaskTiming::default();
@@ -7515,7 +7515,7 @@
 <a href=#7515 id=7515 data-nosnippet>7515</a>                        worker_outputs.push(output);
 <a href=#7516 id=7516 data-nosnippet>7516</a>                    }
 <a href=#7517 id=7517 data-nosnippet>7517</a>                    worker_profile.finish(worker_started);
-<a href=#7518 id=7518 data-nosnippet>7518</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
+<a href=#7518 id=7518 data-nosnippet>7518</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
 <a href=#7519 id=7519 data-nosnippet>7519</a>                }));
 <a href=#7520 id=7520 data-nosnippet>7520</a>            }
 <a href=#7521 id=7521 data-nosnippet>7521</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -7527,7 +7527,7 @@
 <a href=#7527 id=7527 data-nosnippet>7527</a>                outputs.push(worker_outputs);
 <a href=#7528 id=7528 data-nosnippet>7528</a>                worker_profiles.push(worker_profile);
 <a href=#7529 id=7529 data-nosnippet>7529</a>            }
-<a href=#7530 id=7530 data-nosnippet>7530</a>            Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(())
+<a href=#7530 id=7530 data-nosnippet>7530</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(())
 <a href=#7531 id=7531 data-nosnippet>7531</a>        })<span class="question-mark">?</span>;
 <a href=#7532 id=7532 data-nosnippet>7532</a>
 <a href=#7533 id=7533 data-nosnippet>7533</a>        <span class="kw">let </span>merge_started = Instant::now();
@@ -7675,7 +7675,7 @@
 <a href=#7675 id=7675 data-nosnippet>7675</a>                        worker_outputs.push(output);
 <a href=#7676 id=7676 data-nosnippet>7676</a>                    }
 <a href=#7677 id=7677 data-nosnippet>7677</a>                    worker_profile.finish(worker_started);
-<a href=#7678 id=7678 data-nosnippet>7678</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
+<a href=#7678 id=7678 data-nosnippet>7678</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
 <a href=#7679 id=7679 data-nosnippet>7679</a>                }));
 <a href=#7680 id=7680 data-nosnippet>7680</a>            }
 <a href=#7681 id=7681 data-nosnippet>7681</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -7687,7 +7687,7 @@
 <a href=#7687 id=7687 data-nosnippet>7687</a>                outputs.push(worker_outputs);
 <a href=#7688 id=7688 data-nosnippet>7688</a>                worker_profiles.push(worker_profile);
 <a href=#7689 id=7689 data-nosnippet>7689</a>            }
-<a href=#7690 id=7690 data-nosnippet>7690</a>            Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(())
+<a href=#7690 id=7690 data-nosnippet>7690</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(())
 <a href=#7691 id=7691 data-nosnippet>7691</a>        })<span class="question-mark">?</span>;
 <a href=#7692 id=7692 data-nosnippet>7692</a>
 <a href=#7693 id=7693 data-nosnippet>7693</a>        <span class="kw">let </span><span class="kw-2">mut </span>task_timing = StandardMfsTileTaskTiming::default();
@@ -7886,7 +7886,7 @@
 <a href=#7886 id=7886 data-nosnippet>7886</a>                        worker_outputs.push(output);
 <a href=#7887 id=7887 data-nosnippet>7887</a>                    }
 <a href=#7888 id=7888 data-nosnippet>7888</a>                    worker_profile.finish(worker_started);
-<a href=#7889 id=7889 data-nosnippet>7889</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
+<a href=#7889 id=7889 data-nosnippet>7889</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
 <a href=#7890 id=7890 data-nosnippet>7890</a>                }));
 <a href=#7891 id=7891 data-nosnippet>7891</a>            }
 <a href=#7892 id=7892 data-nosnippet>7892</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -7898,7 +7898,7 @@
 <a href=#7898 id=7898 data-nosnippet>7898</a>                outputs.push(worker_outputs);
 <a href=#7899 id=7899 data-nosnippet>7899</a>                worker_profiles.push(worker_profile);
 <a href=#7900 id=7900 data-nosnippet>7900</a>            }
-<a href=#7901 id=7901 data-nosnippet>7901</a>            Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(())
+<a href=#7901 id=7901 data-nosnippet>7901</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(())
 <a href=#7902 id=7902 data-nosnippet>7902</a>        })<span class="question-mark">?</span>;
 <a href=#7903 id=7903 data-nosnippet>7903</a>
 <a href=#7904 id=7904 data-nosnippet>7904</a>        <span class="kw">let </span>merge_started = Instant::now();
@@ -9052,7 +9052,7 @@
 <a href=#9052 id=9052 data-nosnippet>9052</a>                        worker_outputs.push(output);
 <a href=#9053 id=9053 data-nosnippet>9053</a>                    }
 <a href=#9054 id=9054 data-nosnippet>9054</a>                    worker_profile.finish(worker_started);
-<a href=#9055 id=9055 data-nosnippet>9055</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
+<a href=#9055 id=9055 data-nosnippet>9055</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((worker_outputs, worker_profile))
 <a href=#9056 id=9056 data-nosnippet>9056</a>                }));
 <a href=#9057 id=9057 data-nosnippet>9057</a>            }
 <a href=#9058 id=9058 data-nosnippet>9058</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -9064,7 +9064,7 @@
 <a href=#9064 id=9064 data-nosnippet>9064</a>                outputs.push(worker_outputs);
 <a href=#9065 id=9065 data-nosnippet>9065</a>                worker_profiles.push(worker_profile);
 <a href=#9066 id=9066 data-nosnippet>9066</a>            }
-<a href=#9067 id=9067 data-nosnippet>9067</a>            Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(worker_profiles)
+<a href=#9067 id=9067 data-nosnippet>9067</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(worker_profiles)
 <a href=#9068 id=9068 data-nosnippet>9068</a>        })<span class="question-mark">?</span>;
 <a href=#9069 id=9069 data-nosnippet>9069</a>
 <a href=#9070 id=9070 data-nosnippet>9070</a>        <span class="kw">let </span><span class="kw-2">mut </span>task_timing = StandardMfsTileTaskTiming::default();
@@ -18821,14 +18821,14 @@
 <a href=#18821 id=18821 data-nosnippet>18821</a></span><span class="kw">mod </span>tests {
 <a href=#18822 id=18822 data-nosnippet>18822</a>    <span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
 <a href=#18823 id=18823 data-nosnippet>18823</a>    </span><span class="kw">use </span><span class="kw">super</span>::METAL_DIRTY_SHADER;
-<a href=#18824 id=18824 data-nosnippet>18824</a>    <span class="kw">use </span>super::{
+<a href=#18824 id=18824 data-nosnippet>18824</a>    <span class="kw">use super</span>::{
 <a href=#18825 id=18825 data-nosnippet>18825</a>        STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY, STANDARD_MFS_TILE_FLAG_PSF_ONLY,
 <a href=#18826 id=18826 data-nosnippet>18826</a>        StandardMfsBackend, StandardMfsBlockTileBuckets, StandardMfsCpuExecutor,
 <a href=#18827 id=18827 data-nosnippet>18827</a>        StandardMfsDirtyCpuExecutor, StandardMfsFixedTilePartition,
 <a href=#18828 id=18828 data-nosnippet>18828</a>        StandardMfsRowBlockSampleAccess, StandardMfsSampleRef, StandardMfsTileId,
 <a href=#18829 id=18829 data-nosnippet>18829</a>        StandardMfsTiledCpuExecutor,
 <a href=#18830 id=18830 data-nosnippet>18830</a>    };
-<a href=#18831 id=18831 data-nosnippet>18831</a>    <span class="kw">use </span>crate::{
+<a href=#18831 id=18831 data-nosnippet>18831</a>    <span class="kw">use crate</span>::{
 <a href=#18832 id=18832 data-nosnippet>18832</a>        ImageGeometry, StandardMfsExecutionConfig, StandardMfsMinorCycleBackend,
 <a href=#18833 id=18833 data-nosnippet>18833</a>        StandardMfsPlannedWeightedSample, StandardMfsRoutedVisibilityRow,
 <a href=#18834 id=18834 data-nosnippet>18834</a>        StandardMfsRoutedVisibilityRun, StandardMfsVisibilityPolarization, VisibilityBatch,

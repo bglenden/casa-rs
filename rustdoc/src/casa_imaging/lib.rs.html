@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging" data-themes="" data-resource-suffix="" data-rustdoc-version="1.96.1 (31fca3adb 2026-06-26)" data-channel="1.96.1" data-search-js="search-b5634cc7.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-5"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0 (2d8144b78 2026-07-07)" data-channel="1.97.0" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-5"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="attr">#![warn(missing_docs)]
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Pure imaging kernels and CLEAN orchestration for CASA-compatible imaging.
 <a href=#4 id=4 data-nosnippet>4</a>//!
@@ -616,7 +616,7 @@
 <a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">let </span>uvw_m = row.uvw_m;
 <a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">let </span>channel_lambda_scales = Arc::clone(<span class="kw-2">&amp;</span>row.channel_lambda_scales);
 <a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span>routed_row = Arc::new(row.into_routed_row());
-<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span><span class="kw-2">mut </span>run_start = None::&lt;usize&gt;;
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span><span class="kw-2">mut </span>run_start = <span class="prelude-val">None</span>::&lt;usize&gt;;
 <a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">let </span><span class="kw-2">mut </span>tap_centers = Vec::&lt;[u32; <span class="number">2</span>]&gt;::new();
 <a href=#621 id=621 data-nosnippet>621</a>
 <a href=#622 id=622 data-nosnippet>622</a>        <span class="kw">for </span>(source_slot, lambda_scale) <span class="kw">in </span>channel_lambda_scales.iter().copied().enumerate() {
@@ -7388,7 +7388,7 @@
 <a href=#7388 id=7388 data-nosnippet>7388</a>    <span class="kw">let </span>controller_started = Instant::now();
 <a href=#7389 id=7389 data-nosnippet>7389</a>    <span class="kw">let </span><span class="kw-2">mut </span>reported_minor_iterations = <span class="number">0usize</span>;
 <a href=#7390 id=7390 data-nosnippet>7390</a>    <span class="kw">let </span><span class="kw-2">mut </span>major_cycles = <span class="number">0usize</span>;
-<a href=#7391 id=7391 data-nosnippet>7391</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = None::&lt;CleanStopReason&gt;;
+<a href=#7391 id=7391 data-nosnippet>7391</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#7392 id=7392 data-nosnippet>7392</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycle_traces = Vec::&lt;MinorCycleTrace&gt;::new();
 <a href=#7393 id=7393 data-nosnippet>7393</a>    <span class="kw">let </span><span class="kw-2">mut </span>final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
 <a href=#7394 id=7394 data-nosnippet>7394</a>    <span class="kw">let </span><span class="kw-2">mut </span>min_residual_peak_jy_per_beam = initial_peak;
@@ -7452,7 +7452,7 @@
 <a href=#7452 id=7452 data-nosnippet>7452</a>        ));
 <a href=#7453 id=7453 data-nosnippet>7453</a>        reported_minor_iterations += outcome.reported_updates;
 <a href=#7454 id=7454 data-nosnippet>7454</a>        final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
-<a href=#7455 id=7455 data-nosnippet>7455</a>        <span class="kw">let </span><span class="kw-2">mut </span>stop_after_refresh = None::&lt;CleanStopReason&gt;;
+<a href=#7455 id=7455 data-nosnippet>7455</a>        <span class="kw">let </span><span class="kw-2">mut </span>stop_after_refresh = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#7456 id=7456 data-nosnippet>7456</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(reason) = outcome.stop_reason {
 <a href=#7457 id=7457 data-nosnippet>7457</a>            <span class="kw">match </span>reason {
 <a href=#7458 id=7458 data-nosnippet>7458</a>                CleanStopReason::CycleThresholdReached <span class="kw">if </span>outcome.updated_model =&gt; {}
@@ -9271,7 +9271,7 @@
 <a href=#9271 id=9271 data-nosnippet>9271</a>                        .iter()
 <a href=#9272 id=9272 data-nosnippet>9272</a>                        .map(|spec| materialize_mosaic_grouped_range_spec(batches, spec))
 <a href=#9273 id=9273 data-nosnippet>9273</a>                        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#9274 id=9274 data-nosnippet>9274</a>                    Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((chunk_index, groups))
+<a href=#9274 id=9274 data-nosnippet>9274</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((chunk_index, groups))
 <a href=#9275 id=9275 data-nosnippet>9275</a>                }));
 <a href=#9276 id=9276 data-nosnippet>9276</a>            }
 <a href=#9277 id=9277 data-nosnippet>9277</a>            <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -9281,7 +9281,7 @@
 <a href=#9281 id=9281 data-nosnippet>9281</a>                    )
 <a href=#9282 id=9282 data-nosnippet>9282</a>                })<span class="question-mark">??</span>);
 <a href=#9283 id=9283 data-nosnippet>9283</a>            }
-<a href=#9284 id=9284 data-nosnippet>9284</a>            Ok::&lt;(), ImagingError&gt;(())
+<a href=#9284 id=9284 data-nosnippet>9284</a>            <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#9285 id=9285 data-nosnippet>9285</a>        })<span class="question-mark">?</span>;
 <a href=#9286 id=9286 data-nosnippet>9286</a>        worker_results.sort_by_key(|(chunk_index, <span class="kw">_</span>)| <span class="kw-2">*</span>chunk_index);
 <a href=#9287 id=9287 data-nosnippet>9287</a>        worker_results
@@ -9584,7 +9584,7 @@
 <a href=#9584 id=9584 data-nosnippet>9584</a>                    gridded_samples += contribution.gridded_samples;
 <a href=#9585 id=9585 data-nosnippet>9585</a>                    skipped_samples += contribution.skipped_samples;
 <a href=#9586 id=9586 data-nosnippet>9586</a>                }
-<a href=#9587 id=9587 data-nosnippet>9587</a>                Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((
+<a href=#9587 id=9587 data-nosnippet>9587</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((
 <a href=#9588 id=9588 data-nosnippet>9588</a>                    worker_samples,
 <a href=#9589 id=9589 data-nosnippet>9589</a>                    alloc_elapsed,
 <a href=#9590 id=9590 data-nosnippet>9590</a>                    worker_started.elapsed(),
@@ -9603,7 +9603,7 @@
 <a href=#9603 id=9603 data-nosnippet>9603</a>        <span class="kw">for </span>handle <span class="kw">in </span>handles {
 <a href=#9604 id=9604 data-nosnippet>9604</a>            worker_results.push(handle.join().expect(<span class="string">"mosaic dirty worker panicked"</span>)<span class="question-mark">?</span>);
 <a href=#9605 id=9605 data-nosnippet>9605</a>        }
-<a href=#9606 id=9606 data-nosnippet>9606</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#9606 id=9606 data-nosnippet>9606</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#9607 id=9607 data-nosnippet>9607</a>    })<span class="question-mark">?</span>;
 <a href=#9608 id=9608 data-nosnippet>9608</a>    <span class="kw">let </span>join_elapsed = join_started.elapsed();
 <a href=#9609 id=9609 data-nosnippet>9609</a>
@@ -10443,7 +10443,7 @@
 <a href=#10443 id=10443 data-nosnippet>10443</a>                        )<span class="question-mark">?</span>),
 <a href=#10444 id=10444 data-nosnippet>10444</a>                    ));
 <a href=#10445 id=10445 data-nosnippet>10445</a>                }
-<a href=#10446 id=10446 data-nosnippet>10446</a>                Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(prepared)
+<a href=#10446 id=10446 data-nosnippet>10446</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(prepared)
 <a href=#10447 id=10447 data-nosnippet>10447</a>            }));
 <a href=#10448 id=10448 data-nosnippet>10448</a>        }
 <a href=#10449 id=10449 data-nosnippet>10449</a>        <span class="kw">for </span>handle <span class="kw">in </span>handles {
@@ -10451,7 +10451,7 @@
 <a href=#10451 id=10451 data-nosnippet>10451</a>                ImagingError::Unsupported(<span class="string">"mosaic Metal cache worker panicked"</span>.to_string())
 <a href=#10452 id=10452 data-nosnippet>10452</a>            })<span class="question-mark">??</span>);
 <a href=#10453 id=10453 data-nosnippet>10453</a>        }
-<a href=#10454 id=10454 data-nosnippet>10454</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#10454 id=10454 data-nosnippet>10454</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#10455 id=10455 data-nosnippet>10455</a>    })<span class="question-mark">?</span>;
 <a href=#10456 id=10456 data-nosnippet>10456</a>
 <a href=#10457 id=10457 data-nosnippet>10457</a>    <span class="kw">let </span><span class="kw-2">mut </span>cache = (<span class="number">0</span>..groups.len()).map(|<span class="kw">_</span>| <span class="prelude-val">None</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
@@ -10882,7 +10882,7 @@
 <a href=#10882 id=10882 data-nosnippet>10882</a>                ImagingError::Unsupported(<span class="string">"mosaic dirty sample worker panicked"</span>.to_string())
 <a href=#10883 id=10883 data-nosnippet>10883</a>            })<span class="question-mark">?</span>);
 <a href=#10884 id=10884 data-nosnippet>10884</a>        }
-<a href=#10885 id=10885 data-nosnippet>10885</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#10885 id=10885 data-nosnippet>10885</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#10886 id=10886 data-nosnippet>10886</a>    })<span class="question-mark">?</span>;
 <a href=#10887 id=10887 data-nosnippet>10887</a>    <span class="kw">let </span>join_elapsed = profile::elapsed_since(join_started);
 <a href=#10888 id=10888 data-nosnippet>10888</a>
@@ -11935,7 +11935,7 @@
 <a href=#11935 id=11935 data-nosnippet>11935</a>                    metal_stats.add_assign(contribution.metal_stats);
 <a href=#11936 id=11936 data-nosnippet>11936</a>                    add_complex64_grid(<span class="kw-2">&amp;mut </span>residual_grid, <span class="kw-2">&amp;</span>contribution.residual_grid);
 <a href=#11937 id=11937 data-nosnippet>11937</a>                }
-<a href=#11938 id=11938 data-nosnippet>11938</a>                Ok::&lt;<span class="kw">_</span>, ImagingError&gt;((
+<a href=#11938 id=11938 data-nosnippet>11938</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;((
 <a href=#11939 id=11939 data-nosnippet>11939</a>                    worker_samples,
 <a href=#11940 id=11940 data-nosnippet>11940</a>                    alloc_elapsed,
 <a href=#11941 id=11941 data-nosnippet>11941</a>                    worker_started.elapsed(),
@@ -11947,7 +11947,7 @@
 <a href=#11947 id=11947 data-nosnippet>11947</a>        <span class="kw">for </span>handle <span class="kw">in </span>handles {
 <a href=#11948 id=11948 data-nosnippet>11948</a>            worker_results.push(handle.join().expect(<span class="string">"mosaic residual worker panicked"</span>)<span class="question-mark">?</span>);
 <a href=#11949 id=11949 data-nosnippet>11949</a>        }
-<a href=#11950 id=11950 data-nosnippet>11950</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#11950 id=11950 data-nosnippet>11950</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#11951 id=11951 data-nosnippet>11951</a>    })<span class="question-mark">?</span>;
 <a href=#11952 id=11952 data-nosnippet>11952</a>    <span class="kw">let </span>join_elapsed = join_started.elapsed();
 <a href=#11953 id=11953 data-nosnippet>11953</a>
@@ -12380,7 +12380,7 @@
 <a href=#12380 id=12380 data-nosnippet>12380</a>                ImagingError::Unsupported(<span class="string">"mosaic residual sample worker panicked"</span>.to_string())
 <a href=#12381 id=12381 data-nosnippet>12381</a>            })<span class="question-mark">?</span>);
 <a href=#12382 id=12382 data-nosnippet>12382</a>        }
-<a href=#12383 id=12383 data-nosnippet>12383</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#12383 id=12383 data-nosnippet>12383</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#12384 id=12384 data-nosnippet>12384</a>    })<span class="question-mark">?</span>;
 <a href=#12385 id=12385 data-nosnippet>12385</a>    <span class="kw">let </span>join_elapsed = profile::elapsed_since(join_started);
 <a href=#12386 id=12386 data-nosnippet>12386</a>
@@ -15001,7 +15001,7 @@
 <a href=#15001 id=15001 data-nosnippet>15001</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_iterations = <span class="number">0usize</span>;
 <a href=#15002 id=15002 data-nosnippet>15002</a>    <span class="kw">let </span><span class="kw-2">mut </span>reported_minor_iterations = <span class="number">0usize</span>;
 <a href=#15003 id=15003 data-nosnippet>15003</a>    <span class="kw">let </span><span class="kw-2">mut </span>major_cycles = <span class="number">0usize</span>;
-<a href=#15004 id=15004 data-nosnippet>15004</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = None::&lt;CleanStopReason&gt;;
+<a href=#15004 id=15004 data-nosnippet>15004</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#15005 id=15005 data-nosnippet>15005</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycle_traces = Vec::&lt;MinorCycleTrace&gt;::new();
 <a href=#15006 id=15006 data-nosnippet>15006</a>    <span class="kw">let </span><span class="kw-2">mut </span>final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
 <a href=#15007 id=15007 data-nosnippet>15007</a>    <span class="kw">let </span><span class="kw-2">mut </span>min_residual_peak_jy_per_beam = initial_peak;
@@ -16157,7 +16157,7 @@
 <a href=#16157 id=16157 data-nosnippet>16157</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_iterations = <span class="number">0usize</span>;
 <a href=#16158 id=16158 data-nosnippet>16158</a>    <span class="kw">let </span><span class="kw-2">mut </span>reported_minor_iterations = <span class="number">0usize</span>;
 <a href=#16159 id=16159 data-nosnippet>16159</a>    <span class="kw">let </span><span class="kw-2">mut </span>major_cycles = <span class="number">0usize</span>;
-<a href=#16160 id=16160 data-nosnippet>16160</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = None::&lt;CleanStopReason&gt;;
+<a href=#16160 id=16160 data-nosnippet>16160</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#16161 id=16161 data-nosnippet>16161</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycle_traces = Vec::&lt;MinorCycleTrace&gt;::new();
 <a href=#16162 id=16162 data-nosnippet>16162</a>    <span class="kw">let </span><span class="kw-2">mut </span>final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
 <a href=#16163 id=16163 data-nosnippet>16163</a>    <span class="kw">let </span><span class="kw-2">mut </span>min_residual_peak_jy_per_beam = initial_peak;
@@ -16278,7 +16278,7 @@
 <a href=#16278 id=16278 data-nosnippet>16278</a>        minor_iterations += outcome.actual_updates;
 <a href=#16279 id=16279 data-nosnippet>16279</a>        reported_minor_iterations = reported_after_outcome;
 <a href=#16280 id=16280 data-nosnippet>16280</a>        final_cycle_threshold_jy_per_beam = outcome.final_cycle_threshold_jy_per_beam;
-<a href=#16281 id=16281 data-nosnippet>16281</a>        <span class="kw">let </span><span class="kw-2">mut </span>stop_after_refresh = None::&lt;CleanStopReason&gt;;
+<a href=#16281 id=16281 data-nosnippet>16281</a>        <span class="kw">let </span><span class="kw-2">mut </span>stop_after_refresh = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#16282 id=16282 data-nosnippet>16282</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(reason) = outcome.stop_reason {
 <a href=#16283 id=16283 data-nosnippet>16283</a>            <span class="kw">match </span>reason {
 <a href=#16284 id=16284 data-nosnippet>16284</a>                CleanStopReason::CycleThresholdReached <span class="kw">if </span>outcome.updated_model =&gt; {}
@@ -16556,7 +16556,7 @@
 <a href=#16556 id=16556 data-nosnippet>16556</a>    <span class="kw">let </span><span class="kw-2">mut </span>peak_searches = <span class="number">0usize</span>;
 <a href=#16557 id=16557 data-nosnippet>16557</a>    <span class="kw">let </span><span class="kw-2">mut </span>subtract_updates = <span class="number">0usize</span>;
 <a href=#16558 id=16558 data-nosnippet>16558</a>    <span class="kw">let </span>image_pixels = residual.len();
-<a href=#16559 id=16559 data-nosnippet>16559</a>    <span class="kw">let </span><span class="kw-2">mut </span>first_peak = None::&lt;((usize, usize), f32)&gt;;
+<a href=#16559 id=16559 data-nosnippet>16559</a>    <span class="kw">let </span><span class="kw-2">mut </span>first_peak = <span class="prelude-val">None</span>::&lt;((usize, usize), f32)&gt;;
 <a href=#16560 id=16560 data-nosnippet>16560</a>    <span class="kw">while </span>cycle_component_updates &lt; cycle_component_budget {
 <a href=#16561 id=16561 data-nosnippet>16561</a>        <span class="kw">let </span>peak_started = Instant::now();
 <a href=#16562 id=16562 data-nosnippet>16562</a>        <span class="kw">let </span>peak = hclean_peak_location_masked(residual, request.clean_mask.as_ref());
@@ -20130,7 +20130,7 @@
 <a href=#20130 id=20130 data-nosnippet>20130</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_iterations = <span class="number">0usize</span>;
 <a href=#20131 id=20131 data-nosnippet>20131</a>    <span class="kw">let </span><span class="kw-2">mut </span>reported_minor_iterations = <span class="number">0usize</span>;
 <a href=#20132 id=20132 data-nosnippet>20132</a>    <span class="kw">let </span><span class="kw-2">mut </span>major_cycles = <span class="number">0usize</span>;
-<a href=#20133 id=20133 data-nosnippet>20133</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = None::&lt;CleanStopReason&gt;;
+<a href=#20133 id=20133 data-nosnippet>20133</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#20134 id=20134 data-nosnippet>20134</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycle_traces = Vec::&lt;MinorCycleTrace&gt;::new();
 <a href=#20135 id=20135 data-nosnippet>20135</a>    <span class="kw">let </span><span class="kw-2">mut </span>final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
 <a href=#20136 id=20136 data-nosnippet>20136</a>    <span class="kw">let </span><span class="kw-2">mut </span>min_residual_peak_jy_per_beam = initial_peak;
@@ -20375,7 +20375,7 @@
 <a href=#20375 id=20375 data-nosnippet>20375</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_iterations = <span class="number">0usize</span>;
 <a href=#20376 id=20376 data-nosnippet>20376</a>    <span class="kw">let </span><span class="kw-2">mut </span>reported_minor_iterations = <span class="number">0usize</span>;
 <a href=#20377 id=20377 data-nosnippet>20377</a>    <span class="kw">let </span><span class="kw-2">mut </span>major_cycles = <span class="number">0usize</span>;
-<a href=#20378 id=20378 data-nosnippet>20378</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = None::&lt;CleanStopReason&gt;;
+<a href=#20378 id=20378 data-nosnippet>20378</a>    <span class="kw">let </span><span class="kw-2">mut </span>clean_stop_reason = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#20379 id=20379 data-nosnippet>20379</a>    <span class="kw">let </span><span class="kw-2">mut </span>minor_cycle_traces = Vec::&lt;MinorCycleTrace&gt;::new();
 <a href=#20380 id=20380 data-nosnippet>20380</a>    <span class="kw">let </span><span class="kw-2">mut </span>final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
 <a href=#20381 id=20381 data-nosnippet>20381</a>    <span class="kw">let </span><span class="kw-2">mut </span>min_residual_peak_jy_per_beam = initial_peak;
@@ -20467,7 +20467,7 @@
 <a href=#20467 id=20467 data-nosnippet>20467</a>        <span class="kw">let </span>initial_cycle_component = cycle_candidate.strength.abs();
 <a href=#20468 id=20468 data-nosnippet>20468</a>        <span class="kw">let </span><span class="kw-2">mut </span>cycle_component_updates = <span class="number">0usize</span>;
 <a href=#20469 id=20469 data-nosnippet>20469</a>        <span class="kw">let </span><span class="kw-2">mut </span>updated_model = <span class="bool-val">false</span>;
-<a href=#20470 id=20470 data-nosnippet>20470</a>        <span class="kw">let </span><span class="kw-2">mut </span>cycle_stop_reason = None::&lt;CleanStopReason&gt;;
+<a href=#20470 id=20470 data-nosnippet>20470</a>        <span class="kw">let </span><span class="kw-2">mut </span>cycle_stop_reason = <span class="prelude-val">None</span>::&lt;CleanStopReason&gt;;
 <a href=#20471 id=20471 data-nosnippet>20471</a>        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
 <a href=#20472 id=20472 data-nosnippet>20472</a>        <span class="kw">let </span><span class="kw-2">mut </span>dirty_window = full_window;
 <a href=#20473 id=20473 data-nosnippet>20473</a>        emit_standard_mfs_controller_progress(
@@ -21062,7 +21062,7 @@
 <a href=#21062 id=21062 data-nosnippet>21062</a>    mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Array2&lt;bool&gt;&gt;,
 <a href=#21063 id=21063 data-nosnippet>21063</a>    window: ImageWindow,
 <a href=#21064 id=21064 data-nosnippet>21064</a>) -&gt; <span class="prelude-ty">Option</span>&lt;MultiscaleCandidate&gt; {
-<a href=#21065 id=21065 data-nosnippet>21065</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = None::&lt;(MultiscaleCandidate, f32)&gt;;
+<a href=#21065 id=21065 data-nosnippet>21065</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = <span class="prelude-val">None</span>::&lt;(MultiscaleCandidate, f32)&gt;;
 <a href=#21066 id=21066 data-nosnippet>21066</a>    <span class="kw">for </span>scale_index <span class="kw">in </span><span class="number">0</span>..state.dirty_conv_scales.len() {
 <a href=#21067 id=21067 data-nosnippet>21067</a>        <span class="kw">let </span>search_mask = state
 <a href=#21068 id=21068 data-nosnippet>21068</a>            .scale_masks
@@ -21276,7 +21276,7 @@
 <a href=#21276 id=21276 data-nosnippet>21276</a>}
 <a href=#21277 id=21277 data-nosnippet>21277</a>
 <a href=#21278 id=21278 data-nosnippet>21278</a><span class="kw">fn </span>peak_clark_active_pixel(active_pixels: <span class="kw-2">&amp;</span>ClarkActiveSet) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, ClarkActivePixel)&gt; {
-<a href=#21279 id=21279 data-nosnippet>21279</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = None::&lt;(usize, ClarkActivePixel)&gt;;
+<a href=#21279 id=21279 data-nosnippet>21279</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = <span class="prelude-val">None</span>::&lt;(usize, ClarkActivePixel)&gt;;
 <a href=#21280 id=21280 data-nosnippet>21280</a>    <span class="kw">for </span>(index, pixel) <span class="kw">in </span>active_pixels.pixels.iter().copied().enumerate() {
 <a href=#21281 id=21281 data-nosnippet>21281</a>        <span class="kw">match </span>best {
 <a href=#21282 id=21282 data-nosnippet>21282</a>            <span class="prelude-val">None </span>=&gt; best = <span class="prelude-val">Some</span>((index, pixel)),
@@ -22597,7 +22597,7 @@
 <a href=#22597 id=22597 data-nosnippet>22597</a>    end_x: usize,
 <a href=#22598 id=22598 data-nosnippet>22598</a>    ny: usize,
 <a href=#22599 id=22599 data-nosnippet>22599</a>) -&gt; <span class="prelude-ty">Option</span>&lt;((usize, usize), Vec&lt;f32&gt;, f32)&gt; {
-<a href=#22600 id=22600 data-nosnippet>22600</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = None::&lt;((usize, usize), Vec&lt;f32&gt;, f32)&gt;;
+<a href=#22600 id=22600 data-nosnippet>22600</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = <span class="prelude-val">None</span>::&lt;((usize, usize), Vec&lt;f32&gt;, f32)&gt;;
 <a href=#22601 id=22601 data-nosnippet>22601</a>    <span class="kw">let </span><span class="kw-2">mut </span>best_penalty = -<span class="number">1.0f32</span>;
 <a href=#22602 id=22602 data-nosnippet>22602</a>    <span class="kw">for </span>x <span class="kw">in </span>start_x..end_x {
 <a href=#22603 id=22603 data-nosnippet>22603</a>        <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..ny {
@@ -23604,7 +23604,7 @@
 <a href=#23604 id=23604 data-nosnippet>23604</a>                ImagingError::Unsupported(<span class="string">"standard MFS dirty grid worker panicked"</span>.to_string())
 <a href=#23605 id=23605 data-nosnippet>23605</a>            })<span class="question-mark">?</span>);
 <a href=#23606 id=23606 data-nosnippet>23606</a>        }
-<a href=#23607 id=23607 data-nosnippet>23607</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#23607 id=23607 data-nosnippet>23607</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#23608 id=23608 data-nosnippet>23608</a>    })<span class="question-mark">?</span>;
 <a href=#23609 id=23609 data-nosnippet>23609</a>    <span class="kw">let </span>join_elapsed = profile::elapsed_since(join_started);
 <a href=#23610 id=23610 data-nosnippet>23610</a>
@@ -24319,7 +24319,7 @@
 <a href=#24319 id=24319 data-nosnippet>24319</a>                ImagingError::Unsupported(<span class="string">"standard MFS grid worker panicked"</span>.to_string())
 <a href=#24320 id=24320 data-nosnippet>24320</a>            })<span class="question-mark">?</span>);
 <a href=#24321 id=24321 data-nosnippet>24321</a>        }
-<a href=#24322 id=24322 data-nosnippet>24322</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#24322 id=24322 data-nosnippet>24322</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#24323 id=24323 data-nosnippet>24323</a>    })<span class="question-mark">?</span>;
 <a href=#24324 id=24324 data-nosnippet>24324</a>    <span class="kw">let </span>join_elapsed = profile::elapsed_since(join_started);
 <a href=#24325 id=24325 data-nosnippet>24325</a>
@@ -24620,7 +24620,7 @@
 <a href=#24620 id=24620 data-nosnippet>24620</a>                ImagingError::Unsupported(<span class="string">"standard MFS streaming grid worker panicked"</span>.to_string())
 <a href=#24621 id=24621 data-nosnippet>24621</a>            })<span class="question-mark">?</span>);
 <a href=#24622 id=24622 data-nosnippet>24622</a>        }
-<a href=#24623 id=24623 data-nosnippet>24623</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#24623 id=24623 data-nosnippet>24623</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#24624 id=24624 data-nosnippet>24624</a>    })<span class="question-mark">?</span>;
 <a href=#24625 id=24625 data-nosnippet>24625</a>    <span class="kw">let </span>join_elapsed = profile::elapsed_since(join_started);
 <a href=#24626 id=24626 data-nosnippet>24626</a>
@@ -26313,7 +26313,7 @@
 <a href=#26313 id=26313 data-nosnippet>26313</a>                ImagingError::Unsupported(<span class="string">"wproject streaming worker panicked"</span>.to_string())
 <a href=#26314 id=26314 data-nosnippet>26314</a>            })<span class="question-mark">?</span>);
 <a href=#26315 id=26315 data-nosnippet>26315</a>        }
-<a href=#26316 id=26316 data-nosnippet>26316</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#26316 id=26316 data-nosnippet>26316</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#26317 id=26317 data-nosnippet>26317</a>    })<span class="question-mark">?</span>;
 <a href=#26318 id=26318 data-nosnippet>26318</a>    local_results.sort_by_key(|(worker_index, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>)| <span class="kw-2">*</span>worker_index);
 <a href=#26319 id=26319 data-nosnippet>26319</a>    <span class="kw">if </span>profile_detail {
@@ -26626,7 +26626,7 @@
 <a href=#26626 id=26626 data-nosnippet>26626</a>                ImagingError::Unsupported(<span class="string">"wproject PSF grid worker panicked"</span>.to_string())
 <a href=#26627 id=26627 data-nosnippet>26627</a>            })<span class="question-mark">?</span>);
 <a href=#26628 id=26628 data-nosnippet>26628</a>        }
-<a href=#26629 id=26629 data-nosnippet>26629</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#26629 id=26629 data-nosnippet>26629</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#26630 id=26630 data-nosnippet>26630</a>    })<span class="question-mark">?</span>;
 <a href=#26631 id=26631 data-nosnippet>26631</a>    <span class="kw">for </span>local_grid <span class="kw">in </span><span class="kw-2">&amp;</span>local_grids {
 <a href=#26632 id=26632 data-nosnippet>26632</a>        add_complex32_grid(psf_grid, local_grid);
@@ -28287,7 +28287,7 @@
 <a href=#28287 id=28287 data-nosnippet>28287</a>                        )<span class="question-mark">?</span>;
 <a href=#28288 id=28288 data-nosnippet>28288</a>                    }
 <a href=#28289 id=28289 data-nosnippet>28289</a>                }
-<a href=#28290 id=28290 data-nosnippet>28290</a>                Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(WProjectMetalPreparedLocal {
+<a href=#28290 id=28290 data-nosnippet>28290</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(WProjectMetalPreparedLocal {
 <a href=#28291 id=28291 data-nosnippet>28291</a>                    sample_start,
 <a href=#28292 id=28292 data-nosnippet>28292</a>                    samples,
 <a href=#28293 id=28293 data-nosnippet>28293</a>                    skipped_samples,
@@ -28307,7 +28307,7 @@
 <a href=#28307 id=28307 data-nosnippet>28307</a>                )
 <a href=#28308 id=28308 data-nosnippet>28308</a>            })<span class="question-mark">??</span>);
 <a href=#28309 id=28309 data-nosnippet>28309</a>        }
-<a href=#28310 id=28310 data-nosnippet>28310</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#28310 id=28310 data-nosnippet>28310</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#28311 id=28311 data-nosnippet>28311</a>    })<span class="question-mark">?</span>;
 <a href=#28312 id=28312 data-nosnippet>28312</a>    local_results.sort_by_key(|local| local.sample_start);
 <a href=#28313 id=28313 data-nosnippet>28313</a>
@@ -28478,7 +28478,7 @@
 <a href=#28478 id=28478 data-nosnippet>28478</a>                        )<span class="question-mark">?</span>;
 <a href=#28479 id=28479 data-nosnippet>28479</a>                    }
 <a href=#28480 id=28480 data-nosnippet>28480</a>                }
-<a href=#28481 id=28481 data-nosnippet>28481</a>                Ok::&lt;<span class="kw">_</span>, ImagingError&gt;(WProjectMetalPreparedLocal {
+<a href=#28481 id=28481 data-nosnippet>28481</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(WProjectMetalPreparedLocal {
 <a href=#28482 id=28482 data-nosnippet>28482</a>                    sample_start,
 <a href=#28483 id=28483 data-nosnippet>28483</a>                    samples,
 <a href=#28484 id=28484 data-nosnippet>28484</a>                    skipped_samples,
@@ -28498,7 +28498,7 @@
 <a href=#28498 id=28498 data-nosnippet>28498</a>                )
 <a href=#28499 id=28499 data-nosnippet>28499</a>            })<span class="question-mark">??</span>);
 <a href=#28500 id=28500 data-nosnippet>28500</a>        }
-<a href=#28501 id=28501 data-nosnippet>28501</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#28501 id=28501 data-nosnippet>28501</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#28502 id=28502 data-nosnippet>28502</a>    })<span class="question-mark">?</span>;
 <a href=#28503 id=28503 data-nosnippet>28503</a>    local_results.sort_by_key(|local| local.sample_start);
 <a href=#28504 id=28504 data-nosnippet>28504</a>
@@ -28644,7 +28644,7 @@
 <a href=#28644 id=28644 data-nosnippet>28644</a>                ImagingError::Unsupported(<span class="string">"wproject sample planning worker panicked"</span>.to_string())
 <a href=#28645 id=28645 data-nosnippet>28645</a>            })<span class="question-mark">?</span>);
 <a href=#28646 id=28646 data-nosnippet>28646</a>        }
-<a href=#28647 id=28647 data-nosnippet>28647</a>        Ok::&lt;(), ImagingError&gt;(())
+<a href=#28647 id=28647 data-nosnippet>28647</a>        <span class="prelude-val">Ok</span>::&lt;(), ImagingError&gt;(())
 <a href=#28648 id=28648 data-nosnippet>28648</a>    })<span class="question-mark">?</span>;
 <a href=#28649 id=28649 data-nosnippet>28649</a>    local_results.sort_by_key(|(batch_offset, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>)| <span class="kw-2">*</span>batch_offset);
 <a href=#28650 id=28650 data-nosnippet>28650</a>
@@ -29250,7 +29250,7 @@
 <a href=#29250 id=29250 data-nosnippet>29250</a>    y1: usize,
 <a href=#29251 id=29251 data-nosnippet>29251</a>) -&gt; <span class="prelude-ty">Option</span>&lt;((usize, usize), f32)&gt; {
 <a href=#29252 id=29252 data-nosnippet>29252</a>    <span class="kw">let </span>(nx, <span class="kw">_</span>) = image.dim();
-<a href=#29253 id=29253 data-nosnippet>29253</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = None::&lt;((usize, usize), f32, usize)&gt;;
+<a href=#29253 id=29253 data-nosnippet>29253</a>    <span class="kw">let </span><span class="kw-2">mut </span>best = <span class="prelude-val">None</span>::&lt;((usize, usize), f32, usize)&gt;;
 <a href=#29254 id=29254 data-nosnippet>29254</a>    <span class="kw">match </span>mask {
 <a href=#29255 id=29255 data-nosnippet>29255</a>        <span class="prelude-val">Some</span>(mask) =&gt; {
 <a href=#29256 id=29256 data-nosnippet>29256</a>            <span class="kw">for </span>x <span class="kw">in </span>x0..=x1 {
@@ -29663,7 +29663,7 @@
 <a href=#29663 id=29663 data-nosnippet>29663</a>}
 <a href=#29664 id=29664 data-nosnippet>29664</a>
 <a href=#29665 id=29665 data-nosnippet>29665</a><span class="kw">fn </span>kernel_nonzero_support(kernel: <span class="kw-2">&amp;</span>Array2&lt;f32&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;KernelSupport&gt; {
-<a href=#29666 id=29666 data-nosnippet>29666</a>    <span class="kw">let </span><span class="kw-2">mut </span>support = None::&lt;KernelSupport&gt;;
+<a href=#29666 id=29666 data-nosnippet>29666</a>    <span class="kw">let </span><span class="kw-2">mut </span>support = <span class="prelude-val">None</span>::&lt;KernelSupport&gt;;
 <a href=#29667 id=29667 data-nosnippet>29667</a>    <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..kernel.shape()[<span class="number">0</span>] {
 <a href=#29668 id=29668 data-nosnippet>29668</a>        <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..kernel.shape()[<span class="number">1</span>] {
 <a href=#29669 id=29669 data-nosnippet>29669</a>            <span class="kw">if </span>kernel[(x, y)] == <span class="number">0.0 </span>{
@@ -29819,7 +29819,7 @@
 <a href=#29819 id=29819 data-nosnippet>29819</a>    <span class="kw">use </span>std::sync::{Arc, Mutex};
 <a href=#29820 id=29820 data-nosnippet>29820</a>    <span class="kw">use </span>std::time::Duration;
 <a href=#29821 id=29821 data-nosnippet>29821</a>
-<a href=#29822 id=29822 data-nosnippet>29822</a>    <span class="kw">use </span>super::{
+<a href=#29822 id=29822 data-nosnippet>29822</a>    <span class="kw">use super</span>::{
 <a href=#29823 id=29823 data-nosnippet>29823</a>        ClarkPsfPatch, CleanConfig, CleanMaskProductRequest, CleanStopReason, CompatibilityMode,
 <a href=#29824 id=29824 data-nosnippet>29824</a>        CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
 <a href=#29825 id=29825 data-nosnippet>29825</a>        GroupedVisibilityMetadata, GroupedVisibilityMetadataBatch, HogbomIterationMode,
@@ -29866,7 +29866,7 @@
 <a href=#29866 id=29866 data-nosnippet>29866</a>        trace_w_project_plan, trace_weighting,
 <a href=#29867 id=29867 data-nosnippet>29867</a>    };
 <a href=#29868 id=29868 data-nosnippet>29868</a>    <span class="attr">#[cfg(all(target_os = <span class="string">"macos"</span>, not(coverage)))]
-<a href=#29869 id=29869 data-nosnippet>29869</a>    </span><span class="kw">use </span>super::{
+<a href=#29869 id=29869 data-nosnippet>29869</a>    </span><span class="kw">use super</span>::{
 <a href=#29870 id=29870 data-nosnippet>29870</a>        build_multiscale_state, compute_dirty_psf_and_residual_standard_metal, fft_convolve_real,
 <a href=#29871 id=29871 data-nosnippet>29871</a>        peak_abs_value_masked, run_clark_minor_cycle_cpu, run_clark_minor_cycle_metal,
 <a href=#29872 id=29872 data-nosnippet>29872</a>        run_hogbom_minor_cycle_cpu, run_hogbom_minor_cycle_metal, run_multiscale_cotton_schwab,
