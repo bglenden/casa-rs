@@ -354,6 +354,10 @@ def build_plan(
     reuse_casa_prefix = os.environ.get("CASA_RS_BENCH_REUSE_CASA_PREFIX") or str_value(
         run, "reuse_casa_prefix", ""
     )
+    if reuse_rust_prefix:
+        skip_rust = "1"
+    if reuse_casa_prefix:
+        skip_casa = "1"
     profile_repeats = os.environ.get("CASA_RS_BENCH_PROFILE_REPEATS") or str(
         int_value(run, "profile_repeats", repeats)
     )
@@ -368,12 +372,18 @@ def build_plan(
     if not dry_run and casa_python and not pathlib.Path(casa_python).is_file():
         raise HarnessError(f"CASA_RS_CASA_PYTHON does not exist: {casa_python}")
 
+    casa_gridder = str_value(imaging, "casa_gridder", gridder)
+    wprojplanes = optional_int_string(imaging, "wprojplanes")
+    casa_wprojplanes = wprojplanes
+    if not casa_wprojplanes and casa_gridder in {"wproject", "widefield"}:
+        casa_wprojplanes = "-1"
+
     env = {
         "BENCH_REPEATS": str(repeats),
         "IMAGER_BENCH_MODE": bench_mode,
         "IMAGER_BENCH_SPECMODE": specmode,
         "IMAGER_BENCH_GRIDDER": gridder,
-        "IMAGER_BENCH_CASA_GRIDDER": str_value(imaging, "casa_gridder", gridder),
+        "IMAGER_BENCH_CASA_GRIDDER": casa_gridder,
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
         "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(imaging, "phasecenter_field"),
@@ -405,7 +415,8 @@ def build_plan(
         "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
         "IMAGER_BENCH_WTERM": wterm,
-        "IMAGER_BENCH_WPROJPLANES": optional_int_string(imaging, "wprojplanes"),
+        "IMAGER_BENCH_WPROJPLANES": wprojplanes,
+        "IMAGER_BENCH_CASA_WPROJPLANES": casa_wprojplanes,
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
@@ -883,7 +894,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["standard_mfs_source_read_ahead"].append(parsed)
         elif name == "dirty_product_fft_timing":
             buckets["dirty_product_fft"].append(parsed)
-        elif name == "dirty_product_gpu_resident":
+        elif name in {
+            "dirty_product_gpu_resident",
+            "mosaic_dirty_product_gpu_resident",
+        }:
             buckets["dirty_product_gpu_resident"].append(parsed)
         elif name == "dirty_product_gpu_resident_fallback":
             buckets["dirty_product_gpu_resident_fallback"].append(parsed)
@@ -1153,9 +1167,29 @@ def summarize_backend_plan_logs(buckets: dict[str, list[dict[str, Any]]]) -> dic
         "dirty_product_fft_fallback_used": dirty_product_fft.get("fallback_used"),
         "dirty_product_fft_total_ms": dirty_product_fft.get("total_ms"),
         "dirty_product_gpu_resident_products": dirty_product_gpu_resident.get("products"),
+        "dirty_product_gpu_resident_requested_backend": dirty_product_gpu_resident.get(
+            "requested_backend"
+        ),
         "dirty_product_gpu_resident_selected_backend": dirty_product_gpu_resident.get(
             "selected_backend"
         ),
+        "dirty_product_gpu_resident_fallback_used": dirty_product_gpu_resident.get(
+            "fallback_used"
+        ),
+        "dirty_product_gpu_resident_reason": dirty_product_gpu_resident.get("reason"),
+        "dirty_product_gpu_resident_plan_ms": dirty_product_gpu_resident.get("plan_ms"),
+        "dirty_product_gpu_resident_pack_ms": dirty_product_gpu_resident.get("pack_ms"),
+        "dirty_product_gpu_resident_transfer_to_device_ms": dirty_product_gpu_resident.get(
+            "transfer_to_device_ms"
+        ),
+        "dirty_product_gpu_resident_exec_ms": dirty_product_gpu_resident.get("exec_ms"),
+        "dirty_product_gpu_resident_device_exec_ms": dirty_product_gpu_resident.get(
+            "device_exec_ms"
+        ),
+        "dirty_product_gpu_resident_transfer_from_device_ms": dirty_product_gpu_resident.get(
+            "transfer_from_device_ms"
+        ),
+        "dirty_product_gpu_resident_sync_ms": dirty_product_gpu_resident.get("sync_ms"),
         "dirty_product_gpu_resident_postprocess_ms": dirty_product_gpu_resident.get(
             "postprocess_ms"
         ),
@@ -2042,6 +2076,33 @@ def build_benchmark_feature_summary(
                 "dirty_product_fft_requested_backend"
             ),
             "dirty_product_fft_total_ms": backend_summary.get("dirty_product_fft_total_ms"),
+            "dirty_product_gpu_resident_plan_ms": backend_summary.get(
+                "dirty_product_gpu_resident_plan_ms"
+            ),
+            "dirty_product_gpu_resident_pack_ms": backend_summary.get(
+                "dirty_product_gpu_resident_pack_ms"
+            ),
+            "dirty_product_gpu_resident_transfer_to_device_ms": backend_summary.get(
+                "dirty_product_gpu_resident_transfer_to_device_ms"
+            ),
+            "dirty_product_gpu_resident_exec_ms": backend_summary.get(
+                "dirty_product_gpu_resident_exec_ms"
+            ),
+            "dirty_product_gpu_resident_device_exec_ms": backend_summary.get(
+                "dirty_product_gpu_resident_device_exec_ms"
+            ),
+            "dirty_product_gpu_resident_transfer_from_device_ms": backend_summary.get(
+                "dirty_product_gpu_resident_transfer_from_device_ms"
+            ),
+            "dirty_product_gpu_resident_sync_ms": backend_summary.get(
+                "dirty_product_gpu_resident_sync_ms"
+            ),
+            "dirty_product_gpu_resident_postprocess_ms": backend_summary.get(
+                "dirty_product_gpu_resident_postprocess_ms"
+            ),
+            "dirty_product_gpu_resident_total_ms": backend_summary.get(
+                "dirty_product_gpu_resident_total_ms"
+            ),
         },
         "backend": {
             "requested_acceleration": mode.get("standard_mfs_acceleration"),
@@ -2061,6 +2122,18 @@ def build_benchmark_feature_summary(
             ),
             "dirty_product_fft_fallback_used": backend_summary.get(
                 "dirty_product_fft_fallback_used"
+            ),
+            "dirty_product_gpu_resident_requested_backend": backend_summary.get(
+                "dirty_product_gpu_resident_requested_backend"
+            ),
+            "dirty_product_gpu_resident_selected_backend": backend_summary.get(
+                "dirty_product_gpu_resident_selected_backend"
+            ),
+            "dirty_product_gpu_resident_fallback_used": backend_summary.get(
+                "dirty_product_gpu_resident_fallback_used"
+            ),
+            "dirty_product_gpu_resident_reason": backend_summary.get(
+                "dirty_product_gpu_resident_reason"
             ),
             "cube_per_plane_backend": backend_summary.get("cube_per_plane_backend"),
             "cube_per_plane_phase": backend_summary.get("cube_per_plane_phase"),

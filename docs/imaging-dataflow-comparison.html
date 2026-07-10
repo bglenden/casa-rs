@@ -696,9 +696,12 @@
             <li>Keep the pure <code>casa-imaging</code> prepared-batch boundary.</li>
             <li>Question adapter-level mode dispatch, cube orchestration, and product-writing spread in <code>casars-imager</code>.</li>
             <li>Standard/W-term gridding is intentionally grouped; mosaic PB projection is a separate implementation path.</li>
-            <li>Shared source read-ahead has an exact two-live-block ceiling: one producer block plus one consumer block, with a rendezvous channel and no third queued block.</li>
+            <li>Shared source read-ahead has an exact two-live-block ceiling: one producer block plus one consumer block, with a rendezvous channel and no third queued block. Consumer failure cancels the producer after any current bounded read and preserves the original error.</li>
+            <li>W-projection sends cached and newly read blocks through that bounded stream and one Metal dispatcher. Every chunk uses the update-density and live Metal-headroom partial-grid formula followed by deterministic host f64 cross-chunk reduction; there is no second streaming GPU kernel path or dataset-selected accumulation policy.</li>
+            <li>Cube shared-source concurrency is derived for every selected multi-slab shape from plane/channel geometry, exact source-cache bytes, per-plane state, hardware capacity, and the memory target. It is not selected by dataset identity or a particular <code>chanchunks</code> value; plans whose planes all fit use the ordinary one-slab route.</li>
             <li>The first single-MS, <code>nterms &lt;= 2</code>, no-W mosaic MT-MFS slice reuses bounded replay and carries raw-UVW density separately from projected mosaic coordinates.</li>
-            <li>Apple f32 dirty products may stay resident through FFT and normalization; Auto guards small batches and resident failures return to the shared CPU finisher.</li>
+            <li>Apple f32 standard and single-term mosaic dirty products may stay resident through FFT and normalization. MT-MFS normally accumulates into Metal-shared grids, returns inverse-FFT Taylor planes to CPU correction and PB normalization, and uses bounded host replay only for Auto recovery. Auto keeps host grids on CPU and Metal-shared grids on Metal from exact input-boundary bytes; explicit Metal fails closed.</li>
+            <li>Large mosaic MFS and MT-MFS use exact-plan records and disjoint output-owned tiles to write directly into Metal-shared FFT input. Standard MFS retains its established 256-pixel tiles; MT-MFS derives tile edge and count from grid geometry, kernel support, Taylor terms, workers, and scratch memory, then derives its group/chunk limit from exact record and route-copy costs.</li>
           </ul>
         </div>
 
@@ -957,7 +960,7 @@
           anchors behind the source paths below.
         </p>
         <ul class="source-list">
-          <li><code>casa-rs</code>: <a href="https://github.com/bglenden/casa-rs.git">https://github.com/bglenden/casa-rs.git</a> at <code>3ed73fc6dac066c8f3f63c6dbbf79e6aee390151</code></li>
+          <li><code>casa-rs</code>: <a href="https://github.com/bglenden/casa-rs.git">https://github.com/bglenden/casa-rs.git</a>, PR #361 wave branch; exact implementation and evidence commits are recorded in the PR closeout</li>
           <li>CASA C++/CASA6: <a href="https://open-bitbucket.nrao.edu/scm/casa/casa6.git">https://open-bitbucket.nrao.edu/scm/casa/casa6.git</a> at <code>61020062cee290f5466cffed5ec5032e0c7a3434</code></li>
           <li>LibRA fork: <a href="https://github.com/bglenden/libRA">https://github.com/bglenden/libRA</a> at <code>0ab99e261878334d6588eafa360cef3b673e897f</code></li>
           <li>LibRA upstream: <a href="https://github.com/ARDG-NRAO/LibRA.git">https://github.com/ARDG-NRAO/LibRA.git</a></li>

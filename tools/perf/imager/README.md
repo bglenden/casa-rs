@@ -35,7 +35,11 @@ imager.
     including exact workload/artifact handles, correctness gates, stage metrics,
     and speedup or slowdown fractions
 - `tools/perf/imager/imaging_performance_ledger.py`
-  - validates and summarizes the performance ledger
+  - validates formulas, role semantics, checked-in evidence identities and
+    SHA-256 digests, then summarizes the performance ledger
+- `tools/perf/imager/evidence/`
+  - retains compact final run/comparison JSON used by the ledger so CI can
+    verify evidence without workstation-local benchmark paths
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -132,8 +136,14 @@ current workload harness:
   prepare worker, one live source block, RustFFT product transforms, and no
   Metal grouped-input cache.
 - `chanchunks` is the CASA-like top-level spectral channel chunk count. The
-  planner may reuse a bounded resident source cache across chunks when that
-  fits the memory plan; it does not imply repeated full-MS reads.
+  requested count establishes the minimum slab shape; it is not an exact worker
+  cap or a switch for shared-source concurrency. For every cube plan, the
+  planner derives active planes and workers from plane/channel geometry,
+  hardware capacity, exact source-cache bytes, per-plane working state, and the
+  memory target. It uses the ordinary route when all planes fit one slab. Any
+  selected multi-slab shape can reuse a bounded resident source cache when the
+  same formula proves that cache resident, independent of dataset identity or a
+  particular `chanchunks` value.
 - `imaging_memory_target_mb`, `imaging_prepare_buffer_mb`,
   `imaging_row_block_rows`, and `imaging_prepare_workers` control the shared
   source-stream plan.
@@ -143,7 +153,9 @@ current workload harness:
   a zero-capacity rendezvous channel (`queue_capacity = max_live - 2`), so no
   third block can wait in the queue. One block is synchronous. Full-slab
   spectral modes default to one and reject the overlap plan when it would cost
-  modeled plane residency or row locality.
+  modeled plane residency or row locality. Consumer failure cancels the
+  producer after any current bounded read, wakes a blocked rendezvous send, and
+  preserves the original consumer error.
 - `imaging_fft_precision` and `imaging_fft_backend` select dirty/PSF/residual
   product transform policy independently from visibility-grid acceleration.
 
@@ -161,22 +173,95 @@ and the embedded observability snapshot schema is version 2.
 
 ## Apple GPU product finishing
 
-On Apple platforms, eligible f32 dirty-product batches can keep standard or
-mosaic PSF/residual/weight grids resident through MPSGraph FFT, grid correction,
-normalization, and peak reduction. An explicit `metal-mpsgraph` request uses the
-resident path when supported. `auto` selects it only when the batch shape and
-work size pass the profitability guard; small batches, f64 products,
-unsupported shapes, unavailable devices, and resident command failures use the
-shared CPU finisher. The fallback preserves the same product set and is emitted
-in detailed backend telemetry.
+On Apple platforms, eligible f32 standard and single-term mosaic dirty-product
+batches can keep PSF/residual/weight grids resident through MPSGraph FFT, grid
+correction, normalization, and peak reduction. Large mosaic MFS and MT-MFS also
+accumulate directly into a Metal-shared FFT input; MT-MFS returns transformed
+Taylor planes to the CPU for image correction and PB normalization. Output-owned
+tiles are disjoint, so CPU workers can convolve exact-plan records in parallel without
+atomics or full-grid worker replicas. MFS groups identical convolution plans;
+MT-MFS additionally stores f64 PSF moments and Complex64 dirty moments per plan,
+then forms the `2*nterms-1` PSF and `nterms` residual values before one projector
+traversal. Only the bounded tile accumulator narrows to f32. No full host grid,
+pack, or host-to-device grid copy is retained.
+
+MT-MFS compaction and tile routing retain only one metadata group and bounded
+raw-sample chunk at a time. The frontend scratch request is computed from image
+cells, Taylor plane count, and planned workers, and is capped by the run-level
+memory target after fixed products, caches, and one source row block. The core
+derives the tile edge and route-copy bound from grid geometry and kernel support,
+reduces worker count when required, and converts the remaining bytes into a raw
+sample limit using the actual record layouts. Reusable standard-MFS tap plans
+also use an exact record-byte reservation instead of a sample cutoff. These
+formulas do not identify or tune for a dataset.
+
+An explicit `metal-mpsgraph` request uses the resident path when supported.
+`auto` selects it when the exact f32 recipe is Metal-shared and therefore avoids
+an input-boundary materialization; host-resident and f64 products use the CPU
+finisher independent of shape or batch. Unsupported shapes, unavailable devices,
+and resident command failures also use the CPU finisher under `auto`. Standard
+and mosaic MFS recover retained shared grids without rereading the source. If
+`auto` must recover an MT-MFS Metal attempt, it replays the bounded stream to
+rebuild equivalent host grids; the normal MT-MFS route remains direct
+Metal-shared accumulation. Explicit Metal requests fail closed. Fallback
+preserves the same product set and is emitted in detailed backend telemetry.
 
 The performance ledger is authoritative for acceptance. In the current wave,
 the explicit Metal standard dirty-product stage improved from `45.552 ms` to
 `30.544 ms` (`1.49x`, `33.0%` lower), but the paired medium end-to-end run was
-still `8.4%` slower than CPU. Auto therefore keeps that small batch on CPU.
-Similarly, a proposed large-mosaic Metal command fusion was `8.7%` slower in
-the product FFT stage and was rejected. Kernel/stage wins are not promoted as
-end-to-end wins without a guarded retained-path comparison.
+still `8.4%` slower than CPU. Auto therefore keeps host-resident grids on CPU
+for every shape and batch; only Metal-shared recipes avoid the input boundary copy
+and remain on Metal. This decision is derived from exact recipe bytes rather
+than a workload-tuned image-size crossover.
+A separate proposed large-mosaic command fusion was `8.7%` slower in the
+product FFT stage and was rejected.
+
+The retained path wins at the large tier. On the `107 GiB` GLENDENNING ALMA
+mosaic dataset, the seven-field row selected `6,060,670` rows and `96,970,720`
+channel samples into a `1280x1280` dirty product. Exact-plan grouping plus the
+disjoint direct grid reduced single-term MFS wall from the prior `57.179 s` CPU
+result to `23.241 s` (`2.46x`, `59.4%` lower). A matched current CPU run was
+also `23.241 s`, so the retained Metal path removed the earlier slowdown rather
+than trading total time for a faster FFT.
+
+The final counterbalanced MFS run passes the zero-tolerance no-slowdown gate,
+but it does not support a release speedup claim. Its median paired block was
+`17.4%` lower, while the three block deltas ranged from `38.3%` lower to `48.9%`
+higher with a `43.6` percentage-point IQR. The retained adjacent semantic pair
+still shows the Metal PSF-product stage falling from `75.685 ms` to `26.616 ms`.
+The comparison remains `investigate` for `.image`, `.image.pbcor`, and
+`.residual` because the small f32 accumulation-order differences are spatially
+coherent; `.pb`, `.psf`, `.sumwt`, and `.weight` are `good`.
+
+For mosaic MT-MFS with `nterms=2`, the final counterbalanced estimate is a
+`3.71x` speedup, or `73.1%` lower wall. Its three paired-block reductions were
+`69.7%`, `73.1%`, and `78.8%`, with a `4.58` percentage-point IQR. An earlier
+matched diagnostic showed the initial-dirty replay falling from `119.777 s` to
+`22.935 s`.
+Exact-plan compaction retained about `7.4%` to `7.8%` of accepted records and
+tile routing duplicated those records only about `1.06x` to `1.12x`. Four
+workers used at most `10 MiB` aggregate host tile scratch and the five-plane
+Metal input occupied `75 MiB`. The same-run CASA wall was `508.642 s`.
+
+Replacing the fixed scratch clamp, four-tile assumption, route-copy count, and
+sample cutoffs with grid/support/term/worker/memory formulas produced a further
+single-run reduction on the same large Metal workload: `30.708 s` to `19.154 s`
+(`1.60x`, `37.6%` lower). In that historical run, the shape-derived planner
+selected a 453-pixel tile edge, nine disjoint tiles, four workers, and a
+`262,144,000`-byte scratch budget; those values describe the selected example,
+not fixed MT-MFS policy. All seven products in the previous-versus-current
+comparison are `good`, with maximum normalized RMS `9.13e-7`. This additional
+pair is not counterbalanced; the earlier `3.71x` CPU-to-Metal result remains the
+formal release claim.
+
+The retained CPU-versus-Metal products are all `good`, correlate at effectively
+`1.0`, and have maximum normalized RMS `8.53e-7`. The current `1280x1280` CASA
+oracle is also green on primary products: normalized RMS is at most `3.78e-7`,
+and Rust wall is `12.116 s` versus CASA `14.981 s`. Full-product review remains
+`investigate` only for cancellation-scale PSF/residual TT1 and sumwt TT1; model
+TT0/TT1 and sumwt TT0/TT2 are exact, and PB TT1 is zero in both implementations.
+Kernel/stage wins are promoted only when a retained-path comparison also clears
+end-to-end and product-equivalence gates.
 
 Read-ahead is also mode- and workload-sensitive. The standard MFS medium
 workload improved from `129.408 s` to `108.572 s` (`1.19x`, `16.1%` lower)
@@ -186,12 +271,18 @@ mosaic MT-MFS sentinel improved from `119.203 s` to `111.821 s` (`1.066x`,
 two-live-block ceiling and compare read-ahead-disabled versus enabled products
 as `good`; standard-MFS products are bit-identical.
 
-For the large spectral workload, guarded source-cache reuse made
-`chanchunks=4` faster than both comparison points: `101.044 s` versus
-`154.956 s` for one slab (`1.53x`, `34.8%` lower) and `279.915 s` for the old
-four-chunk path (`2.77x`, `63.9%` lower). Source-read time fell from `62.094 s`
-to `3.064 s` (`20.3x` lower). This is the accepted #56 behavior; repeated
-full-source reads across channel chunks are a regression.
+Cube shared-source concurrency is not a `chanchunks=4` or dataset-specific fast
+path. Every selected multi-slab shape is eligible when its geometry-derived
+source ranges and exact cache/per-plane memory model fit the target. As
+historical evidence, the medium seven-field mosaic cube workload's original
+exact `chanchunks=4` worker cap regressed to `42.34 s` versus `27.29 s` for one
+slab. The formula-derived planner allowed all eight planes at a modeled
+`3.529 GiB` active set under the `16 GiB` target and bypassed the unnecessary
+cache variant. Three counterbalanced blocks then measured that configuration at
+`8.92%` lower paired wall (`1.098x`) with zero slowdown tolerance; all seven
+products were bit-identical. Other geometries and memory targets may select a
+different one-slab or bounded multi-slab shape, with guarded shared-source reuse
+instead of repeated full-MS reads whenever the formula admits it.
 
 To compare native `simobserve` with CASA on a selected dataset:
 

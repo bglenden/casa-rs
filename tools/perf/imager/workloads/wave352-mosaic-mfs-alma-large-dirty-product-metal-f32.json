@@ -1,0 +1,71 @@
+{
+  "id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32",
+  "mode_id": "mosaic-mfs-one-channel",
+  "description": "Issue #352 large-tier ALMA mosaic Metal dirty-product row using all seven fields, 16 selected channels, and a 1280 image.",
+  "dataset": {
+    "key": "wave1-alma-mosaic-large",
+    "relative_path": "wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "wterm": "none",
+    "field": "0,1,2,3,4,5,6",
+    "phasecenter_field": 0,
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 16,
+    "imsize": 1280,
+    "cell_arcsec": 0.08,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "multiscale",
+    "scales": [
+      0,
+      5,
+      15
+    ],
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 0,
+    "minor_cycle_length": 25,
+    "pblimit": 0.2,
+    "write_pb": true,
+    "pbcor": true,
+    "standard_mfs_acceleration": "auto",
+    "imaging_fft_precision": "f32",
+    "imaging_fft_backend": "metal-mpsgraph"
+  },
+  "run": {
+    "repeats": 3,
+    "profile_repeats": 3,
+    "run_label": "wave352-large-dirty-product-metal-f32",
+    "storage_label": "external-ssd-wave1-large",
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "skip_casa": "1",
+    "evidence_role": "metal_f32_candidate"
+  },
+  "review": {
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "required_evidence_roles": [
+      "cpu_f32_baseline",
+      "metal_f32_candidate"
+    ]
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".psf",
+      ".weight",
+      ".sumwt",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 2000000
+  }
+}

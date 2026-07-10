@@ -1480,7 +1480,18 @@ fn build_density_grid(
     let thread_count = requested_threads
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
         .max(1);
-    if thread_count > 1 && sample_count >= 100_000 {
+    let actual_threads = if batches.len() == 1 {
+        thread_count.min(sample_count)
+    } else {
+        thread_count.min(batches.len())
+    }
+    .max(1);
+    if density_grid_parallel_profitable(
+        sample_count,
+        gridder.density_grid_shape(),
+        mirror_hermitian,
+        actual_threads,
+    ) {
         return build_density_grid_parallel(
             batches,
             gridder,
@@ -1490,6 +1501,30 @@ fn build_density_grid(
         );
     }
     build_density_grid_serial(batches, gridder, mirror_hermitian, convention)
+}
+
+fn density_grid_parallel_profitable(
+    sample_count: usize,
+    [nx, ny]: [usize; 2],
+    mirror_hermitian: bool,
+    thread_count: usize,
+) -> bool {
+    if thread_count <= 1 || sample_count == 0 {
+        return false;
+    }
+    let updates_per_sample = if mirror_hermitian { 2u128 } else { 1u128 };
+    let update_cell_touches = (sample_count as u128)
+        .saturating_mul(updates_per_sample)
+        .saturating_mul(2);
+    let grid_cells = (nx as u128).saturating_mul(ny as u128);
+    let workers = thread_count as u128;
+    let worker_update_touches = update_cell_touches.div_ceil(workers);
+    let worker_zero_touches = grid_cells;
+    let merge_touches = grid_cells.saturating_mul(workers).saturating_mul(3);
+    worker_update_touches
+        .saturating_add(worker_zero_touches)
+        .saturating_add(merge_touches)
+        < update_cell_touches
 }
 
 fn build_density_grid_serial(
@@ -3237,5 +3272,27 @@ mod tests {
         );
         assert_eq!(density[(17, 17)], 2.0);
         assert_eq!(density[(14, 14)], 2.0);
+    }
+
+    #[test]
+    fn density_parallelism_uses_grid_and_update_work_instead_of_sample_cutoff() {
+        assert!(!density_grid_parallel_profitable(
+            20_000,
+            [2048, 1536],
+            true,
+            8,
+        ));
+        assert!(density_grid_parallel_profitable(
+            40_000_000,
+            [2048, 1536],
+            true,
+            8,
+        ));
+        assert!(!density_grid_parallel_profitable(
+            40_000_000,
+            [2048, 1536],
+            true,
+            1,
+        ));
     }
 }

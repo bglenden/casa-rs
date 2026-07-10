@@ -17,6 +17,54 @@ pub(crate) const STANDARD_GRIDDER_TAP_COUNT: usize = STANDARD_GRIDDER_SUPPORT * 
 const GRIDDER_SUPPORT: usize = STANDARD_GRIDDER_SUPPORT;
 const GRIDDER_TAP_COUNT: usize = STANDARD_GRIDDER_TAP_COUNT;
 const GRIDDER_PRODUCT_TAP_COUNT: usize = GRIDDER_TAP_COUNT * GRIDDER_TAP_COUNT;
+// CASA WPConvFunc expands the measured maximum W before deriving both the
+// automatic plane count and quadratic W-plane spacing.
+const CASA_WPROJECT_MAX_W_SAFETY_FACTOR: f64 = 1.05;
+
+/// Mutable centered-grid storage used by f32 gridders.
+///
+/// Implementations may store cells in centered host order or map them into a
+/// backend-native FFT input layout. The gridder remains responsible only for
+/// logical centered coordinates.
+pub(crate) trait CenteredComplex32Grid {
+    /// Logical centered grid shape.
+    fn shape(&self) -> [usize; 2];
+
+    /// Add one value at a logical centered flat index.
+    fn add_centered_flat(&mut self, flat_index: usize, value: Complex32);
+}
+
+/// Mutable batch of complex centered f32 grids updated by one convolution pass.
+pub(crate) trait CenteredComplex32GridBatch {
+    /// Logical centered grid shape shared by every plane.
+    fn shape(&self) -> [usize; 2];
+
+    /// Number of planes expected in each projected value slice.
+    fn plane_count(&self) -> usize;
+
+    /// Add one scaled value per plane at a logical centered flat index.
+    fn add_centered_scaled_values_flat(
+        &mut self,
+        flat_index: usize,
+        scale: Complex32,
+        values: &[Complex32],
+    );
+}
+
+impl CenteredComplex32Grid for Array2<Complex32> {
+    fn shape(&self) -> [usize; 2] {
+        [self.shape()[0], self.shape()[1]]
+    }
+
+    fn add_centered_flat(&mut self, flat_index: usize, value: Complex32) {
+        if let Some(storage) = self.as_slice_memory_order_mut() {
+            storage[flat_index] += value;
+        } else {
+            let columns = self.shape()[1];
+            self[(flat_index / columns, flat_index % columns)] += value;
+        }
+    }
+}
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -577,30 +625,45 @@ impl StandardGridder {
         }
     }
 
-    pub(crate) fn grid_sample_product_planned(
+    pub(crate) fn grid_sample_product_planned<G: CenteredComplex32Grid>(
         &self,
-        grid: &mut Array2<Complex32>,
+        grid: &mut G,
         taps: &ProductTapSet,
         value: Complex32,
     ) {
-        if let Some(storage) = grid.as_slice_memory_order_mut() {
-            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-                let weight = taps.weights[tap];
-                let cell = &mut storage[taps.flat_indices[tap]];
-                cell.re += value.re * weight;
-                cell.im += value.im * weight;
-            }
-            return;
-        }
+        debug_assert_eq!(grid.shape(), self.grid_shape);
         for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-            let flat_index = taps.flat_indices[tap];
             let weight = taps.weights[tap];
-            let cell = &mut grid[(
-                flat_index / self.grid_shape[1],
-                flat_index % self.grid_shape[1],
-            )];
-            cell.re += value.re * weight;
-            cell.im += value.im * weight;
+            grid.add_centered_flat(taps.flat_indices[tap], value * weight);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    pub(crate) fn grid_compact_taps_planned_values_f32<G: CenteredComplex32GridBatch>(
+        &self,
+        grids: &mut G,
+        values: &[Complex32],
+        x_start: usize,
+        y_start: usize,
+        x_weight_index: usize,
+        y_weight_index: usize,
+    ) {
+        debug_assert_eq!(grids.shape(), self.grid_shape);
+        debug_assert_eq!(grids.plane_count(), values.len());
+        let grid_stride = self.grid_shape[1];
+        let x_weights = &self.normalized_tap_weights[x_weight_index];
+        let y_weights = &self.normalized_tap_weights[y_weight_index];
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = (x_start + x_tap) * grid_stride;
+            let x_weight = x_weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                let weight = x_weight * y_weights[y_tap];
+                grids.add_centered_scaled_values_flat(
+                    x_index + y_start + y_tap,
+                    Complex32::new(weight, 0.0),
+                    values,
+                );
+            }
         }
     }
 
@@ -1650,6 +1713,28 @@ impl StandardGridder {
         image
     }
 
+    pub(crate) fn corrected_mosaic_image_from_grid(
+        &self,
+        raw: &Array2<Complex32>,
+        conv_sampling: usize,
+    ) -> Array2<f32> {
+        let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                let sinc_factor = sinc[grid_x] * sinc[grid_y];
+                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
+                    (raw[(grid_x, grid_y)] / sinc_factor).re
+                } else {
+                    0.0
+                };
+            }
+        }
+        image
+    }
+
     pub(crate) fn mosaic_weight_image_from_grid_f64(&self, raw: &Array2<Complex64>) -> Array2<f32> {
         // CASA's MosaicFT finalizes skyCoverage/weight by FFTing the weight
         // lattice and cropping it directly; unlike dirty/residual images, it
@@ -1660,6 +1745,18 @@ impl StandardGridder {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
                 image[(x, y)] = raw[(grid_x, grid_y)].re as f32;
+            }
+        }
+        image
+    }
+
+    pub(crate) fn mosaic_weight_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                image[(x, y)] = raw[(grid_x, grid_y)].re;
             }
         }
         image
@@ -2270,13 +2367,13 @@ impl ScreenProjector {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn grid_sample_planned(
+    pub(crate) fn grid_sample_planned<G: CenteredComplex32Grid>(
         &self,
-        grid: &mut Array2<Complex32>,
+        grid: &mut G,
         plan: &ScreenProjectSamplePlan,
         value: Complex32,
     ) {
+        debug_assert_eq!(grid.shape(), self.grid_shape);
         for iy in plan.min_iy..=plan.max_iy {
             let kernel_y =
                 (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
@@ -2284,7 +2381,35 @@ impl ScreenProjector {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
                 let kernel_x = (self.kernel_center as isize + signed_x) as usize;
                 let cwt = self.phased_kernel_weights[(kernel_x, kernel_y)];
-                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
+                let grid_x = (plan.loc_x + ix) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                grid.add_centered_flat(grid_x * self.grid_shape[1] + grid_y, value * cwt);
+            }
+        }
+    }
+
+    pub(crate) fn grid_sample_planned_values<G: CenteredComplex32GridBatch>(
+        &self,
+        grids: &mut G,
+        plan: &ScreenProjectSamplePlan,
+        values: &[Complex32],
+    ) {
+        debug_assert_eq!(grids.shape(), self.grid_shape);
+        debug_assert_eq!(grids.plane_count(), values.len());
+        for iy in plan.min_iy..=plan.max_iy {
+            let kernel_y =
+                (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
+            for ix in plan.min_ix..=plan.max_ix {
+                let signed_x = ix * self.sampling as isize + plan.off_x;
+                let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                let cwt = self.phased_kernel_weights[(kernel_x, kernel_y)];
+                let grid_x = (plan.loc_x + ix) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                grids.add_centered_scaled_values_flat(
+                    grid_x * self.grid_shape[1] + grid_y,
+                    cwt,
+                    values,
+                );
             }
         }
     }
@@ -2480,7 +2605,7 @@ impl WProjector {
         explicit_plane_count: Option<usize>,
     ) -> Result<Self, ImagingError> {
         let build_started = Instant::now();
-        let raw_auto_plane_count = suggested_w_project_plane_count(geometry, max_abs_w_lambda);
+        let formula_auto_plane_count = suggested_w_project_plane_count(geometry, max_abs_w_lambda);
         let plane_count = explicit_plane_count
             .unwrap_or_else(|| choose_w_project_plane_count(geometry, max_abs_w_lambda));
         let sampling = if plane_count > 1 { 4usize } else { 1usize };
@@ -2493,15 +2618,7 @@ impl WProjector {
             / conv_size as f64;
         let s1 = geometry.cell_size_rad[1].abs() * sampling as f64 * grid_shape[1] as f64
             / conv_size as f64;
-        let max_increment = geometry.cell_size_rad[0]
-            .abs()
-            .max(geometry.cell_size_rad[1].abs());
-        let effective_max_w_lambda =
-            if explicit_plane_count.is_some() || raw_auto_plane_count > MAX_AUTO_WPROJECT_PLANES {
-                0.25 / max_increment
-            } else {
-                1.05 * max_abs_w_lambda
-            };
+        let effective_max_w_lambda = CASA_WPROJECT_MAX_W_SAFETY_FACTOR * max_abs_w_lambda;
         let w_scale = if plane_count > 1
             && effective_max_w_lambda.is_finite()
             && effective_max_w_lambda > 0.0
@@ -2645,7 +2762,7 @@ impl WProjector {
                 grid_shape[1],
                 kernels.len(),
                 explicit_plane_count,
-                raw_auto_plane_count,
+                formula_auto_plane_count,
                 max_abs_w_lambda,
                 kernel_width,
                 max_support,
@@ -2882,28 +2999,17 @@ pub(crate) fn choose_w_project_plane_count(
     geometry: ImageGeometry,
     max_abs_w_lambda: f64,
 ) -> usize {
-    let suggested = suggested_w_project_plane_count(geometry, max_abs_w_lambda);
-    // Keep the default auto estimate in the current tested regime rather than
-    // letting it explode into very large supports that discard edge samples.
-    // Callers that need a specific CASA-style `wprojplanes` budget can now
-    // override this through the public request surface.
-    suggested
-        .max(1)
-        .next_power_of_two()
-        .clamp(1, MAX_AUTO_WPROJECT_PLANES)
+    suggested_w_project_plane_count(geometry, max_abs_w_lambda).max(1)
 }
-
-const MAX_AUTO_WPROJECT_PLANES: usize = 16;
 
 fn suggested_w_project_plane_count(geometry: ImageGeometry, max_abs_w_lambda: f64) -> usize {
     if !(max_abs_w_lambda.is_finite() && max_abs_w_lambda > 0.0) {
         return 1;
     }
-    let max_axis = geometry.nx().max(geometry.ny()) as f64;
-    let max_increment = geometry.cell_size_rad[0]
-        .abs()
-        .max(geometry.cell_size_rad[1].abs());
-    (1.05 * max_abs_w_lambda * (max_increment * max_axis / 2.0).sin().abs()).ceil() as usize
+    let half_field_angle = ((geometry.nx() as f64 * geometry.cell_size_rad[0].abs())
+        .max(geometry.ny() as f64 * geometry.cell_size_rad[1].abs()))
+        / 2.0;
+    (CASA_WPROJECT_MAX_W_SAFETY_FACTOR * max_abs_w_lambda * half_field_angle.sin().abs()) as usize
 }
 
 fn find_w_project_support_from_transformed(
@@ -3350,7 +3456,8 @@ mod tests {
     use serial_test::serial;
 
     use super::{
-        DensityCellConvention, GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder, WProjector,
+        CASA_WPROJECT_MAX_W_SAFETY_FACTOR, DensityCellConvention, GRIDDER_TAP_COUNT,
+        ScreenProjector, StandardGridder, WProjector, choose_w_project_plane_count,
     };
     use crate::{
         ImageGeometry,
@@ -3722,6 +3829,7 @@ mod tests {
         };
         let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
         let projector = WProjector::new(geometry, &gridder, 20_000.0, Some(8)).unwrap();
+        assert!((projector.w_scale - 49.0 / 21_000.0).abs() <= f64::EPSILON);
         let plan = projector
             .plan_sample(12_000.25, -9_000.75, -4_000.0)
             .expect("wproject sample should plan inside the grid");
@@ -3739,6 +3847,20 @@ mod tests {
 
         assert!((cached - direct).abs() <= f32::EPSILON);
         assert_eq!(cached, plan.normalization);
+    }
+
+    #[test]
+    fn w_project_auto_planes_follow_rectangular_field_geometry_without_cap() {
+        let geometry = ImageGeometry {
+            image_shape: [1_000, 500],
+            cell_size_rad: [1.0e-3, 4.0e-3],
+        };
+        let half_field_angle = 1.0_f64;
+        let expected =
+            (CASA_WPROJECT_MAX_W_SAFETY_FACTOR * 100.0 * half_field_angle.sin()) as usize;
+        assert_eq!(choose_w_project_plane_count(geometry, 100.0), expected);
+        assert!(expected > 16);
+        assert_eq!(choose_w_project_plane_count(geometry, 0.0), 1);
     }
 
     #[test]

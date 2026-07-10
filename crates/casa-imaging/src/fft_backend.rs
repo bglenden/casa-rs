@@ -15,8 +15,6 @@ use num_complex::{Complex32, Complex64};
 
 use crate::fft;
 
-const MPSGRAPH_DIRTY_PRODUCT_AUTO_MIN_WORK_ITEMS: usize = 6_000_000;
-
 /// Imaging role that is asking for a 2-D complex FFT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FftUseCase {
@@ -55,6 +53,34 @@ pub enum FftPrecision {
     F32,
     /// Complex double precision.
     F64,
+}
+
+/// Requested precision policy before an exact FFT workload is planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FftPrecisionChoice {
+    /// Select precision jointly with the backend for the exact workload.
+    Auto,
+    /// Require complex single precision.
+    F32,
+    /// Require complex double precision.
+    F64,
+}
+
+impl FftPrecisionChoice {
+    /// Stable lowercase label for diagnostics and benchmark manifests.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+}
+
+impl fmt::Display for FftPrecisionChoice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 impl FftPrecision {
@@ -561,39 +587,31 @@ pub fn wall_to_io_ratio(wall: Duration, io: Duration) -> Option<f64> {
 }
 
 fn select_auto_fft_backend(spec: Fft2Spec) -> FftBackendSelection {
-    if spec.placement == FftPlacement::AppleGpuDeviceBuffer {
-        return FftBackendSelection {
-            requested_backend: spec.backend_choice,
-            selected_backend: FftBackendChoice::MetalVkFft,
-            requested_backend_supported: false,
-            fallback_used: false,
-            reason: metal_vkfft_unavailable_reason(spec),
-        };
-    }
-
     if cfg!(target_os = "macos")
         && spec.precision == FftPrecision::F32
         && spec.use_case == FftUseCase::DirtyPsfResidual
     {
-        let metal_capability = if cfg!(all(target_os = "macos", not(coverage))) {
-            Some(fft_backend_capability(
-                FftBackendChoice::MetalMpsGraph,
-                spec,
-            ))
-        } else {
-            None
-        };
-        let metal_is_likely_profitable = metal_mpsgraph_dirty_product_auto_profitable(spec);
-        if metal_is_likely_profitable
-            && let Some(capability) = metal_capability
-            && capability.supported
-        {
+        let metal_capability = fft_backend_capability(FftBackendChoice::MetalMpsGraph, spec);
+        let metal_movement =
+            dirty_product_input_boundary_movement_bytes(spec, FftBackendChoice::MetalMpsGraph);
+        let cpu_movement =
+            dirty_product_input_boundary_movement_bytes(spec, FftBackendChoice::RustFft);
+        if metal_capability.supported && metal_movement.is_some() && metal_movement < cpu_movement {
             return FftBackendSelection {
                 requested_backend: spec.backend_choice,
                 selected_backend: FftBackendChoice::MetalMpsGraph,
                 requested_backend_supported: true,
                 fallback_used: false,
-                reason: capability.reason,
+                reason: "dirty_product_auto_metal_shared_avoids_boundary_movement",
+            };
+        }
+        if spec.placement == FftPlacement::AppleGpuDeviceBuffer {
+            return FftBackendSelection {
+                requested_backend: spec.backend_choice,
+                selected_backend: FftBackendChoice::MetalMpsGraph,
+                requested_backend_supported: metal_capability.supported,
+                fallback_used: false,
+                reason: metal_capability.reason,
             };
         }
         let capability = fft_backend_capability(FftBackendChoice::Accelerate, spec);
@@ -606,32 +624,22 @@ fn select_auto_fft_backend(spec: Fft2Spec) -> FftBackendSelection {
                 reason: capability.reason,
             };
         }
-        if !metal_is_likely_profitable {
-            return FftBackendSelection {
-                requested_backend: spec.backend_choice,
-                selected_backend: FftBackendChoice::RustFft,
-                requested_backend_supported: true,
-                fallback_used: true,
-                reason: "metal_mpsgraph_auto_guard_small_dirty_product_batch",
-            };
-        }
-        if let Some(metal_capability) = metal_capability
-            && metal_capability.supported
-        {
-            return FftBackendSelection {
-                requested_backend: spec.backend_choice,
-                selected_backend: FftBackendChoice::MetalMpsGraph,
-                requested_backend_supported: true,
-                fallback_used: false,
-                reason: metal_capability.reason,
-            };
-        }
         return FftBackendSelection {
             requested_backend: spec.backend_choice,
             selected_backend: FftBackendChoice::RustFft,
             requested_backend_supported: true,
             fallback_used: true,
-            reason: capability.reason,
+            reason: "dirty_product_auto_host_residency_avoids_metal_boundary_movement",
+        };
+    }
+
+    if spec.placement == FftPlacement::AppleGpuDeviceBuffer {
+        return FftBackendSelection {
+            requested_backend: spec.backend_choice,
+            selected_backend: FftBackendChoice::MetalMpsGraph,
+            requested_backend_supported: false,
+            fallback_used: false,
+            reason: "apple_gpu_resident_fft_has_no_eligible_backend_for_request",
         };
     }
 
@@ -878,19 +886,38 @@ pub(crate) fn transform_f64(
     }
 }
 
-fn metal_mpsgraph_dirty_product_auto_profitable(spec: Fft2Spec) -> bool {
-    if spec.precision != FftPrecision::F32
-        || spec.use_case != FftUseCase::DirtyPsfResidual
-        || spec.shape.batch == 0
-    {
-        return false;
+fn dirty_product_input_boundary_movement_bytes(
+    spec: Fft2Spec,
+    backend: FftBackendChoice,
+) -> Option<u128> {
+    if spec.use_case != FftUseCase::DirtyPsfResidual || spec.shape.batch == 0 {
+        return None;
     }
-    let plane_elements = spec.shape.rows.saturating_mul(spec.shape.columns);
-    let work_items = plane_elements.saturating_mul(spec.shape.batch);
-    work_items >= MPSGRAPH_DIRTY_PRODUCT_AUTO_MIN_WORK_ITEMS
-        && (spec.shape.batch > 1
-            || !spec.shape.is_power_of_two_2d()
-            || plane_elements >= 2048 * 2048)
+    let elements = (spec.shape.rows as u128)
+        .checked_mul(spec.shape.columns as u128)?
+        .checked_mul(spec.shape.batch as u128)?;
+    let complex_bytes = match spec.precision {
+        FftPrecision::F32 => std::mem::size_of::<Complex32>() as u128,
+        FftPrecision::F64 => std::mem::size_of::<Complex64>() as u128,
+    };
+    let one_boundary_pass = elements.checked_mul(complex_bytes)?;
+    let crosses_residency_boundary = matches!(
+        (spec.placement, backend),
+        (
+            FftPlacement::Host,
+            FftBackendChoice::MetalMpsGraph | FftBackendChoice::MetalVkFft
+        ) | (
+            FftPlacement::AppleGpuDeviceBuffer,
+            FftBackendChoice::RustFft
+                | FftBackendChoice::Accelerate
+                | FftBackendChoice::FftwLocalBench
+        )
+    );
+    if crosses_residency_boundary {
+        one_boundary_pass.checked_mul(2)
+    } else {
+        Some(0)
+    }
 }
 
 fn metal_vkfft_unavailable_reason(spec: Fft2Spec) -> &'static str {
@@ -907,14 +934,6 @@ fn metal_mpsgraph_capability(backend: FftBackendChoice, spec: Fft2Spec) -> FftBa
             implemented: cfg!(all(target_os = "macos", not(coverage))),
             supported: false,
             reason: "mpsgraph_fft_supports_complex_f32_not_f64",
-        };
-    }
-    if spec.placement != FftPlacement::Host {
-        return FftBackendCapability {
-            backend,
-            implemented: cfg!(all(target_os = "macos", not(coverage))),
-            supported: false,
-            reason: "mpsgraph_adapter_currently_uses_host_staging",
         };
     }
     if spec.shift != FftShift::CenteredCasaCompatible {
@@ -944,7 +963,7 @@ fn metal_mpsgraph_platform_capability(backend: FftBackendChoice) -> FftBackendCa
             backend,
             implemented: true,
             supported: true,
-            reason: "metal_mpsgraph_complex_f32_host_batch_supported",
+            reason: "metal_mpsgraph_complex_f32_batch_supported",
         }
     } else {
         FftBackendCapability {
@@ -1466,96 +1485,118 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
-    fn auto_prefers_mpsgraph_for_awkward_dirty_f32_product_transforms_when_available() {
-        let spec = Fft2Spec::centered_c2c(
-            2500,
-            2500,
-            FftPrecision::F32,
-            FftDirection::Inverse,
-            FftUseCase::DirtyPsfResidual,
-            FftBackendChoice::Auto,
-        );
-
-        let capability = fft_backend_capability(FftBackendChoice::MetalMpsGraph, spec);
-        let selection = select_fft_backend(spec);
-
-        if capability.supported {
-            assert_eq!(selection.selected_backend, FftBackendChoice::MetalMpsGraph);
-            assert!(!selection.fallback_used);
-            assert_eq!(
-                selection.reason,
-                "metal_mpsgraph_complex_f32_host_batch_supported"
+    fn auto_keeps_host_dirty_products_on_cpu_for_all_shapes_and_batches() {
+        for (rows, columns, batch) in [
+            (64, 64, 6),
+            (997, 1009, 1),
+            (1536, 1152, 2),
+            (2304, 1728, 3),
+            (4096, 3072, 6),
+        ] {
+            let spec = Fft2Spec::centered_c2c_batch(
+                rows,
+                columns,
+                batch,
+                FftPrecision::F32,
+                FftDirection::Inverse,
+                FftUseCase::DirtyPsfResidual,
+                FftBackendChoice::Auto,
             );
-        } else {
-            assert_eq!(selection.selected_backend, FftBackendChoice::RustFft);
-            assert_eq!(
-                selection.reason,
-                "accelerate_vdsp_fft_requires_power_of_two_axes"
+            let selection = select_fft_backend(spec);
+            assert_ne!(
+                selection.selected_backend,
+                FftBackendChoice::MetalMpsGraph,
+                "shape={rows}x{columns} batch={batch}"
             );
         }
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
-    fn auto_prefers_mpsgraph_for_dirty_f32_product_batches() {
-        let spec = Fft2Spec::centered_c2c_batch(
-            2048,
-            2048,
-            2,
-            FftPrecision::F32,
-            FftDirection::Inverse,
-            FftUseCase::DirtyPsfResidual,
-            FftBackendChoice::Auto,
-        );
-
-        let capability = fft_backend_capability(FftBackendChoice::MetalMpsGraph, spec);
-        let selection = select_fft_backend(spec);
-
-        if capability.supported {
-            assert_eq!(selection.selected_backend, FftBackendChoice::MetalMpsGraph);
-            assert!(!selection.fallback_used);
-            assert_eq!(
-                selection.reason,
-                "metal_mpsgraph_complex_f32_host_batch_supported"
+    fn auto_keeps_metal_shared_dirty_products_on_metal_for_all_shapes_and_batches() {
+        for (rows, columns, batch) in [
+            (64, 64, 1),
+            (997, 1009, 2),
+            (2304, 1728, 3),
+            (4096, 3072, 6),
+        ] {
+            let mut spec = Fft2Spec::centered_c2c_batch(
+                rows,
+                columns,
+                batch,
+                FftPrecision::F32,
+                FftDirection::Inverse,
+                FftUseCase::DirtyPsfResidual,
+                FftBackendChoice::Auto,
             );
-        } else {
-            let accelerate_capability = fft_backend_capability(FftBackendChoice::Accelerate, spec);
-            assert_eq!(selection.selected_backend, FftBackendChoice::Accelerate);
-            assert_eq!(selection.reason, accelerate_capability.reason);
+            spec.placement = FftPlacement::AppleGpuDeviceBuffer;
+            let capability = fft_backend_capability(FftBackendChoice::MetalMpsGraph, spec);
+            let selection = select_fft_backend(spec);
+            if capability.supported {
+                assert_eq!(selection.selected_backend, FftBackendChoice::MetalMpsGraph);
+                assert_eq!(
+                    selection.reason,
+                    "dirty_product_auto_metal_shared_avoids_boundary_movement"
+                );
+            }
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn auto_avoids_mpsgraph_for_small_dirty_f32_product_batches() {
-        let spec = Fft2Spec::centered_c2c_batch(
-            1250,
-            1250,
-            2,
+    fn dirty_product_input_boundary_movement_scales_from_exact_recipe_bytes() {
+        let mut host = Fft2Spec::centered_c2c_batch(
+            37,
+            53,
+            5,
             FftPrecision::F32,
             FftDirection::Inverse,
             FftUseCase::DirtyPsfResidual,
             FftBackendChoice::Auto,
         );
-
-        let selection = select_fft_backend(spec);
-
-        assert_eq!(selection.selected_backend, FftBackendChoice::RustFft);
-        assert!(selection.fallback_used);
+        let expected = 37_u128 * 53 * 5 * std::mem::size_of::<Complex32>() as u128 * 2;
         assert_eq!(
-            selection.reason,
-            "metal_mpsgraph_auto_guard_small_dirty_product_batch"
+            dirty_product_input_boundary_movement_bytes(host, FftBackendChoice::RustFft),
+            Some(0)
+        );
+        assert_eq!(
+            dirty_product_input_boundary_movement_bytes(host, FftBackendChoice::MetalMpsGraph,),
+            Some(expected)
+        );
+        host.placement = FftPlacement::AppleGpuDeviceBuffer;
+        assert_eq!(
+            dirty_product_input_boundary_movement_bytes(host, FftBackendChoice::MetalMpsGraph,),
+            Some(0)
+        );
+        assert_eq!(
+            dirty_product_input_boundary_movement_bytes(host, FftBackendChoice::RustFft),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn dirty_product_input_boundary_movement_rejects_overflow() {
+        let spec = Fft2Spec::centered_c2c_batch(
+            usize::MAX,
+            usize::MAX,
+            usize::MAX,
+            FftPrecision::F64,
+            FftDirection::Inverse,
+            FftUseCase::DirtyPsfResidual,
+            FftBackendChoice::Auto,
+        );
+        assert_eq!(
+            dirty_product_input_boundary_movement_bytes(spec, FftBackendChoice::MetalMpsGraph,),
+            None
         );
     }
 
     #[cfg(all(target_os = "macos", not(coverage)))]
     #[test]
-    fn explicit_mpsgraph_request_bypasses_small_dirty_f32_product_auto_guard() {
+    fn explicit_mpsgraph_request_bypasses_auto_residency_selection() {
         let spec = Fft2Spec::centered_c2c_batch(
-            1250,
-            1250,
+            777,
+            901,
             2,
             FftPrecision::F32,
             FftDirection::Inverse,

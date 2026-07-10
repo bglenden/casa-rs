@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "evidence_manifest": "evidence/imaging_performance_evidence_manifest.json",
   "wave_issues": [56, 343, 262, 352],
   "description": "Performance-evidence ledger for the broad imaging performance wave. Fill this from GLENDENNING medium/large run_workload.py results before claiming speedup fractions.",
   "summary_columns": [
@@ -87,6 +88,12 @@
       "required_roles": ["read_ahead_disabled", "read_ahead_enabled"]
     },
     {
+      "group_id": "standard_mfs_single_block_control",
+      "owner_issues": [343],
+      "workloads": ["wave1-standard-mfs-dirty-smoke.json"],
+      "required_roles": ["read_ahead_negative_control"]
+    },
+    {
       "group_id": "standard_cubedata_medium_large_controls",
       "owner_issues": [56, 343],
       "workloads": [
@@ -136,9 +143,36 @@
         "wave3-standard-mfs-clark-heavy-wave2.json",
         "wave4-standard-cube-line-medium.json",
         "wave4-standard-cubedata-line-medium.json",
-        "wave3-mosaic-mfs-alma-large-stress-auto.json"
+        "wave3-mosaic-mfs-alma-large-stress-auto.json",
+        "wave352-mosaic-mfs-alma-large-dirty-product-f32.json",
+        "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32.json"
       ],
       "required_roles": ["cpu_f32_baseline", "metal_f32_candidate"]
+    },
+    {
+      "group_id": "standard_mfs_metal_historical_negative_control",
+      "owner_issues": [352],
+      "workloads": ["wave3-standard-mfs-clark-heavy-wave2.json"],
+      "required_roles": ["rejected_metal_negative_control"]
+    },
+    {
+      "group_id": "mosaic_mtmfs_gpu_residency_large",
+      "owner_issues": [262, 352],
+      "workloads": [
+        "wave352-mosaic-mtmfs-alma-large-dirty-product-f32.json",
+        "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32.json",
+        "wave3-mosaic-mtmfs-alma-large-bounded.json"
+      ],
+      "required_roles": ["cpu_f32_baseline", "metal_f32_candidate", "parallel_auto"]
+    },
+    {
+      "group_id": "wprojection_medium_cpu_metal",
+      "owner_issues": [343, 352],
+      "workloads": [
+        "wave3-wprojection-single-plane-heavy-wave1-medium-multicpu.json",
+        "wave3-wprojection-single-plane-heavy-wave1-medium-auto.json"
+      ],
+      "required_roles": ["multi_cpu_baseline", "metal_candidate", "casa_oracle"]
     }
   ],
   "runs": [
@@ -186,16 +220,21 @@
         "candidate": "/private/tmp/casa-rs-wave343-standard-final-candidate3/20260709T194937Z-wave3-standard-mfs-single-term-heavy-wave2-58dd109d.json",
         "product_comparison": "/private/tmp/casa-rs-wave343-standard-final-comparison.json"
       },
+      "evidence_artifacts": {
+        "baseline": "standard-mfs-final-baseline",
+        "candidate": "standard-mfs-final-candidate",
+        "product_comparison": "standard-mfs-final-comparison"
+      },
       "stages": [
         {
           "stage": "frontend_total",
-          "baseline_s": 129.408320,
-          "candidate_s": 108.571609,
-          "delta_s": -20.836711,
-          "baseline_wall_fraction": 1.0,
-          "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": 0.16101523,
-          "contribution_to_total_saved_wall": 1.0
+          "baseline_s": 136.883787,
+          "candidate_s": 132.293198,
+          "delta_s": -4.590589,
+          "baseline_wall_fraction": 1.05776651,
+          "candidate_wall_fraction": 1.21848796,
+          "saved_fraction_of_baseline_wall": 0.03547368,
+          "contribution_to_total_saved_wall": 0.22031255
         }
       ],
       "overlap": {
@@ -314,8 +353,8 @@
         {"group_id": "mosaic_cube_large_overlap", "role": "parallel_auto"},
         {"group_id": "mosaic_cube_large_overlap", "role": "parallel_chanchunks"}
       ],
-      "commit": "f541094fa+worktree",
-      "machine": "bg-macbook-air",
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air Apple M4",
       "mode": "dirty cube",
       "gridder": "mosaic",
       "deconvolver": "hogbom",
@@ -323,7 +362,7 @@
       "parallel_requested": "multi-cpu",
       "parallel_effective": {
         "baseline": "mosaic shared source slab active_planes=8 worker_count=8",
-        "candidate": "mosaic full-source reuse active_planes=2 worker_count=2 slab_count=4 source_fill_once"
+        "candidate": "memory formula expanded the requested 2-plane minimum to active_planes=8 worker_count=8; one ordinary shared-source slab"
       },
       "chanchunks_requested": {
         "baseline": 1,
@@ -331,7 +370,7 @@
       },
       "chanchunks_effective": {
         "baseline": "8 planes in 1 slab",
-        "candidate": "2 planes per slab, 4 slabs"
+        "candidate": "8 planes in 1 slab because the exact source-cache plus per-plane working set fits the memory target"
       },
       "row_block_rows": {
         "baseline": 6060670,
@@ -343,50 +382,37 @@
         "baseline": null,
         "candidate": null
       },
-      "baseline_total_wall_s": 154.955595,
-      "candidate_total_wall_s": 101.043972,
-      "speedup": 1.533546,
-      "wall_reduction_fraction": 0.347917,
-      "correctness_status": "rust_only_skip_casa; candidate completed all 8 PB-aware mosaic cube planes with full-source reuse; targeted product-invariance tests cover .psf/.residual/.image/.sumwt/.weight/.pb/.image.pbcor",
-      "max_abs": null,
-      "rms": null,
-      "notes": "GLENDENNING medium mosaic cube bounded dirty workload. chanchunks=4 now fills one guarded full-source cache and reuses it across four 2-plane slabs, avoiding the previous repeated 6.06M-row source reads. Final guarded run is 34.8% faster than the one-slab baseline and 63.9% faster than the previous chanchunks=4 implementation while retaining the lower active-plane bound. The reuse gate estimated 1.784GB active bytes against the 16GiB memory target, including a 1.315GB resident source cache. CASA was skipped for timing isolation; targeted product-equivalence tests cover mosaic cube products.",
+      "baseline_total_wall_s": 28.2542985,
+      "candidate_total_wall_s": 25.7334145,
+      "speedup": 1.0979615044867055,
+      "wall_reduction_fraction": 0.08922125601525736,
+      "correctness_status": "Product comparison is overall good: chanchunks=4 versus chanchunks=1 is bit-for-bit identical for .image, .residual, .psf, .sumwt, .weight, .pb, and .image.pbcor; CASA timing was skipped because imaging parameters and CASA semantics were unchanged",
+      "max_abs": 0.0,
+      "rms": 0.0,
+      "decision_status": "retained_counterbalanced_no_slowdown_with_memory_derived_concurrency",
+      "notes": "GLENDENNING medium seven-field mosaic dirty cube counterbalanced result. The old special path treated chanchunks=4 as an exact two-worker cap and regressed to 42.34s versus 27.29s. The replacement formula computes the largest active plane group from exact source-cache bytes, per-plane execution bytes, the memory target, and hardware worker capacity. Here it permits all 8 planes in one slab at an estimated 3.529GiB active set under a 16GiB target, so the unnecessary full-source-cache variant is bypassed. Across three ABBA/BAAB blocks the median paired wall is 8.92% lower, a 1.098x speedup, and every block is faster. Six runs per side span substantial host variance, so the counterbalanced paired result is the release claim. All seven products compare exactly.",
       "result_paths": {
-        "baseline": "/private/tmp/casa-rs-imaging-wave/runs/20260708T192304Z-wave4-mosaic-cube-alma-medium-dirty-bounded-a27d1c5a.json",
-        "candidate": "/private/tmp/casa-rs-imaging-perf-chanchunks-final/results/20260709T032111Z-wave4-mosaic-cube-alma-medium-dirty-bounded-8a206a69.json",
-        "pre_full_source_reuse_candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T193058Z-wave4-mosaic-cube-alma-medium-dirty-bounded-278ad003.json",
-        "failed_pre_fix_candidate": "/private/tmp/casa-rs-imaging-wave/runs/20260708T192707Z-wave4-mosaic-cube-alma-medium-dirty-bounded-aab82699.json"
+        "baseline": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f/runs/001-measured-01-01-baseline/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-bounded-c31ba184.json",
+        "candidate": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f/runs/002-measured-01-02-candidate/20260710T200748Z-wave4-mosaic-cube-alma-medium-dirty-bounded-0748bceb.json",
+        "product_comparison": "/private/tmp/wave56-final/same-path.comparison.json",
+        "counterbalanced_comparison": "/private/tmp/wave56-final/alternating/20260710T200719Z-wave4-mosaic-cube-alma-medium-dirty-boun-vs-wave4-mosaic-cube-alma-medium-dirty-boun-3f87984f.json"
+      },
+      "evidence_artifacts": {
+        "baseline": "mosaic-cube-chanchunks-formula-baseline",
+        "candidate": "mosaic-cube-chanchunks-formula-candidate",
+        "product_comparison": "mosaic-cube-chanchunks-formula-comparison",
+        "counterbalanced_comparison": "mosaic-cube-chanchunks-formula-counterbalanced"
       },
       "stages": [
         {
-          "stage": "frontend_total",
-          "baseline_s": 154.955595,
-          "candidate_s": 101.043972,
-          "delta_s": -53.911623,
+          "stage": "counterbalanced_total",
+          "baseline_s": 28.2542985,
+          "candidate_s": 25.7334145,
+          "delta_s": -2.520884,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": 0.347917,
+          "saved_fraction_of_baseline_wall": 0.08922125601525736,
           "contribution_to_total_saved_wall": 1.0
-        },
-        {
-          "stage": "source_read",
-          "baseline_s": 15.685784,
-          "candidate_s": 3.064426,
-          "delta_s": -12.621358,
-          "baseline_wall_fraction": 0.101230,
-          "candidate_wall_fraction": 0.030329,
-          "saved_fraction_of_baseline_wall": 0.081451,
-          "contribution_to_total_saved_wall": 0.234112
-        },
-        {
-          "stage": "run_imaging",
-          "baseline_s": 117.178000,
-          "candidate_s": 90.774000,
-          "delta_s": -26.404000,
-          "baseline_wall_fraction": 0.756203,
-          "candidate_wall_fraction": 0.898361,
-          "saved_fraction_of_baseline_wall": 0.170397,
-          "contribution_to_total_saved_wall": 0.489760
         }
       ]
     },
@@ -394,8 +420,7 @@
       "workload_id": "wave3-standard-mfs-clark-heavy-wave2",
       "issue_slice": "352-standard-mfs-dirty-product-gpu-residency",
       "evidence_roles": [
-        {"group_id": "gpu_residency_medium_large", "role": "cpu_f32_baseline"},
-        {"group_id": "gpu_residency_medium_large", "role": "metal_f32_candidate"}
+        {"group_id": "standard_mfs_metal_historical_negative_control", "role": "rejected_metal_negative_control"}
       ],
       "commit": "e8a614379",
       "machine": "bg-macbook-air",
@@ -428,7 +453,7 @@
       "correctness_status": "CASA run completed for the candidate timing artifact; no product comparison panel was generated; resident-product unit tests compare GPU product finish against CPU f32 finish",
       "max_abs": null,
       "rms": null,
-      "notes": "GLENDENNING medium standard-MFS dirty workload. Corrected unsandboxed Metal evidence: sandboxed Swift/Metal checks can hide MTLCreateSystemDefaultDevice, but the same host exposes Apple M4 Metal outside the sandbox. Auto still guards the losing 1250x1250x2 dirty-product case and selects RustFFT with reason metal_mpsgraph_auto_guard_small_dirty_product_batch, preventing accidental default Metal slowdown. Explicit metal-mpsgraph now chains MPSGraph export with standard dirty-product crop, PSF peak reduction, and normalize in one command buffer, and dirty-product Metal defaults to the fused f64-to-f32 pack path. The dirty-product profile slice is now faster than the RustFFT CPU slice: 45.552ms to 30.544ms, a 1.49x speedup / 33.0% reduction. Compared with the pre-fusion explicit Metal run, the release dirty-product section dropped from 231.784ms to 31.768ms and the profile section dropped from 70.083ms to 30.544ms. End-to-end explicit Metal is still not a total-speedup claim on this medium row: 13.170s versus the 12.146s CPU wall baseline, 8.4% slower, with source/prepare/gridding variance dominating total wall time.",
+      "notes": "Historical GLENDENNING medium standard-MFS dirty workload. Corrected unsandboxed Metal evidence showed that sandboxed Swift/Metal checks could hide MTLCreateSystemDefaultDevice while the same host exposed Apple M4 Metal outside the sandbox. The then-current fixed 1250x1250x2 Auto guard prevented this measured end-to-end slowdown, but that dataset-shaped guard has since been removed. Current Auto FFT selection is based on input placement and backend capability, while GPU-resident accumulations remain on Metal and host accumulations remain on CPU. The historical dirty-product profile slice improved from 45.552ms to 30.544ms, a 1.49x speedup / 33.0% reduction, but end-to-end explicit Metal was 13.170s versus the 12.146s CPU wall baseline, 8.4% slower, with source/prepare/gridding variance dominating total wall time.",
       "result_paths": {
         "baseline": "/private/tmp/casa-rs-imaging-gpu-resident/results/20260708T233605Z-wave3-standard-mfs-clark-heavy-wave2-f92b935e.json",
         "candidate": "/private/tmp/casa-rs-imaging-metal-default-fused-pack/results/20260709T042309Z-wave3-standard-mfs-clark-heavy-wave2-06b9c577.json",
@@ -514,12 +539,91 @@
         "env_fused_pack_dirty_product_fft_total_ms": 29.893,
         "previous_fused_postprocess_dirty_product_fft_total_ms": 40.588,
         "previous_fused_postprocess_profile_dirty_product_fft_total_ms": 37.246,
-        "auto_guard_selected_backend": "rustfft",
-        "auto_guard_reason": "metal_mpsgraph_auto_guard_small_dirty_product_batch",
-        "auto_guard_total_wall_s": 13.194858,
-        "auto_guard_dirty_product_fft_total_ms": 45.278,
+        "historical_auto_guard_selected_backend": "rustfft",
+        "historical_auto_guard_reason": "metal_mpsgraph_auto_guard_small_dirty_product_batch",
+        "historical_auto_guard_total_wall_s": 13.194858,
+        "historical_auto_guard_dirty_product_fft_total_ms": 45.278,
         "prefusion_dirty_product_fft_total_ms": 231.784,
         "prefusion_profile_dirty_product_fft_total_ms": 70.083
+      }
+    },
+    {
+      "workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-metal-f32",
+      "baseline_workload_id": "wave352-mosaic-mfs-alma-large-dirty-product-f32",
+      "issue_slice": "352-mosaic-mfs-large-dirty-product-metal",
+      "evidence_roles": [
+        {"group_id": "gpu_residency_medium_large", "role": "cpu_f32_baseline"},
+        {"group_id": "gpu_residency_medium_large", "role": "metal_f32_candidate"}
+      ],
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air",
+      "mode": "dirty mfs",
+      "gridder": "mosaic",
+      "deconvolver": "multiscale",
+      "precision_policy": {
+        "baseline": "f32 rustfft",
+        "candidate": "f32 metal-mpsgraph"
+      },
+      "parallel_requested": null,
+      "parallel_effective": "metadata-group compaction followed by disjoint 256x256 CPU tile workers writing two Metal-shared planes",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 4864938,
+        "candidate": 4864938
+      },
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["mfs_mosaic_replay"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 52.588346,
+      "candidate_total_wall_s": 43.450222,
+      "speedup": 1.210312481257288,
+      "wall_reduction_fraction": 0.17376709280797697,
+      "correctness_status": "CPU versus Metal comparison is overall investigate for .image, .image.pbcor, and .residual because tiny f32 accumulation-order differences remain spatially coherent; .pb, .psf, .sumwt, and .weight are good. Maximum normalized RMS is 2.1691e-6.",
+      "max_abs": 0.00027441978454589844,
+      "rms": 0.000002169084020403289,
+      "decision_status": "retained_counterbalanced_no_slowdown_no_speedup_claim",
+      "notes": "Counterbalanced GLENDENNING large seven-field ALMA mosaic MFS dirty-product comparison passes the zero-tolerance no-slowdown gate. Its median paired block is 17.4% lower wall, but the three block deltas span -38.3% to +48.9% with 43.6 percentage-point IQR, so this row records no slowdown rather than a release speedup claim. The retained adjacent CPU/Metal artifacts prove backend identity and a 75.685ms to 26.616ms PSF-product reduction. The product comparison remains investigate for image, image.pbcor, and residual because small f32 accumulation-order differences are spatially coherent; PB, PSF, sumwt, and weight are good. Relative to the pre-compaction 57.179s CPU diagnostic, the shared grouped path remains 2.46x faster / 59.4% lower wall in the earlier controlled pair.",
+      "result_paths": {
+        "baseline": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f/runs/009-measured-03-01-baseline/20260710T153654Z-wave352-mosaic-mfs-alma-large-dirty-product-f32-70147f8e.json",
+        "candidate": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f/runs/010-measured-03-02-candidate/20260710T153829Z-wave352-mosaic-mfs-alma-large-dirty-product-metal-f32-1b56d03f.json",
+        "product_comparison": "/private/tmp/wave352-mfs-cpu-metal-comparison.json",
+        "counterbalanced_comparison": "/private/tmp/wave352-counterbalanced-mfs/20260710T152434Z-wave352-mosaic-mfs-alma-large-dirty-prod-vs-wave352-mosaic-mfs-alma-large-dirty-prod-ae7ee40f.json"
+      },
+      "evidence_artifacts": {
+        "baseline": "mosaic-mfs-large-dirty-product-cpu",
+        "candidate": "mosaic-mfs-large-dirty-product-metal",
+        "product_comparison": "mosaic-mfs-large-dirty-product-comparison",
+        "counterbalanced_comparison": "mosaic-mfs-large-dirty-product-counterbalanced"
+      },
+      "stages": [
+        {
+          "stage": "counterbalanced_total",
+          "baseline_s": 52.588346,
+          "candidate_s": 43.450222,
+          "delta_s": -9.138124,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.17376709280797697,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ],
+      "gpu": {
+        "device_fft_s": 0.005684,
+        "device_product_assembly_s": 0.006347,
+        "device_to_host_final_export_s": 0.001611,
+        "fallback_reason": "not_applicable_metal_selected",
+        "dirty_product_fft_selected_backend": "metal-mpsgraph",
+        "dirty_product_fft_fallback_used": false,
+        "dirty_product_fft_total_ms": 26.616,
+        "dirty_product_gpu_resident_postprocess_ms": 6.347,
+        "f32_cast_pack_s": 0.0,
+        "gpu_sync_wait_s": 0.005326,
+        "host_to_device_staging_s": 0.00005,
+        "metal_device_available": true,
+        "metal_device_name": "Apple M4",
+        "unsandboxed": true
       }
     },
     {
@@ -572,40 +676,40 @@
           "baseline_s": 18.462678,
           "candidate_s": 17.650948,
           "delta_s": -0.811730,
-          "baseline_wall_fraction": 0.911635,
-          "candidate_wall_fraction": 0.870520,
-          "saved_fraction_of_baseline_wall": 0.040081,
-          "contribution_to_total_saved_wall": -33.730729
+          "baseline_wall_fraction": 0.9116400336201208,
+          "candidate_wall_fraction": 0.8705244561573424,
+          "saved_fraction_of_baseline_wall": 0.04008116073358704,
+          "contribution_to_total_saved_wall": -33.73072927488025
         },
         {
           "stage": "run_imaging",
           "baseline_s": 14.790403,
           "candidate_s": 14.222571,
           "delta_s": -0.567832,
-          "baseline_wall_fraction": 0.730321,
-          "candidate_wall_fraction": 0.701443,
-          "saved_fraction_of_baseline_wall": 0.028038,
-          "contribution_to_total_saved_wall": -23.595761
+          "baseline_wall_fraction": 0.7303124437405633,
+          "candidate_wall_fraction": 0.7014408452698513,
+          "saved_fraction_of_baseline_wall": 0.02803809845844572,
+          "contribution_to_total_saved_wall": -23.59576147932657
         },
         {
           "stage": "psf_fft",
           "baseline_s": 0.067930,
           "candidate_s": 0.073851,
           "delta_s": 0.005921,
-          "baseline_wall_fraction": 0.003354,
-          "candidate_wall_fraction": 0.003642,
-          "saved_fraction_of_baseline_wall": -0.000292,
-          "contribution_to_total_saved_wall": 0.246042
+          "baseline_wall_fraction": 0.0033542104500666053,
+          "candidate_wall_fraction": 0.0036422463887874974,
+          "saved_fraction_of_baseline_wall": -0.0002923639051206294,
+          "contribution_to_total_saved_wall": 0.24604196966548683
         },
         {
           "stage": "write_products",
           "baseline_s": 0.168873,
           "candidate_s": 0.189349,
           "delta_s": 0.020476,
-          "baseline_wall_fraction": 0.008338,
-          "candidate_wall_fraction": 0.009338,
-          "saved_fraction_of_baseline_wall": -0.001011,
-          "contribution_to_total_saved_wall": 0.850862
+          "baseline_wall_fraction": 0.008338518788960662,
+          "candidate_wall_fraction": 0.009338474922079915,
+          "saved_fraction_of_baseline_wall": -0.0010110527480577621,
+          "contribution_to_total_saved_wall": 0.8508622480781135
         }
       ],
       "gpu": {
@@ -634,7 +738,7 @@
       "deconvolver": "mtmfs",
       "precision_policy": "CASA-compatible f32 Briggs and Taylor weights with f64 mosaic grids",
       "parallel_requested": "auto",
-      "parallel_effective": "CPU sample-range full-grid with 4 grid threads; Apple M4 Metal visible but mosaic MT-MFS gridding is not Metal-eligible",
+      "parallel_effective": "CPU sample-range full-grid with 4 grid threads; this sandboxed read-ahead pair did not expose Metal",
       "chanchunks_requested": null,
       "chanchunks_effective": null,
       "row_block_rows": {
@@ -661,6 +765,11 @@
         "baseline": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-baseline/20260709T195654Z-wave3-mosaic-mtmfs-alma-large-bounded-06a89dc3.json",
         "candidate": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-candidate/20260709T195437Z-wave3-mosaic-mtmfs-alma-large-bounded-ad12286b.json",
         "product_comparison": "/private/tmp/casa-rs-wave343-mosaic-mtmfs-large-final-comparison.json"
+      },
+      "evidence_artifacts": {
+        "baseline": "mosaic-mtmfs-large-final-baseline",
+        "candidate": "mosaic-mtmfs-large-final-candidate",
+        "product_comparison": "mosaic-mtmfs-large-final-comparison"
       },
       "stages": [
         {
@@ -705,12 +814,217 @@
         "max_live_row_blocks": 2,
         "producer_send_blocked_s": 92.032930,
         "consumer_recv_blocked_s": 1.481509
+      }
+    },
+    {
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "baseline_workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-f32",
+      "issue_slice": "262-352-mosaic-mtmfs-moment-compaction-metal-shared-grid",
+      "evidence_roles": [
+        {"group_id": "mosaic_mtmfs_gpu_residency_large", "role": "cpu_f32_baseline"},
+        {"group_id": "mosaic_mtmfs_gpu_residency_large", "role": "metal_f32_candidate"}
+      ],
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air Apple M4",
+      "mode": "clean mfs niter=0",
+      "gridder": "mosaic",
+      "deconvolver": "mtmfs nterms=2",
+      "precision_policy": {
+        "baseline": "f32 RustFFT product transform with pointwise host-f64 visibility grids",
+        "candidate": "f64/Complex64 exact-plan Taylor moments narrowed into Metal-shared f32 tile grids"
       },
+      "parallel_requested": "auto",
+      "parallel_effective": "4 CPU moment/tile workers, deterministic exact-plan records, 5 Metal-shared Taylor planes, Metal MPSGraph batch FFT",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 1120416,
+        "candidate": 1120416
+      },
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["mosaic_mtmfs_replay"],
+      "memory_target_gb": 4.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 118.996542,
+      "candidate_total_wall_s": 32.061927,
+      "speedup": 3.7114594515794392,
+      "wall_reduction_fraction": 0.7305642125298062,
+      "correctness_status": "Counterbalanced CPU-versus-Metal comparison is overall good for all seven Taylor products. Correlations are at least 0.99999999999984 and maximum normalized RMS is 8.5273e-7.",
+      "max_abs": 0.0099639892578125,
+      "rms": 0.0000008527260532564399,
+      "decision_status": "retained_large_mosaic_mtmfs_moment_compaction_speedup",
+      "notes": "GLENDENNING large seven-field ALMA mosaic MT-MFS counterbalanced result: median paired block wall is 73.1% lower, a 3.71x speedup. The three block reductions are 69.7%, 73.1%, and 78.8% with 4.58 percentage-point IQR. Exact complete-plan grouping reduces accepted samples to about 7.4-7.8% as compact records; four workers write five Metal-shared Taylor planes with zero host full-grid, pack, or host-to-device grid-copy bytes. The retained CPU/Metal product pair is good for all seven Taylor products.",
+      "result_paths": {
+        "baseline": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/001-measured-01-01-baseline/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-product-f32-270e6b04.json",
+        "candidate": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a/runs/002-measured-01-02-candidate/20260710T154356Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-88355d51.json",
+        "product_comparison": "/private/tmp/wave352-mtmfs-cpu-metal-comparison.json",
+        "counterbalanced_comparison": "/private/tmp/wave352-counterbalanced-mtmfs/20260710T154201Z-wave352-mosaic-mtmfs-alma-large-dirty-pr-vs-wave352-mosaic-mtmfs-alma-large-dirty-pr-1178453a.json"
+      },
+      "evidence_artifacts": {
+        "baseline": "mosaic-mtmfs-large-direct-cpu",
+        "candidate": "mosaic-mtmfs-large-direct-metal",
+        "product_comparison": "mosaic-mtmfs-large-direct-comparison",
+        "counterbalanced_comparison": "mosaic-mtmfs-large-direct-counterbalanced"
+      },
+      "stages": [
+        {
+          "stage": "counterbalanced_total",
+          "baseline_s": 118.996542,
+          "candidate_s": 32.061927,
+          "delta_s": -86.934615,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.7305642125298062,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ],
       "gpu": {
+        "device_fft_s": 0.006943,
+        "device_product_assembly_s": 0.004907,
+        "device_to_host_final_export_s": 0.000317,
         "metal_device_available": true,
         "metal_device_name": "Apple M4",
-        "selected_backend": "cpu",
-        "selection_reason": "mosaic-screen-projector-metal-single-grid-owner"
+        "unsandboxed": true,
+        "fallback_reason": "not_applicable_metal_selected",
+        "dirty_product_fft_selected_backend": "metal-mpsgraph",
+        "dirty_product_fft_fallback_used": false,
+        "dirty_product_fft_total_ms": 37.494,
+        "dirty_product_gpu_resident_postprocess_ms": 4.907,
+        "f32_cast_pack_s": 0.0,
+        "gpu_sync_wait_s": 0.009248,
+        "host_to_device_staging_s": 0.0,
+        "resident_fft_input_bytes": 78643200,
+        "host_full_grid_bytes": 0,
+        "input_pack_bytes": 0,
+        "input_copy_to_device_bytes": 0,
+        "max_host_tile_bytes_per_worker": 2621440,
+        "bounded_host_tile_bytes": 10485760,
+        "dirty_product_gpu_resident_total_ms": 37.494,
+        "dirty_product_gpu_resident_device_exec_ms": 6.943,
+        "dirty_product_gpu_resident_postprocess_ms": 4.907
+      }
+    },
+    {
+      "workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "baseline_workload_id": "wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32",
+      "issue_slice": "352-mosaic-mtmfs-shape-derived-scratch-planner",
+      "evidence_roles": [
+        {"group_id": "mosaic_mtmfs_gpu_residency_large", "role": "parallel_auto"}
+      ],
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air Apple M4",
+      "mode": "clean mfs niter=0",
+      "gridder": "mosaic",
+      "deconvolver": "mtmfs nterms=2",
+      "precision_policy": {
+        "baseline": "Metal-shared f32 Taylor grids with fixed scratch geometry",
+        "candidate": "Metal-shared f32 Taylor grids with shape-derived scratch, tile, route-copy, and chunk formulas"
+      },
+      "parallel_requested": "auto",
+      "parallel_effective": "4 CPU moment/tile workers, tile edge 453, 9 disjoint tiles, 262144000-byte scratch budget, raw chunk limit 1219737",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": {
+        "baseline": 1120416,
+        "candidate": 1044233
+      },
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["mosaic_mtmfs_replay"],
+      "memory_target_gb": 4.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 30.707776,
+      "candidate_total_wall_s": 19.154092,
+      "speedup": 1.6031966433073415,
+      "wall_reduction_fraction": 0.37624619900835543,
+      "correctness_status": "Previous versus shape-derived Metal planner comparison is overall good for all seven Taylor products. Maximum normalized RMS is 9.1306e-7.",
+      "max_abs": 0.0093994140625,
+      "rms": 0.000000913051532624255,
+      "decision_status": "retained_shape_derived_scratch_planner_speedup",
+      "notes": "GLENDENNING large seven-field ALMA mosaic MT-MFS direct-Metal result. Replacing fixed scratch clamps, worker-tile assumptions, route-copy counts, and sample cutoffs with grid/support/term/worker/memory formulas reduced the retained single-run wall from 30.708s to 19.154s: 37.6% lower and 1.60x faster. This is an additional measured improvement on top of the counterbalanced 3.71x CPU-to-Metal result; it is recorded as a single-run implementation comparison, not a counterbalanced release claim.",
+      "result_paths": {
+        "baseline": "/private/tmp/wave352-formula-mtmfs-baseline/20260710T154356Z-wave352-mosaic-mtmfs-metal-formula-baseline-f32.json",
+        "candidate": "/private/tmp/wave352-formula-mtmfs-unsandboxed-v2/20260710T182534Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-8ee77a1f.json",
+        "product_comparison": "/private/tmp/wave352-formula-mtmfs-comparison/20260710T183021Z-wave352-mosaic-mtmfs-alma-large-dirty-product-metal-f32-fcba4938.json"
+      },
+      "evidence_artifacts": {
+        "baseline": "mosaic-mtmfs-formula-planner-baseline",
+        "candidate": "mosaic-mtmfs-formula-planner-candidate",
+        "product_comparison": "mosaic-mtmfs-formula-planner-comparison"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 30.707776,
+          "candidate_s": 19.154092,
+          "delta_s": -11.553684,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.37624619900835543,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ]
+    },
+    {
+      "workload_id": "wave1-standard-mfs-dirty-smoke",
+      "issue_slice": "343-standard-mfs-single-block-read-ahead-control",
+      "evidence_roles": [
+        {"group_id": "standard_mfs_single_block_control", "role": "read_ahead_negative_control"}
+      ],
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air",
+      "mode": "dirty mfs",
+      "gridder": "standard",
+      "deconvolver": "hogbom",
+      "precision_policy": "auto",
+      "parallel_requested": "auto",
+      "parallel_effective": "fixed_tile grid_threads=4",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": 4509,
+      "read_ahead_blocks": {
+        "baseline": 1,
+        "candidate": 2
+      },
+      "source_read_ahead_modes": ["standard_mfs"],
+      "memory_target_gb": null,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 1.154433,
+      "candidate_total_wall_s": 1.0900355,
+      "speedup": 1.0590783511179225,
+      "wall_reduction_fraction": 0.055782795536856715,
+      "correctness_status": "Both configurations execute exactly one source row block, so the requested depth-two candidate disables the producer queue and uses the same synchronous path as depth one.",
+      "max_abs": 0.0,
+      "rms": 0.0,
+      "decision_status": "retained_no_overhead_single_block_control",
+      "notes": "Small negative-control row only, not a speedup claim. The counterbalanced median paired delta is -5.58%, with one noisy positive block and two negative blocks; the formal zero-tolerance no-slowdown verdict passes. Logs show enabled=false, queue_capacity=0, live_row_block_high_water=1, and row_blocks=1 for both configurations, proving that the general read-ahead path does not create a producer thread or queue when the source has only one block.",
+      "result_paths": {
+        "counterbalanced_comparison": "/private/tmp/casa-rs-current-head-single-block-read-ahead/20260710T212004Z-wave1-standard-mfs-dirty-smoke-vs-wave1-standard-mfs-dirty-smoke-fe4c7599.json"
+      },
+      "evidence_artifacts": {
+        "counterbalanced_comparison": "standard-mfs-single-block-read-ahead-counterbalanced"
+      },
+      "stages": [
+        {
+          "stage": "counterbalanced_total",
+          "baseline_s": 1.154433,
+          "candidate_s": 1.0900355,
+          "delta_s": -0.0643975,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.055782795536856715,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ],
+      "overlap": {
+        "producer_active_s": 0.0,
+        "consumer_active_s": 0.0,
+        "producer_consumer_overlap_s": 0.0,
+        "queue_high_water_blocks": 1,
+        "queue_high_water_bytes": null,
+        "queue_capacity_blocks": 0,
+        "max_live_row_blocks": 1,
+        "producer_send_blocked_s": 0.0,
+        "consumer_recv_blocked_s": 0.0
       }
     },
     {
@@ -720,14 +1034,14 @@
         {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "mosaic_mtmfs_candidate"},
         {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "casa_oracle"}
       ],
-      "commit": "1f624ad9d",
+      "commit": "worktree-before-final-commit",
       "machine": "bg-macbook-air",
       "mode": "clean mfs niter=1",
       "gridder": "mosaic",
       "deconvolver": "mtmfs",
-      "precision_policy": "CASA-compatible f32 Briggs and Taylor weights with f64 mosaic grids",
+      "precision_policy": "CASA-compatible f32 Briggs and Taylor weights with direct Metal-shared f32 Taylor grids",
       "parallel_requested": "CASA serial versus casa-rs auto",
-      "parallel_effective": "CASA serial; casa-rs CPU sample-range full-grid",
+      "parallel_effective": "CASA serial; casa-rs four-worker exact-plan compaction into Metal-shared Taylor grids",
       "chanchunks_requested": null,
       "chanchunks_effective": null,
       "row_block_rows": null,
@@ -735,37 +1049,206 @@
       "source_read_ahead_modes": ["mosaic_mtmfs_replay"],
       "memory_target_gb": 16.0,
       "peak_rss_gb": null,
-      "baseline_total_wall_s": 14.859600,
-      "candidate_total_wall_s": 10.559692,
-      "speedup": 1.407200,
-      "wall_reduction_fraction": 0.28936903,
-      "correctness_status": "Final-head CASA oracle is green for primary products. Full comparison has only cancellation-dominated investigate labels for near-zero residual TT1 and sumwt TT1; all scientifically meaningful image, model, PSF, PB, PBCOR, alpha, and alpha-error products are good.",
-      "max_abs": 0.140625,
-      "rms": 0.000005922918326059648,
-      "notes": "Exact final runtime commit. All seven per-field density statistics and robust f2 match CASA. Model TT0 and sumwt TT0/TT2 are bit-identical; PB TT1 is zero in both implementations.",
+      "baseline_total_wall_s": 14.981171,
+      "candidate_total_wall_s": 12.116323,
+      "speedup": 1.2364453308152976,
+      "wall_reduction_fraction": 0.19122991119986552,
+      "correctness_status": "Current-head CASA oracle is green for all primary products. Full comparison is overall investigate only for cancellation-scale PSF/residual TT1 and sumwt TT1; all image, model, PB, PBCOR, alpha, alpha-error, TT0, and TT2 products are good.",
+      "max_abs": 0.16015625,
+      "rms": 0.0002496527923405806,
+      "notes": "Current worktree runtime. Primary product normalized RMS is at most 3.7804e-7. Model TT0/TT1 and sumwt TT0/TT2 are exact; PB TT1 is zero in both implementations. PSF TT1 and residual TT1 absolute RMS differences are 6.99e-15 and 5.21e-12 on cancellation-scale reference products.",
       "result_paths": {
-        "oracle": "/private/tmp/casa-rs-wave262-final-head-oracle/20260709T200728Z-wave262-mosaic-mtmfs-small-casa-oracle-2eebb403.json",
-        "primary_comparison": "/private/tmp/casa-rs-wave262-final-head-oracle/20260709T200728Z-wave262-mosaic-mtmfs-small-casa-oracle-2eebb403.comparison.json",
-        "all_product_comparison": "/private/tmp/casa-rs-wave262-final-head-oracle/comparison-all.json"
+        "oracle": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.json",
+        "primary_comparison": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.comparison.json",
+        "all_product_comparison": "/private/tmp/wave262-current-head-all-comparison.json"
+      },
+      "evidence_artifacts": {
+        "casa_oracle": "mosaic-mtmfs-final-casa-oracle",
+        "primary_comparison": "mosaic-mtmfs-final-primary-comparison",
+        "full_comparison": "mosaic-mtmfs-final-full-comparison"
       },
       "stages": [
         {
           "stage": "frontend_total",
-          "baseline_s": 14.859600,
-          "candidate_s": 10.559692,
-          "delta_s": -4.299908,
+          "baseline_s": 14.981171,
+          "candidate_s": 12.116323,
+          "delta_s": -2.864848,
           "baseline_wall_fraction": 1.0,
           "candidate_wall_fraction": 1.0,
-          "saved_fraction_of_baseline_wall": 0.28936903,
+          "saved_fraction_of_baseline_wall": 0.19122991119986552,
           "contribution_to_total_saved_wall": 1.0
         }
       ],
       "casa": {
-        "oracle_result_path": "/private/tmp/casa-rs-wave262-final-head-oracle/20260709T200728Z-wave262-mosaic-mtmfs-small-casa-oracle-2eebb403.json",
-        "comparison_result_path": "/private/tmp/casa-rs-wave262-final-head-oracle/comparison-all.json",
-        "comparison_status": "good_with_cancellation_only_investigate",
-        "max_abs": 0.140625,
-        "rms": 0.000005922918326059648
+        "oracle_result_path": "/private/tmp/casa-rs-wave262-current-head-oracle/20260710T161003Z-wave262-mosaic-mtmfs-small-casa-oracle-fc1eb62d.json",
+        "comparison_result_path": "/private/tmp/wave262-current-head-all-comparison.json",
+        "comparison_status": "investigate",
+        "max_abs": 0.16015625,
+        "rms": 0.0002496527923405806,
+        "adjudication": {
+          "rationale": "The three investigate products are cancellation-scale Taylor terms. Their absolute errors remain bounded below 3e-6, and their normalized RMS remains below 3e-4; all non-cancellation image, model, PB, PBCOR, alpha, TT0, and TT2 products are good.",
+          "products": [
+            ".psf.tt1",
+            ".residual.tt1",
+            ".sumwt.tt1"
+          ],
+          "bounds": {
+            "max_abs": 0.000003,
+            "max_normalized_rms": 0.0003
+          }
+        }
+      }
+    },
+    {
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+      "baseline_workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-multicpu",
+      "issue_slice": "343-352-wprojection-bounded-read-ahead-metal",
+      "evidence_roles": [
+        {"group_id": "wprojection_medium_cpu_metal", "role": "multi_cpu_baseline"},
+        {"group_id": "wprojection_medium_cpu_metal", "role": "metal_candidate"}
+      ],
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air Apple M4",
+      "mode": "dirty mfs",
+      "gridder": "wproject auto planes=55",
+      "deconvolver": "hogbom niter=0",
+      "precision_policy": {
+        "baseline": "seven-worker CPU streaming W-projection with Complex32 output grids",
+        "candidate": "Metal f32 partial grids with formula-derived fanout and deterministic host f64 cross-chunk reduction"
+      },
+      "parallel_requested": {
+        "baseline": "multi-cpu",
+        "candidate": "auto"
+      },
+      "parallel_effective": {
+        "baseline": "CPU W-projection streaming workers=7",
+        "candidate": "Metal W-projection for initial dirty and residual accumulation; CPU minor-cycle control"
+      },
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": 1613286,
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["standard_mfs_prepared"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 16.303193,
+      "candidate_total_wall_s": 13.3780205,
+      "speedup": 1.218655106710294,
+      "wall_reduction_fraction": 0.17942328843190414,
+      "correctness_status": "Metal versus CASA image and residual normalized RMS are 5.3731e-5 with correlation 0.9999999986; PSF normalized RMS is 1.1137e-4 with correlation 0.9999999938 and good structure. Two independent Metal runs differ by at most 1.6696e-6 normalized RMS. Metal improves the CASA difference by 13.3x for image/residual and 11.8x for PSF relative to the CPU baseline.",
+      "max_abs": 0.0013146400451660156,
+      "rms": 0.00011136682223648531,
+      "decision_status": "retained_counterbalanced_metal_speedup_with_casa_adjudication",
+      "notes": "GLENDENNING medium 3.09M-row, 64-channel W-projection counterbalanced comparison with 55 shape-derived W planes and six measured runs per side. All six Auto runs exposed Apple M4 Metal and selected the shared W Metal kernel for initial dirty and residual accumulation. The median paired ABBA/BAAB block is 17.94% faster, a 1.219x speedup; all six adjacent CPU/Metal pairs are faster. Aggregate medians are 15.515s CPU and 12.974s Metal. Cached and newly read blocks share the exact two-live-block stream, reaching high-water two with measured producer/consumer overlap. Production selection uses projected W, field geometry, update density, live Metal headroom, and memory geometry; it contains no dataset identity or fixed dataset-size thresholds.",
+      "result_paths": {
+        "baseline": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.json",
+        "candidate": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/002-measured-01-02-candidate/20260710T223425Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-f1b378b8.json",
+        "counterbalanced_comparison": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f.json",
+        "repeat_comparison": "/private/tmp/casa-rs-wprojection-metal-repeat-comparison.json"
+      },
+      "evidence_artifacts": {
+        "baseline": "wprojection-medium-multicpu",
+        "candidate": "wprojection-medium-metal",
+        "counterbalanced_comparison": "wprojection-medium-cpu-metal-counterbalanced"
+      },
+      "stages": [
+        {
+          "stage": "counterbalanced_total",
+          "baseline_s": 16.303193,
+          "candidate_s": 13.3780205,
+          "delta_s": -2.9251725,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.17942328843190414,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ],
+      "overlap": {
+        "producer_active_s": 7.059746,
+        "consumer_active_s": 5.941419,
+        "producer_consumer_overlap_s": 3.622265,
+        "queue_high_water_blocks": 2,
+        "queue_high_water_bytes": 17063726022,
+        "queue_capacity_blocks": 0,
+        "max_live_row_blocks": 2,
+        "producer_blocked_on_capacity_s": 0.0,
+        "consumer_blocked_on_input_s": 0.025803,
+        "effective_read_bandwidth_mb_s": 979.0837634203509
+      },
+      "gpu": {
+        "metal_device_available": true,
+        "metal_device_name": "Apple M4",
+        "unsandboxed": true,
+        "fallback_reason": "not_applicable_metal_selected",
+        "resolved_initial_dirty_backend": "metal-row-run-grouped",
+        "resolved_residual_backend": "metal-row-run-grouped",
+        "partial_grid_policy": "sqrt_average_updates_per_cell_capped_by_live_metal_headroom"
+      }
+    },
+    {
+      "workload_id": "wave3-wprojection-single-plane-heavy-wave1-medium-auto",
+      "issue_slice": "352-wprojection-final-casa-oracle",
+      "evidence_roles": [
+        {"group_id": "wprojection_medium_cpu_metal", "role": "casa_oracle"}
+      ],
+      "commit": "worktree-before-final-commit",
+      "machine": "bg-macbook-air Apple M4",
+      "mode": "dirty mfs",
+      "gridder": "wproject auto planes=55",
+      "deconvolver": "hogbom niter=0",
+      "precision_policy": "CASA and Metal f32 W-projection with identical imaging parameters and 55 independently auto-selected W planes",
+      "parallel_requested": "CASA serial versus casa-rs auto",
+      "parallel_effective": "CASA WProjectFT; casa-rs Metal partial grids with deterministic host f64 cross-chunk reduction",
+      "chanchunks_requested": null,
+      "chanchunks_effective": null,
+      "row_block_rows": 1613286,
+      "read_ahead_blocks": 2,
+      "source_read_ahead_modes": ["standard_mfs_prepared"],
+      "memory_target_gb": 16.0,
+      "peak_rss_gb": null,
+      "baseline_total_wall_s": 190.703701,
+      "candidate_total_wall_s": 15.197535,
+      "speedup": 12.548331094483414,
+      "wall_reduction_fraction": 0.9203081276330343,
+      "correctness_status": "Fresh current-head CASA oracle is overall investigate, not bad. Image and residual normalized RMS are 5.3819e-5 with correlation 0.9999999986; PSF normalized RMS is 1.1140e-4 with correlation 0.9999999938 and good structure.",
+      "max_abs": 0.0013105273246765137,
+      "rms": 0.00011139730684580314,
+      "decision_status": "retained_current_head_casa_adjudicated_wprojection_metal",
+      "notes": "Fresh self-contained GLENDENNING medium oracle after W-plane formula correction, Metal-path consolidation, deterministic f64 cross-chunk reduction, and cached-block read-ahead integration. CASA and casa-rs independently select 55 W planes from the selected projected W range and field geometry. The timing ratio is recorded for completeness; the release performance claim remains the counterbalanced multi-CPU versus Metal record.",
+      "result_paths": {
+        "oracle": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.json",
+        "all_product_comparison": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.comparison.json"
+      },
+      "evidence_artifacts": {
+        "casa_oracle": "wprojection-final-casa-oracle",
+        "full_comparison": "wprojection-final-casa-comparison"
+      },
+      "stages": [
+        {
+          "stage": "frontend_total",
+          "baseline_s": 190.703701,
+          "candidate_s": 15.197535,
+          "delta_s": -175.506166,
+          "baseline_wall_fraction": 1.0,
+          "candidate_wall_fraction": 1.0,
+          "saved_fraction_of_baseline_wall": 0.9203081276330343,
+          "contribution_to_total_saved_wall": 1.0
+        }
+      ],
+      "casa": {
+        "oracle_result_path": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.json",
+        "comparison_result_path": "/private/tmp/casa-rs-wprojection-final-casa-oracle/20260710T224409Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-b4ca9838.comparison.json",
+        "comparison_status": "investigate",
+        "max_abs": 0.0013105273246765137,
+        "rms": 0.00011139730684580314,
+        "adjudication": {
+          "rationale": "Image and residual amplitude checks are good at 5.3819e-5 normalized RMS; PSF is 1.1140e-4 with good beam-scale structure and 7.6022e-6 maximum absolute error. Independent Metal runs differ by at most 1.6696e-6 normalized RMS, and the Metal result is substantially closer to CASA than the multi-CPU baseline.",
+          "products": [".image", ".psf", ".residual"],
+          "bounds": {
+            "max_abs": 0.0014,
+            "max_normalized_rms": 0.00012
+          }
+        }
       }
     }
   ]

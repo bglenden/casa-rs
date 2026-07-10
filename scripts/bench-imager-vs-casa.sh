@@ -70,6 +70,7 @@ nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
 wprojplanes="${IMAGER_BENCH_WPROJPLANES:-}"
+casa_wprojplanes="${IMAGER_BENCH_CASA_WPROJPLANES:-}"
 imaging_memory_target_mb="${IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB:-}"
 imaging_prepare_buffer_mb="${IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB:-}"
 imaging_row_block_rows="${IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS:-}"
@@ -109,12 +110,24 @@ case "$gridder" in
     ;;
 esac
 
+if [[ -z "$casa_wprojplanes" ]]; then
+  case "$casa_gridder" in
+    wproject|widefield)
+      casa_wprojplanes=-1
+      ;;
+  esac
+fi
+
 if [[ "$wterm" != "none" && ! ( "$gridder_uses_wproject_wterm" == "1" && "$wterm" == "wproject" ) ]]; then
   echo "error: scripts/bench-imager-vs-casa.sh supports IMAGER_BENCH_WTERM=none, or wproject with gridder=wproject/widefield/AW aliases" >&2
   exit 2
 fi
 if [[ -n "$wprojplanes" && ! "$wprojplanes" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_WPROJPLANES must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ -n "$casa_wprojplanes" && "$casa_wprojplanes" != "-1" && ! "$casa_wprojplanes" =~ ^[0-9]+$ ]]; then
+  echo "error: IMAGER_BENCH_CASA_WPROJPLANES must be -1 or an unsigned integer" >&2
   exit 2
 fi
 if [[ -n "$standard_mfs_grid_threads" && "$standard_mfs_grid_threads" != "auto" && ! "$standard_mfs_grid_threads" =~ ^[0-9]+$ ]]; then
@@ -387,13 +400,13 @@ emit_rust_backend_diagnostics() {
     return 0
   fi
   grep -E \
-    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
+    '^(single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|mosaic_dirty_product_gpu_resident|mosaic_mtmfs_(direct_metal_tile_parallel|residual_gpu_resident)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
     "$stderr_file" || true
 }
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
@@ -789,6 +802,10 @@ with tempfile.TemporaryDirectory() as td:
             kwargs.update(spw=spw_selector)
         if wprojplanes_env:
             kwargs["wprojplanes"] = int(wprojplanes_env)
+        elif casa_gridder in ("wproject", "widefield"):
+            # CASA defaults wprojplanes to one, which silently selects ordinary
+            # 2-D gridding. Match casa-rs Auto by requesting CASA's Auto mode.
+            kwargs["wprojplanes"] = -1
         if phasecenter_field:
             kwargs["phasecenter"] = int(phasecenter_field)
         tclean(**kwargs)
@@ -801,11 +818,13 @@ if casa_keep_prefix:
     print(f"kept_casa_prefix={casa_keep_prefix}")
 PY
 
-if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ]]; then
+if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" || -n "$reuse_casa_prefix" ]]; then
   echo "CASA tclean timings (seconds):"
-  echo "  skipped; IMAGER_BENCH_SKIP_CASA=$skip_casa"
   if [[ -n "$reuse_casa_prefix" ]]; then
+    echo "  reused; IMAGER_BENCH_REUSE_CASA_PREFIX=$reuse_casa_prefix"
     echo "  kept_casa_prefix=$reuse_casa_prefix"
+  else
+    echo "  skipped; IMAGER_BENCH_SKIP_CASA=$skip_casa"
   fi
 else
   echo "CASA tclean timings (seconds):"
@@ -822,7 +841,7 @@ else
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
-  CASA_RS_BENCH_WPROJPLANES="$wprojplanes" \
+  CASA_RS_BENCH_WPROJPLANES="$casa_wprojplanes" \
   CASA_RS_BENCH_IMSIZE="$imsize" \
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
   CASA_RS_BENCH_WEIGHTING="$weighting" \
@@ -864,7 +883,7 @@ if [[ -n "$keep_output_root" ]]; then
   echo
 fi
 
-if [[ "$phase_probe_enabled" == "1" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
+if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
   echo "CASA PySynthesisImager stage medians (milliseconds):"
   CASA_RS_BENCH_MS_PATH="$ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \

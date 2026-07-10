@@ -45,9 +45,24 @@
   },
   "comparison": {
     "products": [
+      ".alpha",
+      ".alpha.error",
       ".image.tt0",
+      ".image.tt0.pbcor",
+      ".image.tt1",
+      ".image.tt1.pbcor",
+      ".model.tt0",
+      ".model.tt1",
+      ".pb.tt0",
+      ".pb.tt1",
+      ".psf.tt0",
+      ".psf.tt1",
+      ".psf.tt2",
       ".residual.tt0",
-      ".psf.tt0"
+      ".residual.tt1",
+      ".sumwt.tt0",
+      ".sumwt.tt1",
+      ".sumwt.tt2"
     ],
     "max_elements_per_product": 1000000
   }

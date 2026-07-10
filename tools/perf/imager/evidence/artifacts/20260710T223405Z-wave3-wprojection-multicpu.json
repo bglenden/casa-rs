@@ -1,0 +1,2431 @@
+{
+  "artifacts": {
+    "comparison_root": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/comparisons/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381",
+    "products_root": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381",
+    "result_dir": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline",
+    "root": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f",
+    "tmp_root": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/tmp"
+  },
+  "benchmark_features": {
+    "backend": {
+      "cpu_multi_worker_reason": "wproject-streaming-workers-7",
+      "cube_per_plane_backend": null,
+      "cube_per_plane_fallback_reasons": null,
+      "cube_per_plane_fixed_tile_eligible": null,
+      "cube_per_plane_grid_threads": null,
+      "cube_per_plane_metal_eligible": null,
+      "cube_per_plane_phase": null,
+      "cube_per_plane_workers": null,
+      "dirty_product_fft_fallback_used": null,
+      "dirty_product_fft_requested_backend": null,
+      "dirty_product_fft_selected_backend": null,
+      "dirty_product_gpu_resident_fallback_used": null,
+      "dirty_product_gpu_resident_reason": null,
+      "dirty_product_gpu_resident_requested_backend": null,
+      "dirty_product_gpu_resident_selected_backend": null,
+      "gpu_metal_reason": "standard-mfs-policy-disabled-metal",
+      "mosaic_cube_slab_active_planes": null,
+      "mosaic_cube_slab_count": null,
+      "mosaic_cube_slab_executor_capabilities": null,
+      "mosaic_cube_slab_nplanes": null,
+      "mosaic_cube_slab_product_state": null,
+      "mosaic_cube_slab_schedule": null,
+      "mosaic_cube_slab_source_reuse": null,
+      "mosaic_cube_slab_worker_count": null,
+      "requested_acceleration": "multi-cpu",
+      "requested_imaging_fft_backend": "auto",
+      "resolved_backend": "cpu",
+      "resolved_grid_threads": 7,
+      "resolved_initial_dirty_backend": "cpu",
+      "resolved_residual_backend": "cpu",
+      "resolved_tile_anchor": "center_quadrants"
+    },
+    "image": {
+      "image_work": 786432,
+      "imsize_x": 512,
+      "imsize_y": 512,
+      "output_planes": 1,
+      "product_count": 3
+    },
+    "mode_cost": {
+      "actual_major_cycles": null,
+      "actual_minor_iterations": null,
+      "cycleniter": "2",
+      "deconvolver": "hogbom",
+      "gridder": "wproject",
+      "mosaic_field_count": 1,
+      "mtmfs_nterms": null,
+      "multiscale_scale_count": null,
+      "niter": 0,
+      "specmode": "mfs",
+      "weighting": "briggs",
+      "wprojplanes": null
+    },
+    "resources": {
+      "available_parallelism": 10,
+      "dirty_product_fft_requested_backend": null,
+      "dirty_product_fft_selected_backend": null,
+      "dirty_product_fft_total_ms": null,
+      "dirty_product_gpu_resident_device_exec_ms": null,
+      "dirty_product_gpu_resident_exec_ms": null,
+      "dirty_product_gpu_resident_pack_ms": null,
+      "dirty_product_gpu_resident_plan_ms": null,
+      "dirty_product_gpu_resident_postprocess_ms": null,
+      "dirty_product_gpu_resident_sync_ms": null,
+      "dirty_product_gpu_resident_total_ms": null,
+      "dirty_product_gpu_resident_transfer_from_device_ms": null,
+      "dirty_product_gpu_resident_transfer_to_device_ms": null,
+      "logical_cores": 10,
+      "memory_headroom_bytes": 9402,
+      "memory_target_bytes": 17179869184,
+      "metal_device": true,
+      "metal_grouped_input_cache": 0,
+      "peak_rss_bytes": null,
+      "physical_cores": 10,
+      "physical_memory_bytes": 34359738368,
+      "planned_active_bytes": 17179859782,
+      "row_block_count": 2,
+      "row_block_rows": 1613286,
+      "source_read_ahead_consumer_ms": 8549.516,
+      "source_read_ahead_consumer_recv_blocked_ms": 0.069,
+      "source_read_ahead_effective_read_bandwidth_mib_s": 1077.1757814266032,
+      "source_read_ahead_enabled": true,
+      "source_read_ahead_live_row_block_high_water": 2,
+      "source_read_ahead_mode": "standard_mfs_prepared",
+      "source_read_ahead_modes": [
+        "standard_mfs_prepared"
+      ],
+      "source_read_ahead_producer_consumer_overlap_ms": 4785.941,
+      "source_read_ahead_producer_send_blocked_ms": 417.781,
+      "source_read_ahead_queue_capacity": 0,
+      "source_read_ahead_row_blocks": 3,
+      "source_read_ahead_source_bytes": 4468868280,
+      "source_read_ahead_source_prepare_ms": 13384.114,
+      "source_read_ahead_source_read_ms": 3956.499,
+      "source_read_ahead_source_route_ms": 4834.6,
+      "source_read_ahead_summary_count": 2
+    },
+    "schema_version": 1,
+    "visibility": {
+      "correlation_source": "scalar-plane-after-polarization-collapse",
+      "correlations": 1,
+      "flagged_fraction": null,
+      "gridded_samples": null,
+      "selected_channels": 64,
+      "selected_rows": 3086235,
+      "source_stream_throughput_samples_per_s": null,
+      "visibility_work": 197519040
+    }
+  },
+  "command": {
+    "argv": [
+      "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+      "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms"
+    ],
+    "env": {
+      "BENCH_REPEATS": "1",
+      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1",
+      "IMAGER_BENCH_CASA_GRIDDER": "wproject",
+      "IMAGER_BENCH_CASA_WPROJPLANES": "-1",
+      "IMAGER_BENCH_CELL_ARCSEC": "0.25",
+      "IMAGER_BENCH_CHANNEL_COUNT": "64",
+      "IMAGER_BENCH_CHANNEL_START": "0",
+      "IMAGER_BENCH_CUBE_START": "",
+      "IMAGER_BENCH_CUBE_WIDTH": "",
+      "IMAGER_BENCH_CYCLEFACTOR": "1.0",
+      "IMAGER_BENCH_DECONVOLVER": "hogbom",
+      "IMAGER_BENCH_FIELD": "0",
+      "IMAGER_BENCH_GAIN": "0.1",
+      "IMAGER_BENCH_GRIDDER": "wproject",
+      "IMAGER_BENCH_HOGBOM_ITERATION_MODE": "casa",
+      "IMAGER_BENCH_IMAGING_FFT_BACKEND": "auto",
+      "IMAGER_BENCH_IMAGING_FFT_PRECISION": "auto",
+      "IMAGER_BENCH_IMSIZE": "512",
+      "IMAGER_BENCH_INTERPOLATION": "linear",
+      "IMAGER_BENCH_KEEP_OUTPUT_ROOT": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381",
+      "IMAGER_BENCH_MAX_PSFFRACTION": "0.8",
+      "IMAGER_BENCH_MINOR_CYCLE_LENGTH": "2",
+      "IMAGER_BENCH_MIN_PSFFRACTION": "0.05",
+      "IMAGER_BENCH_MODE": "dirty",
+      "IMAGER_BENCH_MS_STAGING": "direct",
+      "IMAGER_BENCH_NITER": "0",
+      "IMAGER_BENCH_NSIGMA": "0.0",
+      "IMAGER_BENCH_NTERMS": "1",
+      "IMAGER_BENCH_PBCOR": "0",
+      "IMAGER_BENCH_PBLIMIT": "0.2",
+      "IMAGER_BENCH_PERCHANWEIGHTDENSITY": "0",
+      "IMAGER_BENCH_PHASECENTER_FIELD": "",
+      "IMAGER_BENCH_PHASE_PROBE": "0",
+      "IMAGER_BENCH_PROFILE_REPEATS": "1",
+      "IMAGER_BENCH_PSFCUTOFF": "0.35",
+      "IMAGER_BENCH_REUSE_CASA_PREFIX": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa",
+      "IMAGER_BENCH_ROBUST": "0.5",
+      "IMAGER_BENCH_SCALES": "",
+      "IMAGER_BENCH_SKIP_CASA": "1",
+      "IMAGER_BENCH_SKIP_PROFILE": "1",
+      "IMAGER_BENCH_SKIP_RUST": "0",
+      "IMAGER_BENCH_SPECMODE": "mfs",
+      "IMAGER_BENCH_SPW": "0",
+      "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "multi-cpu",
+      "IMAGER_BENCH_THRESHOLD_JY": "0.0",
+      "IMAGER_BENCH_TMP_ROOT": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/tmp",
+      "IMAGER_BENCH_WEIGHTING": "briggs",
+      "IMAGER_BENCH_WPROJPLANES": "",
+      "IMAGER_BENCH_WRITE_PB": "0",
+      "IMAGER_BENCH_WTERM": "wproject"
+    }
+  },
+  "comparison": {
+    "max_elements_per_product": 1000000,
+    "products": [
+      ".image",
+      ".residual",
+      ".psf"
+    ]
+  },
+  "completed_at": "2026-07-10T22:34:25.233545Z",
+  "created_at": "2026-07-10T22:34:05.706303Z",
+  "dataset": {
+    "key": "wave1-vla-single-medium",
+    "path": "/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "relative_path": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "environment": {
+    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+    "bench_script_sha256": "2c162c23ff8c075ab1ca5d411229360bdaea91ac653d2d291c1f3ef0d7082c51",
+    "casa_python": "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
+    "git_branch": "codex/improve-imaging-performance",
+    "git_commit": "04a7eda96ffc463bb8109b145df268e5a640fb10",
+    "logical_cores": 10,
+    "physical_cores": 10,
+    "physical_memory_bytes": 34359738368,
+    "python": "3.13.5",
+    "repo_root": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs"
+  },
+  "exit_code": 0,
+  "human_review": {
+    "evidence_role": "after_multi_worker_cpu",
+    "panel_reason": null,
+    "panel_status": "ready",
+    "reason": "mode ticket cannot move to Done until the review bundle is accepted",
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ],
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true,
+    "status": "pending",
+    "structured_difference_label": "bad",
+    "structured_difference_legend": {
+      "bad": "Structured or large enough difference; do not close without explanation.",
+      "good": "No review action expected from this check.",
+      "investigate": "Plausible but needs review in context.",
+      "unknown": "Check could not be evaluated for this product."
+    },
+    "structured_difference_summary": "overall bad; bad: .image, .psf, .residual"
+  },
+  "logs": {
+    "benchmark_log": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.log"
+  },
+  "manifest_path": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/tools/perf/imager/workloads/wave3-wprojection-single-plane-heavy-wave1-medium-multicpu.json",
+  "mode": {
+    "bench_mode": "dirty",
+    "chanchunks": null,
+    "channel_count": 64,
+    "deconvolver": "hogbom",
+    "gridder": "wproject",
+    "hogbom_iteration_mode": "casa",
+    "image_shape": [
+      512,
+      512
+    ],
+    "imaging_fft_backend": "auto",
+    "imaging_fft_precision": "auto",
+    "imaging_read_ahead_blocks": null,
+    "niter": 0,
+    "nterms": 1,
+    "parallel": null,
+    "perchanweightdensity": "0",
+    "specmode": "mfs",
+    "standard_mfs_acceleration": "multi-cpu",
+    "standard_mfs_metal_minor_cycle_chunk": null,
+    "start": null,
+    "weighting": "briggs",
+    "width": null,
+    "wprojplanes": null
+  },
+  "products": {
+    "casa_prefix": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/casa/casa",
+    "root": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381",
+    "rust_prefix": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/rust/rust"
+  },
+  "results": {
+    "backend_plan_logs": {
+      "clark_minor_cycle_diagnostics": [],
+      "clean_residual_refresh_diagnostics": [],
+      "cube_per_plane_backend": [],
+      "cube_plane_state_store": [],
+      "cube_product_summaries": [],
+      "cube_resident_clean_control": [],
+      "cube_resident_clean_executor": [],
+      "cube_resident_clean_finish_planes": [],
+      "cube_resident_clean_stage": [],
+      "cube_source_row_blocks": [],
+      "dirty_product_fft": [],
+      "dirty_product_gpu_resident": [],
+      "dirty_product_gpu_resident_fallback": [],
+      "executor_limitations": [],
+      "frontend_progress": [
+        {
+          "fields": {
+            "stage": "cli/run_from_request_return",
+            "stage_elapsed_s": 15.701
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/run_from_request_return stage_elapsed_s=15.701"
+        },
+        {
+          "fields": {
+            "stage": "cli/result_summary_build",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 15.701
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/result_summary_build stage_elapsed_s=0.000 total_elapsed_s=15.701"
+        },
+        {
+          "fields": {
+            "count": 1,
+            "stage": "cli/warning_emit",
+            "stage_elapsed_s": 0.0,
+            "total_elapsed_s": 15.701
+          },
+          "name": "frontend",
+          "raw": "frontend stage=cli/warning_emit count=1 stage_elapsed_s=0.000 total_elapsed_s=15.701"
+        }
+      ],
+      "hogbom_minor_cycle_diagnostics": [],
+      "image_product_writes": [
+        {
+          "fields": {
+            "elapsed_ms": 5.837,
+            "elements": 262144,
+            "role": "psf",
+            "shape": "512x512x1x1",
+            "suffix": ".psf"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.psf role=psf shape=512x512x1x1 elements=262144 elapsed_ms=5.837"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 5.155,
+            "elements": 262144,
+            "role": "residual",
+            "shape": "512x512x1x1",
+            "suffix": ".residual"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.residual role=residual shape=512x512x1x1 elements=262144 elapsed_ms=5.155"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 5.026,
+            "elements": 262144,
+            "role": "model",
+            "shape": "512x512x1x1",
+            "suffix": ".model"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.model role=model shape=512x512x1x1 elements=262144 elapsed_ms=5.026"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 5.174,
+            "elements": 262144,
+            "role": "image",
+            "shape": "512x512x1x1",
+            "suffix": ".image"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.image role=image shape=512x512x1x1 elements=262144 elapsed_ms=5.174"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 1.292,
+            "elements": 1,
+            "role": "sumwt",
+            "shape": "1x1x1x1",
+            "suffix": ".sumwt"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.sumwt role=sumwt shape=1x1x1x1 elements=1 elapsed_ms=1.292"
+        },
+        {
+          "fields": {
+            "elapsed_ms": 2.014,
+            "elements": 262144,
+            "role": "mask",
+            "shape": "512x512x1x1",
+            "suffix": ".mask"
+          },
+          "name": "image_product_write",
+          "raw": "image_product_write suffix=.mask role=mask shape=512x512x1x1 elements=262144 elapsed_ms=2.014"
+        }
+      ],
+      "imaging_source_read_ahead": [
+        {
+          "fields": {
+            "consumer_ms": 0.002,
+            "consumer_recv_blocked_ms": 0.0,
+            "effective_read_bandwidth_mib_s": 1196.469,
+            "enabled": false,
+            "live_row_block_high_water": 1,
+            "max_live_row_blocks": 2,
+            "mode": "standard_mfs_prepared",
+            "producer_consumer_overlap_ms": 0.0,
+            "producer_send_blocked_ms": 0.0,
+            "queue_capacity": 0,
+            "row_block_rows": 1613286,
+            "row_blocks": 1,
+            "source_bytes": 2336038128,
+            "source_prepare_ms": 2157.269,
+            "source_read_ms": 1861.995,
+            "source_route_ms": 2157.268,
+            "streamed_samples": 103250304
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=standard_mfs_prepared enabled=false max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=1 row_blocks=1 row_block_rows=1613286 consumer_recv_blocked_ms=0.000 producer_send_blocked_ms=0.000 producer_consumer_overlap_ms=0.000 source_read_ms=1861.995 source_route_ms=2157.268 consumer_ms=0.002 source_prepare_ms=2157.269 source_bytes=2336038128 effective_read_bandwidth_mib_s=1196.469 streamed_samples=103250304"
+        },
+        {
+          "fields": {
+            "consumer_ms": 8549.514,
+            "consumer_recv_blocked_ms": 0.069,
+            "effective_read_bandwidth_mib_s": 971.125,
+            "enabled": true,
+            "live_row_block_high_water": 2,
+            "max_live_row_blocks": 2,
+            "mode": "standard_mfs_prepared",
+            "producer_consumer_overlap_ms": 4785.941,
+            "producer_send_blocked_ms": 417.781,
+            "queue_capacity": 0,
+            "row_block_rows": 1613286,
+            "row_blocks": 2,
+            "source_bytes": 2132830152,
+            "source_prepare_ms": 11226.845,
+            "source_read_ms": 2094.504,
+            "source_route_ms": 2677.332,
+            "streamed_samples": 197519040
+          },
+          "name": "imaging_source_read_ahead_summary",
+          "raw": "imaging_source_read_ahead_summary mode=standard_mfs_prepared enabled=true max_live_row_blocks=2 queue_capacity=0 live_row_block_high_water=2 row_blocks=2 row_block_rows=1613286 consumer_recv_blocked_ms=0.069 producer_send_blocked_ms=417.781 producer_consumer_overlap_ms=4785.941 source_read_ms=2094.504 source_route_ms=2677.332 consumer_ms=8549.514 source_prepare_ms=11226.845 source_bytes=2132830152 effective_read_bandwidth_mib_s=971.125 streamed_samples=197519040"
+        }
+      ],
+      "metal_diagnostics": [],
+      "minor_cycle_diagnostics": [],
+      "mosaic_cube_slab_executor_summaries": [],
+      "mosaic_cube_slab_planes": [],
+      "mosaic_cube_slab_plans": [],
+      "multiscale_minor_cycle_diagnostics": [],
+      "profile_runs": [],
+      "schema_version": 1,
+      "single_plane_execution_plan": [
+        {
+          "fields": {
+            "cpu_multi_worker_eligible": true,
+            "cpu_multi_worker_reason": "wproject-streaming-workers-7",
+            "deconvolver": "single-term",
+            "gpu_metal_eligible": false,
+            "gpu_metal_reason": "standard-mfs-policy-disabled-metal",
+            "one_output_channel": true,
+            "output_channels": 1,
+            "output_products": ".image,.residual,.model,.psf,.sumwt",
+            "pb_products": false,
+            "pb_requirement": "none",
+            "projection": "wproject",
+            "source_stream": "bounded",
+            "source_stream_memory": "planner",
+            "spectral": "mfs",
+            "stage_timing_attribution": "frontend-core-product-stages",
+            "standard_mfs_regression_sentinel": false,
+            "weighting": "briggs"
+          },
+          "name": "single_plane_execution_plan",
+          "raw": "single_plane_execution_plan spectral=mfs projection=wproject deconvolver=single-term weighting=briggs output_channels=1 one_output_channel=true source_stream=bounded source_stream_memory=planner pb_products=false pb_requirement=none output_products=.image,.residual,.model,.psf,.sumwt cpu_multi_worker_eligible=true cpu_multi_worker_reason=wproject-streaming-workers-7 gpu_metal_eligible=false gpu_metal_reason=standard-mfs-policy-disabled-metal stage_timing_attribution=frontend-core-product-stages standard_mfs_regression_sentinel=false"
+        }
+      ],
+      "source_stream_consumer": [],
+      "source_stream_memory_plan": [
+        {
+          "fields": {
+            "execution_mode": "fixed_tile_streaming",
+            "executor_plan_bytes_estimate": 8466524928,
+            "fixed_tile_edge": 0,
+            "fixed_tile_resident_bytes": 0,
+            "fixed_tile_resident_limit": 0,
+            "global_grid_bytes": 13107200,
+            "gpu_staging_bytes": 0,
+            "gridded_visibility_bytes": 0,
+            "heuristic_row_block_rows": 1613286,
+            "image_working_set_bytes": 8388608,
+            "live_bucket_bytes": 6608019456,
+            "live_row_block_bytes": 8466524928,
+            "local_grid_bytes_estimate": 106696576,
+            "materialized_sample_plan_budget_bytes": 0,
+            "max_live_row_blocks": 2,
+            "memory_target_bytes": 17179869184,
+            "memory_target_source": "system_half",
+            "metal_grouped_input_cache_bytes": 0,
+            "metal_grouped_input_cache_enabled": false,
+            "modeled_source_read_bytes": 3703482000,
+            "output_image_bytes": 0,
+            "peak_rss_bytes": 0,
+            "planned_active_bytes": 17179859782,
+            "planned_reserved_bytes": 23787879238,
+            "prepare_buffer_bytes": 9402,
+            "prepare_buffer_floor_applied": false,
+            "product_status": "cpu",
+            "queued_task_bytes": 0,
+            "reserve_over_budget_bytes": 6608010054,
+            "resident_tile_buffer_bytes": 0,
+            "routed_replay_cache_bytes": 0,
+            "routed_replay_cache_enabled": false,
+            "row_block_rows": 1613286,
+            "row_block_rows_source": "shape-planner",
+            "rows_total": 3086235,
+            "selected_channels": 64,
+            "source_stream": "bounded",
+            "source_stream_buffer_bytes": 17063726022,
+            "system_memory_bytes": 34359738368,
+            "tile_cell_bin_bytes": 0,
+            "total_budget_bytes": 17179869184,
+            "visibility_row_cache_overhead_bytes": 33,
+            "visibility_row_channel_bytes": 18,
+            "visibility_row_fixed_bytes": 48,
+            "visibility_row_fixed_resident_bytes": 81,
+            "weighting_density_bytes": 1048576,
+            "worker_buffers": 1,
+            "worker_staging_bytes": 106696576
+          },
+          "name": "standard_mfs_memory_plan_actual",
+          "raw": "standard_mfs_memory_plan_actual source_stream=bounded execution_mode=fixed_tile_streaming rows_total=3086235 selected_channels=64 row_block_rows=1613286 row_block_rows_source=shape-planner heuristic_row_block_rows=1613286 worker_buffers=1 system_memory_bytes=34359738368 memory_target_bytes=17179869184 memory_target_source=system_half total_budget_bytes=17179869184 planned_reserved_bytes=23787879238 planned_active_bytes=17179859782 reserve_over_budget_bytes=6608010054 prepare_buffer_floor_applied=false prepare_buffer_bytes=9402 image_working_set_bytes=8388608 weighting_density_bytes=1048576 gridded_visibility_bytes=0 output_image_bytes=0 fixed_tile_resident_bytes=0 fixed_tile_resident_limit=0 fixed_tile_edge=0 fixed_tile_anchor= max_live_row_blocks=2 source_stream_buffer_bytes=17063726022 live_row_block_bytes=8466524928 live_bucket_bytes=6608019456 visibility_row_channel_bytes=18 visibility_row_fixed_bytes=48 visibility_row_fixed_resident_bytes=81 visibility_row_cache_overhead_bytes=33 modeled_source_read_bytes=3703482000 queued_task_bytes=0 resident_tile_buffer_bytes=0 global_grid_bytes=13107200 tile_cell_bin_bytes=0 worker_staging_bytes=106696576 gpu_staging_bytes=0 routed_replay_cache_bytes=0 routed_replay_cache_enabled=false metal_grouped_input_cache_bytes=0 metal_grouped_input_cache_enabled=false materialized_sample_plan_budget_bytes=0 executor_plan_bytes_estimate=8466524928 local_grid_bytes_estimate=106696576 peak_rss_bytes=0 product_status=cpu"
+        }
+      ],
+      "spectral_slab_events": [],
+      "spectral_slab_memory": [],
+      "spectral_slab_plans": [],
+      "standard_mfs_runtime_plan": [
+        {
+          "fields": {
+            "auto_metal": false,
+            "auto_multi_cpu": true,
+            "backend": "cpu",
+            "backend_source": "policy",
+            "density_threads": "grid_threads",
+            "density_threads_source": "not_applicable",
+            "eligible": true,
+            "grid_threads": 7,
+            "grid_threads_source": "policy",
+            "imaging_fft_backend": "auto",
+            "imaging_fft_precision": "auto",
+            "initial_dirty_backend": "cpu",
+            "initial_dirty_backend_source": "policy",
+            "metal_device_available": true,
+            "metal_grouped_input_cache": 0,
+            "metal_grouped_input_cache_source": "policy",
+            "metal_minor_cycle_chunk": "full",
+            "metal_minor_cycle_chunk_source": "not_applicable",
+            "minor_cycle_backend": "cpu",
+            "minor_cycle_backend_reason": "not_applicable",
+            "mtmfs_metal_backend": "not_applicable",
+            "mtmfs_metal_input_cache": "not_applicable",
+            "policy": "multi-cpu",
+            "residual_backend": "cpu",
+            "residual_backend_source": "policy",
+            "tile_anchor": "center_quadrants",
+            "tile_anchor_source": "policy",
+            "worker_candidate_costs": "1:cost=262144,waves=1,contention_milli=1000,eff_speedup_milli=1000,command_target_ms=none;2:cost=133746,waves=1,contention_milli=1000,eff_speedup_milli=1960,command_target_ms=none;3:cost=94398,waves=1,contention_milli=1000,eff_speedup_milli=2777,command_target_ms=none;4:cost=77351,waves=1,contention_milli=1000,eff_speedup_milli=3389,command_target_ms=none;5:cost=69222,waves=1,contention_milli=1000,eff_speedup_milli=3787,command_target_ms=none;6:cost=65536,waves=1,contention_milli=1000,eff_speedup_milli=4000,command_target_ms=none;7:cost=64424,waves=1,contention_milli=1000,eff_speedup_milli=4069,command_target_ms=none;8:cost=64887,waves=1,contention_milli=1000,eff_speedup_milli=4040,command_target_ms=none;9:cost=66416,waves=1,contention_milli=1000,eff_speedup_milli=3947,command_target_ms=none;10:cost=68696,waves=1,contention_milli=1000,eff_speedup_milli=3816,command_target_ms=none",
+            "worker_model": "intra_plane_wproject_cpu_diminishing_return_v1",
+            "worker_modeled_cost_units": 64424
+          },
+          "name": "standard_mfs_runtime_plan",
+          "raw": "standard_mfs_runtime_plan policy=multi-cpu imaging_fft_precision=auto imaging_fft_backend=auto eligible=true auto_multi_cpu=true auto_metal=false metal_device_available=true worker_model=intra_plane_wproject_cpu_diminishing_return_v1 worker_modeled_cost_units=64424 worker_candidate_costs=1:cost=262144,waves=1,contention_milli=1000,eff_speedup_milli=1000,command_target_ms=none;2:cost=133746,waves=1,contention_milli=1000,eff_speedup_milli=1960,command_target_ms=none;3:cost=94398,waves=1,contention_milli=1000,eff_speedup_milli=2777,command_target_ms=none;4:cost=77351,waves=1,contention_milli=1000,eff_speedup_milli=3389,command_target_ms=none;5:cost=69222,waves=1,contention_milli=1000,eff_speedup_milli=3787,command_target_ms=none;6:cost=65536,waves=1,contention_milli=1000,eff_speedup_milli=4000,command_target_ms=none;7:cost=64424,waves=1,contention_milli=1000,eff_speedup_milli=4069,command_target_ms=none;8:cost=64887,waves=1,contention_milli=1000,eff_speedup_milli=4040,command_target_ms=none;9:cost=66416,waves=1,contention_milli=1000,eff_speedup_milli=3947,command_target_ms=none;10:cost=68696,waves=1,contention_milli=1000,eff_speedup_milli=3816,command_target_ms=none backend=cpu backend_source=policy grid_threads=7 grid_threads_source=policy density_threads=grid_threads density_threads_source=not_applicable tile_anchor=center_quadrants tile_anchor_source=policy residual_backend=cpu residual_backend_source=policy initial_dirty_backend=cpu initial_dirty_backend_source=policy metal_grouped_input_cache=0 metal_grouped_input_cache_source=policy minor_cycle_backend=cpu minor_cycle_backend_reason=not_applicable metal_minor_cycle_chunk=full metal_minor_cycle_chunk_source=not_applicable mtmfs_metal_backend=not_applicable mtmfs_metal_input_cache=not_applicable"
+        }
+      ],
+      "standard_mfs_source_read_ahead": [],
+      "summary": {
+        "active_rows": 3086235,
+        "clean_residual_refresh_accounted_ms": null,
+        "clean_residual_refresh_backend": null,
+        "clean_residual_refresh_calls": 0,
+        "clean_residual_refresh_model_fft_ms": null,
+        "clean_residual_refresh_ms": null,
+        "clean_residual_refresh_overhead_ms": null,
+        "clean_residual_refresh_residual_degrid_grid_ms": null,
+        "clean_residual_refresh_residual_fft_ms": null,
+        "clean_residual_refresh_residual_normalize_ms": null,
+        "cube_per_plane_backend": null,
+        "cube_per_plane_fallback_reasons": null,
+        "cube_per_plane_fixed_tile_eligible": null,
+        "cube_per_plane_grid_threads": null,
+        "cube_per_plane_metal_eligible": null,
+        "cube_per_plane_phase": null,
+        "cube_per_plane_workers": null,
+        "cube_plane_state_store_bytes_read": null,
+        "cube_plane_state_store_bytes_written": null,
+        "cube_plane_state_store_cleanup_policy": null,
+        "cube_plane_state_store_count": 0,
+        "cube_plane_state_store_elapsed_ms": null,
+        "cube_plane_state_store_kind": null,
+        "cube_product_bytes": null,
+        "cube_product_group_planes": null,
+        "cube_product_groups": null,
+        "cube_product_image_ms": null,
+        "cube_product_image_pbcor_ms": null,
+        "cube_product_model_ms": null,
+        "cube_product_pb_ms": null,
+        "cube_product_psf_ms": null,
+        "cube_product_residual_ms": null,
+        "cube_product_role_ms": null,
+        "cube_product_summary_count": 0,
+        "cube_product_sumwt_ms": null,
+        "cube_product_tiled_c_order_calls": null,
+        "cube_product_tiled_copied_elements": null,
+        "cube_product_tiled_direct_pack_ns": null,
+        "cube_product_tiled_direct_swap_ns": null,
+        "cube_product_tiled_direct_write_bytes": null,
+        "cube_product_tiled_direct_write_calls": null,
+        "cube_product_tiled_direct_write_ns": null,
+        "cube_product_tiled_direct_write_tiles": null,
+        "cube_product_tiled_fortran_calls": null,
+        "cube_product_tiled_lru_batch_flush_bytes": null,
+        "cube_product_tiled_lru_batch_flush_tiles": null,
+        "cube_product_tiled_lru_zero_fill_tiles": null,
+        "cube_product_tiled_tile_visits": null,
+        "cube_product_weight_ms": null,
+        "cube_product_write_ms": null,
+        "cube_resident_clean_actual_updates": null,
+        "cube_resident_clean_cleaned_planes": null,
+        "cube_resident_clean_completed": null,
+        "cube_resident_clean_consume_ms": null,
+        "cube_resident_clean_control_prepare_ms": null,
+        "cube_resident_clean_control_source_read_ms": null,
+        "cube_resident_clean_controller_overhead_ms": null,
+        "cube_resident_clean_core_total_ms": null,
+        "cube_resident_clean_cycle_threshold": null,
+        "cube_resident_clean_elapsed_ms": null,
+        "cube_resident_clean_finish_cleaned_plane_count": 0,
+        "cube_resident_clean_finish_plane_count": 0,
+        "cube_resident_clean_finish_skipped_plane_count": 0,
+        "cube_resident_clean_major_cycle_refresh_ms": null,
+        "cube_resident_clean_max_actual_updates_per_plane": null,
+        "cube_resident_clean_minor_cycle_ms": null,
+        "cube_resident_clean_minor_cycle_solve_ms": null,
+        "cube_resident_clean_minor_iterations_from_planes": null,
+        "cube_resident_clean_model_nonzero_pixels": null,
+        "cube_resident_clean_model_nonzero_planes": 0,
+        "cube_resident_clean_model_peak_abs_jy": null,
+        "cube_resident_clean_model_sum_abs_jy": null,
+        "cube_resident_clean_planes": null,
+        "cube_resident_clean_planes_at_or_below_threshold": null,
+        "cube_resident_clean_product_write_ms": null,
+        "cube_resident_clean_publish_prepare_ms": null,
+        "cube_resident_clean_publish_source_read_ms": null,
+        "cube_resident_clean_reported_updates": null,
+        "cube_resident_clean_residency": null,
+        "cube_resident_clean_residual_refresh_overhead_ms": null,
+        "cube_resident_clean_restore_ms": null,
+        "cube_resident_clean_result_wait_ms": null,
+        "cube_resident_clean_skipped_minor_cycle_planes": null,
+        "cube_resident_clean_skipped_model_nonzero_planes": 0,
+        "cube_resident_clean_stop_reason_counts": null,
+        "cube_resident_clean_trace_minor_cycles": null,
+        "cube_source_row_block_rows": null,
+        "cube_source_row_blocks": null,
+        "cube_source_row_blocks_prepare_ms": null,
+        "cube_source_row_blocks_read_ms": null,
+        "cube_source_row_blocks_visibility_capacity_bytes": null,
+        "cube_source_row_blocks_wall_ms": null,
+        "dirty_product_fft_fallback_used": null,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_fft_total_ms": null,
+        "dirty_product_gpu_resident_device_exec_ms": null,
+        "dirty_product_gpu_resident_exec_ms": null,
+        "dirty_product_gpu_resident_fallback_reason": null,
+        "dirty_product_gpu_resident_fallback_used": null,
+        "dirty_product_gpu_resident_pack_ms": null,
+        "dirty_product_gpu_resident_plan_ms": null,
+        "dirty_product_gpu_resident_postprocess_ms": null,
+        "dirty_product_gpu_resident_products": null,
+        "dirty_product_gpu_resident_reason": null,
+        "dirty_product_gpu_resident_requested_backend": null,
+        "dirty_product_gpu_resident_selected_backend": null,
+        "dirty_product_gpu_resident_sync_ms": null,
+        "dirty_product_gpu_resident_total_ms": null,
+        "dirty_product_gpu_resident_transfer_from_device_ms": null,
+        "dirty_product_gpu_resident_transfer_to_device_ms": null,
+        "executor_limitation_materialization": null,
+        "executor_limitation_reason": null,
+        "frontend_io_time_ms": null,
+        "frontend_wall_to_io_ratio": null,
+        "gridded_samples": null,
+        "image_product_write_count": 6,
+        "image_product_write_elements_by_suffix": {
+          ".image": 262144,
+          ".mask": 262144,
+          ".model": 262144,
+          ".psf": 262144,
+          ".residual": 262144,
+          ".sumwt": 1
+        },
+        "image_product_write_ms_by_suffix": {
+          ".image": 5.174,
+          ".mask": 2.014,
+          ".model": 5.026,
+          ".psf": 5.837,
+          ".residual": 5.155,
+          ".sumwt": 1.292
+        },
+        "image_product_write_role_by_suffix": {
+          ".image": "image",
+          ".mask": "mask",
+          ".model": "model",
+          ".psf": "psf",
+          ".residual": "residual",
+          ".sumwt": "sumwt"
+        },
+        "image_product_write_shape_by_suffix": {
+          ".image": "512x512x1x1",
+          ".mask": "512x512x1x1",
+          ".model": "512x512x1x1",
+          ".psf": "512x512x1x1",
+          ".residual": "512x512x1x1",
+          ".sumwt": "1x1x1x1"
+        },
+        "major_cycles": null,
+        "memory_target_bytes": 17179869184,
+        "metal_device_available": true,
+        "metal_diagnostic_count": 0,
+        "metal_grouped_append_data_flag_copy_ms": null,
+        "metal_grouped_append_group_assign_ms": null,
+        "metal_grouped_append_group_finalize_ms": null,
+        "metal_grouped_append_lane_push_ms": null,
+        "metal_grouped_append_run_desc_ms": null,
+        "metal_grouped_append_setup_ms": null,
+        "metal_grouped_input_cache": 0,
+        "metal_residual_refresh_append_total_ms": null,
+        "metal_residual_refresh_calls": 0,
+        "metal_residual_refresh_candidate_model_reads": null,
+        "metal_residual_refresh_candidate_tap_visits": null,
+        "metal_residual_refresh_chunks": null,
+        "metal_residual_refresh_density_buffer_ms": null,
+        "metal_residual_refresh_detail_dispatch_gpu_ms": null,
+        "metal_residual_refresh_detail_dispatch_kernel_ms": null,
+        "metal_residual_refresh_detail_dispatch_wait_ms": null,
+        "metal_residual_refresh_detail_readback_ms": null,
+        "metal_residual_refresh_dispatch_encode_ms": null,
+        "metal_residual_refresh_dispatch_gpu_ms": null,
+        "metal_residual_refresh_dispatch_input_buffers_ms": null,
+        "metal_residual_refresh_dispatch_kernel_ms": null,
+        "metal_residual_refresh_dispatch_params_buffer_ms": null,
+        "metal_residual_refresh_dispatch_wait_ms": null,
+        "metal_residual_refresh_exact_candidate_grid_atomic_adds": null,
+        "metal_residual_refresh_grid_buffer_ms": null,
+        "metal_residual_refresh_group_descs": null,
+        "metal_residual_refresh_grouped_candidate_grid_atomic_adds": null,
+        "metal_residual_refresh_grouped_candidate_scan_tests": null,
+        "metal_residual_refresh_input_cache_chunks": null,
+        "metal_residual_refresh_input_cache_fills": null,
+        "metal_residual_refresh_input_cache_hits": null,
+        "metal_residual_refresh_input_cache_host_bytes": null,
+        "metal_residual_refresh_lane_refs": null,
+        "metal_residual_refresh_logical_lanes": null,
+        "metal_residual_refresh_model_buffer_ms": null,
+        "metal_residual_refresh_model_pack_ms": null,
+        "metal_residual_refresh_prepare_plus_dispatch_ms": null,
+        "metal_residual_refresh_readback_ms": null,
+        "metal_residual_refresh_replay_ms": null,
+        "metal_residual_refresh_runs": null,
+        "metal_residual_refresh_staged_bytes": null,
+        "metal_residual_refresh_unsupported_runs": null,
+        "minor_iterations": null,
+        "modeled_source_read_bytes": 3703482000,
+        "mosaic_cube_slab_active_planes": null,
+        "mosaic_cube_slab_count": null,
+        "mosaic_cube_slab_executor_capabilities": null,
+        "mosaic_cube_slab_executor_elapsed_ms": null,
+        "mosaic_cube_slab_executor_summary_count": 0,
+        "mosaic_cube_slab_executor_worker_max_ms": null,
+        "mosaic_cube_slab_executor_worker_sum_ms": null,
+        "mosaic_cube_slab_nplanes": null,
+        "mosaic_cube_slab_plane_count": 0,
+        "mosaic_cube_slab_plane_publish_ms": null,
+        "mosaic_cube_slab_plane_worker_sum_ms": null,
+        "mosaic_cube_slab_product_state": null,
+        "mosaic_cube_slab_product_write_ms": null,
+        "mosaic_cube_slab_schedule": null,
+        "mosaic_cube_slab_source_reuse": null,
+        "mosaic_cube_slab_worker_count": null,
+        "peak_rss_bytes": null,
+        "planned_active_bytes": 17179859782,
+        "requested_imaging_fft_backend": "auto",
+        "resolved_backend": "cpu",
+        "resolved_grid_threads": 7,
+        "resolved_initial_dirty_backend": "cpu",
+        "resolved_minor_cycle_backend": "cpu",
+        "resolved_minor_cycle_backend_reason": "not_applicable",
+        "resolved_residual_backend": "cpu",
+        "resolved_tile_anchor": "center_quadrants",
+        "row_block_rows": 1613286,
+        "selected_channels": 64,
+        "single_plane_reason": {
+          "cpu_multi_worker": "wproject-streaming-workers-7",
+          "gpu_metal": "standard-mfs-policy-disabled-metal"
+        },
+        "source_read_ahead_consumer_ms": 8549.516,
+        "source_read_ahead_consumer_recv_blocked_ms": 0.069,
+        "source_read_ahead_effective_read_bandwidth_mib_s": 1077.1757814266032,
+        "source_read_ahead_enabled": true,
+        "source_read_ahead_live_row_block_high_water": 2,
+        "source_read_ahead_max_live_row_blocks": 2,
+        "source_read_ahead_mode": "standard_mfs_prepared",
+        "source_read_ahead_modes": [
+          "standard_mfs_prepared"
+        ],
+        "source_read_ahead_producer_consumer_overlap_ms": 4785.941,
+        "source_read_ahead_producer_send_blocked_ms": 417.781,
+        "source_read_ahead_queue_capacity": 0,
+        "source_read_ahead_row_blocks": 3,
+        "source_read_ahead_source_bytes": 4468868280,
+        "source_read_ahead_source_prepare_ms": 13384.114,
+        "source_read_ahead_source_read_ms": 3956.499,
+        "source_read_ahead_source_route_ms": 4834.6,
+        "source_read_ahead_streamed_samples": 300769344,
+        "source_read_ahead_summary_count": 2,
+        "source_stream_buffer_bytes": 17063726022,
+        "spectral_active_planes": null,
+        "spectral_backend": null,
+        "spectral_best_modeled_active_planes": null,
+        "spectral_best_modeled_output_spill_io_bytes": null,
+        "spectral_best_modeled_product_write_bytes": null,
+        "spectral_best_modeled_schedule": null,
+        "spectral_best_modeled_slab_count": null,
+        "spectral_best_modeled_source_channel_visits": null,
+        "spectral_best_modeled_source_read_bytes": null,
+        "spectral_best_modeled_total_io_bytes": null,
+        "spectral_best_modeled_visibility_cache_io_bytes": null,
+        "spectral_cache_budget_bytes": null,
+        "spectral_candidate_io_costs": null,
+        "spectral_data_channel_read_granularity": null,
+        "spectral_executor_capabilities": null,
+        "spectral_flag_channel_read_granularity": null,
+        "spectral_full_source_channel_count": null,
+        "spectral_max_slab_source_channels": null,
+        "spectral_memory_max_current_rss_bytes": null,
+        "spectral_memory_max_delta_from_baseline_bytes": null,
+        "spectral_memory_max_delta_from_previous_bytes": null,
+        "spectral_memory_max_delta_slab_id": null,
+        "spectral_memory_max_delta_stage": null,
+        "spectral_memory_max_peak_rss_bytes": null,
+        "spectral_modeled_full_cache_source_read_bytes": null,
+        "spectral_modeled_no_cache_source_read_bytes": null,
+        "spectral_modeled_output_spill_io_bytes": null,
+        "spectral_modeled_output_spill_read_bytes": null,
+        "spectral_modeled_output_spill_write_bytes": null,
+        "spectral_modeled_product_write_bytes": null,
+        "spectral_modeled_source_read_bytes": null,
+        "spectral_modeled_total_io_bytes": null,
+        "spectral_modeled_visibility_cache_fill_bytes": null,
+        "spectral_modeled_visibility_cache_io_bytes": null,
+        "spectral_modeled_visibility_cache_read_bytes": null,
+        "spectral_prepared_residency": null,
+        "spectral_product_batch_planes": null,
+        "spectral_schedule": null,
+        "spectral_slab_count": null,
+        "spectral_source_cell_channel_count": null,
+        "spectral_source_channel_visits": null,
+        "spectral_visibility_cache_bytes": null,
+        "spectral_visibility_cache_policy": null,
+        "spectral_visibility_cache_saved_read_bytes": null,
+        "spectral_visibility_resident_cache_layout": null,
+        "spectral_visibility_row_cache_overhead_bytes": null,
+        "spectral_visibility_row_channel_bytes": null,
+        "spectral_visibility_row_fixed_bytes": null,
+        "spectral_visibility_row_fixed_resident_bytes": null,
+        "spectral_weight_spectrum_channel_read_granularity": null,
+        "visibility_geometry_cache_budget_bytes": null,
+        "visibility_geometry_cache_bypasses": null,
+        "visibility_geometry_cache_elapsed_ms": null,
+        "visibility_geometry_cache_enabled": null,
+        "visibility_geometry_cache_entries": null,
+        "visibility_geometry_cache_fills": null,
+        "visibility_geometry_cache_hits": null,
+        "visibility_geometry_cache_misses": null,
+        "visibility_geometry_cache_rejected_model_dependent": null,
+        "visibility_geometry_cache_resident_bytes": null,
+        "visibility_geometry_cache_shares": null,
+        "visibility_row_cache_overhead_bytes": 33,
+        "visibility_row_channel_bytes": 18,
+        "visibility_row_fixed_bytes": 48,
+        "visibility_row_fixed_resident_bytes": 81
+      },
+      "visibility_geometry_cache": [],
+      "worker_diagnostics": []
+    },
+    "benchmark_features": {
+      "backend": {
+        "cpu_multi_worker_reason": "wproject-streaming-workers-7",
+        "cube_per_plane_backend": null,
+        "cube_per_plane_fallback_reasons": null,
+        "cube_per_plane_fixed_tile_eligible": null,
+        "cube_per_plane_grid_threads": null,
+        "cube_per_plane_metal_eligible": null,
+        "cube_per_plane_phase": null,
+        "cube_per_plane_workers": null,
+        "dirty_product_fft_fallback_used": null,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_gpu_resident_fallback_used": null,
+        "dirty_product_gpu_resident_reason": null,
+        "dirty_product_gpu_resident_requested_backend": null,
+        "dirty_product_gpu_resident_selected_backend": null,
+        "gpu_metal_reason": "standard-mfs-policy-disabled-metal",
+        "mosaic_cube_slab_active_planes": null,
+        "mosaic_cube_slab_count": null,
+        "mosaic_cube_slab_executor_capabilities": null,
+        "mosaic_cube_slab_nplanes": null,
+        "mosaic_cube_slab_product_state": null,
+        "mosaic_cube_slab_schedule": null,
+        "mosaic_cube_slab_source_reuse": null,
+        "mosaic_cube_slab_worker_count": null,
+        "requested_acceleration": "multi-cpu",
+        "requested_imaging_fft_backend": "auto",
+        "resolved_backend": "cpu",
+        "resolved_grid_threads": 7,
+        "resolved_initial_dirty_backend": "cpu",
+        "resolved_residual_backend": "cpu",
+        "resolved_tile_anchor": "center_quadrants"
+      },
+      "image": {
+        "image_work": 786432,
+        "imsize_x": 512,
+        "imsize_y": 512,
+        "output_planes": 1,
+        "product_count": 3
+      },
+      "mode_cost": {
+        "actual_major_cycles": null,
+        "actual_minor_iterations": null,
+        "cycleniter": "2",
+        "deconvolver": "hogbom",
+        "gridder": "wproject",
+        "mosaic_field_count": 1,
+        "mtmfs_nterms": null,
+        "multiscale_scale_count": null,
+        "niter": 0,
+        "specmode": "mfs",
+        "weighting": "briggs",
+        "wprojplanes": null
+      },
+      "resources": {
+        "available_parallelism": 10,
+        "dirty_product_fft_requested_backend": null,
+        "dirty_product_fft_selected_backend": null,
+        "dirty_product_fft_total_ms": null,
+        "dirty_product_gpu_resident_device_exec_ms": null,
+        "dirty_product_gpu_resident_exec_ms": null,
+        "dirty_product_gpu_resident_pack_ms": null,
+        "dirty_product_gpu_resident_plan_ms": null,
+        "dirty_product_gpu_resident_postprocess_ms": null,
+        "dirty_product_gpu_resident_sync_ms": null,
+        "dirty_product_gpu_resident_total_ms": null,
+        "dirty_product_gpu_resident_transfer_from_device_ms": null,
+        "dirty_product_gpu_resident_transfer_to_device_ms": null,
+        "logical_cores": 10,
+        "memory_headroom_bytes": 9402,
+        "memory_target_bytes": 17179869184,
+        "metal_device": true,
+        "metal_grouped_input_cache": 0,
+        "peak_rss_bytes": null,
+        "physical_cores": 10,
+        "physical_memory_bytes": 34359738368,
+        "planned_active_bytes": 17179859782,
+        "row_block_count": 2,
+        "row_block_rows": 1613286,
+        "source_read_ahead_consumer_ms": 8549.516,
+        "source_read_ahead_consumer_recv_blocked_ms": 0.069,
+        "source_read_ahead_effective_read_bandwidth_mib_s": 1077.1757814266032,
+        "source_read_ahead_enabled": true,
+        "source_read_ahead_live_row_block_high_water": 2,
+        "source_read_ahead_mode": "standard_mfs_prepared",
+        "source_read_ahead_modes": [
+          "standard_mfs_prepared"
+        ],
+        "source_read_ahead_producer_consumer_overlap_ms": 4785.941,
+        "source_read_ahead_producer_send_blocked_ms": 417.781,
+        "source_read_ahead_queue_capacity": 0,
+        "source_read_ahead_row_blocks": 3,
+        "source_read_ahead_source_bytes": 4468868280,
+        "source_read_ahead_source_prepare_ms": 13384.114,
+        "source_read_ahead_source_read_ms": 3956.499,
+        "source_read_ahead_source_route_ms": 4834.6,
+        "source_read_ahead_summary_count": 2
+      },
+      "schema_version": 1,
+      "visibility": {
+        "correlation_source": "scalar-plane-after-polarization-collapse",
+        "correlations": 1,
+        "flagged_fraction": null,
+        "gridded_samples": null,
+        "selected_channels": 64,
+        "selected_rows": 3086235,
+        "source_stream_throughput_samples_per_s": null,
+        "visibility_work": 197519040
+      }
+    },
+    "casa": {
+      "reason": "CASA tclean timing section was not reported",
+      "status": "missing",
+      "timings_seconds": {
+        "median": null,
+        "runs": []
+      }
+    },
+    "casa_clean_control_diagnostics": [],
+    "product_comparison": {
+      "beam_info": {
+        "beam_area_pixels": 28.32725088641996,
+        "beam_block_side_pixels": 5,
+        "fwhm_pixels": [
+          5,
+          5
+        ],
+        "peak_abs": 1.0,
+        "peak_location": [
+          256,
+          256
+        ],
+        "psf_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa.psf",
+        "sample_stride": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "status": "estimated_from_psf"
+      },
+      "input": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.comparison-input.json",
+      "log": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/runs/001-measured-01-01-baseline/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381.comparison.log",
+      "panel_dir": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/comparisons/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/panels",
+      "products": {
+        ".image": {
+          "casa_max": 90.39209747314453,
+          "casa_min": -14.019784927368164,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa.image",
+          "casa_peak_abs": {
+            "abs_value": 90.39209747314453,
+            "location": [
+              254,
+              254,
+              0,
+              0
+            ],
+            "value": 90.39209747314453
+          },
+          "casa_rms": 5.240085370522414,
+          "correlation": 0.9999997528773218,
+          "diff_abs_max": 0.039469003677368164,
+          "diff_abs_max_over_casa_peak": 0.0004366421930754997,
+          "diff_peak_abs": {
+            "abs_value": 0.039469003677368164,
+            "location": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "value": 0.039469003677368164
+          },
+          "diff_rms": 0.003745991766580716,
+          "diff_rms_over_casa_rms": 0.0007148722781604714,
+          "finite_overlap": 262144,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -14.019784927368164,
+              90.39209747314453
+            ],
+            "difference_color_limits": [
+              -0.039469003677368164,
+              0.039469003677368164
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                511,
+                511,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              512,
+              512,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/comparisons/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/panels/image.review.png",
+            "status": "written",
+            "structured_difference_label": "bad",
+            "structured_difference_summary": ".image: bad; amplitude is investigate and structure is bad. Treat this as a correctness blocker until instrumented or explained.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 512,
+                "x_start": 0,
+                "y_end": 512,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 90.38445281982422,
+          "rust_min": -14.016709327697754,
+          "rust_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/rust/rust.image",
+          "rust_peak_abs": {
+            "abs_value": 90.38445281982422,
+            "location": [
+              254,
+              254,
+              0,
+              0
+            ],
+            "value": 90.38445281982422
+          },
+          "rust_rms": 5.239441949427652,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 262144,
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 262144,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 1.0,
+                "beam_width_multiplier": 1.0,
+                "block_mean_rms": 0.0038103626941307944,
+                "block_mean_rms_over_mean_pixel_rms": 1.7054613152858586,
+                "block_side_pixels": 5,
+                "max_block_robust_z": 18.839668894100882,
+                "mean_pixel_rms_in_blocks": 0.002234212327174437,
+                "median_abs_block_mean": 0.0013372683525085449,
+                "n_blocks": 10608,
+                "normalized_block_mean_rms": 0.000727156606181574
+              },
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 0.0035778449749277437,
+                "block_mean_rms_over_mean_pixel_rms": 1.6171997507578746,
+                "block_side_pixels": 10,
+                "max_block_robust_z": 17.796901849529526,
+                "mean_pixel_rms_in_blocks": 0.0022123704713972684,
+                "median_abs_block_mean": 0.001303873215802014,
+                "n_blocks": 2601,
+                "normalized_block_mean_rms": 0.000682783718573472
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 0.003630872420866023,
+                "block_mean_rms_over_mean_pixel_rms": 1.4585487655210516,
+                "block_side_pixels": 20,
+                "max_block_robust_z": 17.736153309106168,
+                "mean_pixel_rms_in_blocks": 0.0024893733460937323,
+                "median_abs_block_mean": 0.0012292167614214122,
+                "n_blocks": 676,
+                "normalized_block_mean_rms": 0.0006929032952957483
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 0.002870288994201363,
+                "block_mean_rms_over_mean_pixel_rms": 1.0914251758812694,
+                "block_side_pixels": 40,
+                "max_block_robust_z": 14.241274866938623,
+                "mean_pixel_rms_in_blocks": 0.002629854118843972,
+                "median_abs_block_mean": 0.0009928068825411174,
+                "n_blocks": 169,
+                "normalized_block_mean_rms": 0.0005477561511398062
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 0.0017380643032273192,
+                "block_mean_rms_over_mean_pixel_rms": 0.5707583604623185,
+                "block_side_pixels": 80,
+                "max_block_robust_z": 11.706629786775308,
+                "mean_pixel_rms_in_blocks": 0.003045184133298502,
+                "median_abs_block_mean": 0.0005628658741420622,
+                "n_blocks": 48,
+                "normalized_block_mean_rms": 0.00033168625706073976
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 0.00011693301813476902,
+                "block_mean_rms_over_mean_pixel_rms": 0.04563902853356061,
+                "block_side_pixels": 160,
+                "max_block_robust_z": 1.1879603436437962,
+                "mean_pixel_rms_in_blocks": 0.002562127676507892,
+                "median_abs_block_mean": 7.067198013164245e-05,
+                "n_blocks": 9,
+                "normalized_block_mean_rms": 2.231509791664163e-05
+              }
+            ],
+            "beam_block_side_pixels": 5,
+            "block_rms_decay_slope_vs_independent_beams": -0.408497411763894,
+            "classification": {
+              "amplitude": "investigate",
+              "overall": "bad",
+              "structure": "bad",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "good",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": false,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 0.003745991766580716,
+            "large_scale_power_fraction": {
+              "fraction": 0.9014258426975181,
+              "frequency_cutoff_cycles_per_pixel": 0.025,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.021380088423809118,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 262144,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 5.240085370522414
+            },
+            "normalized_diff_rms": 0.0007148722781604714,
+            "review": {
+              "checks": [
+                {
+                  "label": "investigate",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 0.0007148722781604714
+                },
+                {
+                  "label": "good",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.408497411763894
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.9014258426975181
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.021380088423809118
+                }
+              ],
+              "label": "bad",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".image: bad; amplitude is investigate and structure is bad. Treat this as a correctness blocker until instrumented or explained."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 0.00015758241619444308,
+                "dy_pixels": 8.412853894390116e-05,
+                "offset": 0.00022396490256370615,
+                "scale": -0.00012261754014882353
+              },
+              "diff_rms": 0.003745991766580716,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.029698347599851238,
+              "residual_rms": 0.00368295235292432,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".psf": {
+          "casa_max": 1.0,
+          "casa_min": -0.043815385550260544,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa.psf",
+          "casa_peak_abs": {
+            "abs_value": 1.0,
+            "location": [
+              256,
+              256,
+              0,
+              0
+            ],
+            "value": 1.0
+          },
+          "casa_rms": 0.0084366488144588,
+          "correlation": 0.9999991392093787,
+          "diff_abs_max": 0.00013603459228761494,
+          "diff_abs_max_over_casa_peak": 0.00013603459228761494,
+          "diff_peak_abs": {
+            "abs_value": 0.00013603459228761494,
+            "location": [
+              511,
+              0,
+              0,
+              0
+            ],
+            "value": -0.00013603459228761494
+          },
+          "diff_rms": 1.1097561455053843e-05,
+          "diff_rms_over_casa_rms": 0.0013153992419400874,
+          "finite_overlap": 262144,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -0.043823327869176865,
+              1.0
+            ],
+            "difference_color_limits": [
+              -0.00013603459228761494,
+              0.00013603459228761494
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                511,
+                511,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              512,
+              512,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/comparisons/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/panels/psf.review.png",
+            "status": "written",
+            "structured_difference_label": "bad",
+            "structured_difference_summary": ".psf: bad; amplitude is bad and structure is bad. Treat this as a correctness blocker until instrumented or explained.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 512,
+                "x_start": 0,
+                "y_end": 512,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 1.0,
+          "rust_min": -0.043823327869176865,
+          "rust_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/rust/rust.psf",
+          "rust_peak_abs": {
+            "abs_value": 1.0,
+            "location": [
+              256,
+              256,
+              0,
+              0
+            ],
+            "value": 1.0
+          },
+          "rust_rms": 0.008436509139769984,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 262144,
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 262144,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 1.0,
+                "beam_width_multiplier": 1.0,
+                "block_mean_rms": 1.1021635593871039e-05,
+                "block_mean_rms_over_mean_pixel_rms": 2.1181466752248768,
+                "block_side_pixels": 5,
+                "max_block_robust_z": 45.8937056880213,
+                "mean_pixel_rms_in_blocks": 5.203433606740623e-06,
+                "median_abs_block_mean": 1.7439759631088237e-06,
+                "n_blocks": 10608,
+                "normalized_block_mean_rms": 0.0013063997134717836
+              },
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 9.336808429990489e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.800870091302565,
+                "block_side_pixels": 10,
+                "max_block_robust_z": 43.11172729667325,
+                "mean_pixel_rms_in_blocks": 5.184609636799064e-06,
+                "median_abs_block_mean": 1.5309957962017506e-06,
+                "n_blocks": 2601,
+                "normalized_block_mean_rms": 0.001106696347723872
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 8.795106391149926e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.4586075071078966,
+                "block_side_pixels": 20,
+                "max_block_robust_z": 50.427470981951366,
+                "mean_pixel_rms_in_blocks": 6.029796465663831e-06,
+                "median_abs_block_mean": 1.1721711391743384e-06,
+                "n_blocks": 676,
+                "normalized_block_mean_rms": 0.0010424881471985414
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 6.519475993656521e-06,
+                "block_mean_rms_over_mean_pixel_rms": 1.0362082040383345,
+                "block_side_pixels": 40,
+                "max_block_robust_z": 32.51561556165662,
+                "mean_pixel_rms_in_blocks": 6.291666065032751e-06,
+                "median_abs_block_mean": 7.302131496578212e-07,
+                "n_blocks": 169,
+                "normalized_block_mean_rms": 0.0007727565929357387
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 4.529463586627272e-06,
+                "block_mean_rms_over_mean_pixel_rms": 0.5882817982581025,
+                "block_side_pixels": 80,
+                "max_block_robust_z": 50.34652221512155,
+                "mean_pixel_rms_in_blocks": 7.699479399224957e-06,
+                "median_abs_block_mean": 3.46053441634131e-07,
+                "n_blocks": 48,
+                "normalized_block_mean_rms": 0.0005368794750428202
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 7.264943585313862e-07,
+                "block_mean_rms_over_mean_pixel_rms": 0.1197002206784262,
+                "block_side_pixels": 160,
+                "max_block_robust_z": 4.185390676321586,
+                "mean_pixel_rms_in_blocks": 6.0692816973421315e-06,
+                "median_abs_block_mean": 2.727347517040082e-07,
+                "n_blocks": 9,
+                "normalized_block_mean_rms": 8.611172214331288e-05
+              }
+            ],
+            "beam_block_side_pixels": 5,
+            "block_rms_decay_slope_vs_independent_beams": -0.33112753558651475,
+            "classification": {
+              "amplitude": "bad",
+              "overall": "bad",
+              "structure": "bad",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "investigate",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": false,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 1.1097561455053843e-05,
+            "large_scale_power_fraction": {
+              "fraction": 0.5650668109113842,
+              "frequency_cutoff_cycles_per_pixel": 0.025,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.03139060573101904,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 262144,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 0.0084366488144588
+            },
+            "normalized_diff_rms": 0.0013153992419400874,
+            "review": {
+              "checks": [
+                {
+                  "label": "bad",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 0.0013153992419400874
+                },
+                {
+                  "label": "investigate",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.33112753558651475
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.5650668109113842
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.03139060573101904
+                }
+              ],
+              "label": "bad",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".psf: bad; amplitude is bad and structure is bad. Treat this as a correctness blocker until instrumented or explained."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 2.5527783587155185e-05,
+                "dy_pixels": 2.8410503132358604e-06,
+                "offset": 7.755641004620515e-07,
+                "scale": -1.7524587586359045e-05
+              },
+              "diff_rms": 1.1097561455053843e-05,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.00021186867011324662,
+              "residual_rms": 1.1069266615622145e-05,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        },
+        ".residual": {
+          "casa_max": 90.39209747314453,
+          "casa_min": -14.019784927368164,
+          "casa_path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa.residual",
+          "casa_peak_abs": {
+            "abs_value": 90.39209747314453,
+            "location": [
+              254,
+              254,
+              0,
+              0
+            ],
+            "value": 90.39209747314453
+          },
+          "casa_rms": 5.240085370522414,
+          "correlation": 0.9999997528773218,
+          "diff_abs_max": 0.039469003677368164,
+          "diff_abs_max_over_casa_peak": 0.0004366421930754997,
+          "diff_peak_abs": {
+            "abs_value": 0.039469003677368164,
+            "location": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "value": 0.039469003677368164
+          },
+          "diff_rms": 0.003745991766580716,
+          "diff_rms_over_casa_rms": 0.0007148722781604714,
+          "finite_overlap": 262144,
+          "review_panel": {
+            "casa_rs_and_casa_color_limits": [
+              -14.019784927368164,
+              90.39209747314453
+            ],
+            "difference_color_limits": [
+              -0.039469003677368164,
+              0.039469003677368164
+            ],
+            "display_bounds": {
+              "blc": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "inc": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "trc": [
+                511,
+                511,
+                0,
+                0
+              ]
+            },
+            "display_description": "center display plane loaded with spatial-only stride; non-spatial axes fixed at their center",
+            "display_reason": null,
+            "display_sample_stride": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "display_shape": [
+              512,
+              512,
+              1,
+              1
+            ],
+            "display_status": "derived",
+            "display_transform": "center_plane_full_spatial_display",
+            "path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/comparisons/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/panels/residual.review.png",
+            "status": "written",
+            "structured_difference_label": "bad",
+            "structured_difference_summary": ".residual: bad; amplitude is investigate and structure is bad. Treat this as a correctness blocker until instrumented or explained.",
+            "zoom_panel": {
+              "bounds": {
+                "x_end": 512,
+                "x_start": 0,
+                "y_end": 512,
+                "y_start": 0
+              },
+              "reason": "zoom bounds cover the full review plane",
+              "status": "skipped"
+            }
+          },
+          "rust_max": 90.38445281982422,
+          "rust_min": -14.016709327697754,
+          "rust_path": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/rust/rust.residual",
+          "rust_peak_abs": {
+            "abs_value": 90.38445281982422,
+            "location": [
+              254,
+              254,
+              0,
+              0
+            ],
+            "value": 90.38445281982422
+          },
+          "rust_rms": 5.239441949427652,
+          "sample_stride": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "sampled_elements": 262144,
+          "shape": [
+            512,
+            512,
+            1,
+            1
+          ],
+          "status": "compared",
+          "structured_difference": {
+            "analysis_pixels": 262144,
+            "beam_block_rms_by_scale": [
+              {
+                "approx_independent_beams_per_block": 1.0,
+                "beam_width_multiplier": 1.0,
+                "block_mean_rms": 0.0038103626941307944,
+                "block_mean_rms_over_mean_pixel_rms": 1.7054613152858586,
+                "block_side_pixels": 5,
+                "max_block_robust_z": 18.839668894100882,
+                "mean_pixel_rms_in_blocks": 0.002234212327174437,
+                "median_abs_block_mean": 0.0013372683525085449,
+                "n_blocks": 10608,
+                "normalized_block_mean_rms": 0.000727156606181574
+              },
+              {
+                "approx_independent_beams_per_block": 4.0,
+                "beam_width_multiplier": 2.0,
+                "block_mean_rms": 0.0035778449749277437,
+                "block_mean_rms_over_mean_pixel_rms": 1.6171997507578746,
+                "block_side_pixels": 10,
+                "max_block_robust_z": 17.796901849529526,
+                "mean_pixel_rms_in_blocks": 0.0022123704713972684,
+                "median_abs_block_mean": 0.001303873215802014,
+                "n_blocks": 2601,
+                "normalized_block_mean_rms": 0.000682783718573472
+              },
+              {
+                "approx_independent_beams_per_block": 16.0,
+                "beam_width_multiplier": 4.0,
+                "block_mean_rms": 0.003630872420866023,
+                "block_mean_rms_over_mean_pixel_rms": 1.4585487655210516,
+                "block_side_pixels": 20,
+                "max_block_robust_z": 17.736153309106168,
+                "mean_pixel_rms_in_blocks": 0.0024893733460937323,
+                "median_abs_block_mean": 0.0012292167614214122,
+                "n_blocks": 676,
+                "normalized_block_mean_rms": 0.0006929032952957483
+              },
+              {
+                "approx_independent_beams_per_block": 64.0,
+                "beam_width_multiplier": 8.0,
+                "block_mean_rms": 0.002870288994201363,
+                "block_mean_rms_over_mean_pixel_rms": 1.0914251758812694,
+                "block_side_pixels": 40,
+                "max_block_robust_z": 14.241274866938623,
+                "mean_pixel_rms_in_blocks": 0.002629854118843972,
+                "median_abs_block_mean": 0.0009928068825411174,
+                "n_blocks": 169,
+                "normalized_block_mean_rms": 0.0005477561511398062
+              },
+              {
+                "approx_independent_beams_per_block": 256.0,
+                "beam_width_multiplier": 16.0,
+                "block_mean_rms": 0.0017380643032273192,
+                "block_mean_rms_over_mean_pixel_rms": 0.5707583604623185,
+                "block_side_pixels": 80,
+                "max_block_robust_z": 11.706629786775308,
+                "mean_pixel_rms_in_blocks": 0.003045184133298502,
+                "median_abs_block_mean": 0.0005628658741420622,
+                "n_blocks": 48,
+                "normalized_block_mean_rms": 0.00033168625706073976
+              },
+              {
+                "approx_independent_beams_per_block": 1024.0,
+                "beam_width_multiplier": 32.0,
+                "block_mean_rms": 0.00011693301813476902,
+                "block_mean_rms_over_mean_pixel_rms": 0.04563902853356061,
+                "block_side_pixels": 160,
+                "max_block_robust_z": 1.1879603436437962,
+                "mean_pixel_rms_in_blocks": 0.002562127676507892,
+                "median_abs_block_mean": 7.067198013164245e-05,
+                "n_blocks": 9,
+                "normalized_block_mean_rms": 2.231509791664163e-05
+              }
+            ],
+            "beam_block_side_pixels": 5,
+            "block_rms_decay_slope_vs_independent_beams": -0.408497411763894,
+            "classification": {
+              "amplitude": "investigate",
+              "overall": "bad",
+              "structure": "bad",
+              "structure_components": {
+                "block_rms_decay_slope_vs_independent_beams": "good",
+                "large_scale_power_fraction": "bad",
+                "low_order_r2_quadratic": "good"
+              },
+              "structure_suppressed_by_numerical_floor": false,
+              "thresholds": {
+                "block_rms_decay_slope_vs_independent_beams": {
+                  "bad": "> -0.15",
+                  "good": "<= -0.35",
+                  "investigate": "-0.35 .. -0.15"
+                },
+                "large_scale_power_fraction": {
+                  "bad": "> 0.5",
+                  "good": "< 0.25",
+                  "investigate": "0.25 .. 0.5"
+                },
+                "low_order_r2_quadratic": {
+                  "bad": "> 0.2",
+                  "good": "< 0.05",
+                  "investigate": "0.05 .. 0.2"
+                },
+                "normalized_diff_rms": {
+                  "bad": "> 1e-3",
+                  "good": "< 1e-4",
+                  "investigate": "1e-4 .. 1e-3",
+                  "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+                }
+              }
+            },
+            "diff_rms": 0.003745991766580716,
+            "large_scale_power_fraction": {
+              "fraction": 0.9014258426975181,
+              "frequency_cutoff_cycles_per_pixel": 0.025,
+              "min_wavelength_beams": 8.0
+            },
+            "low_order_r2_quadratic": 0.021380088423809118,
+            "mask": {
+              "type": "finite_overlap"
+            },
+            "masked_pixels": 262144,
+            "normalization": {
+              "type": "casa_support_rms_or_peak",
+              "value": 5.240085370522414
+            },
+            "normalized_diff_rms": 0.0007148722781604714,
+            "review": {
+              "checks": [
+                {
+                  "label": "investigate",
+                  "meaning": "beam/product-scale RMS amplitude difference",
+                  "name": "normalized_diff_rms",
+                  "value": 0.0007148722781604714
+                },
+                {
+                  "label": "good",
+                  "meaning": "whether averaging over independent beams suppresses the difference",
+                  "name": "block_rms_decay_slope_vs_independent_beams",
+                  "value": -0.408497411763894
+                },
+                {
+                  "label": "bad",
+                  "meaning": "fraction of difference power on scales much larger than the beam",
+                  "name": "large_scale_power_fraction",
+                  "value": 0.9014258426975181
+                },
+                {
+                  "label": "good",
+                  "meaning": "fraction of difference variance explained by a smooth quadratic surface",
+                  "name": "low_order_r2_quadratic",
+                  "value": 0.021380088423809118
+                }
+              ],
+              "label": "bad",
+              "legend": {
+                "bad": "Structured or large enough difference; do not close without explanation.",
+                "good": "No review action expected from this check.",
+                "investigate": "Plausible but needs review in context.",
+                "unknown": "Check could not be evaluated for this product."
+              },
+              "summary": ".residual: bad; amplitude is investigate and structure is bad. Treat this as a correctness blocker until instrumented or explained."
+            },
+            "scale_offset_gradient_fit": {
+              "coefficients": {
+                "dx_pixels": 0.00015758241619444308,
+                "dy_pixels": 8.412853894390116e-05,
+                "offset": 0.00022396490256370615,
+                "scale": -0.00012261754014882353
+              },
+              "diff_rms": 0.003745991766580716,
+              "model": "diff ~= scale*reference + offset + dx*d_reference_dx + dy*d_reference_dy",
+              "r2": 0.029698347599851238,
+              "residual_rms": 0.00368295235292432,
+              "status": "computed"
+            },
+            "status": "computed"
+          }
+        }
+      },
+      "status": "completed",
+      "structured_difference_review": {
+        "checks_by_product": {
+          "block_rms_decay_slope_vs_independent_beams": {
+            ".image": "good",
+            ".psf": "investigate",
+            ".residual": "good"
+          },
+          "large_scale_power_fraction": {
+            ".image": "bad",
+            ".psf": "bad",
+            ".residual": "bad"
+          },
+          "low_order_r2_quadratic": {
+            ".image": "good",
+            ".psf": "good",
+            ".residual": "good"
+          },
+          "normalized_diff_rms": {
+            ".image": "investigate",
+            ".psf": "bad",
+            ".residual": "investigate"
+          }
+        },
+        "label": "bad",
+        "legend": {
+          "bad": "Structured or large enough difference; do not close without explanation.",
+          "good": "No review action expected from this check.",
+          "investigate": "Plausible but needs review in context.",
+          "unknown": "Check could not be evaluated for this product."
+        },
+        "product_summaries": {
+          ".image": ".image: bad; amplitude is investigate and structure is bad. Treat this as a correctness blocker until instrumented or explained.",
+          ".psf": ".psf: bad; amplitude is bad and structure is bad. Treat this as a correctness blocker until instrumented or explained.",
+          ".residual": ".residual: bad; amplitude is investigate and structure is bad. Treat this as a correctness blocker until instrumented or explained."
+        },
+        "products": {
+          ".image": "bad",
+          ".psf": "bad",
+          ".residual": "bad"
+        },
+        "summary": "overall bad; bad: .image, .psf, .residual",
+        "thresholds": {
+          "block_rms_decay_slope_vs_independent_beams": {
+            "bad": "> -0.15",
+            "good": "<= -0.35",
+            "investigate": "-0.35 .. -0.15"
+          },
+          "large_scale_power_fraction": {
+            "bad": "> 0.5",
+            "good": "< 0.25",
+            "investigate": "0.25 .. 0.5"
+          },
+          "low_order_r2_quadratic": {
+            "bad": "> 0.2",
+            "good": "< 0.05",
+            "investigate": "0.05 .. 0.2"
+          },
+          "normalized_diff_rms": {
+            "bad": "> 1e-3",
+            "good": "< 1e-4",
+            "investigate": "1e-4 .. 1e-3",
+            "numerical_floor": "< 1e-6 suppresses structure-only escalation"
+          }
+        }
+      }
+    },
+    "product_paths": {
+      "casa_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa",
+      "product_root": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381",
+      "rust_prefix": "/private/tmp/casa-rs-wprojection-cpu-metal-counterbalanced-metal-artifacts/20260710T223405Z-wave3-wprojection-single-plane-heavy-wav-vs-wave3-wprojection-single-plane-heavy-wav-7ab8b97f/products/20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381/rust/rust"
+    },
+    "rust": {
+      "reason": null,
+      "status": "ran",
+      "timings_seconds": {
+        "median": 16.951782,
+        "runs": [
+          16.951782
+        ]
+      }
+    },
+    "stage_breakdown": {
+      "casa": {
+        "categories": {
+          "cube_major_cycle_algorithm_envelope": {
+            "components_ms": {},
+            "description": "CASA cube major-cycle envelope. For cube imaging this brackets CubeMajorCycleAlgorithm work including C++ tuneSelectData, nSubCubeFitInMemory, gridding/degridding, normalization, and subimage writeback that are not exposed as separate Python timers.",
+            "missing_fields": [
+              "make_psf",
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "reason": "no source timing fields found: make_psf, calcres_major_cycle, clean_major_cycle",
+            "source_fields": [
+              "make_psf",
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "deconvolution_minor_cycle": {
+            "components_ms": {},
+            "description": "CASA minor-cycle, mask update, and convergence checks. For cube imaging minor_cycle brackets CubeMinorCycleAlgorithm.",
+            "missing_fields": [
+              "minor_cycle",
+              "update_mask",
+              "has_converged"
+            ],
+            "reason": "no source timing fields found: minor_cycle, update_mask, has_converged",
+            "source_fields": [
+              "minor_cycle",
+              "update_mask",
+              "has_converged"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "image_store_writeback_and_restore": {
+            "components_ms": {},
+            "description": "CASA image-store writeback envelope: cube subimage writes occur inside major-cycle C++ calls, while final restored-image writes are included in restore_images.",
+            "missing_fields": [
+              "clean_major_cycle",
+              "calcres_major_cycle",
+              "restore_images"
+            ],
+            "reason": "no source timing fields found: clean_major_cycle, calcres_major_cycle, restore_images",
+            "source_fields": [
+              "clean_major_cycle",
+              "calcres_major_cycle",
+              "restore_images"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "major_cycle_residual": {
+            "components_ms": {},
+            "description": "CASA residual major-cycle and clean major-cycle work.",
+            "missing_fields": [
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "reason": "no source timing fields found: calcres_major_cycle, clean_major_cycle",
+            "source_fields": [
+              "calcres_major_cycle",
+              "clean_major_cycle"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "ms_selection_and_image_definition": {
+            "components_ms": {},
+            "description": "Narrow CASA helper timings for synthesisimager.selectdata, defineimage, normalizerinfo, and CF-cache setup during initializeImagers.",
+            "missing_fields": [
+              "select_data",
+              "define_image",
+              "normalizer_info",
+              "cf_cache_setup"
+            ],
+            "reason": "no source timing fields found: select_data, define_image, normalizer_info, cf_cache_setup",
+            "source_fields": [
+              "select_data",
+              "define_image",
+              "normalizer_info",
+              "cf_cache_setup"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "psf_and_primary_beam": {
+            "components_ms": {},
+            "description": "CASA PSF and PB construction.",
+            "missing_fields": [
+              "make_psf",
+              "make_pb"
+            ],
+            "reason": "no source timing fields found: make_psf, make_pb",
+            "source_fields": [
+              "make_psf",
+              "make_pb"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "restore_and_cleanup": {
+            "components_ms": {},
+            "description": "CASA restore and tool cleanup.",
+            "missing_fields": [
+              "restore_images",
+              "delete_tools"
+            ],
+            "reason": "no source timing fields found: restore_images, delete_tools",
+            "source_fields": [
+              "restore_images",
+              "delete_tools"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "setup_and_tool_construction": {
+            "components_ms": {},
+            "description": "CASA PySynthesisImager setup, construction, initialization, and memory estimation.",
+            "missing_fields": [
+              "parameter_setup",
+              "construct_imager",
+              "initialize_imagers",
+              "initialize_normalizers",
+              "initialize_deconvolvers",
+              "initialize_iteration_control",
+              "estimate_memory"
+            ],
+            "reason": "no source timing fields found: parameter_setup, construct_imager, initialize_imagers, initialize_normalizers, initialize_deconvolvers, initialize_iteration_control, estimate_memory",
+            "source_fields": [
+              "parameter_setup",
+              "construct_imager",
+              "initialize_imagers",
+              "initialize_normalizers",
+              "initialize_deconvolvers",
+              "initialize_iteration_control",
+              "estimate_memory"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "total": {
+            "components_ms": {},
+            "description": "CASA phase probe total.",
+            "missing_fields": [
+              "total"
+            ],
+            "reason": "no source timing fields found: total",
+            "source_fields": [
+              "total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "weighting_density_setup": {
+            "components_ms": {},
+            "description": "CASA weighting setup; set_weighting_core is the direct synthesisimager.setweighting call when the phase probe is enabled.",
+            "missing_fields": [
+              "set_weighting",
+              "set_weighting_core"
+            ],
+            "reason": "no source timing fields found: set_weighting, set_weighting_core",
+            "source_fields": [
+              "set_weighting",
+              "set_weighting_core"
+            ],
+            "status": "missing",
+            "total_ms": null
+          }
+        },
+        "status": "missing"
+      },
+      "contract_review": "local benchmark result JSON only; no provider protocol or managed-output schema change",
+      "instrumentation_scope": "benchmark-harness",
+      "rust": {
+        "categories": {
+          "coordinate_and_product_writeback": {
+            "components_ms": {},
+            "description": "Output coordinate construction and image product writeback.",
+            "missing_fields": [
+              "build_coordinate_system",
+              "write_products"
+            ],
+            "reason": "no source timing fields found: build_coordinate_system, write_products",
+            "source_fields": [
+              "build_coordinate_system",
+              "write_products"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "core_total": {
+            "components_ms": {},
+            "description": "Total pure imaging-core wallclock from the Rust profiler.",
+            "missing_fields": [
+              "total"
+            ],
+            "reason": "no source timing fields found: total",
+            "source_fields": [
+              "total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "deconvolution_minor_cycle": {
+            "components_ms": {},
+            "description": "Minor-cycle component selection and subtraction.",
+            "reason": "dirty-only or niter=0 workload",
+            "source_fields": [
+              "minor_cycle_solve"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "fft": {
+            "components_ms": {},
+            "description": "PSF, model, and residual FFT work.",
+            "missing_fields": [
+              "psf_fft",
+              "model_fft",
+              "residual_fft"
+            ],
+            "reason": "no source timing fields found: psf_fft, model_fft, residual_fft",
+            "source_fields": [
+              "psf_fft",
+              "model_fft",
+              "residual_fft"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "frontend_ms_preparation": {
+            "components_ms": {},
+            "description": "MS open, selection, row adaptation, and phase-center resolution.",
+            "missing_fields": [
+              "open_measurement_set",
+              "prepare_plane_input",
+              "extract_phase_center"
+            ],
+            "reason": "no source timing fields found: open_measurement_set, prepare_plane_input, extract_phase_center",
+            "source_fields": [
+              "open_measurement_set",
+              "prepare_plane_input",
+              "extract_phase_center"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "frontend_total": {
+            "components_ms": {},
+            "description": "Total frontend wallclock from the Rust profiler.",
+            "missing_fields": [
+              "frontend_total"
+            ],
+            "reason": "no source timing fields found: frontend_total",
+            "source_fields": [
+              "frontend_total"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "gridding_degridding": {
+            "components_ms": {},
+            "description": "PSF gridding plus residual degrid/grid work.",
+            "missing_fields": [
+              "psf_grid",
+              "residual_degrid_grid"
+            ],
+            "reason": "no source timing fields found: psf_grid, residual_degrid_grid",
+            "source_fields": [
+              "psf_grid",
+              "residual_degrid_grid"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "model_prediction_and_residual_refresh": {
+            "components_ms": {},
+            "description": "Major-cycle model prediction and residual refresh aggregate.",
+            "reason": "dirty-only or niter=0 workload",
+            "source_fields": [
+              "major_cycle_refresh"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "normalization_pb_correction": {
+            "components_ms": {},
+            "description": "PSF and residual normalization; PB correction is included when the selected mode produces PB products.",
+            "missing_fields": [
+              "psf_normalize",
+              "residual_normalize"
+            ],
+            "reason": "no source timing fields found: psf_normalize, residual_normalize",
+            "source_fields": [
+              "psf_normalize",
+              "residual_normalize"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "preview_sidecar_generation": {
+            "components_ms": {},
+            "description": "The benchmark script passes --no-preview-pngs, so preview sidecars are disabled.",
+            "reason": "disabled by benchmark harness",
+            "source_fields": [],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "projection_pb_cf_preparation": {
+            "components_ms": {},
+            "description": "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            "reason": "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            "source_fields": [],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "restore_and_beam_fit": {
+            "components_ms": {},
+            "description": "Restoring-beam fit and restored-image generation.",
+            "reason": "dirty-only or niter=0 workload",
+            "source_fields": [
+              "beam_fit",
+              "restore"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "standard_mfs_source_prepare": {
+            "components_ms": {},
+            "description": "Prepared-source adaptation into imaging batches.",
+            "reason": "not reported for this preparation path",
+            "source_fields": [
+              "prepare_processing_buffer"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "standard_mfs_source_read": {
+            "components_ms": {},
+            "description": "Prepared source reads from MS and table columns. Accepts the legacy raw timer key.",
+            "reason": "not reported for this preparation path",
+            "source_fields": [
+              "get_ms_values_into_processing_buffer"
+            ],
+            "status": "skipped",
+            "total_ms": null
+          },
+          "visibility_adaptation_and_chunking": {
+            "components_ms": {},
+            "description": "Visibility adaptation before entering the imaging core.",
+            "missing_fields": [
+              "prepare_plane_input"
+            ],
+            "reason": "no source timing fields found: prepare_plane_input",
+            "source_fields": [
+              "prepare_plane_input"
+            ],
+            "status": "missing",
+            "total_ms": null
+          },
+          "weighting_density_setup": {
+            "components_ms": {},
+            "description": "Imaging weights, density grids, and taper setup.",
+            "missing_fields": [
+              "weighting"
+            ],
+            "reason": "no source timing fields found: weighting",
+            "source_fields": [
+              "weighting"
+            ],
+            "status": "missing",
+            "total_ms": null
+          }
+        },
+        "status": "missing"
+      },
+      "schema_version": 1,
+      "units": "milliseconds"
+    },
+    "stage_medians_ms": {
+      "casa": {},
+      "rust": {}
+    }
+  },
+  "review": {
+    "evidence_role": "after_multi_worker_cpu",
+    "required_evidence_roles": [
+      "before_baseline",
+      "after_multi_worker_cpu",
+      "after_gpu_metal",
+      "casa_cpp"
+    ],
+    "required_reviewer": "Brian",
+    "requires_human_acceptance_before_done": true
+  },
+  "run": {
+    "env": {},
+    "ms_staging": "direct",
+    "phase_probe": "0",
+    "profile_repeats": 1,
+    "repeats": 1,
+    "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/current-head-wprojection-casa-auto/products/20260710T213603Z-wave3-wprojection-single-plane-heavy-wave1-medium-auto-fbba94eb/casa/casa",
+    "reuse_rust_prefix": null,
+    "run_label": "wave3-wprojection-multicpu",
+    "skip_casa": "1",
+    "skip_rust": "0",
+    "storage_label": "external-ssd-wave1",
+    "stream_log": false
+  },
+  "run_id": "20260710T223405Z-wave3-wprojection-single-plane-heavy-wave1-medium-multicpu-98869381",
+  "run_support": {
+    "bench_script": "/Users/brianglendenning/.codex/worktrees/c1e0/casa-rs/scripts/bench-imager-vs-casa.sh",
+    "reason": null,
+    "status": "runnable"
+  },
+  "schema_version": 1,
+  "started_at": "2026-07-10T22:34:05.731773Z",
+  "status": "completed",
+  "workload": {
+    "description": "Wave 3 #279 W-projection dirty explicit multi-worker CPU row on the Wave 1 32 GiB VLA medium MS, 64 channels, 512 image, Briggs.",
+    "id": "wave3-wprojection-single-plane-heavy-wave1-medium-multicpu",
+    "mode_id": "wprojection-single-plane"
+  }
+}

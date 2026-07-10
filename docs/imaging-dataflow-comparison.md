@@ -130,20 +130,50 @@ Refactoring signals visible here:
   The live-block control is currently capped at two and counts the block being
   filled by the producer plus the block owned by the consumer. Its channel has
   capacity `max_live_row_blocks - 2`, so the two-block case is a rendezvous and
-  cannot retain an additional queued block. Full-slab spectral routes default
-  to one block and disable requested read-ahead when it would reduce modeled
-  plane residency or row locality.
+  cannot retain an additional queued block. Consumer failure cancels the
+  producer after any current bounded read, wakes a blocked send by dropping the
+  receiver, and preserves the original error. Full-slab spectral routes
+  default to one block and disable requested read-ahead when it would reduce
+  modeled plane residency or row locality.
+- W-projection replay sends cached and newly read blocks through that same
+  bounded stream and one shared Metal dispatcher. Every chunk uses the
+  update-density and Metal-headroom partial-grid formula, then deterministic
+  host f64 cross-chunk reduction; there is no second streaming GPU kernel path
+  or dataset-selected accumulation policy.
+- Cube shared-source concurrency is selected from the planned slab geometry,
+  exact source-cache bytes, per-plane working state, hardware capacity, and the
+  run-level memory target. Any selected multi-slab shape can use bounded source
+  reuse when that formula fits; the route is not tied to dataset identity or a
+  particular `chanchunks` value. Plans whose planes all fit use the ordinary
+  one-slab route.
 - The supported mosaic MT-MFS slice is a replayable, single-MS MFS path with
   `nterms <= 2`, `gridder='mosaic'`, no W term, natural/uniform/Briggs
   weighting, clean or dirty products, and optional PB/PB-corrected output.
   Weight-density replay carries raw UVW separately from mosaic-projected UVW;
   unsupported higher-term, W/AW, pointing, start-model, outlier, and multi-MS
   combinations reject before visibility materialization.
-- On Apple platforms, f32 standard and mosaic dirty products can keep FFT,
-  correction, normalization, and peak reduction on the GPU. Explicit Metal
-  requests use the resident MPSGraph path when supported; `auto` uses a
-  profitability guard and CPU fallback for small batches, f64 work, unsupported
-  shapes, unavailable devices, or resident command failures.
+- On Apple platforms, f32 standard and single-term mosaic dirty products can
+  keep FFT, correction, normalization, and peak reduction on the GPU. Mosaic
+  MT-MFS keeps its multi-plane input resident through the batched inverse FFT,
+  then performs Taylor correction and PB normalization on CPU. Explicit Metal
+  requests use the resident MPSGraph path when supported and fail closed on
+  backend errors; `auto` uses exact shape/batch/precision/placement input-boundary
+  movement, keeping host grids on CPU and Metal-shared grids on Metal. F64 work,
+  unsupported shapes, unavailable devices, or resident command failures use the
+  CPU fallback only under `auto`. MT-MFS normally accumulates into Metal-shared
+  grids on the direct path; bounded replay into host grids is an `auto` recovery
+  route, not an MT-MFS storage restriction.
+- Large mosaic MFS and MT-MFS can accumulate directly into the Metal-shared FFT
+  input through disjoint output-owned tiles. Standard MFS currently retains its
+  established 256-pixel tiles; MT-MFS derives tile edge and count from grid
+  geometry, kernel support, Taylor terms, requested workers, and available
+  scratch memory. MT-MFS keeps f64/Complex64 Taylor moments per complete plan
+  key and grids all PSF/residual planes in one projector traversal, narrowing
+  only in the bounded f32 tile. Its compaction and routing are group/chunk
+  bounded; the chunk limit comes from exact worker-tile storage, compact record
+  layout, and a geometry-derived route-copy bound rather than a dataset
+  threshold. PB correction and normalization remain image-domain operations
+  after the FFT; there is no normal-path host full-grid pack/upload path.
 - Gridder terminology is split across Python task input (`standard`,
   `wproject`, `mosaic`, `awproject`, `awp2`, `awphpg`) and the Rust core
   (`GridderMode::Standard`, `GridderMode::Mosaic`, plus `WTermMode`). That split
@@ -367,8 +397,8 @@ Current and next optimization experiments:
 The diagrams were checked against local source snapshots rather than inferred
 only from package names. For circulation, the relevant repo anchors are:
 
-- `casa-rs`: <https://github.com/bglenden/casa-rs.git> at
-  `3ed73fc6dac066c8f3f63c6dbbf79e6aee390151`
+- `casa-rs`: <https://github.com/bglenden/casa-rs.git>, PR #361 wave branch;
+  exact implementation and evidence commits are recorded in the PR closeout
 - CASA C++/CASA6: <https://open-bitbucket.nrao.edu/scm/casa/casa6.git> at
   `61020062cee290f5466cffed5ec5032e0c7a3434`
 - LibRA fork: <https://github.com/bglenden/libRA> at

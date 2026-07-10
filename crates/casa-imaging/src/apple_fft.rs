@@ -6,11 +6,16 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     env,
     ffi::c_void,
+    marker::PhantomData,
     mem,
+    ops::Range,
     ptr::{NonNull, null_mut},
     slice, thread,
     time::{Duration, Instant},
 };
+
+#[cfg(test)]
+use std::cell::Cell;
 
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -30,14 +35,32 @@ use objc2_metal_performance_shaders_graph::{
 
 use crate::fft::{fftshift2, ifftshift2};
 use crate::fft_backend::{
-    Fft2Spec, FftBackendChoice, FftBackendSelection, FftDirection, FftPrecision, FftTiming,
-    FftUseCase, select_fft_backend,
+    Fft2Spec, FftBackendChoice, FftBackendSelection, FftDirection, FftPlacement, FftPrecision,
+    FftTiming, FftUseCase, select_fft_backend,
 };
-use crate::gridder::{StandardGridderMosaicProductCorrection, StandardGridderProductCorrection};
+use crate::gridder::{
+    CenteredComplex32Grid, CenteredComplex32GridBatch, StandardGridderMosaicProductCorrection,
+    StandardGridderProductCorrection,
+};
 
 type MetalDevice = Retained<ProtocolObject<dyn MTLDevice>>;
 type MetalQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
 type MetalBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+
+#[cfg(test)]
+thread_local! {
+    static FORCE_SHARED_INPUT_EXECUTION_FAILURE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn force_shared_input_execution_failure_for_test(force: bool) {
+    FORCE_SHARED_INPUT_EXECUTION_FAILURE.set(force);
+}
+
+#[cfg(test)]
+fn shared_input_execution_failure_forced_for_test() -> bool {
+    FORCE_SHARED_INPUT_EXECUTION_FAILURE.get()
+}
 type MetalCommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
 type MetalComputePipeline = Retained<ProtocolObject<dyn MTLComputePipelineState>>;
 
@@ -473,6 +496,333 @@ pub(crate) struct AppleDirtyMosaicProduct {
     pub(crate) psf_peak: f32,
 }
 
+/// Allocation and zeroing costs for a direct Metal-owned dirty FFT input.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct MetalSharedF32GridTiming {
+    pub(crate) allocation: Duration,
+    pub(crate) zero: Duration,
+}
+
+/// Host-writable Metal-owned f32 dirty-grid batch before the CPU write phase is sealed.
+pub(crate) struct MetalSharedF32DirtyGridBatch {
+    buffer: MetalBuffer,
+    rows: usize,
+    columns: usize,
+    batch: usize,
+    timing: MetalSharedF32GridTiming,
+}
+
+/// Sealed Metal-owned f32 FFT input. No mutable host view remains after sealing.
+#[derive(Clone)]
+pub(crate) struct MetalSharedF32FftInputBatch {
+    buffer: MetalBuffer,
+    rows: usize,
+    columns: usize,
+    batch: usize,
+    timing: MetalSharedF32GridTiming,
+}
+
+// SAFETY: this state owns a retained MTLBuffer after host mutation has been
+// sealed. It exposes no mutable pointer or writer, and ownership is moved to
+// the finishing thread before any command buffer reads the resource.
+unsafe impl Send for MetalSharedF32FftInputBatch {}
+
+/// Exclusive logical centered-grid view into one plane of a shared Metal batch.
+pub(crate) struct MetalSharedF32GridWriter<'a> {
+    values: *mut Complex32,
+    rows: usize,
+    columns: usize,
+    plane_offset: usize,
+    _borrow: PhantomData<&'a mut MetalSharedF32DirtyGridBatch>,
+}
+
+/// Exclusive logical centered-grid view into a contiguous plane range.
+pub(crate) struct MetalSharedF32GridBatchWriter<'a> {
+    values: *mut Complex32,
+    rows: usize,
+    columns: usize,
+    first_plane_offset: usize,
+    plane_elements: usize,
+    plane_count: usize,
+    _borrow: PhantomData<&'a mut MetalSharedF32DirtyGridBatch>,
+}
+
+/// Movable writer for one non-overlapping centered tile in contiguous batch planes.
+///
+/// Writers are created as a complete validated set from one exclusive batch
+/// borrow. Each writer owns a distinct half-open tile interior across the same
+/// plane range, so scoped CPU workers can populate the shared Metal allocation
+/// without locks or atomics.
+pub(crate) struct MetalSharedF32DisjointTileWriter<'a> {
+    values: *mut Complex32,
+    rows: usize,
+    columns: usize,
+    first_plane_offset: usize,
+    plane_elements: usize,
+    plane_count: usize,
+    extent: [usize; 4],
+    _borrow: PhantomData<&'a mut MetalSharedF32DirtyGridBatch>,
+}
+
+// SAFETY: the constructor validates that every writer in a returned set has a
+// non-overlapping centered extent in every plane of their shared contiguous
+// plane range. Moving separate writers to scoped threads therefore cannot
+// create aliased writes, and the parent batch remains exclusively borrowed
+// until all writers have been consumed or dropped.
+unsafe impl Send for MetalSharedF32DisjointTileWriter<'_> {}
+
+impl MetalSharedF32DirtyGridBatch {
+    pub(crate) fn new(rows: usize, columns: usize, batch: usize) -> Result<Self, &'static str> {
+        if rows == 0 || columns == 0 || batch == 0 {
+            return Err("metal_shared_dirty_grid_requires_non_empty_shape");
+        }
+        let element_count = rows
+            .checked_mul(columns)
+            .and_then(|value| value.checked_mul(batch))
+            .ok_or("metal_shared_dirty_grid_shape_overflow")?;
+        let byte_len = element_count
+            .checked_mul(mem::size_of::<Complex32>())
+            .ok_or("metal_shared_dirty_grid_byte_size_overflow")?;
+        let device = MTLCreateSystemDefaultDevice().ok_or("mpsgraph_no_default_metal_device")?;
+        let allocation_started = Instant::now();
+        let buffer = empty_buffer(&device, byte_len)?;
+        let allocation = allocation_started.elapsed();
+        let zero_started = Instant::now();
+        unsafe {
+            std::ptr::write_bytes(buffer.contents().as_ptr().cast::<u8>(), 0, byte_len);
+        }
+        let zero = zero_started.elapsed();
+        Ok(Self {
+            buffer,
+            rows,
+            columns,
+            batch,
+            timing: MetalSharedF32GridTiming { allocation, zero },
+        })
+    }
+
+    pub(crate) fn writer(
+        &mut self,
+        plane: usize,
+    ) -> Result<MetalSharedF32GridWriter<'_>, &'static str> {
+        if plane >= self.batch {
+            return Err("metal_shared_dirty_grid_plane_out_of_range");
+        }
+        Ok(MetalSharedF32GridWriter {
+            values: self.buffer.contents().as_ptr().cast::<Complex32>(),
+            rows: self.rows,
+            columns: self.columns,
+            plane_offset: plane * self.rows * self.columns,
+            _borrow: PhantomData,
+        })
+    }
+
+    pub(crate) fn batch_writer(
+        &mut self,
+        plane_range: Range<usize>,
+    ) -> Result<MetalSharedF32GridBatchWriter<'_>, &'static str> {
+        if plane_range.start >= plane_range.end {
+            return Err("metal_shared_dirty_grid_requires_non_empty_plane_range");
+        }
+        if plane_range.end > self.batch {
+            return Err("metal_shared_dirty_grid_plane_range_out_of_range");
+        }
+        let plane_elements = self.rows * self.columns;
+        Ok(MetalSharedF32GridBatchWriter {
+            values: self.buffer.contents().as_ptr().cast::<Complex32>(),
+            rows: self.rows,
+            columns: self.columns,
+            first_plane_offset: plane_range.start * plane_elements,
+            plane_elements,
+            plane_count: plane_range.end - plane_range.start,
+            _borrow: PhantomData,
+        })
+    }
+
+    pub(crate) fn disjoint_tile_writers(
+        &mut self,
+        plane_range: Range<usize>,
+        extents: &[[usize; 4]],
+    ) -> Result<Vec<MetalSharedF32DisjointTileWriter<'_>>, &'static str> {
+        if plane_range.start >= plane_range.end {
+            return Err("metal_shared_dirty_grid_requires_non_empty_plane_range");
+        }
+        if plane_range.end > self.batch {
+            return Err("metal_shared_dirty_grid_plane_range_out_of_range");
+        }
+        for (index, &[x0, x1, y0, y1]) in extents.iter().enumerate() {
+            if x0 >= x1 || y0 >= y1 || x1 > self.rows || y1 > self.columns {
+                return Err("metal_shared_dirty_grid_tile_extent_out_of_range");
+            }
+            if extents[..index]
+                .iter()
+                .any(|&[other_x0, other_x1, other_y0, other_y1]| {
+                    x0 < other_x1 && other_x0 < x1 && y0 < other_y1 && other_y0 < y1
+                })
+            {
+                return Err("metal_shared_dirty_grid_tile_extents_overlap");
+            }
+        }
+        let values = self.buffer.contents().as_ptr().cast::<Complex32>();
+        let plane_elements = self.rows * self.columns;
+        let first_plane_offset = plane_range.start * plane_elements;
+        let plane_count = plane_range.end - plane_range.start;
+        Ok(extents
+            .iter()
+            .copied()
+            .map(|extent| MetalSharedF32DisjointTileWriter {
+                values,
+                rows: self.rows,
+                columns: self.columns,
+                first_plane_offset,
+                plane_elements,
+                plane_count,
+                extent,
+                _borrow: PhantomData,
+            })
+            .collect())
+    }
+
+    pub(crate) fn timing(&self) -> MetalSharedF32GridTiming {
+        self.timing
+    }
+
+    pub(crate) fn seal(self) -> MetalSharedF32FftInputBatch {
+        MetalSharedF32FftInputBatch {
+            buffer: self.buffer,
+            rows: self.rows,
+            columns: self.columns,
+            batch: self.batch,
+            timing: self.timing,
+        }
+    }
+}
+
+impl MetalSharedF32FftInputBatch {
+    pub(crate) fn shape(&self) -> [usize; 2] {
+        [self.rows, self.columns]
+    }
+
+    pub(crate) fn timing(&self) -> MetalSharedF32GridTiming {
+        self.timing
+    }
+
+    pub(crate) fn resident_bytes(&self) -> usize {
+        self.rows * self.columns * self.batch * mem::size_of::<Complex32>()
+    }
+
+    pub(crate) fn copy_centered_f64_planes(&self) -> Vec<Array2<Complex64>> {
+        let plane_elements = self.rows * self.columns;
+        let values = unsafe {
+            slice::from_raw_parts(
+                self.buffer.contents().as_ptr().cast::<Complex32>(),
+                self.batch * plane_elements,
+            )
+        };
+        (0..self.batch)
+            .map(|plane| {
+                let plane_offset = plane * plane_elements;
+                Array2::from_shape_fn((self.rows, self.columns), |(row, column)| {
+                    let fft_row = (row + self.rows / 2) % self.rows;
+                    let fft_column = (column + self.columns / 2) % self.columns;
+                    let value = values[plane_offset + fft_row * self.columns + fft_column];
+                    Complex64::new(f64::from(value.re), f64::from(value.im))
+                })
+            })
+            .collect()
+    }
+}
+
+impl CenteredComplex32Grid for MetalSharedF32GridWriter<'_> {
+    fn shape(&self) -> [usize; 2] {
+        [self.rows, self.columns]
+    }
+
+    fn add_centered_flat(&mut self, flat_index: usize, value: Complex32) {
+        let row = flat_index / self.columns;
+        let column = flat_index % self.columns;
+        debug_assert!(row < self.rows);
+        let fft_row = (row + self.rows / 2) % self.rows;
+        let fft_column = (column + self.columns / 2) % self.columns;
+        let output_index = self.plane_offset + fft_row * self.columns + fft_column;
+        unsafe {
+            *self.values.add(output_index) += value;
+        }
+    }
+}
+
+impl CenteredComplex32GridBatch for MetalSharedF32GridBatchWriter<'_> {
+    fn shape(&self) -> [usize; 2] {
+        [self.rows, self.columns]
+    }
+
+    fn plane_count(&self) -> usize {
+        self.plane_count
+    }
+
+    fn add_centered_scaled_values_flat(
+        &mut self,
+        flat_index: usize,
+        scale: Complex32,
+        values: &[Complex32],
+    ) {
+        debug_assert_eq!(values.len(), self.plane_count);
+        let row = flat_index / self.columns;
+        let column = flat_index % self.columns;
+        debug_assert!(row < self.rows);
+        let fft_row = (row + self.rows / 2) % self.rows;
+        let fft_column = (column + self.columns / 2) % self.columns;
+        let plane_index = fft_row * self.columns + fft_column;
+        for (plane, &value) in values.iter().enumerate() {
+            unsafe {
+                *self
+                    .values
+                    .add(self.first_plane_offset + plane * self.plane_elements + plane_index) +=
+                    value * scale;
+            }
+        }
+    }
+}
+
+impl MetalSharedF32DisjointTileWriter<'_> {
+    pub(crate) fn extent(&self) -> [usize; 4] {
+        self.extent
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plane_count(&self) -> usize {
+        self.plane_count
+    }
+
+    pub(crate) fn add_planes(self, values: &[Complex32]) -> Result<(), &'static str> {
+        let [x0, x1, y0, y1] = self.extent;
+        let tile_columns = y1 - y0;
+        let tile_elements = (x1 - x0) * tile_columns;
+        let value_count = self.plane_count * tile_elements;
+        if values.len() != value_count {
+            return Err("metal_shared_dirty_grid_tile_value_count_mismatch");
+        }
+        for plane in 0..self.plane_count {
+            let input_plane_offset = plane * tile_elements;
+            let output_plane_offset = self.first_plane_offset + plane * self.plane_elements;
+            for centered_x in x0..x1 {
+                let local_row = (centered_x - x0) * tile_columns;
+                let fft_x = (centered_x + self.rows / 2) % self.rows;
+                for centered_y in y0..y1 {
+                    let local_index = local_row + centered_y - y0;
+                    let fft_y = (centered_y + self.columns / 2) % self.columns;
+                    let plane_index = fft_x * self.columns + fft_y;
+                    unsafe {
+                        *self.values.add(output_plane_offset + plane_index) +=
+                            values[input_plane_offset + local_index];
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 struct PendingFusedPack {
     command_buffer: MetalCommandBuffer,
     _source_buffers: Vec<MetalBuffer>,
@@ -820,6 +1170,198 @@ pub(crate) fn dirty_mosaic_products_f64_to_f32_batch(
             pb_limit,
             &mut timing,
         )
+    })
+}
+
+pub(crate) fn dirty_standard_products_metal_shared_f32_batch(
+    input: MetalSharedF32FftInputBatch,
+    correction: StandardGridderProductCorrection<'_>,
+    normalization_sumwts: &[f32],
+) -> Result<(Vec<AppleDirtyStandardProduct>, FftTiming, Duration), &'static str> {
+    #[cfg(test)]
+    if shared_input_execution_failure_forced_for_test() {
+        return Err("test_forced_shared_input_execution_failure");
+    }
+    if normalization_sumwts.is_empty() || input.batch != normalization_sumwts.len() * 2 {
+        return Err("direct_dirty_product_requires_psf_residual_pairs");
+    }
+    if [input.rows, input.columns] != correction.grid_shape {
+        return Err("direct_dirty_product_grid_shape_mismatch");
+    }
+    if normalization_sumwts
+        .iter()
+        .any(|sumwt| !(sumwt.is_finite() && *sumwt > 0.0))
+    {
+        return Err("direct_dirty_product_requires_positive_finite_sumwt");
+    }
+    let mut spec = Fft2Spec::centered_c2c_batch(
+        input.rows,
+        input.columns,
+        input.batch,
+        FftPrecision::F32,
+        FftDirection::Inverse,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::MetalMpsGraph,
+    );
+    spec.placement = FftPlacement::AppleGpuDeviceBuffer;
+    let selection = select_fft_backend(spec);
+    if selection.selected_backend != FftBackendChoice::MetalMpsGraph
+        || !selection.requested_backend_supported
+        || selection.fallback_used
+    {
+        return Err(selection.reason);
+    }
+    let mut timing = FftTiming::new(spec, selection);
+    let key = MpsGraphBatchPlanKey {
+        rows: input.rows,
+        columns: input.columns,
+        batch: input.batch,
+        direction: FftDirection::Inverse,
+        fused_pack: false,
+    };
+    MPSGRAPH_F32_BATCH_PLANS.with(|plans| {
+        let mut plans = plans.borrow_mut();
+        let plan = match plans.entry(key) {
+            Entry::Occupied(entry) => {
+                timing.plan_cache_hit = true;
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => {
+                let plan_started = Instant::now();
+                let plan = make_batch_plan(key)?;
+                timing.plan += plan_started.elapsed();
+                entry.insert(plan)
+            }
+        };
+        execute_dirty_standard_products_from_metal_shared(
+            plan,
+            input,
+            correction,
+            normalization_sumwts,
+            &mut timing,
+        )
+    })
+}
+
+pub(crate) fn dirty_mosaic_products_metal_shared_f32_batch(
+    input: MetalSharedF32FftInputBatch,
+    correction: &StandardGridderMosaicProductCorrection,
+    normalization_sumwt: f32,
+    pb_limit: f32,
+) -> Result<(Vec<AppleDirtyMosaicProduct>, FftTiming, Duration), &'static str> {
+    #[cfg(test)]
+    if shared_input_execution_failure_forced_for_test() {
+        return Err("test_forced_shared_input_execution_failure");
+    }
+    if input.batch == 0 || input.batch % 3 != 0 {
+        return Err("direct_mosaic_dirty_product_requires_psf_residual_weight_triples");
+    }
+    if [input.rows, input.columns] != correction.grid_shape {
+        return Err("direct_mosaic_dirty_product_grid_shape_mismatch");
+    }
+    if !(normalization_sumwt.is_finite() && normalization_sumwt > 0.0) {
+        return Err("direct_mosaic_dirty_product_requires_positive_finite_sumwt");
+    }
+    if !pb_limit.is_finite() {
+        return Err("direct_mosaic_dirty_product_requires_finite_pb_limit");
+    }
+    let mut spec = Fft2Spec::centered_c2c_batch(
+        input.rows,
+        input.columns,
+        input.batch,
+        FftPrecision::F32,
+        FftDirection::Inverse,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::MetalMpsGraph,
+    );
+    spec.placement = FftPlacement::AppleGpuDeviceBuffer;
+    let selection = select_fft_backend(spec);
+    if selection.selected_backend != FftBackendChoice::MetalMpsGraph
+        || !selection.requested_backend_supported
+        || selection.fallback_used
+    {
+        return Err(selection.reason);
+    }
+    let mut timing = FftTiming::new(spec, selection);
+    let key = MpsGraphBatchPlanKey {
+        rows: input.rows,
+        columns: input.columns,
+        batch: input.batch,
+        direction: FftDirection::Inverse,
+        fused_pack: false,
+    };
+    MPSGRAPH_F32_BATCH_PLANS.with(|plans| {
+        let mut plans = plans.borrow_mut();
+        let plan = match plans.entry(key) {
+            Entry::Occupied(entry) => {
+                timing.plan_cache_hit = true;
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => {
+                let plan_started = Instant::now();
+                let plan = make_batch_plan(key)?;
+                timing.plan += plan_started.elapsed();
+                entry.insert(plan)
+            }
+        };
+        execute_dirty_mosaic_products_from_metal_shared(
+            plan,
+            input,
+            correction,
+            normalization_sumwt,
+            pb_limit,
+            &mut timing,
+        )
+    })
+}
+
+pub(crate) fn centered_ifft2_metal_shared_f32_batch(
+    input: MetalSharedF32FftInputBatch,
+) -> Result<(Vec<Array2<Complex32>>, FftTiming, Duration), &'static str> {
+    #[cfg(test)]
+    if shared_input_execution_failure_forced_for_test() {
+        return Err("test_forced_shared_input_execution_failure");
+    }
+    let mut spec = Fft2Spec::centered_c2c_batch(
+        input.rows,
+        input.columns,
+        input.batch,
+        FftPrecision::F32,
+        FftDirection::Inverse,
+        FftUseCase::DirtyPsfResidual,
+        FftBackendChoice::MetalMpsGraph,
+    );
+    spec.placement = FftPlacement::AppleGpuDeviceBuffer;
+    let selection = select_fft_backend(spec);
+    if selection.selected_backend != FftBackendChoice::MetalMpsGraph
+        || !selection.requested_backend_supported
+        || selection.fallback_used
+    {
+        return Err(selection.reason);
+    }
+    let mut timing = FftTiming::new(spec, selection);
+    let key = MpsGraphBatchPlanKey {
+        rows: input.rows,
+        columns: input.columns,
+        batch: input.batch,
+        direction: FftDirection::Inverse,
+        fused_pack: false,
+    };
+    MPSGRAPH_F32_BATCH_PLANS.with(|plans| {
+        let mut plans = plans.borrow_mut();
+        let plan = match plans.entry(key) {
+            Entry::Occupied(entry) => {
+                timing.plan_cache_hit = true;
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => {
+                let plan_started = Instant::now();
+                let plan = make_batch_plan(key)?;
+                timing.plan += plan_started.elapsed();
+                entry.insert(plan)
+            }
+        };
+        execute_centered_ifft2_from_metal_shared(plan, input, &mut timing)
     })
 }
 
@@ -1414,6 +1956,230 @@ fn execute_dirty_mosaic_products_with_plan(
     )?;
     let postprocess_elapsed = postprocess_start.elapsed();
     timing.total = total_start.elapsed();
+    Ok((products, *timing, postprocess_elapsed))
+}
+
+fn execute_dirty_standard_products_from_metal_shared(
+    plan: &mut MpsGraphF32Plan,
+    input: MetalSharedF32FftInputBatch,
+    correction: StandardGridderProductCorrection<'_>,
+    normalization_sumwts: &[f32],
+    timing: &mut FftTiming,
+) -> Result<(Vec<AppleDirtyStandardProduct>, FftTiming, Duration), &'static str> {
+    let total_started = Instant::now();
+    let packed_len = input.batch * input.rows * input.columns * 2;
+    let fft_output_buffer = empty_buffer(&plan.device, packed_len * mem::size_of::<f32>())?;
+    let exec_started = Instant::now();
+    let tensor_data = unsafe {
+        MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+            MPSGraphTensorData::alloc(),
+            &input.buffer,
+            &plan.shape,
+            MPSDataType::ComplexFloat32,
+        )
+    };
+    let feeds: Retained<MPSGraphTensorDataDictionary> =
+        NSDictionary::from_slices(&[&*plan.placeholder], &[&*tensor_data]);
+    let results = unsafe {
+        plan.graph
+            .runWithMTLCommandQueue_feeds_targetTensors_targetOperations(
+                &plan.queue,
+                &feeds,
+                &plan.target_tensors,
+                None,
+            )
+    };
+    timing.exec += exec_started.elapsed();
+    let result = results
+        .objectForKey(&plan.output)
+        .ok_or("mpsgraph_fft_missing_output_tensor")?;
+    let export_postprocess_started = Instant::now();
+    let ndarray = unsafe { result.mpsndarray() };
+    let command_buffer = plan
+        .queue
+        .commandBuffer()
+        .ok_or("mpsgraph_failed_to_create_direct_resident_export_command_buffer")?;
+    unsafe {
+        ndarray.exportDataWithCommandBuffer_toBuffer_destinationDataType_offset_rowStrides(
+            &command_buffer,
+            &fft_output_buffer,
+            MPSDataType::ComplexFloat32,
+            0,
+            null_mut(),
+        );
+    }
+    let encoded_products = encode_dirty_standard_products_on_metal(
+        plan,
+        &command_buffer,
+        &fft_output_buffer,
+        correction,
+        normalization_sumwts,
+        timing,
+    )?;
+    command_buffer.commit();
+    timing.exec += export_postprocess_started.elapsed();
+    let sync_started = Instant::now();
+    command_buffer.waitUntilCompleted();
+    timing.sync += sync_started.elapsed();
+    ensure_command_buffer_ok(
+        &command_buffer,
+        "mpsgraph_direct_resident_export_and_dirty_product_command_failed",
+    )?;
+    record_command_buffer_device_time(&command_buffer, timing);
+    let postprocess_started = Instant::now();
+    let products = collect_dirty_standard_products_from_metal(encoded_products, timing)?;
+    let postprocess_elapsed = postprocess_started.elapsed();
+    timing.total = total_started.elapsed();
+    Ok((products, *timing, postprocess_elapsed))
+}
+
+fn execute_centered_ifft2_from_metal_shared(
+    plan: &MpsGraphF32Plan,
+    input: MetalSharedF32FftInputBatch,
+    timing: &mut FftTiming,
+) -> Result<(Vec<Array2<Complex32>>, FftTiming, Duration), &'static str> {
+    let total_started = Instant::now();
+    let element_count = input.rows * input.columns;
+    let packed_len = input.batch * element_count * 2;
+    let output_buffer = empty_buffer(&plan.device, packed_len * mem::size_of::<f32>())?;
+    let exec_started = Instant::now();
+    let tensor_data = unsafe {
+        MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+            MPSGraphTensorData::alloc(),
+            &input.buffer,
+            &plan.shape,
+            MPSDataType::ComplexFloat32,
+        )
+    };
+    let feeds: Retained<MPSGraphTensorDataDictionary> =
+        NSDictionary::from_slices(&[&*plan.placeholder], &[&*tensor_data]);
+    let results = unsafe {
+        plan.graph
+            .runWithMTLCommandQueue_feeds_targetTensors_targetOperations(
+                &plan.queue,
+                &feeds,
+                &plan.target_tensors,
+                None,
+            )
+    };
+    timing.exec += exec_started.elapsed();
+    let result = results
+        .objectForKey(&plan.output)
+        .ok_or("mpsgraph_fft_missing_output_tensor")?;
+    let export_started = Instant::now();
+    let ndarray = unsafe { result.mpsndarray() };
+    let command_buffer = plan
+        .queue
+        .commandBuffer()
+        .ok_or("mpsgraph_failed_to_create_direct_batch_export_command_buffer")?;
+    unsafe {
+        ndarray.exportDataWithCommandBuffer_toBuffer_destinationDataType_offset_rowStrides(
+            &command_buffer,
+            &output_buffer,
+            MPSDataType::ComplexFloat32,
+            0,
+            null_mut(),
+        );
+    }
+    command_buffer.commit();
+    timing.transfer_from_device += export_started.elapsed();
+    let sync_started = Instant::now();
+    command_buffer.waitUntilCompleted();
+    timing.sync += sync_started.elapsed();
+    ensure_command_buffer_ok(
+        &command_buffer,
+        "mpsgraph_direct_batch_export_command_failed",
+    )?;
+    record_command_buffer_device_time(&command_buffer, timing);
+    let unpack_started = Instant::now();
+    let values = unsafe {
+        slice::from_raw_parts(output_buffer.contents().as_ptr().cast::<f32>(), packed_len)
+    };
+    let outputs = unpack_fftshifted_f32_batch(
+        values,
+        input.batch,
+        element_count,
+        input.rows,
+        input.columns,
+    );
+    let postprocess_elapsed = unpack_started.elapsed();
+    timing.total = total_started.elapsed();
+    Ok((outputs, *timing, postprocess_elapsed))
+}
+
+fn execute_dirty_mosaic_products_from_metal_shared(
+    plan: &mut MpsGraphF32Plan,
+    input: MetalSharedF32FftInputBatch,
+    correction: &StandardGridderMosaicProductCorrection,
+    normalization_sumwt: f32,
+    pb_limit: f32,
+    timing: &mut FftTiming,
+) -> Result<(Vec<AppleDirtyMosaicProduct>, FftTiming, Duration), &'static str> {
+    let total_started = Instant::now();
+    let product_count = input.batch / 3;
+    let packed_len = input.batch * input.rows * input.columns * 2;
+    let fft_output_buffer = empty_buffer(&plan.device, packed_len * mem::size_of::<f32>())?;
+    let exec_started = Instant::now();
+    let tensor_data = unsafe {
+        MPSGraphTensorData::initWithMTLBuffer_shape_dataType(
+            MPSGraphTensorData::alloc(),
+            &input.buffer,
+            &plan.shape,
+            MPSDataType::ComplexFloat32,
+        )
+    };
+    let feeds: Retained<MPSGraphTensorDataDictionary> =
+        NSDictionary::from_slices(&[&*plan.placeholder], &[&*tensor_data]);
+    let results = unsafe {
+        plan.graph
+            .runWithMTLCommandQueue_feeds_targetTensors_targetOperations(
+                &plan.queue,
+                &feeds,
+                &plan.target_tensors,
+                None,
+            )
+    };
+    timing.exec += exec_started.elapsed();
+    let result = results
+        .objectForKey(&plan.output)
+        .ok_or("mpsgraph_fft_missing_output_tensor")?;
+    let export_started = Instant::now();
+    let ndarray = unsafe { result.mpsndarray() };
+    let command_buffer = plan
+        .queue
+        .commandBuffer()
+        .ok_or("mpsgraph_failed_to_create_direct_mosaic_export_command_buffer")?;
+    unsafe {
+        ndarray.exportDataWithCommandBuffer_toBuffer_destinationDataType_offset_rowStrides(
+            &command_buffer,
+            &fft_output_buffer,
+            MPSDataType::ComplexFloat32,
+            0,
+            null_mut(),
+        );
+    }
+    command_buffer.commit();
+    timing.exec += export_started.elapsed();
+    let sync_started = Instant::now();
+    command_buffer.waitUntilCompleted();
+    timing.sync += sync_started.elapsed();
+    ensure_command_buffer_ok(
+        &command_buffer,
+        "mpsgraph_direct_mosaic_resident_export_command_failed",
+    )?;
+    record_command_buffer_device_time(&command_buffer, timing);
+    let postprocess_started = Instant::now();
+    let products = finish_dirty_mosaic_products_on_metal(
+        plan,
+        &fft_output_buffer,
+        correction,
+        product_count,
+        normalization_sumwt,
+        pb_limit,
+        timing,
+    )?;
+    let postprocess_elapsed = postprocess_started.elapsed();
+    timing.total = total_started.elapsed();
     Ok((products, *timing, postprocess_elapsed))
 }
 
@@ -2585,5 +3351,200 @@ fn selection_for_fused_pack(
         }
     } else {
         selection
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use super::*;
+
+    #[test]
+    #[serial]
+    fn metal_shared_grid_writers_match_ifftshift_layout_for_even_and_odd_shapes() {
+        if !mpsgraph_f32_available() {
+            return;
+        }
+        for (rows, columns) in [(4, 6), (5, 7), (4, 7), (5, 6)] {
+            let mut centered = Array2::<Complex32>::zeros((rows, columns));
+            for ((row, column), cell) in centered.indexed_iter_mut() {
+                *cell = Complex32::new((row * columns + column + 1) as f32, -1.0);
+            }
+            let expected = ifftshift2(&centered);
+            let mut batch = MetalSharedF32DirtyGridBatch::new(rows, columns, 2)
+                .expect("Metal shared test grid");
+            {
+                let mut writer = batch.writer(0).expect("first grid writer");
+                for (flat_index, value) in centered.iter().copied().enumerate() {
+                    writer.add_centered_flat(flat_index, value);
+                }
+            }
+            {
+                let mut grids = batch.batch_writer(0..2).expect("grid batch writer");
+                for flat_index in 0..rows * columns {
+                    grids.add_centered_scaled_values_flat(
+                        flat_index,
+                        Complex32::new(1.0, 0.0),
+                        &[Complex32::new(0.5, 0.0), Complex32::new(2.0, 3.0)],
+                    );
+                }
+            }
+            let input = batch.seal();
+            let actual = unsafe {
+                slice::from_raw_parts(
+                    input.buffer.contents().as_ptr().cast::<Complex32>(),
+                    rows * columns * 2,
+                )
+            };
+            for (index, expected) in expected.iter().copied().enumerate() {
+                assert_eq!(actual[index], expected + Complex32::new(0.5, 0.0));
+                assert_eq!(actual[rows * columns + index], Complex32::new(2.0, 3.0));
+            }
+            let recovered = input.copy_centered_f64_planes();
+            assert_eq!(recovered.len(), 2);
+            for ((row, column), value) in centered.indexed_iter() {
+                let first = recovered[0][(row, column)];
+                assert_eq!(first, Complex64::new(f64::from(value.re + 0.5), -1.0));
+                assert_eq!(recovered[1][(row, column)], Complex64::new(2.0, 3.0));
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[serial]
+    fn metal_shared_ifft_matches_rustfft_for_odd_and_mixed_shapes() {
+        if !mpsgraph_f32_available() {
+            return;
+        }
+        for (rows, columns) in [(5, 7), (4, 7), (5, 6)] {
+            let centered = Array2::from_shape_fn((rows, columns), |(row, column)| {
+                let index = (row * columns + column) as f32;
+                Complex32::new((index * 0.17).sin(), (index * 0.11).cos())
+            });
+            let expected = crate::fft::centered_ifft2(&centered);
+            let mut batch = MetalSharedF32DirtyGridBatch::new(rows, columns, 1)
+                .expect("odd-shaped Metal shared FFT input");
+            {
+                let mut writer = batch.writer(0).expect("odd-shaped Metal grid writer");
+                for (index, value) in centered.iter().copied().enumerate() {
+                    writer.add_centered_flat(index, value);
+                }
+            }
+            let (mut actual, timing, _) = centered_ifft2_metal_shared_f32_batch(batch.seal())
+                .expect("odd-shaped Metal shared FFT execution");
+            assert_eq!(
+                timing.selection.selected_backend,
+                FftBackendChoice::MetalMpsGraph
+            );
+            let actual = actual.pop().expect("one odd-shaped Metal output plane");
+            let max_delta = actual
+                .iter()
+                .zip(&expected)
+                .map(|(lhs, rhs)| (*lhs - *rhs).norm())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_delta <= 2.0e-5,
+                "shape={rows}x{columns} max Metal/RustFFT delta={max_delta:.9e}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn metal_shared_disjoint_tile_writers_fill_three_planes_over_multiple_passes() {
+        if !mpsgraph_f32_available() {
+            return;
+        }
+        let (rows, columns) = (5, 7);
+        let extents = [[0, 2, 0, 3], [0, 2, 3, 7], [2, 5, 0, 3], [2, 5, 3, 7]];
+        let mut expected_planes = vec![Array2::<Complex32>::zeros((rows, columns)); 3];
+        for (plane, expected) in expected_planes.iter_mut().enumerate() {
+            for ((row, column), value) in expected.indexed_iter_mut() {
+                *value = Complex32::new(
+                    (plane * rows * columns + row * columns + column) as f32,
+                    plane as f32 - row as f32 + column as f32,
+                );
+            }
+        }
+        let mut batch = MetalSharedF32DirtyGridBatch::new(rows, columns, 4)
+            .expect("Metal shared disjoint tile test grid");
+        for _ in 0..2 {
+            let writers = batch
+                .disjoint_tile_writers(1..4, &extents)
+                .expect("disjoint tile writers");
+            thread::scope(|scope| {
+                for writer in writers {
+                    let [x0, x1, y0, y1] = writer.extent();
+                    assert_eq!(writer.plane_count(), expected_planes.len());
+                    let mut values = Vec::new();
+                    for expected in &expected_planes {
+                        for row in x0..x1 {
+                            for column in y0..y1 {
+                                values.push(expected[(row, column)]);
+                            }
+                        }
+                    }
+                    scope.spawn(move || writer.add_planes(&values).unwrap());
+                }
+            });
+        }
+        let input = batch.seal();
+        let actual = unsafe {
+            slice::from_raw_parts(
+                input.buffer.contents().as_ptr().cast::<Complex32>(),
+                rows * columns * 4,
+            )
+        };
+        assert!(
+            actual[..rows * columns]
+                .iter()
+                .all(|value| *value == Complex32::new(0.0, 0.0))
+        );
+        let shifted_planes: Vec<_> = expected_planes.iter().map(ifftshift2).collect();
+        for index in 0..rows * columns {
+            for (plane, shifted) in shifted_planes.iter().enumerate() {
+                assert_eq!(
+                    actual[(plane + 1) * rows * columns + index],
+                    shifted.as_slice().unwrap()[index] * 2.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn metal_shared_disjoint_tile_writers_validate_ranges_extents_and_values() {
+        if !mpsgraph_f32_available() {
+            return;
+        }
+        let mut batch = MetalSharedF32DirtyGridBatch::new(5, 7, 3)
+            .expect("Metal shared disjoint tile validation grid");
+        assert_eq!(
+            batch.disjoint_tile_writers(1..1, &[]).err(),
+            Some("metal_shared_dirty_grid_requires_non_empty_plane_range")
+        );
+        assert_eq!(
+            batch.disjoint_tile_writers(1..4, &[]).err(),
+            Some("metal_shared_dirty_grid_plane_range_out_of_range")
+        );
+        assert_eq!(
+            batch
+                .disjoint_tile_writers(0..3, &[[0, 3, 0, 4], [2, 5, 3, 7]])
+                .err(),
+            Some("metal_shared_dirty_grid_tile_extents_overlap")
+        );
+
+        let mut writers = batch
+            .disjoint_tile_writers(0..3, &[[1, 3, 2, 5]])
+            .expect("valid disjoint tile writer");
+        let writer = writers.pop().expect("one tile writer");
+        assert_eq!(writer.extent(), [1, 3, 2, 5]);
+        assert_eq!(writer.plane_count(), 3);
+        assert_eq!(
+            writer.add_planes(&[Complex32::new(1.0, 0.0); 17]),
+            Err("metal_shared_dirty_grid_tile_value_count_mismatch")
+        );
     }
 }

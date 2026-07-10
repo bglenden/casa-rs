@@ -1614,8 +1614,8 @@
               Protocol-v3 policy selects CPU workers or Apple Metal, while
               eligible f32 standard/mosaic dirty products may stay resident
               through FFT, correction, normalization, and peak reduction.
-              Auto guards small batches and resident failures use the shared
-              CPU product finisher.
+              Auto keeps host grids on CPU and Metal-shared grids on Metal;
+              resident failures use the shared CPU product finisher.
             </td>
             <td><span class="tag move">medium</span></td>
             <td><code>ExecutionPlan</code> plus public capability query</td>
