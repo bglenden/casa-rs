@@ -1,0 +1,1065 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+        <link rel="prev" href="../install/">
+      
+      
+        <link rel="next" href="../reference/task-parameters/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Guide - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#task-and-session-parameter-profiles" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#sparse-toml-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse TOML format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sources-and-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sources and precedence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managed-last-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed Last files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tui-and-native-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TUI and native GUI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-profiles-intentionally-exclude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What profiles intentionally exclude
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#sparse-toml-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse TOML format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sources-and-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sources and precedence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managed-last-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed Last files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tui-and-native-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TUI and native GUI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-profiles-intentionally-exclude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What profiles intentionally exclude
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="task-and-session-parameter-profiles">Task and Session Parameter Profiles<a class="headerlink" href="#task-and-session-parameter-profiles" title="Permanent link">&para;</a></h1>
+<p>Truth class: normative user contract
+Status: implemented
+Verification: <code>just docs-check</code>; <code>casars params --help</code></p>
+<p><code>casa-rs</code> uses one parameter model for one-shot tasks and durable browser-session
+startup settings. A profile can be loaded by the CLI, edited in the TUI or
+native GUI, or manipulated from Python without changing the parameter names or
+their meaning.</p>
+<p>This guide describes the implemented interface from ADR-0006. Provider JSON
+requests, results, progress, and session events remain machine transports; TOML
+is the sole human-authored parameter-profile format.</p>
+<p>The <a href="../reference/task-parameters/">generated parameter reference</a> lists every
+cataloged task and session surface, its parameters, and their canonical concept
+revisions, types, units, defaults, groups, and summaries.</p>
+<h2 id="sparse-toml-format">Sparse TOML format<a class="headerlink" href="#sparse-toml-format" title="Permanent link">&para;</a></h2>
+<p>Parameter profiles are UTF-8 TOML with an ASCII-oriented syntax. They are
+designed to paste cleanly into Markdown:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[casars]</span>
+<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;imager&quot;</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;task&quot;</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+
+<span class="k">[parameters]</span>
+<span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;data/target.ms&quot;</span>
+<span class="n">imagename</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;products/target&quot;</span>
+<span class="n">imsize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+<span class="n">cell</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.2arcsec&quot;</span>
+<span class="n">field</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;target&quot;</span>
+<span class="n">spw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0:32~255&quot;</span>
+<span class="n">specmode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;cube&quot;</span>
+<span class="n">weighting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;briggs&quot;</span>
+<span class="n">niter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span>
+<span class="n">threshold</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;2mJy&quot;</span>
+</code></pre></div>
+
+<p>Only required values and values that differ semantically from current defaults
+are written. Resetting a field removes its override and reveals the current
+default. Quantities are compared by value and dimension, so equivalent values
+such as <code>"0.001Jy"</code> and <code>"1mJy"</code> do not create a false override.</p>
+<p>Files do not execute code. Includes, URL loading, environment expansion, shell
+expressions, and executable selection are not part of the format. Unknown,
+duplicate, inactive, or wrong-surface parameters are errors with source
+locations where possible. A compound value is replaced as one value; profiles
+are not recursive merge patches.</p>
+<p>Relative dataset and product paths resolve against the explicit workspace, GUI
+project root, or process current directory. They do not resolve relative to the
+profile file merely because the file lives elsewhere.</p>
+<h2 id="sources-and-precedence">Sources and precedence<a class="headerlink" href="#sources-and-precedence" title="Permanent link">&para;</a></h2>
+<p>Every parameter session has exactly one base source:</p>
+<ul>
+<li>Defaults</li>
+<li>Last attempted or last opened</li>
+<li>Last successful, for task surfaces</li>
+<li>an explicit profile file</li>
+</ul>
+<p>Resolution order is:</p>
+<div class="codehilite"><pre><span></span><code>current defaults
+  -&gt; one base source
+  -&gt; accepted context or startup values
+  -&gt; explicit UI, CLI, or Python overrides
+</code></pre></div>
+
+<p>Dataset-derived suggestions are explicit context values, not hidden defaults.
+Loading another base source replaces the current base rather than silently
+merging into a dirty form.</p>
+<p>Noninteractive CLI and Python calls start from Defaults unless a source is
+specified. Interactive TUI and GUI editors may start from a valid Last source,
+but must show the active source, modified state, validation, and per-field
+origins.</p>
+<h2 id="managed-last-files">Managed Last files<a class="headerlink" href="#managed-last-files" title="Permanent link">&para;</a></h2>
+<p>By default, managed state lives under the workspace:</p>
+<div class="codehilite"><pre><span></span><code>&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/last.toml
+&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/last-successful.toml
+</code></pre></div>
+
+<p>For a task, Last attempted is saved after resolution and validation immediately
+before execution. Last successful changes only after a successful result.
+Cancellation or failure leaves Last successful unchanged.</p>
+<p>For <code>imexplore</code> and <code>tablebrowser</code>, <code>last.toml</code> is saved only after the root
+opens successfully and after validated durable settings change. Browser
+sessions do not have <code>last-successful.toml</code>. Cursor movement, scrolling,
+viewport changes, playback, caches, and command history are live state and do
+not trigger profile writes.</p>
+<p><code>tablebrowser</code> bookmark values use stable explicit forms:
+<code>cell:ROW:COLUMN</code>, <code>table-keyword:PATH</code>,
+<code>column-keyword:COLUMN:PATH</code>, or <code>subtable:NAME</code>.</p>
+<p>Set <code>CASA_RS_STATE_DIR</code> to redirect managed state in automation. This changes
+the state location, not the workspace used for relative task paths.</p>
+<p>An explicitly opened profile is read-only until the user chooses Save As.
+Automatic Last updates never overwrite it.</p>
+<h2 id="cli-contract">CLI contract<a class="headerlink" href="#cli-contract" title="Permanent link">&para;</a></h2>
+<p>The accepted noninteractive shape is:</p>
+<div class="codehilite"><pre><span></span><code>casars run &lt;task&gt; [--workspace DIR]
+  [--defaults | --last | --last-successful | --params FILE]
+  [task overrides]
+  [--unset NAME]
+  [--save-params FILE]
+  [--no-save-last]
+
+casars open &lt;session&gt; [--workspace DIR]
+  [--defaults | --last | --params FILE]
+  [session overrides]
+  [--unset NAME]
+  [--save-params FILE]
+  [--no-save-last]
+</code></pre></div>
+
+<p>The parameter utilities are:</p>
+<div class="codehilite"><pre><span></span><code>casars params validate &lt;file&gt;
+casars params show &lt;surface&gt; [source options]
+casars params save &lt;surface&gt; &lt;file&gt; [source options]
+casars params template &lt;surface&gt;
+casars params describe &lt;parameter-or-surface&gt;
+</code></pre></div>
+
+<p><code>template</code> writes a documented example with defaults and units in comments;
+commented defaults are not active overrides. Direct provider binaries continue
+to expose their idiomatic execution transports; source selection and profile
+lifecycle are owned by the top-level <code>casars</code> runner and interactive shells.</p>
+<p>The TUI launcher remains <code>casars</code> (or its existing short surface-launch form).
+<code>casars open &lt;session&gt;</code> launches a browser session from a resolved profile.
+Open, Save As, Revert, Reset to Default, and source selection are
+framework-owned actions.</p>
+<h2 id="tui-and-native-gui">TUI and native GUI<a class="headerlink" href="#tui-and-native-gui" title="Permanent link">&para;</a></h2>
+<p>Both interactive surfaces use a typed parameter session rather than separate
+string maps and frontend defaults. They must display:</p>
+<ul>
+<li>the selected source and dirty state</li>
+<li>current values, defaults, units, and validation messages</li>
+<li>per-field origin and Reset to Default</li>
+<li>conditional activation and required state</li>
+<li>Defaults, Last, Last Successful where applicable, Open, Save As, and Revert</li>
+</ul>
+<p>Loading another profile or resetting a dirty form requires confirmation.
+Runtime controls such as progress telemetry, executable overrides, and safety
+confirmation remain outside the saved science parameters.</p>
+<h2 id="python-contract">Python contract<a class="headerlink" href="#python-contract" title="Permanent link">&para;</a></h2>
+<p>The accepted Python API exposes the same profile session:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">&quot;imager&quot;</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">&quot;data/target.ms&quot;</span><span class="p">,</span>
+    <span class="n">imagename</span><span class="o">=</span><span class="s2">&quot;products/target&quot;</span><span class="p">,</span>
+    <span class="n">imsize</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="s2">&quot;0.2arcsec&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;profiles/target-imaging.toml&quot;</span><span class="p">)</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="s2">&quot;imager&quot;</span><span class="p">,</span>
+    <span class="n">parameters</span><span class="o">=</span><span class="n">p</span><span class="p">,</span>
+    <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">,</span>
+    <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p>Companion constructors are <code>parameters.last(...)</code>,
+<code>parameters.last_successful(...)</code>, and <code>parameters.load(path, ...)</code>.
+<code>TaskParameters</code> supports mapping-style updates, <code>reset(name)</code>, <code>reload()</code>,
+<code>save(path)</code>, and <code>run()</code>. <code>tasks.run()</code> accepts every catalog task and routes
+through the common runner; existing protocol-specific convenience modules
+remain available for their specialized result APIs. Catalog-generated
+CASA-named keyword wrappers and type stubs are available under
+<code>casars.tasks.catalog</code> without copying defaults into Python signatures.</p>
+<p>Session profiles for <code>imexplore</code> and <code>tablebrowser</code> use the same constructors
+and validation model. Open them with <code>sessions.open(surface, parameters=p)</code> or
+<code>SessionParameters.open()</code>. Their live command/event streams remain session
+APIs, not entries in <code>TaskParameters</code>.</p>
+<h2 id="what-profiles-intentionally-exclude">What profiles intentionally exclude<a class="headerlink" href="#what-profiles-intentionally-exclude" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>casars</code> launcher theme, pane sizes, and recent UI state</li>
+<li><code>casars.data.Image</code> and <code>casars.data.Table</code> object-handle lifecycle</li>
+<li>progress files, executable overrides, confirmations, and telemetry</li>
+<li>browser focus, viewport, cursor, scroll, cache, current playback, or command history</li>
+<li>saved region and mask mutations, which are dataset artifacts</li>
+<li>an exact resolved historical replay record</li>
+</ul>
+<p>If exact run replay is needed, record a separate run manifest containing the
+fully resolved invocation and versions. A sparse profile records user intent
+under the current contract and defaults.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

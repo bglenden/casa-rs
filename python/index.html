@@ -253,6 +253,116 @@
   
   
   
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../rust-api/" class="md-nav__link">
         
@@ -291,10 +401,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -312,8 +422,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -339,6 +449,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -355,6 +483,36 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -500,6 +658,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -516,26 +693,57 @@
 
 
 <h1 id="python-support">Python Support<a class="headerlink" href="#python-support" title="Permanent link">&para;</a></h1>
-<p><code>casa-rs-python</code> installs as <code>casars</code> and splits the public surface into two layers:</p>
+<p><code>casa-rs-python</code> installs as <code>casars</code> and separates three public concerns:</p>
 <ul>
-<li><code>casars.data</code> for in-process access to persistent CASA-style images and tables.</li>
-<li><code>casars.tasks.calibrate</code> for higher-level calibration task execution through the <code>calibrate</code> binary.</li>
+<li><code>casars.data</code> provides in-process access to persistent CASA-style images and
+  tables.</li>
+<li><code>casars.tasks</code> provides higher-level task wrappers backed by the versioned
+  provider binaries.</li>
+<li><code>casars.parameters</code> is the accepted common API for typed task and session
+  profiles described by ADR-0006.</li>
 </ul>
-<p>The package deliberately keeps those layers separate.</p>
-<ul>
-<li><code>casars.data</code> is stateful and file-backed. It is intended for interoperability with the Python ecosystem through NumPy-native reads and writes.</li>
-<li><code>casars.tasks.calibrate</code> is stateless at the Python boundary. It serializes one canonical Rust request, invokes <code>calibrate --json-run -</code>, and returns the canonical JSON result envelope.</li>
-</ul>
-<p>For images specifically, v1 includes pixel-slice writes on existing persistent images. It does not include Python-side image creation, coordinate-system authoring, or general image metadata editing.</p>
-<p><code>imager</code> bindings, <code>MeasurementSet</code> Python objects, and image creation / coordinate authoring remain out of scope for v1.</p>
-<p>Tagged releases build Python artifacts for:</p>
-<ul>
-<li>Linux <code>x86_64</code></li>
-<li>macOS <code>arm64</code></li>
-</ul>
-<p>plus a source distribution for environments that need to build from source.</p>
-<p>For suite installation and shell <code>PATH</code> setup, see the top-level
-<a href="../install/">Install</a> guide.</p>
+<p>The generic <code>casars.tasks.run()</code> entry point accepts every catalog task. The
+package also retains specialized calibration, imaging, MeasurementSet
+inspection, VLA import, split, image-analysis, simulation, and simulation
+analysis helpers where a protocol-specific result API is useful.</p>
+<p><code>casars.data</code> is stateful and file-backed. It is intended for interoperability
+with the Python ecosystem through NumPy-native reads and writes. For images,
+the current object surface includes pixel-slice writes on existing persistent
+images; image creation and coordinate-system authoring remain outside the v1
+object contract.</p>
+<h2 id="parameter-profiles">Parameter profiles<a class="headerlink" href="#parameter-profiles" title="Permanent link">&para;</a></h2>
+<p>The accepted profile API is shared with the CLI, TUI, and native GUI:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;profiles/target-imaging.toml&quot;</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">niter</span><span class="o">=</span><span class="mi">20000</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="s2">&quot;1mJy&quot;</span><span class="p">)</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="s2">&quot;imager&quot;</span><span class="p">,</span>
+    <span class="n">parameters</span><span class="o">=</span><span class="n">p</span><span class="p">,</span>
+    <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project&quot;</span><span class="p">,</span>
+    <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p><code>parameters.defaults(surface, ...)</code> and <code>parameters.last(surface, ...)</code> create
+the other common source types. The resulting <code>TaskParameters</code> supports mapping
+updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
+normalizer, validator, migration engine, and sparse renderer.</p>
+<p><code>casars.tasks.catalog</code> is generated from the 40 task definitions and supplies
+one CASA-named keyword wrapper and typing stub per task. The corresponding
+session conveniences are <code>casars.sessions.imexplore(...)</code> and
+<code>casars.sessions.tablebrowser(...)</code>. Their signatures deliberately use an
+unset sentinel instead of copying catalog defaults into Python.</p>
+<p>Session profiles for <code>imexplore</code> and <code>tablebrowser</code> use the same load, validate,
+and save model. <code>casars.sessions.open(...)</code> and <code>SessionParameters.open()</code> apply
+their durable startup configuration; live browser commands remain stateful
+session APIs rather than becoming task calls.</p>
+<p>See <a href="../task-parameters/">Task and Session Parameter Profiles</a> for sparse TOML,
+managed Last paths, source precedence, and examples.</p>
+<p>Tagged releases build Python artifacts for Linux <code>x86_64</code> and macOS <code>arm64</code>,
+plus a source distribution for environments that need to build from source.
+For suite installation and shell <code>PATH</code> setup, see <a href="../install/">Install</a>.</p>
 
 
 

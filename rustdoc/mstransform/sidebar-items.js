@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["action_argument","command_schema","main","option_argument","os_args_to_strings","parse_data_column","parse_request","parse_time_range","parse_width","run","run_with_args","schema_bundle","toggle_argument","usage"],"struct":["OptionConfig","ToggleConfig"]};
+window.SIDEBAR_ITEMS = {"fn":["command_schema","main","os_args_to_strings","parse_data_column","parse_request","parse_time_range","parse_width","run","run_with_args","schema_bundle","usage"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["UiActionKind","UiArgumentParser","UiValueKind"],"fn":["command_schema","logging_argument_schemas","run_env","run_with_cli_args"],"struct":["UiArgumentSchema","UiCommandSchema"]};
+window.SIDEBAR_ITEMS = {"fn":["command_schema","run_env","run_with_cli_args"],"struct":["UiCommandSchema"]};

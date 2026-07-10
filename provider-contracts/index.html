@@ -249,6 +249,116 @@
   
   
   
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../rust-api/" class="md-nav__link">
         
@@ -285,10 +395,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -306,8 +416,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -563,6 +673,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#parameter-catalog-and-surface-definitions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter Catalog and Surface Definitions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sparse-parameter-documents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse Parameter Documents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#-json-schema-and-ui-schema" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -700,7 +832,7 @@
 consumers such as:</p>
 <ul>
 <li><code>casars</code> TUI</li>
-<li>future native GUI applications</li>
+<li>native GUI applications</li>
 <li>Python bindings</li>
 <li>MCP servers</li>
 <li>standalone task binaries</li>
@@ -708,23 +840,28 @@ consumers such as:</p>
 <p>The goal is to keep one source of truth for each provider surface while still
 allowing different transports and different UI capabilities.</p>
 <h2 id="core-rule">Core Rule<a class="headerlink" href="#core-rule" title="Permanent link">&para;</a></h2>
-<p>The canonical boundary contract is a versioned JSON schema bundle.</p>
+<p>The canonical boundary contract is a versioned, typed provider bundle.</p>
 <ul>
-<li>Providers own a semantic contract expressed as JSON request/result,
-  command/response, or object/method/property schemas.</li>
+<li>Providers own request/result, command/response, object, and private adapter
+  semantics. The shared catalog owns reusable public parameter concepts.</li>
 <li>Rust types implement that contract inside the provider.</li>
-<li>Generated schema artifacts publish that contract to UIs, Python parity checks,
-  MCP projections, and test fixtures.</li>
+<li>Generated machine artifacts publish that contract to UIs, Python parity
+  checks, MCP projections, and test fixtures.</li>
 <li>Presentation hints belong in the same schema bundle as annotations. They do
   not replace the semantic contract.</li>
 </ul>
+<p>JSON and JSON Schema remain valid machine transports and projections. They are
+not the semantic model itself, and the user-editable parameter profile format
+is sparse TOML.</p>
 <p>The source of truth is therefore not:</p>
 <ul>
 <li>raw CLI flags</li>
 <li>an app-local TUI form schema</li>
 <li>hand-maintained Python wrappers</li>
+<li>an app-local default or alias table</li>
 </ul>
-<p>It is the provider schema bundle.</p>
+<p>It is the checked catalog plus the self-contained provider schema bundle that
+embeds the concepts referenced by its surface definition.</p>
 <h2 id="surface-kinds">Surface Kinds<a class="headerlink" href="#surface-kinds" title="Permanent link">&para;</a></h2>
 <p>Not every provider surface should look like a standalone executable task. The
 repo supports three primary surface kinds.</p>
@@ -743,6 +880,9 @@ repo supports three primary surface kinds.</p>
 </ul>
 <p>The protocol is request/result oriented. CLI flags, TUI forms, native GUI forms,
 and Python wrappers are projections of the same task contract.</p>
+<p>A task <code>SurfaceDefinition</code> also binds its public parameter names to the shared
+<code>ParameterCatalog</code> and adapts the resolved set into the provider's private,
+idiomatic Rust request.</p>
 <h3 id="session-surfaces">Session Surfaces<a class="headerlink" href="#session-surfaces" title="Permanent link">&para;</a></h3>
 <p>Session surfaces are stateful command streams with request/response envelopes.</p>
 <p>Examples:</p>
@@ -765,6 +905,10 @@ and Python wrappers are projections of the same task contract.</p>
 </ul>
 <p>The contract is a versioned command/event/state protocol, not a one-shot task
 request/result pair.</p>
+<p>A session <code>SurfaceDefinition</code> may additionally define durable startup
+parameters. Those parameters open or configure the session; they do not turn
+cursor movement, scrolling, viewport updates, caches, or commands into task
+parameters.</p>
 <h3 id="object-surfaces">Object Surfaces<a class="headerlink" href="#object-surfaces" title="Permanent link">&para;</a></h3>
 <p>Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.</p>
@@ -798,6 +942,10 @@ should contain at least:</p>
 <li>tasks: operations with request/result schemas</li>
 <li>sessions: commands, responses, events, and state snapshots</li>
 <li>objects: constructors, properties, methods, lifecycle operations</li>
+<li>parameter contract where the surface is parameterized</li>
+<li>shared <code>ParameterCatalog</code> concepts</li>
+<li>task or session <code>SurfaceDefinition</code></li>
+<li>parameter bindings, defaults, roles, validation, migrations, and aliases</li>
 <li>shared component schemas</li>
 <li>reusable logical value definitions referenced across operations</li>
 <li>annotations</li>
@@ -810,8 +958,68 @@ should contain at least:</p>
 </ol>
 <p>The semantic layer is authoritative. Annotations and projections may add
 presentation or mapping metadata, but they must not change semantic meaning.</p>
+<h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
+<p>ADR-0006 defines the common parameter model.</p>
+<p><code>ParameterCatalog</code> entries describe reusable concepts:</p>
+<ul>
+<li>stable semantic ID and canonical CASA-facing name</li>
+<li>value type, normalization, base constraints, semantic equality, and, where
+  applicable, unit dimension</li>
+<li>semantic role and persistence class</li>
+<li>meaning and public documentation</li>
+</ul>
+<p>A canonical name has one meaning across surfaces. Reuse is by semantic concept,
+not by matching strings. Two parameters with different meanings must not share
+a catalog concept even when a legacy CLI happens to spell them alike.</p>
+<p><code>ParameterBinding</code> describes one concept's use on one surface:</p>
+<ul>
+<li>absent, literal, or pure conditional default</li>
+<li>required and activation predicates</li>
+<li>provably narrowing refinements, aliases, and projection metadata</li>
+<li>an optional context role consistent with the concept's semantic role</li>
+</ul>
+<p>Aliases are unique within a surface and cannot shadow any canonical parameter
+name on that surface.</p>
+<p>Concept roles are part of the contract. A path that is safe as an input does not become
+an output merely because both serialize as strings. Runtime-only controls such
+as executable overrides, progress paths, telemetry, and safety confirmations
+are explicitly non-persistable.</p>
+<p><code>SurfaceDefinition</code> is tagged as task or session:</p>
+<ul>
+<li>a task definition maps the resolved CASA-named parameter set into a one-shot
+  provider invocation</li>
+<li>a session definition maps durable startup parameters into the session open
+  operation and leaves later commands to the session protocol</li>
+</ul>
+<p>Every optional parameter has an explicit default. Conditional defaults depend
+only on other parameters and form an acyclic graph. Dataset-derived context is
+an explicit suggestion or startup override, never an undeclared default.</p>
+<p>Semantic evolution is guarded by the append-only fingerprints in
+<code>resources/parameter-contract-history.json</code>. Changing a concept's type,
+normalization, constraints, units, role, or persistence requires a new semantic
+revision. Changing a surface's bindings, defaults, predicates, safety rules,
+provider projections, or migrations requires a new surface contract version.
+Run <code>scripts/check-parameter-contract-history.py --update</code> only after making and
+reviewing those version bumps; the normal architecture gate is check-only.</p>
+<h2 id="sparse-parameter-documents">Sparse Parameter Documents<a class="headerlink" href="#sparse-parameter-documents" title="Permanent link">&para;</a></h2>
+<p>The human interchange format is versioned sparse TOML. The <code>[casars]</code> table
+identifies format version, surface ID, surface kind, and contract version. The
+<code>[parameters]</code> table contains required values and normalized semantic
+differences from current defaults.</p>
+<p>This makes additive evolution cheap: a newly added optional parameter receives
+its current default without editing existing files. A changed default is also
+adopted when the old file omitted that parameter, with a compatibility warning.
+Renames and type/value changes require explicit ordered migrations. Future
+versions and unmigratable required values are errors.</p>
+<p>Parameter documents do not support includes, environment or shell expansion,
+remote URLs, or executable expressions. Relative task paths resolve against the
+selected workspace or process current directory, not the profile file's parent.
+See <a href="../task-parameters/">Task and Session Parameter Profiles</a> for the user
+contract and managed-state lifecycle.</p>
 <h2 id="-json-schema-and-ui-schema"><code>--json-schema</code> and <code>--ui-schema</code><a class="headerlink" href="#-json-schema-and-ui-schema" title="Permanent link">&para;</a></h2>
-<p>For new work, <code>--json-schema</code> should emit the canonical schema bundle.</p>
+<p>For new work, <code>--json-schema</code> should emit a machine representation of the
+canonical provider bundle, including the parameter catalog and applicable
+surface definition.</p>
 <p>If <code>--ui-schema</code> exists, it should be treated as:</p>
 <ul>
 <li>a derived compatibility view of the canonical schema bundle, or</li>
@@ -873,12 +1081,18 @@ same transport encoding. For example:</p>
 <p>CLI parsing is a projection from the semantic contract plus CLI annotation
 metadata such as flag names and positional rules.</p>
 <p>CLI flags are not the source of truth.</p>
+<p>The CLI also projects the common Defaults, Last, Last Successful, explicit
+profile, reset, save, and no-save source operations. Noninteractive invocation
+starts from Defaults unless a source is explicit.</p>
 <h3 id="casars-tui"><code>casars</code> TUI<a class="headerlink" href="#casars-tui" title="Permanent link">&para;</a></h3>
 <p>The TUI projects forms, panes, and result rendering from the same schema bundle
 plus TUI-specific annotations. It should not require app-local parallel schemas
 that drift from the provider contract.</p>
+<p>Framework-owned parameter sessions expose source selection, origins, dirty
+state, validation, reset, open, Save As, and revert. A browser's live navigation
+state remains in its session model.</p>
 <h3 id="native-gui">Native GUI<a class="headerlink" href="#native-gui" title="Permanent link">&para;</a></h3>
-<p>A future native macOS GUI should read the same semantic schema bundle and use
+<p>The native macOS GUI reads the same semantic schema bundle and uses
 the annotations as hints, not strict layout instructions. Keep hints coarse:</p>
 <ul>
 <li>section ordering</li>
@@ -888,11 +1102,17 @@ the annotations as hints, not strict layout instructions. Keep hints coarse:</p>
 <li>units and ranges</li>
 </ul>
 <p>Do not freeze app-specific pixel layouts into the provider schema.</p>
+<p>Native forms use the same typed parameter session and managed Last store as the
+TUI. Swift models may decode a UniFFI projection, but they must not infer
+authoritative types, aliases, or defaults.</p>
 <h3 id="python">Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h3>
 <p>Python should remain ergonomic and typed, but its wrappers and docs should be
 checked against the canonical schema bundle so signatures and enums cannot drift.</p>
 <p>For task surfaces, Python can invoke a task binary or other provider transport.
 For object surfaces, Python can bind directly in-process.</p>
+<p><code>casars.parameters</code> exposes the common typed profile session, while generated
+task-specific wrappers delegate through the same runtime. Python must not keep
+a second default or migration implementation.</p>
 <h3 id="mcp">MCP<a class="headerlink" href="#mcp" title="Permanent link">&para;</a></h3>
 <p>MCP should also project from the same schema bundle.</p>
 <ul>
@@ -915,23 +1135,29 @@ every call.</p>
 <li><code>casars.data.Image</code>: object surface</li>
 <li><code>casars.data.Table</code>: object surface</li>
 </ul>
+<p>The first three task examples and all other one-shot catalog tasks have task
+definitions. <code>tablebrowser</code> and <code>imexplore</code> have session startup definitions.
+The <code>casars</code> launcher and the two object surfaces are not parameter-profile
+surfaces.</p>
 <h2 id="implementation-guidance">Implementation Guidance<a class="headerlink" href="#implementation-guidance" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define typed Rust structs and enums that serialize exactly to the canonical
   schema bundle shapes.</li>
+<li>Define reusable catalog concepts once and bind them explicitly on every
+  parameterized task or session surface.</li>
 <li>Generate schema output from those types rather than hand-maintaining schema
   JSON.</li>
 <li>Keep presentation hints in the schema bundle as annotations.</li>
 <li>Keep protocol names and protocol versions explicit and machine-checkable.</li>
-<li>Add CI parity tests so wrappers, docs, and projections cannot drift from the
-  canonical schema bundle.</li>
+<li>Add CI parity tests so catalog coverage, wrappers, docs, sparse profiles, and
+  projections cannot drift from the canonical schema bundle.</li>
 </ul>
 <p>This preserves one source of truth while still supporting:</p>
 <ul>
 <li>direct Rust APIs</li>
 <li>Python bindings</li>
 <li><code>casars</code> TUI</li>
-<li>future native GUIs</li>
+<li>native GUIs</li>
 <li>MCP servers</li>
 <li>standalone binaries where they make sense</li>
 </ul>

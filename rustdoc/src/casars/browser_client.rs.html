@@ -592,33 +592,34 @@
 <a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">let </span>response = serde_json::to_string(<span class="kw-2">&amp;</span>BrowserResponseEnvelope::snapshot(BrowserSnapshot {
 <a href=#593 id=593 data-nosnippet>593</a>            capabilities: casars_tablebrowser_protocol::BrowserCapabilities { editable: <span class="bool-val">false </span>},
 <a href=#594 id=594 data-nosnippet>594</a>            view: casars_tablebrowser_protocol::BrowserView::Overview,
-<a href=#595 id=595 data-nosnippet>595</a>            focus: casars_tablebrowser_protocol::BrowserFocus::Main,
-<a href=#596 id=596 data-nosnippet>596</a>            table_path: <span class="string">"/tmp/fake.ms"</span>.to_string(),
-<a href=#597 id=597 data-nosnippet>597</a>            breadcrumb: Vec::new(),
-<a href=#598 id=598 data-nosnippet>598</a>            viewport: BrowserViewport::new(<span class="number">80</span>, <span class="number">24</span>),
-<a href=#599 id=599 data-nosnippet>599</a>            status_line: <span class="string">"ok"</span>.to_string(),
-<a href=#600 id=600 data-nosnippet>600</a>            content_lines: <span class="macro">vec!</span>[<span class="string">"Overview"</span>.to_string()],
-<a href=#601 id=601 data-nosnippet>601</a>            vertical_metrics: <span class="prelude-val">None</span>,
-<a href=#602 id=602 data-nosnippet>602</a>            horizontal_metrics: <span class="prelude-val">None</span>,
-<a href=#603 id=603 data-nosnippet>603</a>            selected_address: <span class="prelude-val">None</span>,
-<a href=#604 id=604 data-nosnippet>604</a>            inspector: <span class="prelude-val">None</span>,
-<a href=#605 id=605 data-nosnippet>605</a>        }))
-<a href=#606 id=606 data-nosnippet>606</a>        .expect(<span class="string">"serialize snapshot"</span>);
-<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span>script = <span class="macro">format!</span>(
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n"</span>,
-<a href=#609 id=609 data-nosnippet>609</a>            delay_ms <span class="kw">as </span>f64 / <span class="number">1000.0</span>,
-<a href=#610 id=610 data-nosnippet>610</a>            response
-<a href=#611 id=611 data-nosnippet>611</a>        );
-<a href=#612 id=612 data-nosnippet>612</a>        write_browser_script(root, <span class="kw-2">&amp;</span>script)
-<a href=#613 id=613 data-nosnippet>613</a>    }
-<a href=#614 id=614 data-nosnippet>614</a>
-<a href=#615 id=615 data-nosnippet>615</a>    <span class="kw">fn </span>write_browser_script(root: <span class="kw-2">&amp;</span>Path, script: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">let </span>path = root.join(<span class="string">"browser.sh"</span>);
-<a href=#617 id=617 data-nosnippet>617</a>        fs::write(<span class="kw-2">&amp;</span>path, script).expect(<span class="string">"write script"</span>);
-<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span><span class="kw-2">mut </span>permissions = fs::metadata(<span class="kw-2">&amp;</span>path).expect(<span class="string">"metadata"</span>).permissions();
-<a href=#619 id=619 data-nosnippet>619</a>        permissions.set_mode(<span class="number">0o755</span>);
-<a href=#620 id=620 data-nosnippet>620</a>        fs::set_permissions(<span class="kw-2">&amp;</span>path, permissions).expect(<span class="string">"chmod"</span>);
-<a href=#621 id=621 data-nosnippet>621</a>        path
-<a href=#622 id=622 data-nosnippet>622</a>    }
-<a href=#623 id=623 data-nosnippet>623</a>}
+<a href=#595 id=595 data-nosnippet>595</a>            parameters: casars_tablebrowser_protocol::BrowserParameters::default(),
+<a href=#596 id=596 data-nosnippet>596</a>            focus: casars_tablebrowser_protocol::BrowserFocus::Main,
+<a href=#597 id=597 data-nosnippet>597</a>            table_path: <span class="string">"/tmp/fake.ms"</span>.to_string(),
+<a href=#598 id=598 data-nosnippet>598</a>            breadcrumb: Vec::new(),
+<a href=#599 id=599 data-nosnippet>599</a>            viewport: BrowserViewport::new(<span class="number">80</span>, <span class="number">24</span>),
+<a href=#600 id=600 data-nosnippet>600</a>            status_line: <span class="string">"ok"</span>.to_string(),
+<a href=#601 id=601 data-nosnippet>601</a>            content_lines: <span class="macro">vec!</span>[<span class="string">"Overview"</span>.to_string()],
+<a href=#602 id=602 data-nosnippet>602</a>            vertical_metrics: <span class="prelude-val">None</span>,
+<a href=#603 id=603 data-nosnippet>603</a>            horizontal_metrics: <span class="prelude-val">None</span>,
+<a href=#604 id=604 data-nosnippet>604</a>            selected_address: <span class="prelude-val">None</span>,
+<a href=#605 id=605 data-nosnippet>605</a>            inspector: <span class="prelude-val">None</span>,
+<a href=#606 id=606 data-nosnippet>606</a>        }))
+<a href=#607 id=607 data-nosnippet>607</a>        .expect(<span class="string">"serialize snapshot"</span>);
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>script = <span class="macro">format!</span>(
+<a href=#609 id=609 data-nosnippet>609</a>            <span class="string">"#!/bin/sh\nwhile IFS= read -r line; do\n  sleep {}\n  printf '%s\\n' '{}'\ndone\n"</span>,
+<a href=#610 id=610 data-nosnippet>610</a>            delay_ms <span class="kw">as </span>f64 / <span class="number">1000.0</span>,
+<a href=#611 id=611 data-nosnippet>611</a>            response
+<a href=#612 id=612 data-nosnippet>612</a>        );
+<a href=#613 id=613 data-nosnippet>613</a>        write_browser_script(root, <span class="kw-2">&amp;</span>script)
+<a href=#614 id=614 data-nosnippet>614</a>    }
+<a href=#615 id=615 data-nosnippet>615</a>
+<a href=#616 id=616 data-nosnippet>616</a>    <span class="kw">fn </span>write_browser_script(root: <span class="kw-2">&amp;</span>Path, script: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {
+<a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">let </span>path = root.join(<span class="string">"browser.sh"</span>);
+<a href=#618 id=618 data-nosnippet>618</a>        fs::write(<span class="kw-2">&amp;</span>path, script).expect(<span class="string">"write script"</span>);
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span><span class="kw-2">mut </span>permissions = fs::metadata(<span class="kw-2">&amp;</span>path).expect(<span class="string">"metadata"</span>).permissions();
+<a href=#620 id=620 data-nosnippet>620</a>        permissions.set_mode(<span class="number">0o755</span>);
+<a href=#621 id=621 data-nosnippet>621</a>        fs::set_permissions(<span class="kw-2">&amp;</span>path, permissions).expect(<span class="string">"chmod"</span>);
+<a href=#622 id=622 data-nosnippet>622</a>        path
+<a href=#623 id=623 data-nosnippet>623</a>    }
+<a href=#624 id=624 data-nosnippet>624</a>}
 </code></pre></div></section></main></body></html>

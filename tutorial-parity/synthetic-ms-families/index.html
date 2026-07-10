@@ -249,6 +249,116 @@
   
   
   
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../rust-api/" class="md-nav__link">
         
@@ -285,10 +395,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -306,8 +416,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -640,8 +750,9 @@ cases.</p>
 authoritative sampled spectral sky models. Analytic component models provide
 exact point-source and Gaussian visibility predictions plus per-channel spectra.</p>
 <h2 id="family-inputs">Family Inputs<a class="headerlink" href="#family-inputs" title="Permanent link">&para;</a></h2>
-<p>The dialog-persistent shape is <code>kind: "family"</code>. It records the parameters
-needed to size and regenerate a family member for an imaging mode:</p>
+<p>The machine invocation envelope uses <code>kind: "family"</code>. It records the values
+needed to size and generate a family member for an imaging mode. Human-saved
+configuration uses the equivalent sparse TOML profile shown below:</p>
 <div class="codehilite"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;kind&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;family&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;request&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -705,23 +816,25 @@ metadata.</p>
 <code>image_channels</code> is persisted planning metadata for downstream imaging
 diagnostics and manifests; it does not change the MS channel count by itself.</p>
 <p>Python callers can use the same contract without a second schema:</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars.tasks</span><span class="w"> </span><span class="kn">import</span> <span class="n">simobserve</span>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
 
-<span class="n">request</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;source_model&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;analytic_components&quot;</span><span class="p">,</span> <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;models/14pt-3gauss-v1.json&quot;</span><span class="p">},</span>
-    <span class="s2">&quot;telescope&quot;</span><span class="p">:</span> <span class="s2">&quot;ALMA&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;array_config&quot;</span><span class="p">:</span> <span class="s2">&quot;synthetic-aca&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;band&quot;</span><span class="p">:</span> <span class="s2">&quot;Band 3&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;target_ms_size_gib&quot;</span><span class="p">:</span> <span class="mf">0.25</span><span class="p">,</span>
-    <span class="s2">&quot;polarizations&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
-    <span class="s2">&quot;ms_channels&quot;</span><span class="p">:</span> <span class="mi">32</span><span class="p">,</span>
-    <span class="s2">&quot;image_channels&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
-    <span class="s2">&quot;pointing_count&quot;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
-    <span class="s2">&quot;imaging_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;mosaic&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;output_ms&quot;</span><span class="p">:</span> <span class="s2">&quot;out/aca-mosaic.ms&quot;</span><span class="p">,</span>
-<span class="p">}</span>
-<span class="n">simobserve</span><span class="o">.</span><span class="n">save_request</span><span class="p">(</span><span class="s2">&quot;out/aca-mosaic.json&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;family&quot;</span><span class="p">,</span> <span class="n">request</span><span class="o">=</span><span class="n">request</span><span class="p">)</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">simobserve</span><span class="o">.</span><span class="n">run_file</span><span class="p">(</span><span class="s2">&quot;out/aca-mosaic.json&quot;</span><span class="p">)</span>
+<span class="n">profile</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="s2">&quot;simobserve&quot;</span><span class="p">)</span>
+<span class="n">profile</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+    <span class="n">request_kind</span><span class="o">=</span><span class="s2">&quot;family&quot;</span><span class="p">,</span>
+    <span class="n">source_model</span><span class="o">=</span><span class="s1">&#39;{&quot;kind&quot;:&quot;analytic_components&quot;,&quot;path&quot;:&quot;models/14pt-3gauss-v1.json&quot;}&#39;</span><span class="p">,</span>
+    <span class="n">telescope</span><span class="o">=</span><span class="s2">&quot;ALMA&quot;</span><span class="p">,</span>
+    <span class="n">array_config</span><span class="o">=</span><span class="s2">&quot;synthetic-aca&quot;</span><span class="p">,</span>
+    <span class="n">band</span><span class="o">=</span><span class="s2">&quot;Band 3&quot;</span><span class="p">,</span>
+    <span class="n">target_ms_size_gib</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span>
+    <span class="n">polarizations</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">ms_channels</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="n">image_channels</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+    <span class="n">pointing_count</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
+    <span class="n">imaging_mode</span><span class="o">=</span><span class="s2">&quot;mosaic&quot;</span><span class="p">,</span>
+    <span class="n">output_ms</span><span class="o">=</span><span class="s2">&quot;out/aca-mosaic.ms&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">profile</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;out/aca-mosaic.toml&quot;</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;simobserve&quot;</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="n">profile</span><span class="p">)</span>
 </code></pre></div>
 
 <h2 id="spectral-diagnostics">Spectral Diagnostics<a class="headerlink" href="#spectral-diagnostics" title="Permanent link">&para;</a></h2>

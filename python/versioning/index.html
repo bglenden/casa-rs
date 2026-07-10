@@ -253,6 +253,116 @@
   
   
   
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../rust-api/" class="md-nav__link">
         
@@ -291,10 +401,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -312,8 +422,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -423,6 +533,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -439,6 +567,47 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-document-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter document compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-protocol-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider protocol compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -500,6 +669,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-document-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter document compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-protocol-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider protocol compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -516,6 +715,30 @@
 
 
 <h1 id="compatibility">Compatibility<a class="headerlink" href="#compatibility" title="Permanent link">&para;</a></h1>
+<h2 id="parameter-document-compatibility">Parameter document compatibility<a class="headerlink" href="#parameter-document-compatibility" title="Permanent link">&para;</a></h2>
+<p>Sparse TOML documents carry two independent versions:</p>
+<ul>
+<li><code>casars.format</code> versions the document envelope and TOML conventions.</li>
+<li><code>casars.contract</code> versions the selected task or session definition.</li>
+</ul>
+<p>Loading resolves sparse overrides against the current provider definition.
+Newly added optional parameters receive current defaults. Omitted parameters
+whose defaults changed also receive the new default and produce a compatibility
+warning. Renames and type/value changes require an explicit ordered migration;
+future or unmigratable versions fail before invocation.</p>
+<p>This behavior preserves user intent rather than freezing an exact historical
+request. Use a separate resolved run manifest when exact replay is required.
+The Python implementation uses the shared Rust runtime and must not maintain an
+independent migration or default table.</p>
+<p>Managed state normally lives at:</p>
+<div class="codehilite"><pre><span></span><code>&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/last.toml
+&lt;workspace&gt;/.casa-rs/parameters/&lt;surface-id&gt;/last-successful.toml
+</code></pre></div>
+
+<p><code>CASA_RS_STATE_DIR</code> redirects the managed root without changing workspace path
+resolution. Session surfaces use only <code>last.toml</code>. An explicit source profile
+is never overwritten without an explicit save.</p>
+<h2 id="provider-protocol-compatibility">Provider protocol compatibility<a class="headerlink" href="#provider-protocol-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>casars.tasks.calibrate</code> resolves binaries in this order:</p>
 <ol>
 <li>explicit <code>binary=</code> argument on the function call</li>
