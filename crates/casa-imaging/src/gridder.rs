@@ -35,6 +35,7 @@ pub(crate) trait CenteredComplex32Grid {
 }
 
 /// Mutable batch of complex centered f32 grids updated by one convolution pass.
+#[cfg(all(target_os = "macos", not(coverage)))]
 pub(crate) trait CenteredComplex32GridBatch {
     /// Logical centered grid shape shared by every plane.
     fn shape(&self) -> [usize; 2];
@@ -638,6 +639,7 @@ impl StandardGridder {
         }
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     pub(crate) fn grid_compact_taps_planned_values_f32<G: CenteredComplex32GridBatch>(
         &self,
@@ -1713,6 +1715,7 @@ impl StandardGridder {
         image
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn corrected_mosaic_image_from_grid(
         &self,
         raw: &Array2<Complex32>,
@@ -1750,6 +1753,7 @@ impl StandardGridder {
         image
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn mosaic_weight_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
         let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
         for x in 0..self.geometry.nx() {
@@ -2367,6 +2371,7 @@ impl ScreenProjector {
         })
     }
 
+    #[cfg(any(test, all(target_os = "macos", not(coverage))))]
     pub(crate) fn grid_sample_planned<G: CenteredComplex32Grid>(
         &self,
         grid: &mut G,
@@ -2388,6 +2393,7 @@ impl ScreenProjector {
         }
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
     pub(crate) fn grid_sample_planned_values<G: CenteredComplex32GridBatch>(
         &self,
         grids: &mut G,

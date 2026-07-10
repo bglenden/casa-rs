@@ -1764,12 +1764,15 @@ pub fn finish_standard_mfs_dirty_grid_results(
     for result in grid_results {
         let (request, storage, accumulation, dirty_product_fft_policy, stage_timings) =
             result.into_parts();
-        let StandardMfsDirtyGridStorage::HostF64 {
-            psf_grid,
-            residual_grid,
-        } = storage
-        else {
-            unreachable!("direct Metal grids are finished before the host f64 batch path")
+        let (psf_grid, residual_grid) = match storage {
+            StandardMfsDirtyGridStorage::HostF64 {
+                psf_grid,
+                residual_grid,
+            } => (psf_grid, residual_grid),
+            #[cfg(all(target_os = "macos", not(coverage)))]
+            StandardMfsDirtyGridStorage::MetalSharedF32(_) => {
+                unreachable!("direct Metal grids are finished before the host f64 batch path")
+            }
         };
         raw_grids.push(psf_grid);
         raw_grids.push(residual_grid);
@@ -2318,6 +2321,7 @@ fn apple_gpu_dirty_products_allowed_by_fft_backend_policy(
     Ok(allowed)
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn dirty_product_fft_explicit_metal_requested(policy: DirtyProductFftPolicy) -> bool {
     policy.backend == FftBackendChoice::MetalMpsGraph
 }
@@ -3670,6 +3674,8 @@ where
 {
     let dirty_product_fft_policy = execution.fft.dirty_products;
     let direct_metal_scratch_bytes = execution.memory.direct_metal_scratch_bytes;
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let _ = direct_metal_scratch_bytes;
     let execution_config = execution.standard_mfs;
     let total_started = Instant::now();
     request.geometry.validate()?;
@@ -4689,6 +4695,12 @@ impl MosaicMtmfsStreamGridStorage {
         allow_direct_metal: bool,
         direct_metal_scratch_bytes: Option<usize>,
     ) -> Result<Self, ImagingError> {
+        #[cfg(any(not(target_os = "macos"), coverage))]
+        let _ = (
+            dirty_product_fft_policy,
+            allow_direct_metal,
+            direct_metal_scratch_bytes,
+        );
         #[cfg(all(target_os = "macos", not(coverage)))]
         if allow_direct_metal
             && apple_gpu_dirty_products_allowed_by_fft_backend_policy(
@@ -5088,6 +5100,8 @@ fn finish_mosaic_mtmfs_residual_images(
         pb_limit,
         dirty_product_fft_policy,
     } = finish;
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let _ = nterms;
     let corrected = match storage {
         MosaicMtmfsStreamGridStorage::HostF64(grids) => {
             let input_refs = grids.residual_grids.iter().collect::<Vec<_>>();
@@ -5491,6 +5505,7 @@ pub struct MosaicMtmfsDirectScratchPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 struct MosaicDirectTilePlan {
     budget_bytes: usize,
     worker_count: usize,
@@ -5501,6 +5516,11 @@ struct MosaicDirectTilePlan {
     raw_sample_limit: usize,
 }
 
+const fn mosaic_direct_metal_tile_sample_bytes() -> usize {
+    2 * std::mem::size_of::<u32>()
+}
+
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 fn plan_mosaic_direct_tiles(
     grid_shape: [usize; 2],
     kernel_span: usize,
@@ -5553,7 +5573,7 @@ fn plan_mosaic_direct_tiles(
                 .min(1usize.saturating_add(kernel_span.saturating_sub(1).div_ceil(tile_edge)));
             let max_route_copies = x_route_copies.saturating_mul(y_route_copies).max(1);
             let bytes_per_raw_sample = compact_record_bytes.saturating_add(
-                max_route_copies.saturating_mul(std::mem::size_of::<MosaicDirectMetalTileSample>()),
+                max_route_copies.saturating_mul(mosaic_direct_metal_tile_sample_bytes()),
             );
             let raw_sample_limit = budget_bytes
                 .saturating_sub(worker_tile_bytes)
@@ -5631,7 +5651,7 @@ pub fn plan_mosaic_mtmfs_direct_scratch(
             .saturating_add(plane_count.saturating_mul(std::mem::size_of::<Complex32>()))
             .saturating_add(std::mem::size_of::<MosaicWeightSupportSum>());
         let per_sample = compaction_record_bytes.saturating_add(
-            max_route_copies.saturating_mul(std::mem::size_of::<MosaicDirectMetalTileSample>()),
+            max_route_copies.saturating_mul(mosaic_direct_metal_tile_sample_bytes()),
         );
         let tile_bytes_per_worker = tile_edge
             .saturating_mul(tile_edge)
@@ -9347,6 +9367,8 @@ fn compute_dirty_grids_standard_sample_replay(
     replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<(StandardMfsDirtyGridStorage, StandardMfsDirtyAccumulation), ImagingError> {
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let _ = dirty_product_fft_policy;
     let [grid_nx, grid_ny] = gridder.grid_shape();
     #[cfg(all(target_os = "macos", not(coverage)))]
     if let Some(dirty_grid) =
@@ -11807,6 +11829,11 @@ struct MosaicDirectMetalTileSample {
 }
 
 #[cfg(all(target_os = "macos", not(coverage)))]
+const _: () = assert!(
+    std::mem::size_of::<MosaicDirectMetalTileSample>() == mosaic_direct_metal_tile_sample_bytes()
+);
+
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MosaicDirectMetalTileGridBatch {
     grid_shape: [usize; 2],
     extent: [usize; 4],
@@ -12491,6 +12518,7 @@ fn partial_grid_count_for_update_density(
         .clamp(1, max_by_memory.min(sample_count.max(1)))
 }
 
+#[cfg(any(test, all(target_os = "macos", not(coverage))))]
 fn metal_dispatch_temporary_budget(
     recommended_working_set_bytes: u64,
     current_allocated_bytes: usize,
@@ -14505,12 +14533,15 @@ fn plan_metal_partial_grids(
     }
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 static METAL_PARTIAL_GRID_RESERVED_BYTES: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 struct MetalPartialGridReservation {
     bytes: usize,
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 impl Drop for MetalPartialGridReservation {
     fn drop(&mut self) {
         if self.bytes > 0 {
@@ -14519,6 +14550,7 @@ impl Drop for MetalPartialGridReservation {
     }
 }
 
+#[cfg(all(target_os = "macos", not(coverage)))]
 fn reserve_metal_partial_grids(
     desired: MetalPartialGridPlan,
     available_bytes: usize,
@@ -26691,6 +26723,8 @@ fn compute_mtmfs_residual_terms(
     psf_state: &MtmfsPsfState,
     execution: MtmfsResidualExecution<'_>,
 ) -> Result<Vec<Array2<f32>>, ImagingError> {
+    #[cfg(any(not(target_os = "macos"), coverage))]
+    let _ = acceleration_backend;
     let MtmfsResidualExecution {
         dirty_product_fft_policy,
         stage_timings,
@@ -27957,7 +27991,13 @@ fn compute_psf_standard_metal(
     }
     #[cfg(any(not(target_os = "macos"), coverage))]
     {
-        let _ = (batches, gridder, execution_config, stage_timings);
+        let _ = (
+            batches,
+            gridder,
+            execution_config,
+            dirty_product_fft_policy,
+            stage_timings,
+        );
         Err(ImagingError::Unsupported(
             "standard MFS backend 'metal' requires macOS Metal and is not available on this platform"
                 .to_string(),
