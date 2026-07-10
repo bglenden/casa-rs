@@ -4,6 +4,12 @@ Truth class: proposed product spec
 Last reality check: 2026-05-03
 Verification: not implemented
 
+> **Accepted follow-on design:** The notebook, tutorial, Python, corpus, and AI
+> architecture is now governed by
+> [`scientific-notebooks-and-assistant.md`](scientific-notebooks-and-assistant.md)
+> and ADR-0007. This document remains the product and shell-layout reference;
+> where the two conflict, the accepted follow-on design wins.
+
 ## Product Thesis
 
 The mac-native `casa-rs` GUI should be an AI-enhanced desktop workbench for

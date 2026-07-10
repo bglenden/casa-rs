@@ -76,6 +76,15 @@ Verification: just verify
 
 For each wave:
 
+- scientific-notebook waves first pass the ADR-0007 prototype gate: the live
+  fixture-backed app covers primary, failure, cancellation, retry, and restart
+  states; meaningful controls have accessibility IDs; debug JSON and visual
+  evidence are recorded; and explicit interaction approval precedes real
+  adapter integration
+- after prototype approval, real adapters must match the accepted interaction
+  and state contract; deterministic fixture adapters remain available for
+  regression tests and may not be treated as evidence that persistence,
+  execution, download, Python, retrieval, or model integration works
 - acceptance checks have direct verification evidence
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review

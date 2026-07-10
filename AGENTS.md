@@ -120,6 +120,14 @@ Use `Closes #N` only for issues that should auto-close on merge.
 
 ## Project Rules
 
+- For the scientific-notebook program governed by ADR-0007, every wave begins
+  with a launchable, fully interactive `casars-mac` prototype backed only by
+  deterministic fixture adapters. Record live-app, accessibility, debug-state,
+  and visual evidence and obtain explicit interaction approval before wiring
+  real persistence, tasks, Python, downloads, retrieval, or model providers.
+  Fixture schemas and dummy adapters must not become public or persisted
+  contracts. A material interaction change returns the wave to this prototype
+  gate.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.

@@ -97,6 +97,21 @@ explorer tabs, and dirty-imaging artifacts are grouped under their originating
 in-memory run state so generated products can be reopened without adding a
 project-history persistence format or background service.
 
+ADR-0007 accepts the next runtime boundary for the scientific-notebook program.
+The planned `casa-notebook` Rust crate owns Markdown/cell, execution-receipt,
+export, and tutorial-manifest contracts shared by GUI, TUI, CLI, and Python.
+The planned `casars-assistant` TypeScript sidecar is isolated behind a
+CASA-RS-owned JSONL/stdio protocol and may use Pi as a replaceable model/auth
+adapter. Swift remains the native interaction layer, and
+`casars-frontend-services` remains a projection layer rather than a persistence
+implementation. These modules are accepted architecture but do not exist until
+their implementation waves land.
+
+Every notebook-program wave starts with a launchable deterministic GUI
+prototype and an explicit approval gate before real adapters are connected.
+The prototype state belongs in `CasarsMacCore`; it may not establish persisted
+or provider semantics that bypass the Rust-owned contracts.
+
 ## Persistence / external systems
 
 - casacore-compatible table trees and image tables on local disk
@@ -108,6 +123,10 @@ project-history persistence format or background service.
 - measures runtime data in a CASA-compatible table tree rooted at `~/.casa/data` (override `CASA_RS_MEASURESPATH`)
 - local casacore C++ installations via Homebrew for parity tests and demos when available
 - GitHub Actions as the canonical CI environment, with `scripts/ci-local.sh` as local reproduction support
+- accepted future notebook state from ADR-0007: visible Markdown and assets
+  under `notebooks/`, copied project documents under `documents/`, and versioned
+  managed receipts, transcripts, tutorial locks, Python environments, and local
+  corpus indexes under `.casa-rs/`
 
 ## Public interfaces
 
@@ -155,3 +174,4 @@ project-history persistence format or background service.
 | 0004 | Tiered verification and heavy parity gates | accepted |
 | 0005 | Native macOS GUI prototype boundary | accepted |
 | 0006 | Unified parameter catalog and sparse profiles | accepted |
+| 0007 | Scientific notebooks and assistant boundary | accepted |
