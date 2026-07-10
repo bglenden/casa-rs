@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use casa_ms::{MsSelectionSpec, selection::MsSelection};
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
+    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
+    derived_ui_schema_annotations, merged_components, project_ui_schema,
 };
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use crate::{
     BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
     ContinuumSubtractionDataColumn, ContinuumSubtractionRequest, FluxScaleRequest,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainType, GencalRequest, RefAntSelector, calibration_stats, command_schema, continuum_subtract,
+    GainType, GencalRequest, RefAntSelector, calibration_stats, continuum_subtract,
     execute_apply_from_path, export_corrected_data, fluxscale, gencal, plan_apply_from_path,
     solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
 };
@@ -67,6 +68,8 @@ pub struct CalibrationTaskSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical parameter contracts for every calibration-family surface.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`CalibrationTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`CalibrationTaskResult`].
@@ -78,8 +81,10 @@ impl CalibrationTaskSchemaBundle {
     pub fn current() -> Self {
         let request_schema = schema_for!(CalibrationTaskRequest);
         let result_schema = schema_for!(CalibrationTaskResult);
-        let ui_schema = serde_json::to_value(command_schema("calibrate"))
-            .expect("serialize calibration ui schema projection");
+        let ui_schema = project_ui_schema(
+            &builtin_surface_bundle("calibrate")
+                .expect("built-in calibrate parameter surface must remain valid"),
+        );
         Self {
             protocol: CalibrationProtocolInfo::current(),
             semantic: TaskSemanticContract {
@@ -102,6 +107,22 @@ impl CalibrationTaskSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: [
+                "calibrate",
+                "uvcontsub",
+                "applycal",
+                "gaincal",
+                "bandpass",
+                "fluxscale",
+                "gencal",
+            ]
+            .into_iter()
+            .map(|surface| {
+                builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                    panic!("built-in calibration parameter surface {surface:?}: {error}")
+                })
+            })
+            .collect(),
             request_schema,
             result_schema,
         }
@@ -722,6 +743,35 @@ mod tests {
         );
         assert!(bundle.components.contains_key("SummaryTaskRequest"));
         assert!(bundle.projections.ui_schema.is_some());
+        assert_eq!(
+            bundle
+                .parameter_surfaces
+                .iter()
+                .map(|surface| surface.surface.id())
+                .collect::<Vec<_>>(),
+            [
+                "calibrate",
+                "uvcontsub",
+                "applycal",
+                "gaincal",
+                "bandpass",
+                "fluxscale",
+                "gencal",
+            ]
+        );
+        assert!(
+            bundle
+                .parameter_surfaces
+                .iter()
+                .all(|surface| surface.validate().is_ok())
+        );
+        assert_eq!(
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            7
+        );
         assert!(
             bundle
                 .request_schema

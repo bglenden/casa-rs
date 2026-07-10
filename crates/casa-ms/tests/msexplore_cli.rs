@@ -266,7 +266,7 @@ fn msexplore_ui_schema_describes_launcher_contract() {
     let flag_plotindex = schema
         .argument("flag_plotindex")
         .expect("flag_plotindex argument");
-    assert_eq!(flag_plotindex.value_kind, UiValueKind::String);
+    assert_eq!(flag_plotindex.value_kind, UiValueKind::Float);
     let flag_panel = schema.argument("flag_panel").expect("flag_panel argument");
     assert_eq!(flag_panel.value_kind, UiValueKind::String);
     let flag_xmin = schema.argument("flag_xmin").expect("flag_xmin argument");

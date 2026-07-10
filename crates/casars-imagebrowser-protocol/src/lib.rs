@@ -4,7 +4,8 @@
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
     ProviderProjectionMetadata, ProviderSurfaceKind, SessionSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    SurfaceContractBundle, builtin_surface_bundle, derived_ui_schema_annotations,
+    merged_components, project_ui_schema,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,8 @@ pub struct ImageBrowserSessionSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical durable parameter contract for the session.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`ImageBrowserRequestEnvelope`].
     pub request_schema: schemars::schema::RootSchema,
     /// JSON schema for [`ImageBrowserResponseEnvelope`].
@@ -62,9 +65,12 @@ pub struct ImageBrowserSessionSchemaBundle {
 
 impl ImageBrowserSessionSchemaBundle {
     /// Build the current imagebrowser schema bundle.
-    pub fn current(ui_schema: JsonValue) -> Self {
+    pub fn current() -> Self {
         let request_schema = schema_for!(ImageBrowserRequestEnvelope);
         let response_schema = schema_for!(ImageBrowserResponseEnvelope);
+        let canonical_surface = builtin_surface_bundle("imexplore")
+            .expect("built-in imexplore parameter surface must remain valid");
+        let ui_schema = project_ui_schema(&canonical_surface);
         Self {
             protocol: ImageBrowserProtocolInfo::current(),
             semantic: SessionSemanticContract {
@@ -87,6 +93,7 @@ impl ImageBrowserSessionSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: vec![canonical_surface],
             request_schema,
             response_schema,
         }
@@ -221,6 +228,12 @@ pub enum ImageBrowserCommand {
     },
     SetPlaneContentMode {
         mode: ImagePlaneContentMode,
+    },
+    SetSelectionReferences {
+        #[serde(default)]
+        region: Option<ImageRegionReference>,
+        #[serde(default)]
+        mask: Option<ImageMaskReference>,
     },
     StartRegionShape,
     AppendRegionVertex {
@@ -394,6 +407,51 @@ pub struct ImageBrowserParameters {
     pub clip_low: String,
     #[serde(default)]
     pub clip_high: String,
+}
+
+/// Declarative region selected by a durable session parameter.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImageRegionReference {
+    /// No active region.
+    #[default]
+    None,
+    /// A saved region definition attached to the image.
+    Definition {
+        /// Saved definition name.
+        name: String,
+    },
+    /// A CASA CRTF region file.
+    File {
+        /// Filesystem path to the CRTF file.
+        path: String,
+    },
+    /// Inline CASA CRTF box or polygon text.
+    Expression {
+        /// Inline CRTF expression.
+        expression: String,
+    },
+}
+
+/// Declarative mask selected by a durable session parameter.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImageMaskReference {
+    /// No explicit mask override.
+    #[default]
+    None,
+    /// A named persistent mask attached to the image.
+    Name {
+        /// Persistent mask name.
+        name: String,
+    },
+    /// A boolean image mask expression. Reserved for a backend that can
+    /// evaluate the expression without mutating the source image; the current
+    /// imexplore backend rejects this variant explicitly.
+    Expression {
+        /// Expression text.
+        expression: String,
+    },
 }
 
 /// Quantized grayscale plane raster returned by the backend.
@@ -589,9 +647,13 @@ pub struct ImageBrowserSnapshot {
     #[serde(default)]
     pub active_region_definition_name: Option<String>,
     #[serde(default)]
+    pub region_reference: ImageRegionReference,
+    #[serde(default)]
     pub mask_names: Vec<String>,
     #[serde(default)]
     pub default_mask_name: Option<String>,
+    #[serde(default)]
+    pub mask_reference: ImageMaskReference,
     #[serde(default)]
     pub backend_timing: Option<ImageBackendTimingState>,
     pub capabilities: ImageBrowserCapabilities,
@@ -616,8 +678,8 @@ pub fn response_schema_json() -> Result<String, serde_json::Error> {
 }
 
 /// Returns the canonical schema bundle for the public imagebrowser session protocol.
-pub fn schema_bundle_json(ui_schema: JsonValue) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&ImageBrowserSessionSchemaBundle::current(ui_schema))
+pub fn schema_bundle_json() -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&ImageBrowserSessionSchemaBundle::current())
 }
 
 #[cfg(test)]
@@ -628,6 +690,22 @@ mod tests {
     fn envelope_roundtrip() {
         let envelope =
             ImageBrowserRequestEnvelope::new(ImageBrowserCommand::MoveCursor { dx: 1, dy: -2 });
+        let encoded = serde_json::to_string(&envelope).unwrap();
+        let decoded: ImageBrowserRequestEnvelope = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn declarative_selection_references_roundtrip() {
+        let envelope =
+            ImageBrowserRequestEnvelope::new(ImageBrowserCommand::SetSelectionReferences {
+                region: Some(ImageRegionReference::Expression {
+                    expression: "box[[0pix,0pix],[2pix,2pix]]".into(),
+                }),
+                mask: Some(ImageMaskReference::Expression {
+                    expression: "cube.image>0.5".into(),
+                }),
+            });
         let encoded = serde_json::to_string(&envelope).unwrap();
         let decoded: ImageBrowserRequestEnvelope = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, envelope);
@@ -747,8 +825,12 @@ mod tests {
             region: None,
             saved_region_names: vec!["Region 1".into()],
             active_region_definition_name: Some("Region 1".into()),
+            region_reference: ImageRegionReference::Definition {
+                name: "Region 1".into(),
+            },
             mask_names: vec!["roi".into()],
             default_mask_name: Some("roi".into()),
+            mask_reference: ImageMaskReference::Name { name: "roi".into() },
             backend_timing: Some(ImageBackendTimingState {
                 plane_cache_result: ImageBackendPlaneCacheResult::Miss,
                 cached_plane_lookup_ns: 100,
@@ -789,21 +871,15 @@ mod tests {
                 .unwrap()
                 .contains("ImageBrowserResponseEnvelope")
         );
-        let schema_bundle = schema_bundle_json(serde_json::json!({
-            "schema_version": 1,
-            "command_id": "imexplore",
-        }))
-        .unwrap();
+        let schema_bundle = schema_bundle_json().unwrap();
         assert!(schema_bundle.contains("casa_imagebrowser_session"));
         assert!(schema_bundle.contains("jsonl_stdio"));
+        assert!(schema_bundle.contains("parameter_surfaces"));
     }
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_transport() {
-        let bundle = ImageBrowserSessionSchemaBundle::current(serde_json::json!({
-            "schema_version": 1,
-            "command_id": "imexplore",
-        }));
+        let bundle = ImageBrowserSessionSchemaBundle::current();
         assert_eq!(
             bundle.protocol.protocol_name,
             IMAGEBROWSER_SESSION_PROTOCOL_NAME
@@ -813,12 +889,25 @@ mod tests {
         assert_eq!(bundle.semantic.transport, "jsonl_stdio");
         assert!(bundle.components.contains_key("ImageBrowserCommand"));
         assert!(bundle.components.contains_key("ImageBrowserResponse"));
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imexplore");
+        bundle.parameter_surfaces[0]
+            .validate()
+            .expect("embedded imexplore parameter surface");
         assert_eq!(
-            bundle.ui_schema_projection().unwrap(),
-            serde_json::json!({
-                "schema_version": 1,
-                "command_id": "imexplore",
-            })
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let ui_schema = bundle.ui_schema_projection().unwrap();
+        assert_eq!(ui_schema["schema_version"], 2);
+        assert_eq!(ui_schema["command_id"], "imexplore");
+        assert!(
+            ui_schema["arguments"]
+                .as_array()
+                .is_some_and(|args| !args.is_empty())
         );
     }
 
@@ -838,6 +927,10 @@ mod tests {
                 ui_schema: None,
                 python: None,
             },
+            parameter_surfaces: vec![
+                builtin_surface_bundle("imexplore")
+                    .expect("built-in imexplore parameter surface must remain valid"),
+            ],
             request_schema: schema_for!(ImageBrowserRequestEnvelope),
             response_schema: schema_for!(ImageBrowserResponseEnvelope),
         };

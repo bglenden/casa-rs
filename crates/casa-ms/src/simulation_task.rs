@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical `simobserve` task request/result contracts shared by CLI and Python.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    ParameterValue, ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
+    ProviderInvocation, ProviderInvocationAdaptation, ProviderProjectionMetadata,
+    ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
+    derived_ui_schema_annotations, merged_components, project_ui_schema,
 };
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -27,10 +29,7 @@ use crate::simulation::{
     SyntheticSpectralSetup, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
     tutorial_vla_a_antennas, zenith_transit_phase_center_rad,
 };
-use crate::ui_schema::{
-    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
-    logging_argument_schemas,
-};
+use crate::ui_schema::UiCommandSchema;
 
 /// Stable protocol name advertised by `simobserve --protocol-info`.
 pub const SIMOBSERVE_TASK_PROTOCOL_NAME: &str = "casa_simobserve_task";
@@ -289,6 +288,9 @@ pub struct SimobserveFamilyTaskRequest {
     /// Optional output MeasurementSet path for generated family members.
     #[serde(default)]
     pub output_ms: Option<PathBuf>,
+    /// Replace an existing family output MeasurementSet directory.
+    #[serde(default)]
+    pub overwrite: bool,
     /// Recursively measure the final MeasurementSet directory size. Disabled by
     /// default because it is expensive for large on-the-fly generation runs.
     #[serde(default)]
@@ -436,7 +438,7 @@ impl SimobserveFamilyTaskRequest {
             model: Some(self.source_model.clone()),
             model_peak_jy_per_pixel: None,
             output_ms: output_ms.clone(),
-            overwrite: true,
+            overwrite: self.overwrite,
             telescope_name: Some(telescope_name),
             field_name: Some(preset.field_name.clone()),
             antennas: antennas.clone(),
@@ -1455,6 +1457,207 @@ pub enum SimobserveTaskRequest {
     Family(Box<SimobserveFamilyTaskRequest>),
 }
 
+/// Project resolved canonical parameters into the provider's invocation
+/// transport. Run requests retain their direct CLI arguments; family requests
+/// use the typed JSON request envelope over stdin without creating a saved
+/// request file.
+pub fn simobserve_provider_invocation(
+    values: &BTreeMap<String, ParameterValue>,
+    direct_args: Vec<String>,
+) -> Result<ProviderInvocationAdaptation, String> {
+    let request_kind = optional_parameter_string(values, "request_kind")?.unwrap_or("run");
+    match request_kind {
+        "run" => Ok(ProviderInvocationAdaptation {
+            invocation: ProviderInvocation::direct(direct_args),
+            consumed_parameters: BTreeSet::from(["request_kind".to_string()]),
+        }),
+        "family" => {
+            let request = SimobserveTaskRequest::Family(Box::new(
+                simobserve_family_request_from_parameters(values)?,
+            ));
+            let mut stdin = serde_json::to_string(&request)
+                .map_err(|error| format!("serialize simobserve family request: {error}"))?;
+            stdin.push('\n');
+            Ok(ProviderInvocationAdaptation {
+                invocation: ProviderInvocation {
+                    args: vec!["--json-run".to_string(), "-".to_string()],
+                    stdin: Some(stdin),
+                },
+                consumed_parameters: values.keys().cloned().collect(),
+            })
+        }
+        value => Err(format!(
+            "unsupported simobserve request_kind {value:?}; expected run or family"
+        )),
+    }
+}
+
+fn simobserve_family_request_from_parameters(
+    values: &BTreeMap<String, ParameterValue>,
+) -> Result<SimobserveFamilyTaskRequest, String> {
+    let source_model = required_parameter_string(values, "source_model")?;
+    let source_model = serde_json::from_str::<SyntheticSkyModel>(source_model)
+        .map_err(|error| format!("parse source_model JSON: {error}"))?;
+    let worker_policy = optional_parameter_string(values, "worker_policy")?
+        .map(parse_worker_policy)
+        .transpose()?
+        .unwrap_or_default();
+    let observation_mode = match optional_parameter_string(values, "observation_mode")?
+        .unwrap_or("interferometric")
+    {
+        "interferometric" => SyntheticObservationMode::Interferometric,
+        "total_power" => SyntheticObservationMode::TotalPower,
+        value => {
+            return Err(format!(
+                "unsupported observation_mode {value:?}; expected interferometric or total_power"
+            ));
+        }
+    };
+    Ok(SimobserveFamilyTaskRequest {
+        source_model,
+        telescope: required_parameter_string(values, "telescope")?.to_string(),
+        array_config: required_parameter_string(values, "array_config")?.to_string(),
+        band: required_parameter_string(values, "band")?.to_string(),
+        target_ms_size_gib: required_parameter_f64(values, "target_ms_size_gib")?,
+        polarizations: required_parameter_usize(values, "polarizations")?,
+        ms_channels: required_parameter_usize(values, "ms_channels")?,
+        image_channels: required_parameter_usize(values, "image_channels")?,
+        pointing_count: required_parameter_usize(values, "pointing_count")?,
+        field_phase_centers_rad: None,
+        phase_center_rad: None,
+        start_frequency_hz: None,
+        channel_width_hz: None,
+        time_sample_count: optional_parameter_usize(values, "time_sample_count")?,
+        integration_seconds: optional_parameter_f64(values, "integration_seconds")?,
+        start_time_mjd_seconds: optional_parameter_f64(values, "start_time_mjd_seconds")?,
+        imaging_mode: required_parameter_string(values, "imaging_mode")?.to_string(),
+        output_ms: Some(PathBuf::from(required_parameter_string(
+            values,
+            "output_ms",
+        )?)),
+        overwrite: optional_parameter_bool(values, "overwrite")?.unwrap_or(false),
+        measure_actual_size: optional_parameter_bool(values, "measure_actual_size")?
+            .unwrap_or(false),
+        worker_policy,
+        observation_mode,
+        total_power_antenna_index: None,
+        row_workers: optional_parameter_usize(values, "row_workers")?,
+        channel_workers: optional_parameter_usize(values, "channel_workers")?,
+    })
+}
+
+fn parameter_value<'a>(
+    values: &'a BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<&'a ParameterValue, String> {
+    values
+        .get(name)
+        .ok_or_else(|| format!("simobserve family parameters are missing {name:?}"))
+}
+
+fn required_parameter_string<'a>(
+    values: &'a BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<&'a str, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::String(value) => Ok(value),
+        value => Err(format!(
+            "simobserve family parameter {name:?} must be a string, got {value:?}"
+        )),
+    }
+}
+
+fn optional_parameter_string<'a>(
+    values: &'a BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<&'a str>, String> {
+    match values.get(name) {
+        None => Ok(None),
+        Some(ParameterValue::String(value)) if value == "none" => Ok(None),
+        Some(ParameterValue::String(value)) => Ok(Some(value)),
+        Some(value) => Err(format!(
+            "simobserve parameter {name:?} must be a string, got {value:?}"
+        )),
+    }
+}
+
+fn required_parameter_f64(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<f64, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Integer(value) => Ok(*value as f64),
+        ParameterValue::Float(value) if value.is_finite() => Ok(*value),
+        value => Err(format!(
+            "simobserve family parameter {name:?} must be finite numeric, got {value:?}"
+        )),
+    }
+}
+
+fn optional_parameter_f64(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<f64>, String> {
+    match values.get(name) {
+        None => Ok(None),
+        Some(ParameterValue::String(value)) if value == "none" => Ok(None),
+        Some(ParameterValue::Integer(value)) => Ok(Some(*value as f64)),
+        Some(ParameterValue::Float(value)) if value.is_finite() => Ok(Some(*value)),
+        Some(value) => Err(format!(
+            "simobserve family parameter {name:?} must be none or finite numeric, got {value:?}"
+        )),
+    }
+}
+
+fn required_parameter_usize(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<usize, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Integer(value) if *value >= 0 => usize::try_from(*value)
+            .map_err(|_| format!("simobserve family parameter {name:?} is too large")),
+        ParameterValue::String(value) => value
+            .parse::<usize>()
+            .map_err(|error| format!("parse simobserve family parameter {name:?}: {error}")),
+        value => Err(format!(
+            "simobserve family parameter {name:?} must be a non-negative integer, got {value:?}"
+        )),
+    }
+}
+
+fn optional_parameter_usize(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<usize>, String> {
+    match values.get(name) {
+        None => Ok(None),
+        Some(ParameterValue::String(value)) if value == "none" => Ok(None),
+        Some(ParameterValue::Integer(value)) if *value >= 0 => usize::try_from(*value)
+            .map(Some)
+            .map_err(|_| format!("simobserve family parameter {name:?} is too large")),
+        Some(ParameterValue::String(value)) => value
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|error| format!("parse simobserve family parameter {name:?}: {error}")),
+        Some(value) => Err(format!(
+            "simobserve family parameter {name:?} must be none or a non-negative integer, got {value:?}"
+        )),
+    }
+}
+
+fn optional_parameter_bool(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<bool>, String> {
+    match values.get(name) {
+        None => Ok(None),
+        Some(ParameterValue::Bool(value)) => Ok(Some(*value)),
+        Some(value) => Err(format!(
+            "simobserve family parameter {name:?} must be boolean, got {value:?}"
+        )),
+    }
+}
+
 impl SimobserveTaskRequest {
     /// Execute the request and return the canonical task result envelope.
     pub fn execute(&self) -> Result<SimobserveTaskResult, String> {
@@ -1508,6 +1711,8 @@ pub struct SimobserveTaskSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical parameter contract embedded for self-contained consumers.
+    pub parameter_surfaces: Vec<casa_provider_contracts::SurfaceContractBundle>,
     /// JSON schema for [`SimobserveTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`SimobserveTaskResult`].
@@ -1519,8 +1724,9 @@ impl SimobserveTaskSchemaBundle {
     pub fn current() -> Self {
         let request_schema = schema_for!(SimobserveTaskRequest);
         let result_schema = schema_for!(SimobserveTaskResult);
-        let ui_schema = serde_json::to_value(command_schema("simobserve"))
-            .expect("serialize simobserve ui schema projection");
+        let parameter_surface = builtin_surface_bundle("simobserve")
+            .expect("built-in simobserve parameter surface must remain valid");
+        let ui_schema = project_ui_schema(&parameter_surface);
         Self {
             protocol: SimobserveProtocolInfo::current(),
             semantic: TaskSemanticContract {
@@ -1554,597 +1760,36 @@ impl SimobserveTaskSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: vec![parameter_surface],
             request_schema,
             result_schema,
         }
     }
+
+    /// Return the launcher/TUI compatibility view projected from the bundle.
+    pub fn ui_schema_projection(&self) -> Result<UiCommandSchema, String> {
+        let value = self
+            .projections
+            .ui_schema
+            .clone()
+            .ok_or_else(|| "missing ui_schema projection".to_string())?;
+        serde_json::from_value(value)
+            .map_err(|error| format!("parse simobserve ui schema: {error}"))
+    }
 }
 
 /// Return the launcher/TUI compatibility schema.
+/// Return the launcher/TUI compatibility schema projected from the canonical
+/// parameter surface. The executable spelling may be overridden by launchers
+/// without changing parameter identity or semantics.
 pub fn command_schema(program_name: &str) -> UiCommandSchema {
-    let mut schema = UiCommandSchema {
-        schema_version: 1,
-        command_id: "simobserve".to_string(),
-        invocation_name: program_name.to_string(),
-        display_name: "SimObserve".to_string(),
-        category: "Simulation".to_string(),
-        summary: "Generate a CASA-compatible synthetic VLA MeasurementSet".to_string(),
-        usage: format!("{program_name} --model PATH --out PATH [options]"),
-        arguments: vec![
-            option_argument(OptionArgumentConfig {
-                id: "model",
-                label: "Model FITS",
-                order: 0,
-                flags: &["--model"],
-                metavar: "PATH",
-                value_kind: UiValueKind::Path,
-                default: None,
-                required: true,
-                help: "Input FITS model image",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "out",
-                label: "Output MS",
-                order: 1,
-                flags: &["--out"],
-                metavar: "PATH",
-                value_kind: UiValueKind::Path,
-                default: None,
-                required: true,
-                help: "Output MeasurementSet path",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "inbright",
-                label: "Peak Jy/pixel",
-                order: 2,
-                flags: &["--inbright-jy-per-pixel"],
-                metavar: "JY",
-                value_kind: UiValueKind::Float,
-                default: Some("3e-5"),
-                required: false,
-                help: "Scale the model image peak brightness in Jy/pixel",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "duration",
-                label: "Duration (s)",
-                order: 3,
-                flags: &["--duration"],
-                metavar: "SECONDS",
-                value_kind: UiValueKind::Float,
-                default: Some("3600"),
-                required: false,
-                help: "On-source duration in seconds",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "integration",
-                label: "Integration (s)",
-                order: 4,
-                flags: &["--integration"],
-                metavar: "SECONDS",
-                value_kind: UiValueKind::Float,
-                default: Some("2"),
-                required: false,
-                help: "Integration time in seconds",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "start_frequency_hz",
-                label: "Start Frequency (Hz)",
-                order: 5,
-                flags: &["--start-frequency-hz"],
-                metavar: "HZ",
-                value_kind: UiValueKind::Float,
-                default: Some("44000000000"),
-                required: false,
-                help: "First channel center frequency",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "channel_width_hz",
-                label: "Channel Width (Hz)",
-                order: 6,
-                flags: &["--channel-width-hz"],
-                metavar: "HZ",
-                value_kind: UiValueKind::Float,
-                default: Some("128000000"),
-                required: false,
-                help: "Channel width",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "channel_count",
-                label: "Channels",
-                order: 7,
-                flags: &["--channels"],
-                metavar: "N",
-                value_kind: UiValueKind::String,
-                default: Some("1"),
-                required: false,
-                help: "Number of channels",
-            }),
-            toggle_argument(
-                "overwrite",
-                "Overwrite",
-                8,
-                &["--overwrite"],
-                &["--no-overwrite"],
-                Some("false"),
-                "Replace an existing output MeasurementSet",
-            ),
-            toggle_argument(
-                "predict_model",
-                "Predict Model",
-                9,
-                &["--predict-model"],
-                &["--no-predict-model"],
-                Some("true"),
-                "Predict visibilities from the model image",
-            ),
-            option_argument(OptionArgumentConfig {
-                id: "polarizations",
-                label: "Polarizations",
-                order: 10,
-                flags: &["--polarizations"],
-                metavar: "N",
-                value_kind: UiValueKind::String,
-                default: Some("2"),
-                required: false,
-                help: "Number of correlations to write: 1, 2, or 4",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "polarization_basis",
-                label: "Polarization Basis",
-                order: 11,
-                flags: &["--polarization-basis"],
-                metavar: "circular|linear",
-                value_kind: UiValueKind::String,
-                default: Some("circular"),
-                required: false,
-                help: "Receptor basis for polarization metadata",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "worker_policy",
-                label: "Worker Policy",
-                order: 12,
-                flags: &["--worker-policy"],
-                metavar: "auto|fixed",
-                value_kind: UiValueKind::String,
-                default: Some("auto"),
-                required: false,
-                help: "Native simulator worker policy: auto or fixed",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "row_workers",
-                label: "Row Workers",
-                order: 13,
-                flags: &["--row-workers"],
-                metavar: "N",
-                value_kind: UiValueKind::String,
-                default: None,
-                required: false,
-                help: "Explicit row worker count or auto upper bound",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "channel_workers",
-                label: "Channel Workers",
-                order: 14,
-                flags: &["--channel-workers"],
-                metavar: "N",
-                value_kind: UiValueKind::String,
-                default: None,
-                required: false,
-                help: "Explicit channel prediction worker count or auto upper bound",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "corruption_seed",
-                label: "Corruption Seed",
-                order: 15,
-                flags: &["--corruption-seed"],
-                metavar: "N",
-                value_kind: UiValueKind::String,
-                default: Some("1"),
-                required: false,
-                help: "Seed for deterministic corruption draws",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "noise_simplenoise_jy",
-                label: "Noise SimpleNoise (Jy)",
-                order: 16,
-                flags: &["--noise-simplenoise-jy"],
-                metavar: "JY",
-                value_kind: UiValueKind::Float,
-                default: None,
-                required: false,
-                help: "CASA setnoise(mode='simplenoise') sigma per complex visibility component",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "gain_mode",
-                label: "Gain Mode",
-                order: 17,
-                flags: &["--gain-mode"],
-                metavar: "MODE",
-                value_kind: UiValueKind::String,
-                default: Some("fbm"),
-                required: false,
-                help: "CASA setgain mode: fbm or random",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "gain_interval_seconds",
-                label: "Gain Interval",
-                order: 18,
-                flags: &["--gain-interval-seconds"],
-                metavar: "SECONDS",
-                value_kind: UiValueKind::Float,
-                default: Some("10"),
-                required: false,
-                help: "CASA setgain interval in seconds",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "gain_amplitude",
-                label: "Gain Amplitude",
-                order: 19,
-                flags: &["--gain-amplitude"],
-                metavar: "REAL[,IMAG]",
-                value_kind: UiValueKind::String,
-                default: None,
-                required: false,
-                help: "CASA setgain amplitude vector, scalar or real,imag",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "bandpass_mode",
-                label: "Bandpass Mode",
-                order: 20,
-                flags: &["--bandpass-mode"],
-                metavar: "MODE",
-                value_kind: UiValueKind::String,
-                default: Some("calculate"),
-                required: false,
-                help: "CASA setbandpass mode; casa-rs supports calculate",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "bandpass_interval_seconds",
-                label: "Bandpass Interval",
-                order: 21,
-                flags: &["--bandpass-interval-seconds"],
-                metavar: "SECONDS",
-                value_kind: UiValueKind::Float,
-                default: Some("3600"),
-                required: false,
-                help: "CASA setbandpass interval in seconds",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "bandpass_amplitude",
-                label: "Bandpass Amplitude",
-                order: 22,
-                flags: &["--bandpass-amplitude"],
-                metavar: "AMP[,PHASE]",
-                value_kind: UiValueKind::String,
-                default: None,
-                required: false,
-                help: "CASA setbandpass amplitude vector, scalar or amplitude,phase",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "leakage_amplitude",
-                label: "Leakage Amplitude",
-                order: 23,
-                flags: &["--leakage-amplitude"],
-                metavar: "REAL[,IMAG]",
-                value_kind: UiValueKind::String,
-                default: None,
-                required: false,
-                help: "CASA setleakage amplitude vector, scalar or real,imag",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "leakage_offset",
-                label: "Leakage Offset",
-                order: 24,
-                flags: &["--leakage-offset"],
-                metavar: "REAL[,IMAG]",
-                value_kind: UiValueKind::String,
-                default: None,
-                required: false,
-                help: "CASA setleakage offset vector, scalar or real,imag",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "pointing_offset_ra_arcsec",
-                label: "Pointing RA Offset",
-                order: 25,
-                flags: &["--pointing-offset-ra-arcsec"],
-                metavar: "ARCSEC",
-                value_kind: UiValueKind::Float,
-                default: None,
-                required: false,
-                help: "Global primary-beam pointing offset in right ascension arcseconds",
-            }),
-            option_argument(OptionArgumentConfig {
-                id: "pointing_offset_dec_arcsec",
-                label: "Pointing Dec Offset",
-                order: 26,
-                flags: &["--pointing-offset-dec-arcsec"],
-                metavar: "ARCSEC",
-                value_kind: UiValueKind::Float,
-                default: None,
-                required: false,
-                help: "Global primary-beam pointing offset in declination arcseconds",
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "request_kind",
-                label: "Request Kind",
-                order: 100,
-                default: Some("run"),
-                metavar: "run|family",
-                help: "Canonical request envelope kind.",
-                group: "Saved JSON",
-                choices: &["run", "family"],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "request_json",
-                label: "Request JSON",
-                order: 101,
-                default: Some(".casa-rs/requests/simobserve-family.json"),
-                metavar: "PATH",
-                help: "Saved canonical JSON request path used by simobserve --json-run.",
-                group: "Saved JSON",
-                choices: &[],
-                value_kind: UiValueKind::Path,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "source_model",
-                label: "Source Model",
-                order: 102,
-                default: Some(
-                    r#"{"kind":"analytic_components","components":[{"kind":"point","l_rad":0.0,"m_rad":0.0,"spectrum":{"flux_jy":1.0}}]}"#,
-                ),
-                metavar: "JSON",
-                help: "Canonical SyntheticSkyModel JSON object.",
-                group: "Family Parameters",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "telescope",
-                label: "Telescope",
-                order: 103,
-                default: Some("VLA"),
-                metavar: "NAME",
-                help: "Telescope family, for example VLA, ALMA, or ACA.",
-                group: "Family Parameters",
-                choices: &["VLA", "ALMA", "ACA"],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "array_config",
-                label: "Array Config",
-                order: 104,
-                default: Some("A"),
-                metavar: "CONFIG",
-                help: "CASA .cfg path/name or explicit synthetic-* layout label.",
-                group: "Family Parameters",
-                choices: &[
-                    "A",
-                    "vla.b.cfg",
-                    "vla.c.cfg",
-                    "vla.d.cfg",
-                    "alma.cycle10.5.cfg",
-                    "aca.cycle10.cfg",
-                    "synthetic-vla-d",
-                    "synthetic-alma-compact",
-                    "synthetic-aca",
-                    "synthetic-simalma",
-                ],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "band",
-                label: "Band",
-                order: 105,
-                default: Some("Q"),
-                metavar: "BAND",
-                help: "Receiver band label.",
-                group: "Family Parameters",
-                choices: &[
-                    "L", "S", "C", "X", "Ku", "K", "Ka", "Q", "Band 3", "Band 6", "Band 7",
-                    "Band 9",
-                ],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "target_ms_size_gib",
-                label: "Target MS Size (GiB)",
-                order: 106,
-                default: Some("0.01"),
-                metavar: "GiB",
-                help: "Target MeasurementSet size in GiB.",
-                group: "Family Parameters",
-                choices: &[],
-                value_kind: UiValueKind::Float,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "output_ms",
-                label: "Family Output MS",
-                order: 107,
-                default: Some("simobserve-family.ms"),
-                metavar: "PATH",
-                help: "Output MeasurementSet path persisted as request.output_ms.",
-                group: "Family Parameters",
-                choices: &[],
-                value_kind: UiValueKind::Path,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "polarizations",
-                label: "Polarizations",
-                order: 108,
-                default: Some("2"),
-                metavar: "N",
-                help: "Number of polarization correlations.",
-                group: "Family Dimensions",
-                choices: &["1", "2", "4"],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "ms_channels",
-                label: "MS Channels",
-                order: 109,
-                default: Some("4"),
-                metavar: "N",
-                help: "Number of generated MeasurementSet channels.",
-                group: "Family Dimensions",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "image_channels",
-                label: "Image Channels",
-                order: 110,
-                default: Some("1"),
-                metavar: "N",
-                help: "Expected image-channel count recorded for diagnostics.",
-                group: "Family Dimensions",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "pointing_count",
-                label: "Pointings",
-                order: 111,
-                default: Some("1"),
-                metavar: "N",
-                help: "Number of pointings in the observing pattern.",
-                group: "Family Dimensions",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "imaging_mode",
-                label: "Imaging Mode",
-                order: 115,
-                default: Some("mfs"),
-                metavar: "MODE",
-                help: "Family imaging mode.",
-                group: "Family Dimensions",
-                choices: &[
-                    "single_field",
-                    "mfs",
-                    "continuum",
-                    "continuum_mfs",
-                    "mosaic",
-                    "mosaic_mfs",
-                    "spectral_cube",
-                    "cube",
-                    "cubedata",
-                    "mt_mfs",
-                    "simalma",
-                    "aca",
-                ],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "worker_policy",
-                label: "Worker Policy",
-                order: 117,
-                default: Some("auto"),
-                metavar: "auto|fixed",
-                help: "Native simulator worker policy.",
-                group: "Family Workers",
-                choices: &["auto", "fixed"],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "observation_mode",
-                label: "Observation Mode",
-                order: 116,
-                default: Some("interferometric"),
-                metavar: "interferometric|total_power",
-                help: "Native simulator row topology.",
-                group: "Family Dimensions",
-                choices: &["interferometric", "total_power"],
-                value_kind: UiValueKind::Choice,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "row_workers",
-                label: "Row Workers",
-                order: 118,
-                default: None,
-                metavar: "N",
-                help: "Optional row worker count.",
-                group: "Family Workers",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "channel_workers",
-                label: "Channel Workers",
-                order: 119,
-                default: None,
-                metavar: "N",
-                help: "Optional channel prediction worker count.",
-                group: "Family Workers",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "measure_actual_size",
-                label: "Measure Actual Size",
-                order: 120,
-                default: Some("false"),
-                metavar: "BOOL",
-                help: "Measure generated MeasurementSet size by walking the output directory.",
-                group: "Family Workers",
-                choices: &[],
-                value_kind: UiValueKind::Bool,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "time_sample_count",
-                label: "Time Samples",
-                order: 112,
-                default: None,
-                metavar: "N",
-                help: "Optional exact generated time-sample count.",
-                group: "Family Dimensions",
-                choices: &[],
-                value_kind: UiValueKind::String,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "integration_seconds",
-                label: "Integration Seconds",
-                order: 113,
-                default: None,
-                metavar: "SECONDS",
-                help: "Optional integration time override.",
-                group: "Family Dimensions",
-                choices: &[],
-                value_kind: UiValueKind::Float,
-            }),
-            family_option_argument(FamilyArgumentConfig {
-                id: "start_time_mjd_seconds",
-                label: "Start Time",
-                order: 114,
-                default: None,
-                metavar: "MJD_SECONDS",
-                help: "Optional observation start time in MJD seconds UTC.",
-                group: "Family Dimensions",
-                choices: &[],
-                value_kind: UiValueKind::Float,
-            }),
-            action_argument(
-                "help",
-                "Help",
-                27,
-                &["-h", "--help"],
-                UiActionKind::Help,
-                "Render help text",
-            ),
-            action_argument(
-                "ui_schema",
-                "UI Schema",
-                28,
-                &["--ui-schema"],
-                UiActionKind::UiSchema,
-                "Emit the launcher/TUI schema",
-            ),
-        ],
-        managed_output: None,
-    };
-    schema.arguments.extend(logging_argument_schemas(900));
-    schema
+    let bundle = builtin_surface_bundle("simobserve")
+        .expect("built-in simobserve parameter surface must remain valid");
+    let mut projection = project_ui_schema(&bundle);
+    projection["invocation_name"] = JsonValue::String(program_name.to_string());
+    projection["usage"] = JsonValue::String(format!("{program_name} [parameters]"));
+    serde_json::from_value(projection)
+        .expect("canonical simobserve UI projection must remain valid")
 }
 
 /// Execute CLI-style arguments for the `simobserve` binary.
@@ -2398,131 +2043,6 @@ fn default_vla_antennas() -> Vec<SyntheticAntenna> {
     tutorial_vla_a_antennas()
 }
 
-struct OptionArgumentConfig<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    flags: &'a [&'a str],
-    metavar: &'a str,
-    value_kind: UiValueKind,
-    default: Option<&'a str>,
-    required: bool,
-    help: &'a str,
-}
-
-struct FamilyArgumentConfig<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    default: Option<&'a str>,
-    metavar: &'a str,
-    help: &'a str,
-    group: &'a str,
-    choices: &'a [&'a str],
-    value_kind: UiValueKind,
-}
-
-fn option_argument(config: OptionArgumentConfig<'_>) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: config.id.to_string(),
-        label: config.label.to_string(),
-        order: config.order,
-        parser: UiArgumentParser::Option {
-            flags: config
-                .flags
-                .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-            metavar: config.metavar.to_string(),
-            choices: Vec::new(),
-        },
-        value_kind: config.value_kind,
-        required: config.required,
-        default: config.default.map(str::to_string),
-        help: config.help.to_string(),
-        group: "Synthetic Observation".to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
-
-fn family_option_argument(config: FamilyArgumentConfig<'_>) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: config.id.to_string(),
-        label: config.label.to_string(),
-        order: config.order,
-        parser: UiArgumentParser::Option {
-            flags: Vec::new(),
-            metavar: config.metavar.to_string(),
-            choices: config
-                .choices
-                .iter()
-                .map(|choice| (*choice).to_string())
-                .collect(),
-        },
-        value_kind: config.value_kind,
-        required: false,
-        default: config.default.map(str::to_string),
-        help: config.help.to_string(),
-        group: config.group.to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
-
-fn toggle_argument(
-    id: &str,
-    label: &str,
-    order: usize,
-    true_flags: &[&str],
-    false_flags: &[&str],
-    default: Option<&str>,
-    help: &str,
-) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: id.to_string(),
-        label: label.to_string(),
-        order,
-        parser: UiArgumentParser::Toggle {
-            true_flags: true_flags.iter().map(|flag| (*flag).to_string()).collect(),
-            false_flags: false_flags.iter().map(|flag| (*flag).to_string()).collect(),
-        },
-        value_kind: UiValueKind::Bool,
-        required: false,
-        default: default.map(str::to_string),
-        help: help.to_string(),
-        group: "Synthetic Observation".to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
-
-fn action_argument(
-    id: &str,
-    label: &str,
-    order: usize,
-    flags: &[&str],
-    action: UiActionKind,
-    help: &str,
-) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: id.to_string(),
-        label: label.to_string(),
-        order,
-        parser: UiArgumentParser::Action {
-            flags: flags.iter().map(|flag| (*flag).to_string()).collect(),
-            action,
-        },
-        value_kind: UiValueKind::None,
-        required: false,
-        default: None,
-        help: help.to_string(),
-        group: "Machine".to_string(),
-        advanced: true,
-        hidden_in_tui: true,
-    }
-}
-
 fn extract_string_option(
     args: &[std::ffi::OsString],
     flag: &str,
@@ -2638,13 +2158,16 @@ fn has_flag(args: &[std::ffi::OsString], flag: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::ProviderSurfaceKind;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use casa_provider_contracts::{ParameterValue, ProviderSurfaceKind};
 
     use super::{
         SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveFamilyManifest,
         SimobserveProtocolInfo, SimobserveTaskRequest, SimobserveTaskSchemaBundle,
         SyntheticObservationMode, SyntheticPolarizationBasis, SyntheticWorkerPolicy,
         command_schema, load_real_family_config, request_from_cli_args,
+        simobserve_provider_invocation,
     };
     use crate::columns::main_ids;
     use crate::ui_schema::{UiArgumentParser, UiValueKind};
@@ -2661,6 +2184,18 @@ mod tests {
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert_eq!(bundle.semantic.operations[1].request_kind, "family");
         assert!(bundle.components.contains_key("SimobserveRunTaskRequest"));
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "simobserve");
+        bundle.parameter_surfaces[0]
+            .validate()
+            .expect("embedded simobserve parameter surface");
+        assert_eq!(
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(
             bundle
                 .components
@@ -2673,10 +2208,20 @@ mod tests {
         let UiArgumentParser::Option { choices, .. } = &request_kind.parser else {
             panic!("request_kind should be a choice option");
         };
-        assert_eq!(choices, &["run".to_string(), "family".to_string()]);
+        assert_eq!(choices, &["family".to_string(), "run".to_string()]);
         assert!(ui_schema.argument("source_model").is_some());
         assert!(ui_schema.argument("target_ms_size_gib").is_some());
         assert!(ui_schema.argument("observation_mode").is_some());
+        assert!(ui_schema.argument("request_json").is_none());
+        let projected = bundle.projections.ui_schema.as_ref().unwrap();
+        assert!(
+            projected["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|argument| argument["id"] == "request_kind"
+                    && argument["concept_id"] == "parameter.request_kind")
+        );
     }
 
     #[test]
@@ -2685,6 +2230,117 @@ mod tests {
         assert_eq!(info.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, SIMOBSERVE_TASK_PROTOCOL_VERSION);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
+    }
+
+    #[test]
+    fn family_parameter_projection_reaches_the_typed_stdin_request() {
+        let source_model = r#"{"kind":"analytic_components","components":[{"kind":"point","l_rad":0.0,"m_rad":0.0,"spectrum":{"flux_jy":2.5}}]}"#;
+        let values = BTreeMap::from([
+            (
+                "request_kind".into(),
+                ParameterValue::String("family".into()),
+            ),
+            (
+                "source_model".into(),
+                ParameterValue::String(source_model.into()),
+            ),
+            ("telescope".into(), ParameterValue::String("ALMA".into())),
+            (
+                "array_config".into(),
+                ParameterValue::String("synthetic-alma-compact".into()),
+            ),
+            ("band".into(), ParameterValue::String("Band 6".into())),
+            ("target_ms_size_gib".into(), ParameterValue::Float(0.025)),
+            (
+                "output_ms".into(),
+                ParameterValue::String("products/family.ms".into()),
+            ),
+            ("overwrite".into(), ParameterValue::Bool(true)),
+            ("polarizations".into(), ParameterValue::String("4".into())),
+            ("ms_channels".into(), ParameterValue::Integer(16)),
+            ("image_channels".into(), ParameterValue::Integer(8)),
+            ("pointing_count".into(), ParameterValue::Integer(7)),
+            ("time_sample_count".into(), ParameterValue::Integer(9)),
+            ("integration_seconds".into(), ParameterValue::Float(3.5)),
+            (
+                "start_time_mjd_seconds".into(),
+                ParameterValue::Float(4_895_229_000.0),
+            ),
+            (
+                "imaging_mode".into(),
+                ParameterValue::String("spectral_cube".into()),
+            ),
+            (
+                "observation_mode".into(),
+                ParameterValue::String("total_power".into()),
+            ),
+            ("measure_actual_size".into(), ParameterValue::Bool(true)),
+            (
+                "worker_policy".into(),
+                ParameterValue::String("fixed".into()),
+            ),
+            ("row_workers".into(), ParameterValue::Integer(2)),
+            ("channel_workers".into(), ParameterValue::Integer(3)),
+        ]);
+
+        let invocation = simobserve_provider_invocation(&values, vec!["ignored".into()])
+            .expect("family invocation");
+        assert_eq!(invocation.invocation.args, ["--json-run", "-"]);
+        let stdin = invocation.invocation.stdin.expect("family JSON stdin");
+        assert!(stdin.ends_with('\n'));
+        let SimobserveTaskRequest::Family(request) =
+            serde_json::from_str(&stdin).expect("typed family request")
+        else {
+            panic!("expected family request")
+        };
+        assert_eq!(
+            request.source_model,
+            serde_json::from_str(source_model).expect("source model")
+        );
+        assert_eq!(request.telescope, "ALMA");
+        assert_eq!(request.array_config, "synthetic-alma-compact");
+        assert_eq!(request.band, "Band 6");
+        assert_eq!(request.target_ms_size_gib, 0.025);
+        assert_eq!(
+            request.output_ms.as_deref(),
+            Some(std::path::Path::new("products/family.ms"))
+        );
+        assert!(request.overwrite);
+        assert_eq!(request.polarizations, 4);
+        assert_eq!(request.ms_channels, 16);
+        assert_eq!(request.image_channels, 8);
+        assert_eq!(request.pointing_count, 7);
+        assert_eq!(request.time_sample_count, Some(9));
+        assert_eq!(request.integration_seconds, Some(3.5));
+        assert_eq!(request.start_time_mjd_seconds, Some(4_895_229_000.0));
+        assert_eq!(request.imaging_mode, "spectral_cube");
+        assert_eq!(
+            request.observation_mode,
+            SyntheticObservationMode::TotalPower
+        );
+        assert!(request.measure_actual_size);
+        assert_eq!(request.worker_policy, SyntheticWorkerPolicy::Fixed);
+        assert_eq!(request.row_workers, Some(2));
+        assert_eq!(request.channel_workers, Some(3));
+    }
+
+    #[test]
+    fn run_parameter_projection_keeps_direct_cli_and_has_no_stdin() {
+        let values =
+            BTreeMap::from([("request_kind".into(), ParameterValue::String("run".into()))]);
+        let direct = vec![
+            "--model".into(),
+            "model.fits".into(),
+            "--out".into(),
+            "out.ms".into(),
+        ];
+        let invocation = simobserve_provider_invocation(&values, direct.clone()).unwrap();
+        assert_eq!(invocation.invocation.args, direct);
+        assert_eq!(invocation.invocation.stdin, None);
+        assert_eq!(
+            invocation.consumed_parameters,
+            BTreeSet::from(["request_kind".to_string()])
+        );
     }
 
     #[test]

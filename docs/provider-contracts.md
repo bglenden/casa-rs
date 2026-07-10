@@ -4,7 +4,7 @@ This document defines the contract model between functionality providers and
 consumers such as:
 
 - `casars` TUI
-- future native GUI applications
+- native GUI applications
 - Python bindings
 - MCP servers
 - standalone task binaries
@@ -14,23 +14,29 @@ allowing different transports and different UI capabilities.
 
 ## Core Rule
 
-The canonical boundary contract is a versioned JSON schema bundle.
+The canonical boundary contract is a versioned, typed provider bundle.
 
-- Providers own a semantic contract expressed as JSON request/result,
-  command/response, or object/method/property schemas.
+- Providers own request/result, command/response, object, and private adapter
+  semantics. The shared catalog owns reusable public parameter concepts.
 - Rust types implement that contract inside the provider.
-- Generated schema artifacts publish that contract to UIs, Python parity checks,
-  MCP projections, and test fixtures.
+- Generated machine artifacts publish that contract to UIs, Python parity
+  checks, MCP projections, and test fixtures.
 - Presentation hints belong in the same schema bundle as annotations. They do
   not replace the semantic contract.
+
+JSON and JSON Schema remain valid machine transports and projections. They are
+not the semantic model itself, and the user-editable parameter profile format
+is sparse TOML.
 
 The source of truth is therefore not:
 
 - raw CLI flags
 - an app-local TUI form schema
 - hand-maintained Python wrappers
+- an app-local default or alias table
 
-It is the provider schema bundle.
+It is the checked catalog plus the self-contained provider schema bundle that
+embeds the concepts referenced by its surface definition.
 
 ## Surface Kinds
 
@@ -54,6 +60,10 @@ Recommended machine-facing shape:
 
 The protocol is request/result oriented. CLI flags, TUI forms, native GUI forms,
 and Python wrappers are projections of the same task contract.
+
+A task `SurfaceDefinition` also binds its public parameter names to the shared
+`ParameterCatalog` and adapts the resolved set into the provider's private,
+idiomatic Rust request.
 
 ### Session Surfaces
 
@@ -79,6 +89,11 @@ Recommended machine-facing shape:
 
 The contract is a versioned command/event/state protocol, not a one-shot task
 request/result pair.
+
+A session `SurfaceDefinition` may additionally define durable startup
+parameters. Those parameters open or configure the session; they do not turn
+cursor movement, scrolling, viewport updates, caches, or commands into task
+parameters.
 
 ### Object Surfaces
 
@@ -118,12 +133,16 @@ should contain at least:
    - tasks: operations with request/result schemas
    - sessions: commands, responses, events, and state snapshots
    - objects: constructors, properties, methods, lifecycle operations
-3. shared component schemas
+3. parameter contract where the surface is parameterized
+   - shared `ParameterCatalog` concepts
+   - task or session `SurfaceDefinition`
+   - parameter bindings, defaults, roles, validation, migrations, and aliases
+4. shared component schemas
    - reusable logical value definitions referenced across operations
-4. annotations
+5. annotations
    - labels, descriptions, ordering, groupings, widget hints, examples,
      advanced/basic flags, units, and other presentation metadata
-5. projection metadata where needed
+6. projection metadata where needed
    - CLI flag names
    - TUI/native GUI rendering hints
    - MCP tool naming or handle semantics
@@ -131,9 +150,80 @@ should contain at least:
 The semantic layer is authoritative. Annotations and projections may add
 presentation or mapping metadata, but they must not change semantic meaning.
 
+## Parameter Catalog and Surface Definitions
+
+ADR-0006 defines the common parameter model.
+
+`ParameterCatalog` entries describe reusable concepts:
+
+- stable semantic ID and canonical CASA-facing name
+- value type, normalization, base constraints, semantic equality, and, where
+  applicable, unit dimension
+- semantic role and persistence class
+- meaning and public documentation
+
+A canonical name has one meaning across surfaces. Reuse is by semantic concept,
+not by matching strings. Two parameters with different meanings must not share
+a catalog concept even when a legacy CLI happens to spell them alike.
+
+`ParameterBinding` describes one concept's use on one surface:
+
+- absent, literal, or pure conditional default
+- required and activation predicates
+- provably narrowing refinements, aliases, and projection metadata
+- an optional context role consistent with the concept's semantic role
+
+Aliases are unique within a surface and cannot shadow any canonical parameter
+name on that surface.
+
+Concept roles are part of the contract. A path that is safe as an input does not become
+an output merely because both serialize as strings. Runtime-only controls such
+as executable overrides, progress paths, telemetry, and safety confirmations
+are explicitly non-persistable.
+
+`SurfaceDefinition` is tagged as task or session:
+
+- a task definition maps the resolved CASA-named parameter set into a one-shot
+  provider invocation
+- a session definition maps durable startup parameters into the session open
+  operation and leaves later commands to the session protocol
+
+Every optional parameter has an explicit default. Conditional defaults depend
+only on other parameters and form an acyclic graph. Dataset-derived context is
+an explicit suggestion or startup override, never an undeclared default.
+
+Semantic evolution is guarded by the append-only fingerprints in
+`resources/parameter-contract-history.json`. Changing a concept's type,
+normalization, constraints, units, role, or persistence requires a new semantic
+revision. Changing a surface's bindings, defaults, predicates, safety rules,
+provider projections, or migrations requires a new surface contract version.
+Run `scripts/check-parameter-contract-history.py --update` only after making and
+reviewing those version bumps; the normal architecture gate is check-only.
+
+## Sparse Parameter Documents
+
+The human interchange format is versioned sparse TOML. The `[casars]` table
+identifies format version, surface ID, surface kind, and contract version. The
+`[parameters]` table contains required values and normalized semantic
+differences from current defaults.
+
+This makes additive evolution cheap: a newly added optional parameter receives
+its current default without editing existing files. A changed default is also
+adopted when the old file omitted that parameter, with a compatibility warning.
+Renames and type/value changes require explicit ordered migrations. Future
+versions and unmigratable required values are errors.
+
+Parameter documents do not support includes, environment or shell expansion,
+remote URLs, or executable expressions. Relative task paths resolve against the
+selected workspace or process current directory, not the profile file's parent.
+See [Task and Session Parameter Profiles](task-parameters.md) for the user
+contract and managed-state lifecycle.
+
 ## `--json-schema` and `--ui-schema`
 
-For new work, `--json-schema` should emit the canonical schema bundle.
+For new work, `--json-schema` should emit a machine representation of the
+canonical provider bundle, including the parameter catalog and applicable
+surface definition.
 
 If `--ui-schema` exists, it should be treated as:
 
@@ -204,15 +294,23 @@ metadata such as flag names and positional rules.
 
 CLI flags are not the source of truth.
 
+The CLI also projects the common Defaults, Last, Last Successful, explicit
+profile, reset, save, and no-save source operations. Noninteractive invocation
+starts from Defaults unless a source is explicit.
+
 ### `casars` TUI
 
 The TUI projects forms, panes, and result rendering from the same schema bundle
 plus TUI-specific annotations. It should not require app-local parallel schemas
 that drift from the provider contract.
 
+Framework-owned parameter sessions expose source selection, origins, dirty
+state, validation, reset, open, Save As, and revert. A browser's live navigation
+state remains in its session model.
+
 ### Native GUI
 
-A future native macOS GUI should read the same semantic schema bundle and use
+The native macOS GUI reads the same semantic schema bundle and uses
 the annotations as hints, not strict layout instructions. Keep hints coarse:
 
 - section ordering
@@ -223,6 +321,10 @@ the annotations as hints, not strict layout instructions. Keep hints coarse:
 
 Do not freeze app-specific pixel layouts into the provider schema.
 
+Native forms use the same typed parameter session and managed Last store as the
+TUI. Swift models may decode a UniFFI projection, but they must not infer
+authoritative types, aliases, or defaults.
+
 ### Python
 
 Python should remain ergonomic and typed, but its wrappers and docs should be
@@ -230,6 +332,10 @@ checked against the canonical schema bundle so signatures and enums cannot drift
 
 For task surfaces, Python can invoke a task binary or other provider transport.
 For object surfaces, Python can bind directly in-process.
+
+`casars.parameters` exposes the common typed profile session, while generated
+task-specific wrappers delegate through the same runtime. Python must not keep
+a second default or migration implementation.
 
 ### MCP
 
@@ -256,22 +362,29 @@ This is the intended classification for current and near-term surfaces.
 - `casars.data.Image`: object surface
 - `casars.data.Table`: object surface
 
+The first three task examples and all other one-shot catalog tasks have task
+definitions. `tablebrowser` and `imexplore` have session startup definitions.
+The `casars` launcher and the two object surfaces are not parameter-profile
+surfaces.
+
 ## Implementation Guidance
 
 - Define typed Rust structs and enums that serialize exactly to the canonical
   schema bundle shapes.
+- Define reusable catalog concepts once and bind them explicitly on every
+  parameterized task or session surface.
 - Generate schema output from those types rather than hand-maintaining schema
   JSON.
 - Keep presentation hints in the schema bundle as annotations.
 - Keep protocol names and protocol versions explicit and machine-checkable.
-- Add CI parity tests so wrappers, docs, and projections cannot drift from the
-  canonical schema bundle.
+- Add CI parity tests so catalog coverage, wrappers, docs, sparse profiles, and
+  projections cannot drift from the canonical schema bundle.
 
 This preserves one source of truth while still supporting:
 
 - direct Rust APIs
 - Python bindings
 - `casars` TUI
-- future native GUIs
+- native GUIs
 - MCP servers
 - standalone binaries where they make sense

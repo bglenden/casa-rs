@@ -13,4 +13,7 @@ IMAGING_WEIGHT_*/
 __pycache__/
 *.py[cod]
 .codex/
+# Per-workspace managed Last profiles are runtime state, including when a
+# developer launches casars from a crate directory.
+**/.casa-rs/parameters/
 docs/generated/cargo-metadata.json

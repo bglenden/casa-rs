@@ -1,5 +1,36 @@
 # Compatibility
 
+## Parameter document compatibility
+
+Sparse TOML documents carry two independent versions:
+
+- `casars.format` versions the document envelope and TOML conventions.
+- `casars.contract` versions the selected task or session definition.
+
+Loading resolves sparse overrides against the current provider definition.
+Newly added optional parameters receive current defaults. Omitted parameters
+whose defaults changed also receive the new default and produce a compatibility
+warning. Renames and type/value changes require an explicit ordered migration;
+future or unmigratable versions fail before invocation.
+
+This behavior preserves user intent rather than freezing an exact historical
+request. Use a separate resolved run manifest when exact replay is required.
+The Python implementation uses the shared Rust runtime and must not maintain an
+independent migration or default table.
+
+Managed state normally lives at:
+
+```text
+<workspace>/.casa-rs/parameters/<surface-id>/last.toml
+<workspace>/.casa-rs/parameters/<surface-id>/last-successful.toml
+```
+
+`CASA_RS_STATE_DIR` redirects the managed root without changing workspace path
+resolution. Session surfaces use only `last.toml`. An explicit source profile
+is never overwritten without an explicit save.
+
+## Provider protocol compatibility
+
 `casars.tasks.calibrate` resolves binaries in this order:
 
 1. explicit `binary=` argument on the function call

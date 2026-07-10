@@ -6,10 +6,7 @@ use std::path::PathBuf;
 use std::process;
 
 use casa_ms::selection::MsSelection;
-use casa_ms::ui_schema::{
-    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
-    logging_argument_schemas,
-};
+use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataRequest, QuackMode, flagdata_path,
     parse_numeric_id_selector,
@@ -263,255 +260,20 @@ fn usage() -> String {
 }
 
 fn command_schema(program_name: &str) -> UiCommandSchema {
-    let mut schema = UiCommandSchema {
-        schema_version: 1,
-        command_id: "flagdata".to_string(),
-        invocation_name: program_name.to_string(),
-        display_name: "Flag Data".to_string(),
-        category: "Flagging".to_string(),
-        summary: "Run native CASA-style MeasurementSet flagging.".to_string(),
-        usage: usage(),
-        arguments: vec![
-            option_argument(OptionConfig {
-                id: "vis",
-                label: "MeasurementSet",
-                order: 0,
-                flags: &["--vis", "--ms"],
-                metavar: "MS",
-                value_kind: UiValueKind::Path,
-                choices: &[],
-                default: None,
-                required: true,
-                help: "Input MeasurementSet path.",
-                group: "Input",
-            }),
-            option_argument(OptionConfig {
-                id: "mode",
-                label: "Mode",
-                order: 1,
-                flags: &["--mode"],
-                metavar: "MODE",
-                value_kind: UiValueKind::Choice,
-                choices: &[
-                    "manual", "clip", "quack", "tfcrop", "rflag", "extend", "summary",
-                ],
-                default: Some("summary"),
-                required: true,
-                help: "Flagging mode.",
-                group: "Flagging",
-            }),
-            option_argument(OptionConfig {
-                id: "spw",
-                label: "Spectral Window",
-                order: 2,
-                flags: &["--spw"],
-                metavar: "SELECTOR",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "CASA-style spectral-window selector.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "field",
-                label: "Field",
-                order: 3,
-                flags: &["--field"],
-                metavar: "IDS",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Comma-separated numeric field ids.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "scan",
-                label: "Scan",
-                order: 4,
-                flags: &["--scan"],
-                metavar: "IDS",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Comma-separated numeric scan ids.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "antenna",
-                label: "Antenna",
-                order: 5,
-                flags: &["--antenna"],
-                metavar: "IDS_OR_NAMES",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Comma-separated antenna ids or names.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "datacolumn",
-                label: "Data Column",
-                order: 6,
-                flags: &["--datacolumn"],
-                metavar: "COLUMN",
-                value_kind: UiValueKind::Choice,
-                choices: &["data", "corrected"],
-                default: Some("data"),
-                required: false,
-                help: "Visibility data column for automatic flagging modes.",
-                group: "Data",
-            }),
-            option_argument(OptionConfig {
-                id: "action",
-                label: "Action",
-                order: 7,
-                flags: &["--action"],
-                metavar: "ACTION",
-                value_kind: UiValueKind::Choice,
-                choices: &["flag", "unflag"],
-                default: Some("flag"),
-                required: false,
-                help: "Manual mode flagging action.",
-                group: "Flagging",
-            }),
-            toggle_argument(ToggleConfig {
-                id: "flagbackup",
-                label: "Create Flag Backup",
-                order: 8,
-                true_flags: &["--flagbackup"],
-                false_flags: &["--no-flagbackup"],
-                default: Some("true"),
-                help: "Create a flagmanager backup before mutating flags.",
-                group: "Safety",
-            }),
-            toggle_argument(ToggleConfig {
-                id: "clipzeros",
-                label: "Clip Zeros",
-                order: 9,
-                true_flags: &["--clipzeros"],
-                false_flags: &[],
-                default: Some("false"),
-                help: "Flag exact zero amplitudes in clip mode.",
-                group: "Flagging",
-            }),
-            option_argument(OptionConfig {
-                id: "quackinterval",
-                label: "Quack Interval",
-                order: 10,
-                flags: &["--quackinterval"],
-                metavar: "SECONDS",
-                value_kind: UiValueKind::Float,
-                choices: &[],
-                default: Some("0"),
-                required: false,
-                help: "Quack interval in seconds.",
-                group: "Quack",
-            }),
-            option_argument(OptionConfig {
-                id: "quackmode",
-                label: "Quack Mode",
-                order: 11,
-                flags: &["--quackmode"],
-                metavar: "MODE",
-                value_kind: UiValueKind::Choice,
-                choices: &["beg", "end"],
-                default: Some("beg"),
-                required: false,
-                help: "Quack scan edge.",
-                group: "Quack",
-            }),
-            option_argument(OptionConfig {
-                id: "timecutoff",
-                label: "Time Cutoff",
-                order: 12,
-                flags: &["--timecutoff"],
-                metavar: "SIGMA",
-                value_kind: UiValueKind::Float,
-                choices: &[],
-                default: Some("4.0"),
-                required: false,
-                help: "TFCrop time cutoff in robust sigma units.",
-                group: "Automatic",
-            }),
-            option_argument(OptionConfig {
-                id: "freqcutoff",
-                label: "Frequency Cutoff",
-                order: 13,
-                flags: &["--freqcutoff"],
-                metavar: "SIGMA",
-                value_kind: UiValueKind::Float,
-                choices: &[],
-                default: Some("3.0"),
-                required: false,
-                help: "TFCrop frequency cutoff in robust sigma units.",
-                group: "Automatic",
-            }),
-            option_argument(OptionConfig {
-                id: "timedev",
-                label: "Time Deviation",
-                order: 14,
-                flags: &["--timedev"],
-                metavar: "VALUE",
-                value_kind: UiValueKind::Float,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Explicit RFlag time threshold.",
-                group: "Automatic",
-            }),
-            option_argument(OptionConfig {
-                id: "freqdev",
-                label: "Frequency Deviation",
-                order: 15,
-                flags: &["--freqdev"],
-                metavar: "VALUE",
-                value_kind: UiValueKind::Float,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Explicit RFlag spectral threshold.",
-                group: "Automatic",
-            }),
-            toggle_argument(ToggleConfig {
-                id: "extendflags",
-                label: "Extend Flags",
-                order: 16,
-                true_flags: &["--extendflags"],
-                false_flags: &["--no-extendflags", "--extendflags=false"],
-                default: Some("false"),
-                help: "Run post-extension after automatic flagging.",
-                group: "Extend",
-            }),
-            toggle_argument(ToggleConfig {
-                id: "extendpols",
-                label: "Extend Polarizations",
-                order: 17,
-                true_flags: &["--extendpols"],
-                false_flags: &[],
-                default: Some("false"),
-                help: "Extend flags across correlations.",
-                group: "Extend",
-            }),
-            action_argument("help", "Help", 100, &["-h", "--help"], UiActionKind::Help),
-            action_argument(
-                "ui_schema",
-                "UI Schema",
-                101,
-                &["--ui-schema"],
-                UiActionKind::UiSchema,
-            ),
-        ],
-        managed_output: None,
-    };
-    schema.arguments.extend(logging_argument_schemas(900));
+    let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata")
+        .expect("built-in flagdata parameter surface must remain valid");
+    let mut schema: UiCommandSchema =
+        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+            .expect("canonical flagdata UI projection must match UiCommandSchema");
+    schema.invocation_name = program_name.to_string();
+    schema.usage = format!("{program_name} [parameters]");
     schema
 }
-
 fn schema_bundle(program_name: &str) -> serde_json::Value {
+    let parameter_surfaces = vec![
+        casa_provider_contracts::builtin_surface_bundle("flagdata")
+            .expect("built-in flagdata parameter surface must remain valid"),
+    ];
     json!({
         "protocol": {
             "protocol_name": "casa_ms_flagdata_task",
@@ -521,6 +283,7 @@ fn schema_bundle(program_name: &str) -> serde_json::Value {
         "projections": {
             "ui_schema": command_schema(program_name)
         },
+        "parameter_surfaces": parameter_surfaces,
         "request_schema": {
             "type": "object",
             "required": ["vis", "mode"],
@@ -539,107 +302,27 @@ fn schema_bundle(program_name: &str) -> serde_json::Value {
     })
 }
 
-struct OptionConfig<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    flags: &'a [&'a str],
-    metavar: &'a str,
-    value_kind: UiValueKind,
-    choices: &'a [&'a str],
-    default: Option<&'a str>,
-    required: bool,
-    help: &'a str,
-    group: &'a str,
-}
+#[cfg(test)]
+mod tests {
+    use casa_provider_contracts::SurfaceContractBundle;
 
-fn option_argument(config: OptionConfig<'_>) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: config.id.to_string(),
-        label: config.label.to_string(),
-        order: config.order,
-        parser: UiArgumentParser::Option {
-            flags: config
-                .flags
-                .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-            metavar: config.metavar.to_string(),
-            choices: config
-                .choices
-                .iter()
-                .map(|choice| (*choice).to_string())
-                .collect(),
-        },
-        value_kind: config.value_kind,
-        required: config.required,
-        default: config.default.map(str::to_string),
-        help: config.help.to_string(),
-        group: config.group.to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
+    use super::*;
 
-struct ToggleConfig<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    true_flags: &'a [&'a str],
-    false_flags: &'a [&'a str],
-    default: Option<&'a str>,
-    help: &'a str,
-    group: &'a str,
-}
+    #[test]
+    fn schema_bundle_embeds_flagdata_parameter_contract() {
+        let bundle = schema_bundle("flagdata");
+        assert_eq!(bundle["protocol"]["protocol_name"], "casa_ms_flagdata_task");
+        assert!(bundle["request_schema"]["properties"]["mode"].is_object());
+        assert!(bundle["result_schema"].is_object());
 
-fn toggle_argument(config: ToggleConfig<'_>) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: config.id.to_string(),
-        label: config.label.to_string(),
-        order: config.order,
-        parser: UiArgumentParser::Toggle {
-            true_flags: config
-                .true_flags
-                .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-            false_flags: config
-                .false_flags
-                .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-        },
-        value_kind: UiValueKind::Bool,
-        required: false,
-        default: config.default.map(str::to_string),
-        help: config.help.to_string(),
-        group: config.group.to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
-
-fn action_argument(
-    id: &str,
-    label: &str,
-    order: usize,
-    flags: &[&str],
-    action: UiActionKind,
-) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: id.to_string(),
-        label: label.to_string(),
-        order,
-        parser: UiArgumentParser::Action {
-            flags: flags.iter().map(|flag| (*flag).to_string()).collect(),
-            action,
-        },
-        value_kind: UiValueKind::None,
-        required: false,
-        default: None,
-        help: label.to_string(),
-        group: "Machine".to_string(),
-        advanced: true,
-        hidden_in_tui: true,
+        let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
+            bundle["parameter_surfaces"].clone(),
+        )
+        .expect("serialized flagdata parameter surface");
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].surface.id(), "flagdata");
+        surfaces[0]
+            .validate()
+            .expect("embedded flagdata parameter surface");
     }
 }

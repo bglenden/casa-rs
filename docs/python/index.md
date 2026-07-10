@@ -1,25 +1,62 @@
 # Python Support
 
-`casa-rs-python` installs as `casars` and splits the public surface into two layers:
+`casa-rs-python` installs as `casars` and separates three public concerns:
 
-- `casars.data` for in-process access to persistent CASA-style images and tables.
-- `casars.tasks.calibrate` for higher-level calibration task execution through the `calibrate` binary.
+- `casars.data` provides in-process access to persistent CASA-style images and
+  tables.
+- `casars.tasks` provides higher-level task wrappers backed by the versioned
+  provider binaries.
+- `casars.parameters` is the accepted common API for typed task and session
+  profiles described by ADR-0006.
 
-The package deliberately keeps those layers separate.
+The generic `casars.tasks.run()` entry point accepts every catalog task. The
+package also retains specialized calibration, imaging, MeasurementSet
+inspection, VLA import, split, image-analysis, simulation, and simulation
+analysis helpers where a protocol-specific result API is useful.
 
-- `casars.data` is stateful and file-backed. It is intended for interoperability with the Python ecosystem through NumPy-native reads and writes.
-- `casars.tasks.calibrate` is stateless at the Python boundary. It serializes one canonical Rust request, invokes `calibrate --json-run -`, and returns the canonical JSON result envelope.
+`casars.data` is stateful and file-backed. It is intended for interoperability
+with the Python ecosystem through NumPy-native reads and writes. For images,
+the current object surface includes pixel-slice writes on existing persistent
+images; image creation and coordinate-system authoring remain outside the v1
+object contract.
 
-For images specifically, v1 includes pixel-slice writes on existing persistent images. It does not include Python-side image creation, coordinate-system authoring, or general image metadata editing.
+## Parameter profiles
 
-`imager` bindings, `MeasurementSet` Python objects, and image creation / coordinate authoring remain out of scope for v1.
+The accepted profile API is shared with the CLI, TUI, and native GUI:
 
-Tagged releases build Python artifacts for:
+```python
+from casars import parameters, tasks
 
-- Linux `x86_64`
-- macOS `arm64`
+p = parameters.load("profiles/target-imaging.toml", workspace="project")
+p.update(niter=20000, threshold="1mJy")
 
+result = tasks.run(
+    "imager",
+    parameters=p,
+    workspace="project",
+    save_last=True,
+)
+```
+
+`parameters.defaults(surface, ...)` and `parameters.last(surface, ...)` create
+the other common source types. The resulting `TaskParameters` supports mapping
+updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
+normalizer, validator, migration engine, and sparse renderer.
+
+`casars.tasks.catalog` is generated from the 40 task definitions and supplies
+one CASA-named keyword wrapper and typing stub per task. The corresponding
+session conveniences are `casars.sessions.imexplore(...)` and
+`casars.sessions.tablebrowser(...)`. Their signatures deliberately use an
+unset sentinel instead of copying catalog defaults into Python.
+
+Session profiles for `imexplore` and `tablebrowser` use the same load, validate,
+and save model. `casars.sessions.open(...)` and `SessionParameters.open()` apply
+their durable startup configuration; live browser commands remain stateful
+session APIs rather than becoming task calls.
+
+See [Task and Session Parameter Profiles](../task-parameters.md) for sparse TOML,
+managed Last paths, source precedence, and examples.
+
+Tagged releases build Python artifacts for Linux `x86_64` and macOS `arm64`,
 plus a source distribution for environments that need to build from source.
-
-For suite installation and shell `PATH` setup, see the top-level
-[Install](../install.md) guide.
+For suite installation and shell `PATH` setup, see [Install](../install.md).

@@ -4,15 +4,16 @@
 use casa_ms::ui_schema::UiCommandSchema;
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
+    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
+    derived_ui_schema_annotations, merged_components, project_ui_schema,
 };
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::{
-    ArchiveSummary, ImportReport, ImportVlaOptions, cli::command_schema,
+    ArchiveSummary, ImportReport, ImportVlaOptions,
     import_archive_files_to_measurement_set_from_options, scan_disk_archive_files_from_options,
 };
 
@@ -109,6 +110,8 @@ pub struct ImportVlaTaskSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical parameter contract embedded for self-contained consumers.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`ImportVlaTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`ImportVlaTaskResult`].
@@ -120,8 +123,10 @@ impl ImportVlaTaskSchemaBundle {
     pub fn current() -> Self {
         let request_schema = schema_for!(ImportVlaTaskRequest);
         let result_schema = schema_for!(ImportVlaTaskResult);
-        let ui_schema = serde_json::to_value(command_schema("importvla"))
-            .expect("serialize importvla ui schema projection");
+        let ui_schema = project_ui_schema(
+            &builtin_surface_bundle("importvla")
+                .expect("built-in importvla parameter surface must remain valid"),
+        );
         Self {
             protocol: ImportVlaProtocolInfo::current(),
             semantic: TaskSemanticContract {
@@ -144,6 +149,10 @@ impl ImportVlaTaskSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: vec![
+                builtin_surface_bundle("importvla")
+                    .expect("built-in importvla parameter surface must remain valid"),
+            ],
             request_schema,
             result_schema,
         }
@@ -189,6 +198,18 @@ mod tests {
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
         assert_eq!(bundle.semantic.operations.len(), 2);
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "importvla");
+        bundle.parameter_surfaces[0]
+            .validate()
+            .expect("embedded importvla parameter surface");
+        assert_eq!(
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(
             bundle
                 .projections

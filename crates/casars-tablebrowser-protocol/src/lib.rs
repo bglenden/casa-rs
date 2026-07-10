@@ -11,7 +11,8 @@
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
     ProviderProjectionMetadata, ProviderSurfaceKind, SessionSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    SurfaceContractBundle, builtin_surface_bundle, derived_ui_schema_annotations,
+    merged_components, project_ui_schema,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,8 @@ pub struct BrowserSessionSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical durable parameter contract for the session.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`BrowserRequestEnvelope`].
     pub request_schema: schemars::schema::RootSchema,
     /// JSON schema for [`BrowserResponseEnvelope`].
@@ -69,9 +72,12 @@ pub struct BrowserSessionSchemaBundle {
 
 impl BrowserSessionSchemaBundle {
     /// Build the current tablebrowser schema bundle.
-    pub fn current(ui_schema: JsonValue) -> Self {
+    pub fn current() -> Self {
         let request_schema = schema_for!(BrowserRequestEnvelope);
         let response_schema = schema_for!(BrowserResponseEnvelope);
+        let canonical_surface = builtin_surface_bundle("tablebrowser")
+            .expect("built-in tablebrowser parameter surface must remain valid");
+        let ui_schema = project_ui_schema(&canonical_surface);
         Self {
             protocol: BrowserProtocolInfo::current(),
             semantic: SessionSemanticContract {
@@ -94,6 +100,7 @@ impl BrowserSessionSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: vec![canonical_surface],
             request_schema,
             response_schema,
         }
@@ -151,6 +158,82 @@ impl Default for BrowserViewport {
     }
 }
 
+/// Requested verbosity for rendered table-browser content.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserContentMode {
+    /// Let the backend choose the representation appropriate to the view.
+    #[default]
+    Auto,
+    /// Prefer compact one-line values and summaries.
+    Compact,
+    /// Prefer expanded details and an inspector-oriented presentation.
+    Detailed,
+}
+
+/// Stable startup address independent of a rendered viewport.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BrowserBookmark {
+    /// A cell addressed by zero-based row and column name.
+    Cell {
+        /// Zero-based row index.
+        row: usize,
+        /// Stable column name.
+        column: String,
+    },
+    /// A table keyword path.
+    TableKeyword {
+        /// Keyword-name path from the table keyword root.
+        path: Vec<String>,
+    },
+    /// A keyword path owned by one column.
+    ColumnKeyword {
+        /// Owning column name.
+        column: String,
+        /// Keyword-name path from the column keyword root.
+        path: Vec<String>,
+    },
+    /// A linked subtable entry selected by stable name/path/source text.
+    Subtable {
+        /// Linked-table selector.
+        name: String,
+    },
+}
+
+/// Durable table-browser parameters applied after a root table is open.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct BrowserParameters {
+    /// Initial top-level view.
+    pub view: BrowserView,
+    /// First zero-based row in the navigable cell window.
+    pub row_start: usize,
+    /// Maximum number of rows in the navigable cell window.
+    pub row_count: usize,
+    /// Optional linked table to open before applying the view/bookmark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_table: Option<String>,
+    /// Optional stable selection restored after opening the target table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bookmark: Option<BrowserBookmark>,
+    /// Requested content verbosity.
+    #[serde(default)]
+    pub content_mode: BrowserContentMode,
+}
+
+impl Default for BrowserParameters {
+    fn default() -> Self {
+        Self {
+            view: BrowserView::Overview,
+            row_start: 0,
+            row_count: 100,
+            linked_table: None,
+            bookmark: None,
+            content_mode: BrowserContentMode::Auto,
+        }
+    }
+}
+
 /// Structured main-pane navigation metrics for a browser view.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct BrowserNavigationMetrics {
@@ -192,6 +275,8 @@ pub enum BrowserCommand {
         /// Current render viewport.
         viewport: BrowserViewport,
     },
+    /// Apply the durable startup/update parameters to the opened table.
+    Configure { parameters: BrowserParameters },
     /// Update the render viewport without changing selection state.
     Resize {
         /// Current render viewport.
@@ -649,6 +734,9 @@ pub struct BrowserSnapshot {
     pub capabilities: BrowserCapabilities,
     /// Active top-level view.
     pub view: BrowserView,
+    /// Accepted durable browser parameters.
+    #[serde(default)]
+    pub parameters: BrowserParameters,
     /// Active focus target.
     pub focus: BrowserFocus,
     /// Currently opened table path.
@@ -684,8 +772,8 @@ pub fn response_schema_json() -> Result<String, serde_json::Error> {
 }
 
 /// Render the canonical schema bundle as pretty JSON.
-pub fn schema_bundle_json(ui_schema: JsonValue) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&BrowserSessionSchemaBundle::current(ui_schema))
+pub fn schema_bundle_json() -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&BrowserSessionSchemaBundle::current())
 }
 
 #[cfg(test)]
@@ -711,10 +799,7 @@ mod tests {
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_transport() {
-        let bundle = BrowserSessionSchemaBundle::current(serde_json::json!({
-            "schema_version": 1,
-            "command_id": "tablebrowser",
-        }));
+        let bundle = BrowserSessionSchemaBundle::current();
         assert_eq!(
             bundle.protocol.protocol_name,
             TABLEBROWSER_SESSION_PROTOCOL_NAME
@@ -724,12 +809,25 @@ mod tests {
         assert_eq!(bundle.semantic.transport, "jsonl_stdio");
         assert!(bundle.components.contains_key("BrowserCommand"));
         assert!(bundle.components.contains_key("BrowserResponse"));
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "tablebrowser");
+        bundle.parameter_surfaces[0]
+            .validate()
+            .expect("embedded tablebrowser parameter surface");
         assert_eq!(
-            bundle.ui_schema_projection().unwrap(),
-            serde_json::json!({
-                "schema_version": 1,
-                "command_id": "tablebrowser",
-            })
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let ui_schema = bundle.ui_schema_projection().unwrap();
+        assert_eq!(ui_schema["schema_version"], 2);
+        assert_eq!(ui_schema["command_id"], "tablebrowser");
+        assert!(
+            ui_schema["arguments"]
+                .as_array()
+                .is_some_and(|args| !args.is_empty())
         );
     }
 
@@ -749,6 +847,10 @@ mod tests {
                 ui_schema: None,
                 python: None,
             },
+            parameter_surfaces: vec![
+                builtin_surface_bundle("tablebrowser")
+                    .expect("built-in tablebrowser parameter surface must remain valid"),
+            ],
             request_schema: schema_for!(BrowserRequestEnvelope),
             response_schema: schema_for!(BrowserResponseEnvelope),
         };
@@ -779,6 +881,19 @@ mod tests {
             BrowserRequestEnvelope::new(BrowserCommand::OpenRoot {
                 path: "/tmp/root.ms".to_string(),
                 viewport,
+            }),
+            BrowserRequestEnvelope::new(BrowserCommand::Configure {
+                parameters: BrowserParameters {
+                    view: BrowserView::Cells,
+                    row_start: 10,
+                    row_count: 25,
+                    linked_table: Some("FIELD".to_string()),
+                    bookmark: Some(BrowserBookmark::Cell {
+                        row: 12,
+                        column: "DATA".to_string(),
+                    }),
+                    content_mode: BrowserContentMode::Detailed,
+                },
             }),
             BrowserRequestEnvelope::new(BrowserCommand::Resize { viewport }),
             BrowserRequestEnvelope::new(BrowserCommand::CycleView {
@@ -846,6 +961,7 @@ mod tests {
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
                 view: BrowserView::Columns,
+                parameters: BrowserParameters::default(),
                 focus: BrowserFocus::Main,
                 table_path: "/tmp/root.ms".to_string(),
                 breadcrumb: breadcrumb.clone(),
@@ -880,6 +996,7 @@ mod tests {
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
                 view: BrowserView::Cells,
+                parameters: BrowserParameters::default(),
                 focus: BrowserFocus::Inspector,
                 table_path: "/tmp/root.ms".to_string(),
                 breadcrumb: breadcrumb.clone(),
@@ -943,6 +1060,7 @@ mod tests {
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
                 view: BrowserView::Keywords,
+                parameters: BrowserParameters::default(),
                 focus: BrowserFocus::Inspector,
                 table_path: "/tmp/root.ms".to_string(),
                 breadcrumb: breadcrumb.clone(),
@@ -998,6 +1116,7 @@ mod tests {
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
                 view: BrowserView::Keywords,
+                parameters: BrowserParameters::default(),
                 focus: BrowserFocus::Inspector,
                 table_path: "/tmp/root.ms".to_string(),
                 breadcrumb: breadcrumb.clone(),
@@ -1034,6 +1153,7 @@ mod tests {
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
                 view: BrowserView::Subtables,
+                parameters: BrowserParameters::default(),
                 focus: BrowserFocus::Main,
                 table_path: "/tmp/root.ms".to_string(),
                 breadcrumb,

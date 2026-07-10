@@ -126,8 +126,7 @@
           "task_id": "imhead",
           "command_template": "imexplore imhead twhya_cont.image --json",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true,
+            "imagename": "twhya_cont.image",
             "mode": "summary"
           },
           "outputs": [
@@ -143,8 +142,7 @@
           "provider_kind": "native-rust",
           "task_id": "imhead",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true,
+            "imagename": "twhya_cont.image",
             "mode": "summary"
           },
           "outputs": [
@@ -161,8 +159,7 @@
           "task_id": "imhead",
           "ui_path": "Images > Image Header",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true,
+            "imagename": "twhya_cont.image",
             "mode": "summary"
           },
           "outputs": [
@@ -179,8 +176,7 @@
           "task_id": "imhead",
           "ui_path": "Images > Image Header",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true,
+            "imagename": "twhya_cont.image",
             "mode": "summary"
           },
           "outputs": [
@@ -243,8 +239,7 @@
           "task_id": "imstat",
           "command_template": "imexplore imstat twhya_cont.image --json",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true
+            "imagename": "twhya_cont.image"
           },
           "outputs": [
             {
@@ -259,8 +254,7 @@
           "provider_kind": "native-rust",
           "task_id": "imstat",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true
+            "imagename": "twhya_cont.image"
           },
           "outputs": [
             {
@@ -276,8 +270,7 @@
           "task_id": "imstat",
           "ui_path": "Images > Image Statistics",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true
+            "imagename": "twhya_cont.image"
           },
           "outputs": [
             {
@@ -293,8 +286,7 @@
           "task_id": "imstat",
           "ui_path": "Images > Image Statistics",
           "parameters": {
-            "image_path": "twhya_cont.image",
-            "json": true
+            "imagename": "twhya_cont.image"
           },
           "outputs": [
             {

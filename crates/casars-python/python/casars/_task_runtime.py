@@ -776,28 +776,6 @@ def invoke_simobserve_task(
     return json.loads(stdout)
 
 
-def invoke_simobserve_task_file(
-    source: StrPath,
-    *,
-    binary: StrPath | None = None,
-) -> dict[str, Any]:
-    """Run one saved simobserve task request through ``simobserve --json-run SOURCE``."""
-
-    resolved = resolve_simobserve_binary(binary)
-    _validated_protocol_info(
-        resolved,
-        protocol_name=SIMOBSERVE_PROTOCOL_NAME,
-        protocol_version=SIMOBSERVE_PROTOCOL_VERSION,
-        mismatch_error_cls=SimobserveProtocolMismatchError,
-        invocation_error_cls=SimobserveInvocationError,
-    )
-    stdout = _run_process(
-        [resolved, "--json-run", os.fspath(source)],
-        error_cls=SimobserveInvocationError,
-    )
-    return json.loads(stdout)
-
-
 def invoke_msexplore_task(
     *,
     kind: str,

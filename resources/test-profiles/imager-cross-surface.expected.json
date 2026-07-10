@@ -1,0 +1,18 @@
+{
+  "surface": "imager",
+  "values": {
+    "cell": [
+      "1arcsec",
+      "1arcsec"
+    ],
+    "imagename": "products/image",
+    "imsize": [
+      1024,
+      1024
+    ],
+    "niter": 7,
+    "vis": [
+      "input.ms"
+    ]
+  }
+}

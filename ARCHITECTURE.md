@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-07-04
+Last reality check: 2026-07-09
 Verification: just docs-check
 
 ## System purpose
@@ -18,7 +18,8 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-table-read`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures types, minimal read-only table loading, and runtime measures data access | core codecs |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
-| boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned schema bundles and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
+| boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned provider bundles, parameter catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
+| parameter runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed parameter sessions, and managed Last storage | boundary contracts and `casa-types`; must not implement provider science behavior |
 | apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `casars-frontend-services`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, frontend service bindings, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; lightweight frontend services may expose read-only domain-library probes through UniFFI |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
@@ -26,7 +27,7 @@ coordinates, measures, and related workflows.
 
 Preferred direction is:
 
-`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> apps/runtimes`
+`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime -> apps/runtimes`
 
 with `casa-test-support` outside the product dependency chain.
 
@@ -39,6 +40,16 @@ Additional constraints:
 - Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
 - Versioned provider bundles are boundary contracts; UI projections are derived
   views, not separate truth sources.
+- Parameter concepts live in the checked aggregate `ParameterCatalog` in
+  `casa-provider-contracts`. Each provider bundle embeds the exact referenced
+  concepts so the boundary remains self-contained. Task and session
+  `SurfaceDefinition` bindings supply defaults, conditional activation,
+  narrowing refinements, migrations, presentation, and projection metadata;
+  they cannot redefine concept meaning, normalization, units, role, or
+  persistence. Frontends may not redefine those semantics locally.
+- `casa-task-runtime` owns profile mechanics and managed state, while providers
+  retain ownership of task adapters and session startup semantics. The runtime
+  must not become a central implementation of domain behavior.
 - `apps/casars-mac` keeps fixture schemas inside its SwiftPM core when modeling
   proposed UI behavior. Real, read-only dataset discovery enters through
   `casars-frontend-services`, whose Rust API is exposed to Swift and Python
@@ -54,6 +65,13 @@ harnesses on top. There is no repo-wide async runtime contract today.
 Long-running interoperability, parity, and packaging work is driven by
 shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
+
+ADR-0006 adds one synchronous parameter-session model shared by task and
+browser-session consumers. A task resolves sparse user intent into one
+provider invocation. A browser session resolves only durable startup settings;
+its subsequent command/event stream remains owned by the session protocol.
+Parameter resolution and Last persistence do not introduce a provider daemon
+or repo-wide async runtime.
 
 `apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
 workbench state remains headlessly testable in SwiftPM. GUI-Wave-1 introduces a
@@ -82,6 +100,10 @@ project-history persistence format or background service.
 ## Persistence / external systems
 
 - casacore-compatible table trees and image tables on local disk
+- sparse user-authored parameter profiles in arbitrary user-selected locations
+- managed parameter state under
+  `<workspace>/.casa-rs/parameters/<surface-id>/`, optionally redirected by
+  `CASA_RS_STATE_DIR`
 - MeasurementSet and CASA image fixtures under the shared dataset root (`../casatestdata` by default, override `CASA_RS_TESTDATA_ROOT`)
 - measures runtime data in a CASA-compatible table tree rooted at `~/.casa/data` (override `CASA_RS_MEASURESPATH`)
 - local casacore C++ installations via Homebrew for parity tests and demos when available
@@ -97,6 +119,7 @@ project-history persistence format or background service.
 - Python package `casars-python`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas
+- versioned sparse TOML task and session parameter profiles
 
 ## Approved dependency classes
 
@@ -131,3 +154,4 @@ project-history persistence format or background service.
 | 0003 | Provider schema bundle as boundary contract | accepted |
 | 0004 | Tiered verification and heavy parity gates | accepted |
 | 0005 | Native macOS GUI prototype boundary | accepted |
+| 0006 | Unified parameter catalog and sparse profiles | accepted |

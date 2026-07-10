@@ -19,6 +19,11 @@ This directory holds stable project documentation.
   - architecture and app-authoring rules for the shell family
 - [`casars-calibrate-user-guide.md`](casars-calibrate-user-guide.md)
   - current user-facing guide for the `calibrate` workflow app
+- [`task-parameters.md`](task-parameters.md)
+  - accepted sparse TOML profile, Last-state, and cross-surface parameter
+    contract
+- [`reference/task-parameters.md`](reference/task-parameters.md)
+  - generated catalog of every task and session parameter surface
 - [`provider-contracts.md`](provider-contracts.md)
   - canonical provider schema model for task, session, and object surfaces
 - [`tablebrowser-protocol.md`](tablebrowser-protocol.md)

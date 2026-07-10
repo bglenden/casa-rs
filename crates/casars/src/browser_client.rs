@@ -592,6 +592,7 @@ mod tests {
         let response = serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
             capabilities: casars_tablebrowser_protocol::BrowserCapabilities { editable: false },
             view: casars_tablebrowser_protocol::BrowserView::Overview,
+            parameters: casars_tablebrowser_protocol::BrowserParameters::default(),
             focus: casars_tablebrowser_protocol::BrowserFocus::Main,
             table_path: "/tmp/fake.ms".to_string(),
             breadcrumb: Vec::new(),

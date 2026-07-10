@@ -7,14 +7,14 @@ use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
+    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
+    derived_ui_schema_annotations, merged_components, project_ui_schema,
 };
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::cli::command_schema;
 use super::{
     MsExploreSpec, MsExportFormat, MsFlagEditPreview, MsFlagEditSpec, build_msexplore_payload,
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
@@ -262,6 +262,8 @@ pub struct MsExploreTaskSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical parameter contracts for the MS explorer task family.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`MsExploreTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`MsExploreTaskResult`].
@@ -273,8 +275,10 @@ impl MsExploreTaskSchemaBundle {
     pub fn current() -> Self {
         let request_schema = schema_for!(MsExploreTaskRequest);
         let result_schema = schema_for!(MsExploreTaskResult);
-        let ui_schema = serde_json::to_value(command_schema("msexplore"))
-            .expect("serialize msexplore ui schema projection");
+        let ui_schema = project_ui_schema(
+            &builtin_surface_bundle("msexplore")
+                .expect("built-in msexplore parameter surface must remain valid"),
+        );
         Self {
             protocol: MsExploreProtocolInfo::current(),
             semantic: TaskSemanticContract {
@@ -301,6 +305,14 @@ impl MsExploreTaskSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: ["msexplore", "plotms"]
+                .into_iter()
+                .map(|surface| {
+                    builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                        panic!("built-in MS explorer parameter surface {surface:?}: {error}")
+                    })
+                })
+                .collect(),
             request_schema,
             result_schema,
         }
@@ -366,6 +378,27 @@ mod tests {
         assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("MsExploreRunTaskRequest"));
+        assert_eq!(
+            bundle
+                .parameter_surfaces
+                .iter()
+                .map(|surface| surface.surface.id())
+                .collect::<Vec<_>>(),
+            ["msexplore", "plotms"]
+        );
+        assert!(
+            bundle
+                .parameter_surfaces
+                .iter()
+                .all(|surface| surface.validate().is_ok())
+        );
+        assert_eq!(
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
         assert_eq!(ui_schema.command_id, "msexplore");
     }

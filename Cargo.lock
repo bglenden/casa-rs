@@ -702,6 +702,7 @@ dependencies = [
 name = "casa-provider-contracts"
 version = "0.23.0"
 dependencies = [
+ "casa-types",
  "schemars",
  "serde",
  "serde_json",
@@ -733,6 +734,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "casa-task-runtime"
+version = "0.23.0"
+dependencies = [
+ "casa-provider-contracts",
+ "casa-types",
+ "fs2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -806,7 +821,9 @@ dependencies = [
  "casa-imaging",
  "casa-logging",
  "casa-ms",
+ "casa-provider-contracts",
  "casa-tables",
+ "casa-task-runtime",
  "casa-types",
  "casa-vla",
  "casars-imagebrowser-protocol",
@@ -842,7 +859,9 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-ms",
+ "casa-provider-contracts",
  "casa-tables",
+ "casa-task-runtime",
  "casa-types",
  "casars-imagebrowser-protocol",
  "casars-tablebrowser-protocol",
@@ -912,6 +931,7 @@ dependencies = [
  "casa-images",
  "casa-provider-contracts",
  "casa-tables",
+ "casa-task-runtime",
  "casa-types",
  "ndarray",
  "numpy",
@@ -1832,6 +1852,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88a41f105fe1d5b6b34b2055e3dc59bb79b46b48b2040b9e6c7b4b5de097aa41"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

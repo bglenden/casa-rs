@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
+use std::path::PathBuf;
 
-use casa_ms::ui_schema::{
-    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
-};
+use casa_task_runtime::ParameterSession;
+
+use casa_ms::ui_schema::{UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema};
 
 use crate::registry::{RegistryApp, registered_apps, resolve_app};
 
@@ -24,13 +25,16 @@ pub(crate) struct StartupLaunch {
     pub app: RegistryApp,
     pub prefill: Vec<StartupPrefill>,
     pub auto_run: bool,
+    pub workspace: PathBuf,
+    pub save_last: bool,
+    pub parameter_session: Option<ParameterSession>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum StartupSelection {
     Launcher,
     PrintText(String),
-    App(StartupLaunch),
+    App(Box<StartupLaunch>),
 }
 
 pub(crate) fn parse_startup_args(
@@ -61,24 +65,34 @@ pub(crate) fn parse_startup_args(
 
     let app = resolve_app(Some(&app_id))?;
     if app_args.is_empty() {
-        return Ok(StartupSelection::App(StartupLaunch {
+        return Ok(StartupSelection::App(Box::new(StartupLaunch {
             app,
             prefill: Vec::new(),
             auto_run: false,
-        }));
+            workspace: current_workspace(),
+            save_last: true,
+            parameter_session: None,
+        })));
     }
 
     let schema = app.load_schema()?;
     match parse_schema_prefill_args(&schema, app_args)? {
         SchemaPrefillParse::PrintText(text) => Ok(StartupSelection::PrintText(text)),
         SchemaPrefillParse::Prefill { values, auto_run } => {
-            Ok(StartupSelection::App(StartupLaunch {
+            Ok(StartupSelection::App(Box::new(StartupLaunch {
                 app,
                 prefill: values,
                 auto_run,
-            }))
+                workspace: current_workspace(),
+                save_last: true,
+                parameter_session: None,
+            })))
         }
     }
+}
+
+fn current_workspace() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 #[derive(Debug)]
@@ -105,18 +119,6 @@ fn parse_schema_prefill_args(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let implicit_primary_id = if positional_ids.is_empty() {
-        schema
-            .arguments
-            .iter()
-            .filter(|argument| !argument.hidden_in_tui)
-            .filter(|argument| !matches!(argument.parser, UiArgumentParser::Action { .. }))
-            .filter(|argument| argument.value_kind == UiValueKind::Path)
-            .min_by_key(|argument| argument.order)
-            .map(|argument| argument.id.as_str())
-    } else {
-        None
-    };
     let mut positional_index = 0usize;
     let mut raw_args = args
         .into_iter()
@@ -126,7 +128,6 @@ fn parse_schema_prefill_args(
         .peekable();
     let mut end_of_options = false;
     let mut saw_prefill = false;
-    let mut used_implicit_primary_prefill = false;
 
     while let Some(raw) = raw_args.next() {
         if !end_of_options && raw == "--" {
@@ -201,11 +202,6 @@ fn parse_schema_prefill_args(
         let positional_id = positional_ids
             .get(positional_index)
             .copied()
-            .or_else(|| {
-                (positional_index == 0)
-                    .then_some(implicit_primary_id)
-                    .flatten()
-            })
             .ok_or_else(|| {
                 format!(
                     "unexpected extra positional argument {raw:?} for {}",
@@ -217,16 +213,13 @@ fn parse_schema_prefill_args(
             positional_id.to_string(),
             StartupValue::Text(raw),
         );
-        if positional_ids.is_empty() && positional_index == 0 && implicit_primary_id.is_some() {
-            used_implicit_primary_prefill = true;
-        }
         positional_index += 1;
         saw_prefill = true;
     }
 
     Ok(SchemaPrefillParse::Prefill {
         values,
-        auto_run: saw_prefill && !used_implicit_primary_prefill,
+        auto_run: saw_prefill,
     })
 }
 
@@ -443,8 +436,7 @@ mod tests {
         };
         assert!(auto_run);
         assert!(values.iter().any(|entry| {
-            entry.id == "ms_path"
-                && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
+            entry.id == "vis" && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
         }));
         assert!(values.iter().any(|entry| {
             entry.id == "field" && entry.value == StartupValue::Text("3C286".to_string())
@@ -467,7 +459,7 @@ mod tests {
                 assert_eq!(selection.app.id, "msexplore");
                 assert!(selection.auto_run);
                 assert!(selection.prefill.iter().any(|entry| {
-                    entry.id == "ms_path"
+                    entry.id == "vis"
                         && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
                 }));
                 assert!(selection.prefill.iter().any(|entry| {
@@ -485,30 +477,20 @@ mod tests {
         {
             StartupSelection::PrintText(text) => {
                 assert!(text.contains("\"command_id\": \"msexplore\""));
-                assert!(text.contains("\"schema_version\": 1"));
+                assert!(text.contains("\"schema_version\": 2"));
             }
             other => panic!("expected ui schema text, got {other:?}"),
         }
     }
 
     #[test]
-    fn startup_parser_prefills_calibrate_measurement_set_from_bare_path() {
-        match parse_startup_args(vec![
+    fn startup_parser_rejects_undeclared_calibrate_positional() {
+        let error = parse_startup_args(vec![
             OsString::from("calibrate"),
             OsString::from("/tmp/example.ms"),
         ])
-        .expect("calibrate startup args")
-        {
-            StartupSelection::App(selection) => {
-                assert_eq!(selection.app.id, "calibrate");
-                assert!(!selection.auto_run);
-                assert!(selection.prefill.iter().any(|entry| {
-                    entry.id == "measurement_set"
-                        && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
-                }));
-            }
-            other => panic!("expected startup app selection, got {other:?}"),
-        }
+        .expect_err("calibrate has no declared positional parameter");
+        assert!(error.contains("unexpected extra positional argument"));
     }
 
     #[test]
@@ -524,7 +506,7 @@ mod tests {
                 assert_eq!(selection.app.id, "calibrate");
                 assert!(selection.auto_run);
                 assert!(selection.prefill.iter().any(|entry| {
-                    entry.id == "measurement_set"
+                    entry.id == "vis"
                         && entry.value == StartupValue::Text("/tmp/example.ms".to_string())
                 }));
             }
@@ -533,23 +515,13 @@ mod tests {
     }
 
     #[test]
-    fn startup_parser_prefills_importvla_archivefiles_from_bare_path() {
-        match parse_startup_args(vec![
+    fn startup_parser_rejects_undeclared_importvla_positional() {
+        let error = parse_startup_args(vec![
             OsString::from("importvla"),
             OsString::from("/tmp/example.exp"),
         ])
-        .expect("importvla startup args")
-        {
-            StartupSelection::App(selection) => {
-                assert_eq!(selection.app.id, "importvla");
-                assert!(!selection.auto_run);
-                assert!(selection.prefill.iter().any(|entry| {
-                    entry.id == "archivefiles"
-                        && entry.value == StartupValue::Text("/tmp/example.exp".to_string())
-                }));
-            }
-            other => panic!("expected startup app selection, got {other:?}"),
-        }
+        .expect_err("importvla has no declared positional parameter");
+        assert!(error.contains("unexpected extra positional argument"));
     }
 
     #[test]
@@ -599,14 +571,20 @@ mod tests {
     }
 
     #[test]
-    fn schema_prefill_rejects_hidden_arguments() {
+    fn schema_prefill_accepts_canonical_profile_parameters() {
         let schema = command_schema("msexplore");
-        let error = parse_schema_prefill_args(
+        let result = parse_schema_prefill_args(
             &schema,
             vec![OsString::from("--format"), OsString::from("json")],
         )
-        .expect_err("hidden startup arg should fail");
-        assert!(error.contains("managed internally"));
+        .expect("canonical format parameter should be accepted");
+        let super::SchemaPrefillParse::Prefill { values, auto_run } = result else {
+            panic!("expected prefill")
+        };
+        assert!(auto_run);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].id, "format");
+        assert_eq!(values[0].value, StartupValue::Text("json".to_string()));
     }
 
     #[test]
@@ -759,7 +737,7 @@ mod tests {
         };
         assert!(auto_run);
         assert_eq!(values.len(), 1);
-        assert_eq!(values[0].id, "ms_path");
+        assert_eq!(values[0].id, "vis");
         assert_eq!(
             values[0].value,
             StartupValue::Text("--literal.ms".to_string())

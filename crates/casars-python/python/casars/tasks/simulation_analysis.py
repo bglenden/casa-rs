@@ -1,4 +1,9 @@
-"""Tutorial-scoped simulation analysis helpers composed from casa-rs tasks."""
+"""Tutorial-scoped object helpers composed from raw provider task APIs.
+
+This module is outside profile persistence. Use :mod:`casars.tasks.profiles`
+when a reusable CASA-named task configuration and managed Last lifecycle are
+required.
+"""
 
 from __future__ import annotations
 

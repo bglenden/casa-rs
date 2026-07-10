@@ -520,6 +520,10 @@ public struct TaskUIArgument: Codable, Equatable, Identifiable {
     public var help: String
     public var group: String
     public var parameterType: String?
+    public var conceptID: String?
+    public var conceptRevision: UInt64?
+    public var unitDimension: String?
+    public var contextRole: String?
     public var advanced: Bool
     public var hiddenInTUI: Bool
 
@@ -534,42 +538,14 @@ public struct TaskUIArgument: Codable, Equatable, Identifiable {
         case help
         case group
         case parameterType = "parameter_type"
+        case conceptID = "concept_id"
+        case conceptRevision = "concept_revision"
+        case unitDimension = "unit_dimension"
+        case contextRole = "context_role"
         case advanced
         case hiddenInTUI = "hidden_in_tui"
     }
 
-    public func defaultToggleValue(values: [String: String] = [:]) -> Bool {
-        guard let defaultValue = `default`?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !defaultValue.isEmpty else {
-            return false
-        }
-        if let literal = Self.boolLiteral(defaultValue) {
-            return literal
-        }
-        for clause in defaultValue.split(separator: ",") {
-            let parts = clause.split(separator: ":", maxSplits: 1).map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            guard parts.count == 2,
-                  values.values.contains(parts[0]),
-                  let literal = Self.boolLiteral(parts[1]) else {
-                continue
-            }
-            return literal
-        }
-        return false
-    }
-
-    private static func boolLiteral(_ value: String) -> Bool? {
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "1", "true", "yes", "on":
-            return true
-        case "0", "false", "no", "off":
-            return false
-        default:
-            return nil
-        }
-    }
 }
 
 public struct TaskUIArgumentParser: Codable, Equatable {
@@ -1347,6 +1323,57 @@ public struct ImageExplorerSnapshotRequest: Codable, Equatable {
     }
 }
 
+public enum ImageExplorerRegionReference: Codable, Equatable {
+    case none
+    case definition(name: String)
+    case file(path: String)
+    case expression(expression: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case name
+        case path
+        case expression
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .kind) {
+        case "none":
+            self = .none
+        case "definition":
+            self = .definition(name: try container.decode(String.self, forKey: .name))
+        case "file":
+            self = .file(path: try container.decode(String.self, forKey: .path))
+        case "expression":
+            self = .expression(expression: try container.decode(String.self, forKey: .expression))
+        case let kind:
+            throw DecodingError.dataCorruptedError(
+                forKey: .kind,
+                in: container,
+                debugDescription: "unknown image region reference kind \(kind)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .none:
+            try container.encode("none", forKey: .kind)
+        case .definition(let name):
+            try container.encode("definition", forKey: .kind)
+            try container.encode(name, forKey: .name)
+        case .file(let path):
+            try container.encode("file", forKey: .kind)
+            try container.encode(path, forKey: .path)
+        case .expression(let expression):
+            try container.encode("expression", forKey: .kind)
+            try container.encode(expression, forKey: .expression)
+        }
+    }
+}
+
 public struct ImageExplorerCommand: Codable, Equatable {
     public var command: String
     public var x: Int?
@@ -1355,6 +1382,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public var newName: String?
     public var setDefault: Bool?
     public var path: String?
+    public var region: ImageExplorerRegionReference?
 
     public init(
         command: String,
@@ -1363,7 +1391,8 @@ public struct ImageExplorerCommand: Codable, Equatable {
         name: String? = nil,
         newName: String? = nil,
         setDefault: Bool? = nil,
-        path: String? = nil
+        path: String? = nil,
+        region: ImageExplorerRegionReference? = nil
     ) {
         self.command = command
         self.x = x
@@ -1372,6 +1401,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
         self.newName = newName
         self.setDefault = setDefault
         self.path = path
+        self.region = region
     }
 
     public static let startRegionShape = ImageExplorerCommand(command: "start_region_shape")
@@ -1409,6 +1439,9 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public static func appendRegionFile(path: String) -> ImageExplorerCommand {
         ImageExplorerCommand(command: "append_region_file", path: path)
     }
+    public static func setSelectionReference(_ region: ImageExplorerRegionReference) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "set_selection_references", region: region)
+    }
 
     enum CodingKeys: String, CodingKey {
         case command
@@ -1418,6 +1451,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
         case newName = "new_name"
         case setDefault = "set_default"
         case path
+        case region
     }
 }
 
@@ -1730,12 +1764,15 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var cursorX: Int?
     public var cursorY: Int?
     public var selectedProfileAxis: Int?
+    public var selectedProfileAxisSelector: String? = nil
     public var nonDisplayIndices: [Int] = []
     public var moviePlaying: Bool = false
     public var movieAxis: Int?
+    public var movieAxisSelector: String? = nil
     public var movieFramesPerSecond: Double = 6.0
     public var movieLoop: Bool = true
     public var regionTool: String = "select"
+    public var profileCommands: [ImageExplorerCommand]? = nil
     public var regionCommands: [ImageExplorerCommand] = []
     public var activeRegionFilePath: String?
     public var transientCommands: [ImageExplorerCommand] = []
@@ -1744,7 +1781,7 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var snapshot: ImageExplorerSnapshot?
 
     public var hasQueuedImageExplorerCommands: Bool {
-        !regionCommands.isEmpty || !transientCommands.isEmpty
+        !(profileCommands ?? []).isEmpty || !regionCommands.isEmpty || !transientCommands.isEmpty
     }
 
     public func snapshotRequest(datasetPath: String) -> ImageExplorerSnapshotRequest {
@@ -1758,7 +1795,7 @@ public struct ImageExplorerSessionState: Codable, Equatable {
             cursorY: cursorY,
             selectedProfileAxis: selectedProfileAxis,
             nonDisplayIndices: nonDisplayIndices,
-            commands: regionCommands,
+            commands: (profileCommands ?? []) + regionCommands,
             transientCommands: transientCommands,
             includeProfile: true
         )
@@ -2171,7 +2208,87 @@ public struct TableBrowserCellWindowSnapshot: Codable, Equatable {
     }
 }
 
+public enum TableBrowserBookmark: Codable, Equatable {
+    case cell(row: Int, column: String)
+    case tableKeyword(path: [String])
+    case columnKeyword(column: String, path: [String])
+    case subtable(name: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case row
+        case column
+        case path
+        case name
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .kind) {
+        case "cell":
+            self = .cell(
+                row: try container.decode(Int.self, forKey: .row),
+                column: try container.decode(String.self, forKey: .column)
+            )
+        case "table_keyword":
+            self = .tableKeyword(path: try container.decode([String].self, forKey: .path))
+        case "column_keyword":
+            self = .columnKeyword(
+                column: try container.decode(String.self, forKey: .column),
+                path: try container.decode([String].self, forKey: .path)
+            )
+        case "subtable":
+            self = .subtable(name: try container.decode(String.self, forKey: .name))
+        case let kind:
+            throw DecodingError.dataCorruptedError(
+                forKey: .kind,
+                in: container,
+                debugDescription: "unknown table browser bookmark kind \(kind)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .cell(let row, let column):
+            try container.encode("cell", forKey: .kind)
+            try container.encode(row, forKey: .row)
+            try container.encode(column, forKey: .column)
+        case .tableKeyword(let path):
+            try container.encode("table_keyword", forKey: .kind)
+            try container.encode(path, forKey: .path)
+        case .columnKeyword(let column, let path):
+            try container.encode("column_keyword", forKey: .kind)
+            try container.encode(column, forKey: .column)
+            try container.encode(path, forKey: .path)
+        case .subtable(let name):
+            try container.encode("subtable", forKey: .kind)
+            try container.encode(name, forKey: .name)
+        }
+    }
+}
+
+public struct TableBrowserParameters: Codable, Equatable {
+    public var view: String
+    public var rowStart: Int
+    public var rowCount: Int
+    public var linkedTable: String?
+    public var bookmark: TableBrowserBookmark?
+    public var contentMode: String
+
+    enum CodingKeys: String, CodingKey {
+        case view
+        case rowStart = "row_start"
+        case rowCount = "row_count"
+        case linkedTable = "linked_table"
+        case bookmark
+        case contentMode = "content_mode"
+    }
+}
+
 public enum TableBrowserCommand: Codable, Equatable {
+    case configure(parameters: TableBrowserParameters)
     case setFocus(String)
     case cycleView(forward: Bool)
     case moveUp(steps: Int)
@@ -2186,6 +2303,7 @@ public enum TableBrowserCommand: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case command
+        case parameters
         case focus
         case forward
         case steps
@@ -2195,6 +2313,8 @@ public enum TableBrowserCommand: Codable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(String.self, forKey: .command) {
+        case "configure":
+            self = .configure(parameters: try container.decode(TableBrowserParameters.self, forKey: .parameters))
         case "set_focus":
             self = .setFocus(try container.decode(String.self, forKey: .focus))
         case "cycle_view":
@@ -2225,6 +2345,9 @@ public enum TableBrowserCommand: Codable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .configure(let parameters):
+            try container.encode("configure", forKey: .command)
+            try container.encode(parameters, forKey: .parameters)
         case let .setFocus(focus):
             try container.encode("set_focus", forKey: .command)
             try container.encode(focus, forKey: .focus)
@@ -2324,6 +2447,11 @@ public struct TableBrowserCellValueRequest: Codable, Equatable {
 public struct TableBrowserSessionState: Codable, Equatable {
     public var datasetID: String
     public var selectedView: String
+    public var profileView: String
+    public var bookmark: String
+    public var linkedTable: String
+    public var contentMode: String
+    public var startupProfilePending: Bool
     public var focus: String = "main"
     public var commands: [TableBrowserCommand] = []
     public var transientCommands: [TableBrowserCommand] = []
@@ -2343,6 +2471,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case datasetID
         case selectedView
+        case profileView
+        case bookmark
+        case linkedTable
+        case contentMode
+        case startupProfilePending
         case focus
         case commands
         case transientCommands
@@ -2363,6 +2496,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
     public init(
         datasetID: String,
         selectedView: String,
+        profileView: String? = nil,
+        bookmark: String = "none",
+        linkedTable: String = "none",
+        contentMode: String = "auto",
+        startupProfilePending: Bool = false,
         focus: String = "main",
         commands: [TableBrowserCommand] = [],
         transientCommands: [TableBrowserCommand] = [],
@@ -2381,6 +2519,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
     ) {
         self.datasetID = datasetID
         self.selectedView = selectedView
+        self.profileView = profileView ?? selectedView
+        self.bookmark = bookmark
+        self.linkedTable = linkedTable
+        self.contentMode = contentMode
+        self.startupProfilePending = startupProfilePending
         self.focus = focus
         self.commands = commands
         self.transientCommands = transientCommands
@@ -2402,6 +2545,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         datasetID = try container.decode(String.self, forKey: .datasetID)
         selectedView = try container.decode(String.self, forKey: .selectedView)
+        profileView = try container.decodeIfPresent(String.self, forKey: .profileView) ?? selectedView
+        bookmark = try container.decodeIfPresent(String.self, forKey: .bookmark) ?? "none"
+        linkedTable = try container.decodeIfPresent(String.self, forKey: .linkedTable) ?? "none"
+        contentMode = try container.decodeIfPresent(String.self, forKey: .contentMode) ?? "auto"
+        startupProfilePending = try container.decodeIfPresent(Bool.self, forKey: .startupProfilePending) ?? false
         focus = try container.decodeIfPresent(String.self, forKey: .focus) ?? "main"
         commands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .commands) ?? []
         transientCommands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .transientCommands) ?? []
@@ -2549,8 +2697,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var tutorialPack: TutorialPackContext?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
-    public var genericTaskValues: [String: [String: String]]
-    public var genericTaskToggles: [String: [String: Bool]]
+    public var parameterSessions: [String: SurfaceParameterSession]
     public var genericTaskConfirmations: [String: Bool]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
@@ -2584,8 +2731,7 @@ public struct WorkbenchState: Codable, Equatable {
         tutorialPack: TutorialPackContext? = nil,
         activeTaskID: String = "imager",
         taskUISchemas: [String: TaskUISchema] = [:],
-        genericTaskValues: [String: [String: String]] = [:],
-        genericTaskToggles: [String: [String: Bool]] = [:],
+        parameterSessions: [String: SurfaceParameterSession] = [:],
         genericTaskConfirmations: [String: Bool] = [:],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
@@ -2618,14 +2764,52 @@ public struct WorkbenchState: Codable, Equatable {
         self.tutorialPack = tutorialPack
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
-        self.genericTaskValues = genericTaskValues
-        self.genericTaskToggles = genericTaskToggles
+        self.parameterSessions = parameterSessions
         self.genericTaskConfirmations = genericTaskConfirmations
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
         self.probeDiagnostics = probeDiagnostics
         self.interfaceFontSize = Self.clampedInterfaceFontSize(interfaceFontSize)
+    }
+
+    /// Debug/test projection retained while callers migrate to typed parameter
+    /// sessions. Defaults and normalization come from the resolved Rust
+    /// snapshot, never from a frontend-owned dictionary.
+    public var genericTaskValues: [String: [String: String]] {
+        var valuesBySurface: [String: [String: String]] = [:]
+        for (_, session) in orderedParameterSessionsForProjection {
+            valuesBySurface[session.snapshot.surfaceID] = session.snapshot.states.compactMapValues { state in
+                guard state.value?.boolValue == nil else { return nil }
+                return state.value?.displayText
+            }
+        }
+        return valuesBySurface
+    }
+
+    /// Boolean-only projection of the same typed state.
+    public var genericTaskToggles: [String: [String: Bool]] {
+        var togglesBySurface: [String: [String: Bool]] = [:]
+        for (_, session) in orderedParameterSessionsForProjection {
+            togglesBySurface[session.snapshot.surfaceID] = session.snapshot.states.compactMapValues {
+                $0.value?.boolValue
+            }
+        }
+        return togglesBySurface
+    }
+
+    /// Compatibility projection for debug and older tests. Draft ownership is
+    /// per tab/instance; the active tab's draft wins when more than one tab
+    /// targets the same surface.
+    private var orderedParameterSessionsForProjection: [(key: String, value: SurfaceParameterSession)] {
+        parameterSessions.sorted { lhs, rhs in
+            let lhsIsActive = lhs.key.hasPrefix("\(activeTabID)::")
+            let rhsIsActive = rhs.key.hasPrefix("\(activeTabID)::")
+            if lhsIsActive != rhsIsActive {
+                return !lhsIsActive
+            }
+            return lhs.key < rhs.key
+        }
     }
 
     public var selectedDataset: DatasetSummary? {

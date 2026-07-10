@@ -2994,6 +2994,8 @@ public enum FrontendServiceError: Swift.Error {
     )
     case TableExplorer(reason: String
     )
+    case Parameters(reason: String
+    )
 }
 
 
@@ -3026,6 +3028,9 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 6: return .TableExplorer(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 7: return .Parameters(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -3067,6 +3072,11 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .TableExplorer(reason):
             writeInt(&buf, Int32(6))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .Parameters(reason):
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -3913,6 +3923,161 @@ public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, he
     )
 })
 }
+/**
+ * Return the validated aggregate catalog of canonical parameter concepts and surfaces.
+ */
+public func parameterCatalogJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_catalog_json($0
+    )
+})
+}
+/**
+ * Resolve the current defaults and UI state for one surface.
+ */
+public func parameterDefaultsJson(surfaceId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_defaults_json(
+        FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
+ * Load Last or Last Successful from the managed store, if present.
+ */
+public func parameterLastJson(surfaceId: String, workspace: String, successful: Bool)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_last_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),
+        FfiConverterBool.lower(successful),$0
+    )
+})
+}
+/**
+ * Load and resolve an explicit sparse TOML profile supplied by the frontend.
+ */
+public func parameterLoadJson(surfaceId: String, profileToml: String, sourcePath: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_load_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(profileToml),
+        FfiConverterString.lower(sourcePath),$0
+    )
+})
+}
+/**
+ * Project one complete task invocation for CLI/TUI/GUI consumers.
+ */
+public func parameterProviderInvocationJson(surfaceId: String, valuesJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_provider_invocation_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(valuesJson),$0
+    )
+})
+}
+/**
+ * Render typed resolved values as a sparse current-contract TOML profile.
+ */
+public func parameterRenderToml(surfaceId: String, valuesJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_render_toml(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(valuesJson),$0
+    )
+})
+}
+/**
+ * Resolve typed context and explicit override patches over one selected base source.
+ */
+public func parameterResolveJson(surfaceId: String, baseSource: String, profileToml: String?, profilePath: String?, contextPatchJson: String, overridePatchJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_resolve_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(baseSource),
+        FfiConverterOptionString.lower(profileToml),
+        FfiConverterOptionString.lower(profilePath),
+        FfiConverterString.lower(contextPatchJson),
+        FfiConverterString.lower(overridePatchJson),$0
+    )
+})
+}
+/**
+ * Evaluate catalog-owned run risks for one resolved task value set.
+ */
+public func parameterRunSafetyJson(surfaceId: String, valuesJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_run_safety_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(valuesJson),$0
+    )
+})
+}
+/**
+ * Atomically save typed resolved values to an explicit sparse TOML profile.
+ */
+public func parameterSaveJson(surfaceId: String, valuesJson: String, destinationPath: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_save_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(valuesJson),
+        FfiConverterString.lower(destinationPath),$0
+    )
+})
+}
+/**
+ * Return one self-contained surface definition and its referenced concepts.
+ */
+public func parameterSurfaceBundleJson(surfaceId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_surface_bundle_json(
+        FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
+ * Return the aggregate parameter catalog under a surface-oriented API name.
+ */
+public func parameterSurfaceCatalogJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_surface_catalog_json($0
+    )
+})
+}
+/**
+ * Return one canonical task or session definition without duplicating its concepts.
+ */
+public func parameterSurfaceDefinitionJson(surfaceId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_surface_definition_json(
+        FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
+ * Project a canonical task or session definition into the launcher UI schema shape.
+ */
+public func parameterUiSchemaJson(surfaceId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_ui_schema_json(
+        FfiConverterString.lower(surfaceId),$0
+    )
+})
+}
+/**
+ * Explicitly write Last or Last Successful for a validated resolved value set.
+ */
+public func parameterWriteLastJson(surfaceId: String, workspace: String, valuesJson: String, successful: Bool)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_parameter_write_last_json(
+        FfiConverterString.lower(surfaceId),
+        FfiConverterString.lower(workspace),
+        FfiConverterString.lower(valuesJson),
+        FfiConverterBool.lower(successful),$0
+    )
+})
+}
 public func probeMeasurementSetTimeRange(datasetPath: String)throws  -> MeasurementSetTimeRangeProbe  {
     return try  FfiConverterTypeMeasurementSetTimeRangeProbe_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_probe_measurement_set_time_range(
@@ -3960,6 +4125,9 @@ public func taskExecutionMatrixJson()throws  -> String  {
     )
 })
 }
+/**
+ * Compatibility entrypoint for task launchers; delegates to the canonical projection.
+ */
 public func taskUiSchemaJson(taskId: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_task_ui_schema_json(
@@ -4013,6 +4181,48 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_catalog_json() != 8) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_defaults_json() != 55005) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_last_json() != 64934) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_load_json() != 36461) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_provider_invocation_json() != 48377) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_render_toml() != 1953) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_resolve_json() != 12064) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_run_safety_json() != 45586) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_save_json() != 23246) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_bundle_json() != 20566) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_catalog_json() != 40215) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_surface_definition_json() != 4630) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_ui_schema_json() != 43699) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_parameter_write_last_json() != 32737) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_time_range() != 14615) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4034,7 +4244,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_task_execution_matrix_json() != 33299) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_task_ui_schema_json() != 59642) {
+    if (uniffi_casars_frontend_services_checksum_func_task_ui_schema_json() != 63431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_tutorial_task_parameter_audit_json() != 21445) {

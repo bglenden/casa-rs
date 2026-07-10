@@ -1,0 +1,15 @@
+{
+  "surface": "imexplore",
+  "values": {
+    "image": "fixtures/science.image",
+    "view": "spectrum",
+    "contentmode": "spreadsheet",
+    "colormap": "viridis",
+    "profileaxis": "Stokes",
+    "movieaxis": "Frequency",
+    "fps": 12,
+    "loop": true,
+    "region": "definition:source",
+    "mask": "mask0"
+  }
+}

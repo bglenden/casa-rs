@@ -230,14 +230,17 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTaskID, "imhead")
         XCTAssertEqual(store.state.tabs.last?.taskID, "imhead")
         XCTAssertEqual(
-            store.state.genericTaskValues["imhead"]?["image_path"],
-            packURL.appendingPathComponent("twhya_cont.image").standardizedFileURL.path
+            store.state.genericTaskValues["imhead"]?["imagename"],
+            "twhya_cont.image"
         )
         XCTAssertEqual(store.state.genericTaskValues["imhead"]?["mode"], "summary")
-        XCTAssertEqual(store.state.genericTaskToggles["imhead"]?["json"], true)
+        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["hdkey"], "none")
+        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["hdvalue"], "none")
         XCTAssertEqual(snapshot.activeTaskValues["mode"], "summary")
-        XCTAssertEqual(snapshot.activeTaskToggles["json"], true)
-        XCTAssertEqual(store.state.taskRun.requestSummary, "image_path=twhya_cont.image, mode=summary, json=true")
+        XCTAssertEqual(
+            store.state.taskRun.requestSummary,
+            "imagename=twhya_cont.image, mode=summary, hdkey=none, hdvalue=none"
+        )
         XCTAssertTrue(store.state.lastErrors.isEmpty)
     }
 
@@ -332,7 +335,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.loadTaskUISchemaIfNeeded("imstat")
 
-        XCTAssertNil(store.state.genericTaskValues["imstat"]?["image_path"])
+        XCTAssertNil(store.state.genericTaskValues["imstat"]?["imagename"])
         XCTAssertEqual(store.state.genericTaskValues["imstat"]?["region"], "regions/twhya_cont.image-region.crtf")
     }
 
@@ -578,14 +581,14 @@ final class WorkbenchStoreTests: XCTestCase {
 
         let applycalSchema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "applycal")
         XCTAssertEqual(applycalSchema.commandID, "applycal")
-        XCTAssertTrue(applycalSchema.arguments.contains { argument in
-            argument.id == "mode" && argument.hiddenInTUI && argument.default == "apply"
-        })
+        XCTAssertFalse(applycalSchema.arguments.contains { $0.id == "mode" })
+        let applycalBundle = try UniFFISurfaceParameterClient().loadBundle(surfaceID: "applycal")
+        XCTAssertEqual(applycalBundle.surface.execution.fixedArgs, ["--mode", "apply"])
 
         let gencalSchema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "gencal")
         XCTAssertTrue(gencalSchema.arguments.contains { argument in
             argument.id == "caltype"
-                && argument.parameterType == "gencal_type"
+                && argument.conceptID == "parameter.caltype"
                 && argument.parser.choices?.contains("opac") == true
         })
     }
@@ -594,12 +597,12 @@ final class WorkbenchStoreTests: XCTestCase {
         let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imager")
         let argumentIDs = Set(schema.arguments.filter { !$0.hiddenInTUI }.map(\.id))
         let tutorialArguments = [
-            "ms", "imagename", "imsize", "cell_arcsec", "field", "phasecenter_field",
+            "vis", "imagename", "imsize", "cell", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
             "gridder", "standard_mfs_acceleration", "perchanweightdensity",
             "restoringbeam", "niter", "nmajor", "gain",
-            "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold",
+            "threshold", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
             "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
             "nterms", "savemodel", "outlierfile", "write_pb", "pbcor", "pblimit"
@@ -613,183 +616,74 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(schema.managedOutput?.injectArguments.first?.value, "true")
     }
 
-    func testGenericTaskArgumentsUseSchemaFlagsChoicesAndToggles() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "flagdata",
-          "invocation_name": "flagdata",
-          "display_name": "Flag Data",
-          "category": "Flagging",
-          "summary": "Run native CASA-style MeasurementSet flagging.",
-          "usage": "flagdata",
-          "arguments": [
-            {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--vis"],"metavar":"MS","choices":[]},"value_kind":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","manual"]},"value_kind":"choice","required":true,"default":"summary","help":"","group":"Flagging","advanced":false,"hidden_in_tui":false},
-            {"id":"flagbackup","label":"Backup","order":2,"parser":{"kind":"toggle","true_flags":["--flagbackup"],"false_flags":["--no-flagbackup"]},"value_kind":"bool","required":false,"default":"true","help":"","group":"Safety","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
+    func testGenericTaskArgumentsUseRequiredCanonicalProviderInvocation() throws {
+        let invocation = SurfaceProviderInvocation(
+            args: ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
+        )
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: TaskCatalogEntry(
-                id: "flagdata",
-                category: "Flagging",
-                displayName: "Flag Data",
-                binaryName: "flagdata",
-                cargoPackage: "casa-ms",
-                overrideEnv: "CASARS_FLAGDATA_BIN",
-                shellKind: "workflow",
-                interaction: "one_shot",
-                browserKind: nil,
-                datasetKinds: ["measurement_set"],
-                schemaSource: "binary",
-                showInTUI: true,
-                showInSwift: true,
-                includeInSuite: true
-            ),
-            schema: schema,
-            values: ["vis": "/data/input.ms", "mode": "summary"],
-            toggles: ["flagbackup": false]
+            task: makeTaskCatalogEntry(id: "flagdata", displayName: "Flag Data"),
+            providerInvocation: invocation
         )
 
-        XCTAssertEqual(
-            try ProcessGenericTaskClient.arguments(for: request),
-            ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
-        )
+        XCTAssertEqual(try ProcessGenericTaskClient.arguments(for: request), invocation.args)
     }
 
-    func testGenericTaskArgumentsEvaluateConditionalToggleDefaults() throws {
-        let schema = try makeImagerTaskUISchema()
-        let task = makeImagerTaskCatalogEntry()
-        let cubeRequest = GenericTaskRequest(
+    func testGenericImagerArgumentsOnlyAppendRuntimeControlsToCanonicalInvocation() throws {
+        let providerArguments = [
+            "--vis", "/data/input.ms",
+            "--specmode", "cube",
+            "--perchanweightdensity"
+        ]
+        let request = GenericTaskRequest(
             runID: "run-cube",
-            task: task,
-            schema: schema,
-            values: [
-                "ms": "/data/input.ms",
-                "imagename": "/tmp/out",
-                "imsize": "512",
-                "cell_arcsec": "1.0",
-                "specmode": "cube",
-                "deconvolver": "clark",
-                "weighting": "uniform",
-                "gridder": "mosaic"
-            ],
-            toggles: [:]
-        )
-        let cubeArguments = try ProcessGenericTaskClient.arguments(for: cubeRequest)
-        XCTAssertTrue(cubeArguments.contains("--perchanweightdensity"))
-        XCTAssertFalse(cubeArguments.contains("--no-perchanweightdensity"))
-
-        var cubedataValues = cubeRequest.values
-        cubedataValues["specmode"] = "cubedata"
-        let cubedataRequest = GenericTaskRequest(
-            runID: "run-cubedata",
-            task: task,
-            schema: schema,
-            values: cubedataValues,
-            toggles: [:]
-        )
-        let cubedataArguments = try ProcessGenericTaskClient.arguments(for: cubedataRequest)
-        XCTAssertTrue(cubedataArguments.contains("--no-perchanweightdensity"))
-        XCTAssertFalse(cubedataArguments.contains("--perchanweightdensity"))
-    }
-
-    func testGenericTaskArgumentsInvokeHiddenDefaultOptions() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "applycal",
-          "invocation_name": "calibrate",
-          "display_name": "Applycal",
-          "category": "Calibration",
-          "summary": "Apply native CASA-style calibration.",
-          "usage": "calibrate --mode apply --ms <input.ms>",
-          "arguments": [
-            {"id":"mode","label":"Mode","order":0,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["apply"]},"value_kind":"choice","required":false,"default":"apply","help":"","group":"Mode","advanced":true,"hidden_in_tui":true},
-            {"id":"measurement_set","label":"MeasurementSet","order":1,"parser":{"kind":"option","flags":["--ms"],"metavar":"MS","choices":[]},"value_kind":"path","parameter_type":"measurement_set_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"ui_schema","label":"UI Schema","order":2,"parser":{"kind":"action","flags":["--ui-schema"],"action":"ui_schema"},"value_kind":"bool","required":false,"default":null,"help":"","group":"Meta","advanced":true,"hidden_in_tui":true}
-          ]
-        }
-        """.utf8))
-        let request = GenericTaskRequest(
-            runID: "run-1",
-            task: TaskCatalogEntry(
-                id: "applycal",
-                category: "Calibration",
-                displayName: "Applycal",
-                binaryName: "calibrate",
-                cargoPackage: "casa-calibration",
-                overrideEnv: "CASARS_CALIBRATE_BIN",
-                shellKind: "workflow",
-                interaction: "one_shot",
-                browserKind: nil,
-                datasetKinds: ["measurement_set", "calibration_table"],
-                schemaSource: "embedded_or_binary",
-                showInTUI: true,
-                showInSwift: true,
-                includeInSuite: true
-            ),
-            schema: schema,
-            values: ["measurement_set": "/data/input.ms"],
-            toggles: [:]
+            task: makeImagerTaskCatalogEntry(),
+            providerInvocation: SurfaceProviderInvocation(args: providerArguments)
         )
 
+        let arguments = try ProcessGenericTaskClient.arguments(for: request)
+        XCTAssertEqual(Array(arguments.prefix(providerArguments.count)), providerArguments)
+        XCTAssertFalse(arguments.contains("--no-perchanweightdensity"))
         XCTAssertEqual(
-            try ProcessGenericTaskClient.arguments(for: request),
-            ["--mode", "apply", "--ms", "/data/input.ms"]
+            Array(arguments.suffix(6)),
+            ["--progress", "true", "--progress-max-uv-points", "16384", "--progress-min-interval-ms", "250"]
         )
     }
 
-    func testGenericTaskArgumentsInvokeHiddenDefaultPositionals() throws {
-        let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imhead")
+    func testGenericTaskArgumentsPreserveCatalogProjectedHiddenDefaults() throws {
+        let invocation = SurfaceProviderInvocation(
+            args: ["--mode", "apply", "--ms", "/data/input.ms"]
+        )
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: TaskCatalogEntry(
-                id: "imhead",
-                category: "Images",
-                displayName: "Image Header",
-                binaryName: "imexplore",
-                cargoPackage: "casa-images",
-                overrideEnv: "CASARS_IMEXPLORE_BIN",
-                shellKind: "workflow",
-                interaction: "one_shot",
-                browserKind: nil,
-                datasetKinds: ["image"],
-                schemaSource: "embedded_or_binary",
-                showInTUI: true,
-                showInSwift: true,
-                includeInSuite: true
-            ),
-            schema: schema,
-            values: ["image_path": "/data/image.im", "mode": "list"],
-            toggles: ["json": true]
+            task: makeTaskCatalogEntry(id: "applycal", displayName: "Applycal"),
+            providerInvocation: invocation,
+            parameterBundle: try UniFFISurfaceParameterClient().loadBundle(surfaceID: "applycal"),
+            parameterValues: ["measurement_set": .string("/data/input.ms")]
         )
 
-        XCTAssertEqual(
-            try ProcessGenericTaskClient.arguments(for: request),
-            ["imhead", "/data/image.im", "--json", "--mode", "list"]
+        XCTAssertEqual(try ProcessGenericTaskClient.arguments(for: request), invocation.args)
+    }
+
+    func testGenericTaskArgumentsPreserveCatalogProjectedFixedArguments() throws {
+        let invocation = SurfaceProviderInvocation(
+            args: ["imhead", "/data/image.im", "--mode", "list"]
         )
+        let request = GenericTaskRequest(
+            runID: "run-1",
+            task: makeImheadTaskCatalogEntry(),
+            providerInvocation: invocation,
+            parameterBundle: try UniFFISurfaceParameterClient().loadBundle(surfaceID: "imhead"),
+            parameterValues: [
+                "imagename": .string("/data/image.im"),
+                "mode": .string("list")
+            ]
+        )
+
+        XCTAssertEqual(try ProcessGenericTaskClient.arguments(for: request), invocation.args)
     }
 
     func testGenericTaskCreatesParentDirectoriesForOutputPaths() throws {
-        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-        {
-          "schema_version": 1,
-          "command_id": "exportfits",
-          "invocation_name": "exportfits",
-          "display_name": "Export FITS",
-          "category": "Images",
-          "summary": "Export CASA images to FITS.",
-          "usage": "exportfits <imagename> <fitsimage>",
-          "arguments": [
-            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
-            {"id":"fitsimage","label":"FITS","order":1,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"output_fits_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false},
-            {"id":"overwrite","label":"Overwrite","order":2,"parser":{"kind":"toggle","true_flags":["--overwrite"],"false_flags":["--no-overwrite"]},"value_kind":"bool","required":false,"default":"true","help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-          ]
-        }
-        """.utf8))
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-output-parent-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -813,9 +707,15 @@ final class WorkbenchStoreTests: XCTestCase {
                 showInSwift: true,
                 includeInSuite: true
             ),
-            schema: schema,
-            values: ["imagename": "twhya_cont.image", "fitsimage": "casa-rs-runs/twhya_cont.fits"],
-            toggles: ["overwrite": true],
+            providerInvocation: SurfaceProviderInvocation(
+                args: ["twhya_cont.image", "casa-rs-runs/twhya_cont.fits", "--overwrite"]
+            ),
+            parameterBundle: try UniFFISurfaceParameterClient().loadBundle(surfaceID: "exportfits"),
+            parameterValues: [
+                "imagename": .string("twhya_cont.image"),
+                "fitsimage": .string("casa-rs-runs/twhya_cont.fits"),
+                "overwrite": .bool(true)
+            ],
             workingDirectoryPath: rootURL.path
         )
 
@@ -862,8 +762,6 @@ final class WorkbenchStoreTests: XCTestCase {
         state.selectedDatasetID = imageURL.path
         state.taskCatalog = [makeImheadTaskCatalogEntry()]
         state.activeTaskID = "imhead"
-        state.genericTaskValues["imhead"] = ["image_path": imageURL.path, "mode": "summary"]
-        state.genericTaskToggles["imhead"] = ["json": true]
 
         let store = WorkbenchStore(
             state: state,
@@ -873,6 +771,8 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.loadTaskUISchemaIfNeeded("imhead")
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "imagename", value: imageURL.path)
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "mode", value: "summary")
         store.runTask()
         try taskClient.emitSucceeded()
         waitFor("generic JSON task output to finish") {
@@ -895,7 +795,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.history.last?.affectedPaths.contains(outputPath) == true)
     }
 
-    func testSimobserveFamilyRequestSavesReopensEditsCanonicalJSON() throws {
+    func testSimobserveParameterProfileSavesReopensAndRewritesSparseTOML() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-simobserve-family-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -907,64 +807,978 @@ final class WorkbenchStoreTests: XCTestCase {
         state.activeTaskID = "simobserve"
         let store = WorkbenchStore(
             state: state,
-            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeSimobserveTaskUISchema()),
             taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
         )
 
         store.loadTaskUISchemaIfNeeded("simobserve")
         store.setGenericTaskValue(taskID: "simobserve", argumentID: "request_kind", value: "family")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "request_json", value: "requests/family.json")
-        store.setGenericTaskValue(
-            taskID: "simobserve",
-            argumentID: "source_model",
-            value: #"{"kind":"fits_image","path":"model.fits"}"#
-        )
         store.setGenericTaskValue(taskID: "simobserve", argumentID: "telescope", value: "ALMA")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "array_config", value: "synthetic-aca")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "band", value: "Band 3")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "target_ms_size_gib", value: "0.02")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "output_ms", value: "products/family.ms")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "polarizations", value: "4")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "ms_channels", value: "8")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "image_channels", value: "2")
         store.setGenericTaskValue(taskID: "simobserve", argumentID: "pointing_count", value: "3")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "imaging_mode", value: "mosaic")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "worker_policy", value: "fixed")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "row_workers", value: "2")
-        store.setGenericTaskValue(taskID: "simobserve", argumentID: "channel_workers", value: "3")
 
-        let requestURL = rootURL.appendingPathComponent("requests/family.json")
-        store.saveActiveGenericTaskRequest(to: requestURL.path)
+        let profileURL = rootURL.appendingPathComponent("profiles/simobserve.toml")
+        store.saveActiveParameterProfile(to: profileURL.path)
 
-        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: requestURL)) as? [String: Any]
-        XCTAssertEqual(saved?["kind"] as? String, "family")
-        let request = try XCTUnwrap(saved?["request"] as? [String: Any])
-        XCTAssertNil(request["request_kind"])
-        XCTAssertNil(request["request_json"])
-        XCTAssertEqual(request["telescope"] as? String, "ALMA")
-        XCTAssertEqual(request["array_config"] as? String, "synthetic-aca")
-        XCTAssertEqual(request["polarizations"] as? Int, 4)
-        XCTAssertEqual(request["ms_channels"] as? Int, 8)
-        XCTAssertEqual(request["worker_policy"] as? String, "fixed")
-        XCTAssertEqual(request["row_workers"] as? Int, 2)
-        XCTAssertEqual(request["channel_workers"] as? Int, 3)
+        let saved = try String(contentsOf: profileURL, encoding: .utf8)
+        XCTAssertTrue(saved.contains("surface = \"simobserve\""))
+        XCTAssertTrue(saved.contains("kind = \"task\""))
+        XCTAssertTrue(saved.contains("request_kind = \"family\""))
+        XCTAssertTrue(saved.contains("telescope = \"ALMA\""))
+        XCTAssertTrue(saved.contains("pointing_count = 3"))
+        XCTAssertFalse(saved.contains("measure_actual_size"), "default-valued parameters stay sparse")
 
         store.setGenericTaskValue(taskID: "simobserve", argumentID: "pointing_count", value: "99")
-        store.loadGenericTaskRequest(from: requestURL.path)
+        store.loadActiveParameterProfile(from: profileURL.path, discardEdits: true)
 
-        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["request_kind"], "family")
-        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["request_json"], "requests/family.json")
         XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["pointing_count"], "3")
-        XCTAssertEqual(store.state.genericTaskValues["simobserve"]?["worker_policy"], "fixed")
+        XCTAssertEqual(store.parameterOrigin(surfaceID: "simobserve", name: "pointing_count"), "base_profile")
+        XCTAssertEqual(store.parameterSession(surfaceID: "simobserve")?.selectedSource, .file)
 
         store.setGenericTaskValue(taskID: "simobserve", argumentID: "pointing_count", value: "5")
-        store.saveActiveGenericTaskRequest(to: requestURL.path)
-        let edited = try JSONSerialization.jsonObject(with: Data(contentsOf: requestURL)) as? [String: Any]
-        let editedRequest = try XCTUnwrap(edited?["request"] as? [String: Any])
-        XCTAssertEqual(editedRequest["pointing_count"] as? Int, 5)
+        store.saveActiveParameterProfile(to: profileURL.path)
+        let edited = try String(contentsOf: profileURL, encoding: .utf8)
+        XCTAssertTrue(edited.contains("pointing_count = 5"))
     }
 
-    func testProcessGenericTaskRunsSimobserveFamilyThroughSavedJsonRun() throws {
+    func testParameterSourceReplacementRequiresConfirmationAndReappliesDatasetContext() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-parameter-source-\(UUID().uuidString)", isDirectory: true)
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let image = DatasetSummary(
+            id: imageURL.path,
+            name: imageURL.lastPathComponent,
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "4 x 4",
+            units: "Jy/beam",
+            shape: [4, 4],
+            notes: "test image"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [image], source: .probed)
+        state.selectedDatasetID = image.id
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            surfaceParameterClient: RecordingSurfaceParameterClient(),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imhead")
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "mode", value: "list")
+        store.selectParameterSource(.defaults, surfaceID: "imhead")
+
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", name: "mode"), "list")
+        XCTAssertTrue(store.state.lastErrors.contains { $0.contains("only after confirming") })
+
+        store.selectParameterSource(.defaults, surfaceID: "imhead", discardEdits: true)
+
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", name: "mode"), "summary")
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", name: "imagename"), "input.image")
+        XCTAssertEqual(store.parameterSession(surfaceID: "imhead")?.selectedSource, .defaults)
+    }
+
+    func testRejectedGenericParameterDraftBlocksRunUntilSuccessfulRecovery() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-rejected-parameter-draft-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let taskClient = HoldingGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            surfaceParameterClient: parameterClient,
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imhead")
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "imagename", value: imageURL.path)
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "mode", value: "list")
+        XCTAssertFalse(try XCTUnwrap(store.parameterSession(surfaceID: "imhead")).hasErrors)
+
+        parameterClient.resolveFailure = { _, override in
+            guard override.values["mode"] == .string("not-a-mode") else { return nil }
+            return NSError(
+                domain: "SurfaceParameterResolution",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "rejected mode draft"]
+            )
+        }
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "mode", value: "not-a-mode")
+
+        let rejected = try XCTUnwrap(store.parameterSession(surfaceID: "imhead"))
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", name: "mode"), "not-a-mode")
+        XCTAssertEqual(rejected.snapshot.states["mode"]?.value, .string("list"))
+        XCTAssertTrue(rejected.hasErrors)
+        XCTAssertTrue(rejected.snapshot.dirty)
+        XCTAssertTrue(rejected.snapshot.diagnostics.contains {
+            $0.level == "error"
+                && $0.code == "draft_resolution_failed"
+                && $0.parameter == "mode"
+                && $0.message.contains("rejected mode draft")
+        })
+        XCTAssertFalse(store.hasSaveableActiveParameterProfile())
+
+        store.runTask()
+
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(store.state.taskRun.state, .failed)
+        XCTAssertTrue(store.state.taskRun.diagnostics.contains { $0.contains("rejected mode draft") })
+
+        parameterClient.resolveFailure = nil
+        store.setGenericTaskValue(taskID: "imhead", argumentID: "mode", value: "summary")
+
+        let recovered = try XCTUnwrap(store.parameterSession(surfaceID: "imhead"))
+        XCTAssertFalse(recovered.hasErrors)
+        XCTAssertFalse(recovered.snapshot.diagnostics.contains { $0.code == "draft_resolution_failed" })
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", name: "mode"), "summary")
+        XCTAssertEqual(recovered.snapshot.states["mode"]?.value, .string("summary"))
+        XCTAssertTrue(store.hasSaveableActiveParameterProfile())
+
+        store.runTask()
+
+        XCTAssertEqual(taskClient.requests.count, 1)
+    }
+
+    func testRejectedDatasetContextBlocksRunUntilContextResolves() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-rejected-parameter-context-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let image = DatasetSummary(
+            id: imageURL.path,
+            name: imageURL.lastPathComponent,
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "4 x 4",
+            units: "Jy/beam",
+            shape: [4, 4],
+            notes: "test image"
+        )
+        let taskClient = HoldingGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        parameterClient.resolveFailure = { context, _ in
+            guard context.values["imagename"] != nil else { return nil }
+            return NSError(
+                domain: "SurfaceParameterResolution",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "rejected dataset context"]
+            )
+        }
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Project",
+            rootPath: rootURL.path,
+            datasets: [image],
+            source: .probed
+        )
+        state.selectedDatasetID = image.id
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            surfaceParameterClient: parameterClient,
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imhead")
+
+        let rejected = try XCTUnwrap(store.parameterSession(surfaceID: "imhead"))
+        XCTAssertEqual(rejected.contextPatch.values["imagename"], .string("input.image"))
+        XCTAssertNil(rejected.snapshot.states["imagename"]?.value)
+        XCTAssertTrue(rejected.hasErrors)
+        XCTAssertTrue(rejected.snapshot.diagnostics.contains {
+            $0.level == "error"
+                && $0.code == "draft_resolution_failed"
+                && $0.parameter == "imagename"
+                && $0.message.contains("rejected dataset context")
+        })
+
+        store.runTask()
+
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(store.state.taskRun.state, .failed)
+        XCTAssertTrue(store.state.taskRun.diagnostics.contains { $0.contains("rejected dataset context") })
+
+        parameterClient.resolveFailure = nil
+        store.loadTaskUISchemaIfNeeded("imhead")
+
+        let recovered = try XCTUnwrap(store.parameterSession(surfaceID: "imhead"))
+        XCTAssertFalse(recovered.hasErrors)
+        XCTAssertFalse(recovered.snapshot.diagnostics.contains { $0.code == "draft_resolution_failed" })
+        XCTAssertEqual(store.parameterText(surfaceID: "imhead", name: "imagename"), "input.image")
+        XCTAssertEqual(recovered.snapshot.states["imagename"]?.value, .array([.string("input.image")]))
+
+        store.runTask()
+
+        XCTAssertEqual(taskClient.requests.count, 1)
+    }
+
+    func testParameterDraftsAreIndependentPerTaskTab() throws {
+        var state = EmptyWorkbench.makeState()
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        state.tabs = [
+            WorkbenchTab(id: "tab-task-a", title: "A", kind: .task, taskID: "imhead"),
+            WorkbenchTab(id: "tab-task-b", title: "B", kind: .task, taskID: "imhead"),
+        ]
+        state.activeTabID = "tab-task-a"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            surfaceParameterClient: RecordingSurfaceParameterClient(),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imhead", instanceID: "tab-task-a")
+        store.setGenericTaskValue(
+            taskID: "imhead",
+            instanceID: "tab-task-a",
+            argumentID: "mode",
+            value: "list"
+        )
+        store.loadTaskUISchemaIfNeeded("imhead", instanceID: "tab-task-b")
+        store.setGenericTaskValue(
+            taskID: "imhead",
+            instanceID: "tab-task-b",
+            argumentID: "mode",
+            value: "summary"
+        )
+
+        XCTAssertEqual(
+            store.parameterText(surfaceID: "imhead", instanceID: "tab-task-a", name: "mode"),
+            "list"
+        )
+        XCTAssertEqual(
+            store.parameterText(surfaceID: "imhead", instanceID: "tab-task-b", name: "mode"),
+            "summary"
+        )
+        XCTAssertNotEqual(
+            store.parameterSession(surfaceID: "imhead", instanceID: "tab-task-a")?.snapshot,
+            store.parameterSession(surfaceID: "imhead", instanceID: "tab-task-b")?.snapshot
+        )
+    }
+
+    func testSwiftUniFFIResolvesSharedImagerCrossSurfaceProfile() throws {
+        let fixtureRoot = repositoryRootURL().appendingPathComponent("resources/test-profiles", isDirectory: true)
+        let profile = try String(
+            contentsOf: fixtureRoot.appendingPathComponent("imager-cross-surface.toml"),
+            encoding: .utf8
+        )
+        let expectedData = try Data(
+            contentsOf: fixtureRoot.appendingPathComponent("imager-cross-surface.expected.json")
+        )
+        let expectedRoot = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: expectedData) as? [String: Any]
+        )
+        let expectedValues = try XCTUnwrap(expectedRoot["values"] as? [String: Any])
+        let snapshot = try UniFFISurfaceParameterClient().load(
+            surfaceID: "imager",
+            profileTOML: profile,
+            sourcePath: fixtureRoot.appendingPathComponent("imager-cross-surface.toml").path
+        )
+
+        for name in ["vis", "imagename", "imsize", "cell", "niter"] {
+            let actual = try XCTUnwrap(snapshot.states[name]?.value)
+            let actualJSON = try JSONSerialization.data(
+                withJSONObject: ["value": canonicalJSONObject(actual)],
+                options: [.sortedKeys]
+            )
+            let expectedJSON = try JSONSerialization.data(
+                withJSONObject: ["value": try XCTUnwrap(expectedValues[name])],
+                options: [.sortedKeys]
+            )
+            XCTAssertEqual(actualJSON, expectedJSON, "canonical mismatch for \(name)")
+        }
+    }
+
+    func testSwiftUniFFIUsesCatalogProviderInvocationIncludingStdin() throws {
+        let client = UniFFISurfaceParameterClient()
+        let invocation = try client.providerInvocation(
+            surfaceID: "simobserve",
+            values: ["request_kind": .string("family")]
+        )
+
+        XCTAssertEqual(invocation.args, ["--json-run", "-"])
+        let stdin = try XCTUnwrap(invocation.stdin)
+        let request = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(stdin.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(request["kind"] as? String, "family")
+        XCTAssertNotNil(request["request"] as? [String: Any])
+    }
+
+    func testSwiftUniFFIRunSafetyIsValueDependent() throws {
+        let client = UniFFISurfaceParameterClient()
+        let summary = try client.runSafety(
+            surfaceID: "flagdata",
+            values: ["mode": .string("summary")]
+        )
+        let manual = try client.runSafety(
+            surfaceID: "flagdata",
+            values: ["mode": .string("manual")]
+        )
+
+        XCTAssertFalse(summary.requiresInteractiveConfirmation)
+        XCTAssertTrue(manual.requiresInteractiveConfirmation)
+        XCTAssertTrue(manual.requiresInputMutationConfirmation)
+        XCTAssertEqual(manual.classes, ["input_mutation"])
+    }
+
+    func testTaskLastWritesAttemptThenSuccessAndHonorsNoSaveLast() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-task-last-\(UUID().uuidString)", isDirectory: true)
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let image = DatasetSummary(
+            id: imageURL.path,
+            name: imageURL.lastPathComponent,
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "4 x 4",
+            units: "Jy/beam",
+            shape: [4, 4],
+            notes: "test image"
+        )
+        let taskClient = HoldingGenericTaskClient()
+        let parameterClient = RecordingSurfaceParameterClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [image], source: .probed)
+        state.selectedDatasetID = image.id
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            surfaceParameterClient: parameterClient,
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imhead")
+        store.runTask()
+        XCTAssertEqual(parameterClient.writes.map(\.successful), [false])
+        XCTAssertEqual(
+            parameterClient.writes.first?.values["imagename"],
+            .array([.string("input.image")])
+        )
+
+        store.stopTask()
+        XCTAssertEqual(parameterClient.writes.map(\.successful), [false])
+
+        store.runTask()
+        XCTAssertEqual(parameterClient.writes.map(\.successful), [false, false])
+        try taskClient.emitSucceeded()
+        waitFor("Last Successful parameter write") {
+            parameterClient.writes.count == 3
+        }
+        XCTAssertEqual(parameterClient.writes.map(\.successful), [false, false, true])
+
+        store.setParameterSaveLast(surfaceID: "imhead", enabled: false)
+        store.runTask()
+        XCTAssertEqual(parameterClient.writes.map(\.successful), [false, false, true])
+        store.stopTask()
+    }
+
+    func testSessionLastRequiresSuccessfulOpenAndIgnoresTransientNavigation() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-session-last-\(UUID().uuidString)", isDirectory: true)
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let image = DatasetSummary(
+            id: imageURL.path,
+            name: imageURL.lastPathComponent,
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "test image"
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        imageClient.error = NSError(
+            domain: "StubImageExplorerClient",
+            code: 17,
+            userInfo: [NSLocalizedDescriptionKey: "open failed"]
+        )
+        let parameterClient = RecordingSurfaceParameterClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [image], source: .probed)
+        state.selectedDatasetID = image.id
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: imageClient,
+            surfaceParameterClient: parameterClient,
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openDatasetExplorer(image.id)
+        store.closeActiveTab()
+        XCTAssertTrue(parameterClient.writes.isEmpty, "a failed session open must preserve Last")
+
+        imageClient.error = nil
+        store.openDatasetExplorer(image.id)
+        waitFor("successful session Last write") {
+            parameterClient.writes.count == 1
+        }
+        XCTAssertEqual(parameterClient.writes.first?.surfaceID, "imexplore")
+        XCTAssertEqual(parameterClient.writes.first?.successful, false)
+
+        store.setImageExplorerCursor(x: 1, y: 1, datasetID: image.id)
+        runCurrentRunLoop(for: 0.4)
+        XCTAssertEqual(parameterClient.writes.count, 1, "cursor navigation is not durable profile state")
+
+        store.setImageExplorerColorMap(.inferno, datasetID: image.id)
+        waitFor("accepted durable session update") {
+            parameterClient.writes.count == 2
+        }
+        XCTAssertEqual(parameterClient.writes.last?.values["colormap"], .string("inferno"))
+
+        store.stopImageExplorerMovie(datasetID: image.id)
+        runCurrentRunLoop(for: 0.4)
+        XCTAssertEqual(parameterClient.writes.count, 2, "playback-running state is transient")
+    }
+
+    func testImageExplorerContentModeProfileAppliesAtStartupAndAcceptedLiveUpdatePersistsLast() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-image-contentmode-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let imageURL = rootURL.appendingPathComponent("input.image", isDirectory: true)
+        let image = DatasetSummary(
+            id: imageURL.path,
+            name: imageURL.lastPathComponent,
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "test image"
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let parameterClient = RecordingSurfaceParameterClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Project",
+            rootPath: rootURL.path,
+            datasets: [image],
+            source: .probed
+        )
+        state.selectedDatasetID = image.id
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: imageClient,
+            surfaceParameterClient: parameterClient,
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+        let profileURL = rootURL.appendingPathComponent("image-spreadsheet.toml")
+        try """
+        [casars]
+        format = 1
+        surface = "imexplore"
+        kind = "session"
+        contract = 1
+
+        [parameters]
+        image = "\(image.path)"
+        contentmode = "spreadsheet"
+        """.write(to: profileURL, atomically: true, encoding: .utf8)
+
+        store.selectParameterSource(
+            .file,
+            surfaceID: "imexplore",
+            instanceID: image.explorerTabID,
+            profilePath: profileURL.path,
+            discardEdits: true
+        )
+        store.openDatasetExplorer(image.id)
+
+        XCTAssertEqual(imageClient.requests.first?.planeContentMode, "spreadsheet")
+        XCTAssertEqual(store.state.imageExplorers[image.id]?.planeContentMode, "spreadsheet")
+        XCTAssertEqual(
+            store.parameterSession(surfaceID: "imexplore", instanceID: image.explorerTabID)?
+                .snapshot.states["contentmode"]?.value,
+            .string("spreadsheet")
+        )
+        waitFor("startup content mode Last write") {
+            parameterClient.writes.last?.values["contentmode"] == .string("spreadsheet")
+        }
+        let startupWriteCount = parameterClient.writes.count
+
+        store.setImageExplorerPlaneContentMode("raster", datasetID: image.id)
+
+        XCTAssertEqual(imageClient.requests.last?.planeContentMode, "raster")
+        XCTAssertEqual(store.state.imageExplorers[image.id]?.planeContentMode, "raster")
+        XCTAssertEqual(
+            store.parameterSession(surfaceID: "imexplore", instanceID: image.explorerTabID)?
+                .snapshot.states["contentmode"]?.value,
+            .string("raster")
+        )
+        waitFor("accepted live content mode Last write") {
+            parameterClient.writes.count == startupWriteCount + 1
+                && parameterClient.writes.last?.values["contentmode"] == .string("raster")
+        }
+        let namedProfile = try String(contentsOf: profileURL, encoding: .utf8)
+        XCTAssertTrue(namedProfile.contains("contentmode = \"spreadsheet\""))
+    }
+
+    func testSharedImexploreProfileRoutesLabeledAxesAndTypedRegionReference() throws {
+        let fixtureURL = repositoryRootURL()
+            .appendingPathComponent("resources/test-profiles/imexplore-cross-surface.toml")
+        let image = DatasetSummary(
+            id: "fixtures/science.image",
+            name: "science.image",
+            path: "fixtures/science.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8 x 4",
+            units: "Jy/beam",
+            shape: [4, 4, 8, 4],
+            notes: "shared profile image"
+        )
+        var snapshot = makeImageExplorerSnapshot()
+        snapshot.nonDisplayAxes = [
+            ImageExplorerSnapshot.NonDisplayAxis(axis: 2, label: "Frequency", index: 0, length: 8, pixel: 0),
+            ImageExplorerSnapshot.NonDisplayAxis(axis: 3, label: "Stokes", index: 0, length: 4, pixel: 0),
+        ]
+        let imageClient = StubImageExplorerClient(snapshot: snapshot)
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Shared profile",
+            rootPath: repositoryRootURL().path,
+            datasets: [image],
+            source: .probed
+        )
+        state.selectedDatasetID = image.id
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: imageClient,
+            surfaceParameterClient: RecordingSurfaceParameterClient(),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.selectParameterSource(
+            .file,
+            surfaceID: "imexplore",
+            instanceID: image.explorerTabID,
+            profilePath: fixtureURL.path,
+            discardEdits: true
+        )
+        store.applySurfaceParameterProfile(
+            surfaceID: "imexplore",
+            datasetID: image.id,
+            instanceID: image.explorerTabID
+        )
+
+        XCTAssertEqual(imageClient.requests.count, 2, "a label-selected profile axis requires one metadata resolution pass")
+        XCTAssertEqual(imageClient.requests.last?.selectedProfileAxis, 3)
+        XCTAssertEqual(store.state.imageExplorers[image.id]?.movieAxis, 2)
+        XCTAssertEqual(store.state.imageExplorers[image.id]?.planeContentMode, "spreadsheet")
+        XCTAssertEqual(
+            imageClient.requests.last?.commands,
+            [
+                .setSelectionReference(.definition(name: "source")),
+                .setDefaultMask(name: "mask0"),
+            ]
+        )
+        XCTAssertEqual(
+            store.parameterSession(surfaceID: "imexplore", instanceID: image.explorerTabID)?
+                .snapshot.states["profileaxis"]?.value,
+            .string("Stokes")
+        )
+    }
+
+    func testImageExplorerProfileRoutesEveryDeclarativeRegionVariantAndFailsClosed() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-image-region-profile-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let image = DatasetSummary(
+            id: rootURL.appendingPathComponent("input.image").path,
+            name: "input.image",
+            path: rootURL.appendingPathComponent("input.image").path,
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "region profile image"
+        )
+
+        func routedReference(_ value: String, rejectCommands: Bool = false) throws
+            -> (ImageExplorerRegionReference?, ExplorerSessionStatus, Int)
+        {
+            let profileURL = rootURL.appendingPathComponent("region-\(UUID().uuidString).toml")
+            try """
+            [casars]
+            format = 1
+            surface = "imexplore"
+            kind = "session"
+            contract = 2
+
+            [parameters]
+            image = "\(image.path)"
+            region = "\(value)"
+            """.write(to: profileURL, atomically: true, encoding: .utf8)
+            let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+            imageClient.failWhenCommandsAreQueued = rejectCommands
+            let parameterClient = RecordingSurfaceParameterClient()
+            var state = EmptyWorkbench.makeState()
+            state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [image], source: .probed)
+            let store = WorkbenchStore(
+                state: state,
+                imageExplorerClient: imageClient,
+                surfaceParameterClient: parameterClient,
+                taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+            )
+            store.selectParameterSource(
+                .file,
+                surfaceID: "imexplore",
+                instanceID: image.explorerTabID,
+                profilePath: profileURL.path,
+                discardEdits: true
+            )
+            store.applySurfaceParameterProfile(
+                surfaceID: "imexplore",
+                datasetID: image.id,
+                instanceID: image.explorerTabID
+            )
+            let reference = imageClient.requests.last?.commands.compactMap(\.region).first
+            return (reference, store.state.imageExplorers[image.id]?.status ?? .failed, parameterClient.writes.count)
+        }
+
+        XCTAssertEqual(try routedReference("source").0, .definition(name: "source"))
+        XCTAssertEqual(try routedReference("file:regions/source.crtf").0, .file(path: "regions/source.crtf"))
+        XCTAssertEqual(try routedReference("regions/source.crtf").0, .file(path: "regions/source.crtf"))
+        XCTAssertEqual(
+            try routedReference("box[[0pix,0pix],[2pix,2pix]]").0,
+            .expression(expression: "box[[0pix,0pix],[2pix,2pix]]")
+        )
+        let rejected = try routedReference("definition:missing", rejectCommands: true)
+        XCTAssertEqual(rejected.0, .definition(name: "missing"), "durable profile commands must survive recovery attempts")
+        XCTAssertEqual(rejected.1, .failed)
+        XCTAssertEqual(rejected.2, 0, "a rejected durable profile must not be accepted or saved as Last")
+    }
+
+    func testSessionLastDedupIsScopedByWorkspaceForEqualValues() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-session-workspaces-\(UUID().uuidString)", isDirectory: true)
+        let workspaceURLs = ["workspace-a", "workspace-b"].map {
+            rootURL.appendingPathComponent($0, isDirectory: true)
+        }
+        for workspaceURL in workspaceURLs {
+            try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let images = ["first.image", "second.image"].map { name in
+            DatasetSummary(
+                id: rootURL.appendingPathComponent(name, isDirectory: true).path,
+                name: name,
+                path: rootURL.appendingPathComponent(name, isDirectory: true).path,
+                kind: .imageCube,
+                size: "4 x 4",
+                units: "Jy/beam",
+                shape: [4, 4],
+                notes: "test image"
+            )
+        }
+        let parameterClient = RecordingSurfaceParameterClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: images, source: .probed)
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: StubImageExplorerClient(snapshot: makeImageExplorerSnapshot()),
+            surfaceParameterClient: parameterClient
+        )
+
+        for (image, workspaceURL) in zip(images, workspaceURLs) {
+            store.openDatasetExplorer(image.id)
+            store.setParameterWorkspace(
+                surfaceID: "imexplore",
+                instanceID: image.explorerTabID,
+                path: workspaceURL.path
+            )
+            store.setGenericTaskValue(
+                taskID: "imexplore",
+                instanceID: image.explorerTabID,
+                argumentID: "image",
+                value: "shared.image"
+            )
+            store.setImageExplorerColorMap(.inferno, datasetID: image.id)
+            store.closeActiveTab()
+        }
+
+        XCTAssertEqual(parameterClient.writes.map(\.workspace), workspaceURLs.map(\.path))
+        XCTAssertEqual(parameterClient.writes.count, 2)
+        XCTAssertEqual(parameterClient.writes[0].values, parameterClient.writes[1].values)
+        XCTAssertEqual(parameterClient.writes[0].values["image"], .string("shared.image"))
+        XCTAssertEqual(parameterClient.writes[0].values["colormap"], .string("inferno"))
+    }
+
+    func testSameNormalizedWorkspaceStaleSessionCannotOverwriteNewerLast() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-session-order-\(UUID().uuidString)", isDirectory: true)
+        let nestedURL = rootURL.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let images = ["first.image", "second.image"].map { name in
+            DatasetSummary(
+                id: rootURL.appendingPathComponent(name, isDirectory: true).path,
+                name: name,
+                path: rootURL.appendingPathComponent(name, isDirectory: true).path,
+                kind: .imageCube,
+                size: "4 x 4",
+                units: "Jy/beam",
+                shape: [4, 4],
+                notes: "test image"
+            )
+        }
+        let parameterClient = RecordingSurfaceParameterClient()
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: images, source: .probed)
+        let store = WorkbenchStore(
+            state: state,
+            imageExplorerClient: StubImageExplorerClient(snapshot: makeImageExplorerSnapshot()),
+            surfaceParameterClient: parameterClient
+        )
+
+        store.openDatasetExplorer(images[0].id)
+        store.setParameterWorkspace(
+            surfaceID: "imexplore",
+            instanceID: images[0].explorerTabID,
+            path: "\(nestedURL.path)/.."
+        )
+        store.openDatasetExplorer(images[1].id)
+        store.setParameterWorkspace(
+            surfaceID: "imexplore",
+            instanceID: images[1].explorerTabID,
+            path: rootURL.path
+        )
+        store.setImageExplorerColorMap(.inferno, datasetID: images[1].id)
+        store.closeActiveTab()
+
+        XCTAssertEqual(parameterClient.writes.count, 1)
+        XCTAssertEqual(parameterClient.writes.last?.workspace, rootURL.path)
+        XCTAssertEqual(parameterClient.writes.last?.values["colormap"], .string("inferno"))
+        runCurrentRunLoop(for: 0.4)
+
+        XCTAssertEqual(parameterClient.writes.count, 1)
+        XCTAssertEqual(parameterClient.writes.last?.values["colormap"], .string("inferno"))
+        store.closeActiveTab()
+        XCTAssertEqual(parameterClient.writes.count, 1)
+    }
+
+    func testTableBrowserProfileAppliesBookmarkAndPresentationBeforeUpdatingLast() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-table-profile-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let table = DatasetSummary(
+            id: rootURL.appendingPathComponent("MAIN").path,
+            name: "MAIN",
+            path: rootURL.appendingPathComponent("MAIN").path,
+            kind: .table,
+            size: "12 rows",
+            units: "casacore table",
+            columns: ["TIME", "DATA"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "test table"
+        )
+        let parameterClient = RecordingSurfaceParameterClient()
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: table.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(result: ProjectFixtureProbe(
+                project: ProjectFixture(name: "Project", rootPath: rootURL.path, datasets: [table], source: .probed),
+                diagnostics: []
+            )),
+            tableBrowserClient: tableClient,
+            surfaceParameterClient: parameterClient
+        )
+        store.openProject(path: rootURL.path)
+        runCurrentRunLoop(for: 0.4)
+        let initialWrites = parameterClient.writes.count
+        let instanceID = table.explorerTabID
+
+        let goodProfileURL = rootURL.appendingPathComponent("table-good.toml")
+        try """
+        [casars]
+        format = 1
+        surface = "tablebrowser"
+        kind = "session"
+        contract = 1
+
+        [parameters]
+        table = "\(table.path)"
+        view = "rows"
+        bookmark = "cell:2:DATA"
+        nrow = 7
+        contentmode = "detailed"
+        """.write(to: goodProfileURL, atomically: true, encoding: .utf8)
+        store.selectParameterSource(
+            .file,
+            surfaceID: "tablebrowser",
+            instanceID: instanceID,
+            profilePath: goodProfileURL.path,
+            discardEdits: true
+        )
+        store.applySurfaceParameterProfile(
+            surfaceID: "tablebrowser",
+            datasetID: table.id,
+            instanceID: instanceID
+        )
+
+        let applied = try XCTUnwrap(store.state.tableBrowsers[table.id])
+        XCTAssertEqual(applied.contentMode, "detailed")
+        XCTAssertEqual(applied.bookmark, "cell:2:DATA")
+        XCTAssertEqual(applied.cellWindowRowLimit, 7)
+        XCTAssertEqual(applied.snapshot?.selectedAddress?.row, 2)
+        XCTAssertEqual(applied.snapshot?.selectedAddress?.column, "DATA")
+        waitFor("accepted table profile Last write") {
+            parameterClient.writes.count == initialWrites + 1
+        }
+
+        let failedProfileURL = rootURL.appendingPathComponent("table-failed.toml")
+        try """
+        [casars]
+        format = 1
+        surface = "tablebrowser"
+        kind = "session"
+        contract = 1
+
+        [parameters]
+        table = "\(table.path)"
+        bookmark = "invalid-bookmark"
+        """.write(to: failedProfileURL, atomically: true, encoding: .utf8)
+        store.selectParameterSource(
+            .file,
+            surfaceID: "tablebrowser",
+            instanceID: instanceID,
+            profilePath: failedProfileURL.path,
+            discardEdits: true
+        )
+        store.applySurfaceParameterProfile(
+            surfaceID: "tablebrowser",
+            datasetID: table.id,
+            instanceID: instanceID
+        )
+        runCurrentRunLoop(for: 0.4)
+
+        XCTAssertEqual(store.state.tableBrowsers[table.id]?.status, .failed)
+        XCTAssertEqual(
+            parameterClient.writes.count,
+            initialWrites + 1,
+            "failed backend profile application must preserve managed Last"
+        )
+    }
+
+    func testSharedTableBrowserProfileUsesOneTypedConfigureCommandWithSlashBookmark() throws {
+        let fixtureURL = repositoryRootURL()
+            .appendingPathComponent("resources/test-profiles/tablebrowser-cross-surface.toml")
+        let table = DatasetSummary(
+            id: "fixtures/MAIN",
+            name: "MAIN",
+            path: "fixtures/MAIN",
+            kind: .table,
+            size: "100 rows",
+            units: "casacore table",
+            columns: ["TIME", "DATA"],
+            subtables: ["ANTENNA"],
+            shape: [100],
+            notes: "shared profile table"
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: table.path))
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Shared profile",
+            rootPath: repositoryRootURL().path,
+            datasets: [table],
+            source: .probed
+        )
+        state.tabs = [WorkbenchTab(id: table.explorerTabID, title: "Table", kind: .tableBrowser, datasetID: table.id)]
+        state.activeTabID = table.explorerTabID
+        let store = WorkbenchStore(
+            state: state,
+            tableBrowserClient: tableClient,
+            surfaceParameterClient: RecordingSurfaceParameterClient(),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.selectParameterSource(
+            .file,
+            surfaceID: "tablebrowser",
+            instanceID: table.explorerTabID,
+            profilePath: fixtureURL.path,
+            discardEdits: true
+        )
+        store.applySurfaceParameterProfile(
+            surfaceID: "tablebrowser",
+            datasetID: table.id,
+            instanceID: table.explorerTabID
+        )
+
+        let request = try XCTUnwrap(tableClient.requests.last?.request)
+        XCTAssertEqual(request.commands.count, 1)
+        guard case .configure(let parameters) = try XCTUnwrap(request.commands.first) else {
+            return XCTFail("table startup must use exactly one configure command")
+        }
+        XCTAssertEqual(parameters.view, "keywords")
+        XCTAssertEqual(parameters.rowStart, 4)
+        XCTAssertEqual(parameters.rowCount, 17)
+        XCTAssertEqual(parameters.linkedTable, "ANTENNA")
+        XCTAssertEqual(parameters.bookmark, .tableKeyword(path: ["OBSERVATION", "TIME_RANGE"]))
+        XCTAssertEqual(parameters.contentMode, "detailed")
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+        let commands = try XCTUnwrap(encoded?["commands"] as? [[String: Any]])
+        XCTAssertEqual(commands.first?["command"] as? String, "configure")
+    }
+
+    func testMeasurementSetExplorerUsesCanonicalMsexploreDraft() throws {
+        let measurementSet = DatasetSummary(
+            id: "/data/input.ms",
+            name: "input.ms",
+            path: "/data/input.ms",
+            kind: .measurementSet,
+            size: "4 rows",
+            units: "Jy",
+            dataColumns: ["DATA"],
+            notes: "test MeasurementSet"
+        )
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(result: ProjectFixtureProbe(
+                project: ProjectFixture(name: "Project", rootPath: "/data", datasets: [measurementSet], source: .probed),
+                diagnostics: []
+            ))
+        )
+
+        store.openProject(path: "/data")
+        let session = try XCTUnwrap(store.parameterSession(
+            surfaceID: "msexplore",
+            instanceID: measurementSet.explorerTabID
+        ))
+        XCTAssertEqual(session.snapshot.states["vis"]?.value, .array([.string(measurementSet.path)]))
+        XCTAssertEqual(store.state.measurementSetPlots[measurementSet.id]?.maxPlotPoints, 10_000_000)
+
+        store.setMeasurementSetPlotPreset(.amplitudeVsFrequency, datasetID: measurementSet.id)
+        XCTAssertEqual(
+            store.parameterSession(surfaceID: "msexplore", instanceID: measurementSet.explorerTabID)?
+                .snapshot.states["preset"]?.value,
+            .string("amplitude_vs_frequency")
+        )
+    }
+
+    func testProcessGenericTaskRunsSimobserveThroughCanonicalProviderInvocation() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-simobserve-run-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -973,18 +1787,15 @@ final class WorkbenchStoreTests: XCTestCase {
             rootURL: rootURL,
             script: """
             #!/bin/sh
-            if [ "$1" = "--json-run" ]; then
-              cat "$2"
-              exit 0
-            fi
-            echo "unexpected arguments: $*" >&2
-            exit 2
+            printf '%s\n' "$@"
+            cat
+            exit 0
             """
         )
         setenv("CASARS_SIMOBSERVE_BIN", binaryURL.path, 1)
         defer { unsetenv("CASARS_SIMOBSERVE_BIN") }
 
-        let request = try makeSimobserveFamilyGenericTaskRequest(rootURL: rootURL)
+        let request = try makeSimobserveGenericTaskRequest(rootURL: rootURL)
         let client = ProcessGenericTaskClient(queue: DispatchQueue(label: "test.simobserve.family"))
         let semaphore = DispatchSemaphore(value: 0)
         var event: GenericTaskEvent?
@@ -995,22 +1806,15 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(semaphore.wait(timeout: .now() + 5), .success)
 
         guard case let .succeeded(result) = event else {
-            XCTFail("expected simobserve family success")
+            XCTFail("expected simobserve success")
             return
         }
-        XCTAssertEqual(result.arguments.first, "--json-run")
-        let requestJSONPath = try XCTUnwrap(result.requestJSONPath)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: requestJSONPath))
-        XCTAssertEqual(result.arguments.dropFirst().first, requestJSONPath)
-        let payload = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
-        XCTAssertEqual(payload?["kind"] as? String, "family")
-        let familyRequest = try XCTUnwrap(payload?["request"] as? [String: Any])
-        XCTAssertEqual(familyRequest["worker_policy"] as? String, "fixed")
-        XCTAssertEqual(familyRequest["row_workers"] as? Int, 2)
-        XCTAssertEqual(familyRequest["channel_workers"] as? Int, 3)
+        XCTAssertEqual(result.arguments, ["--json-run", "-"])
+        XCTAssertTrue(result.stdout.contains("model.image"))
+        XCTAssertTrue(result.stdout.contains("products/family.ms"))
     }
 
-    func testProcessGenericTaskSurfacesSimobserveFamilyValidationFailure() throws {
+    func testProcessGenericTaskSurfacesSimobserveValidationFailure() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("casars-simobserve-fail-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -1026,7 +1830,7 @@ final class WorkbenchStoreTests: XCTestCase {
         setenv("CASARS_SIMOBSERVE_BIN", binaryURL.path, 1)
         defer { unsetenv("CASARS_SIMOBSERVE_BIN") }
 
-        let request = try makeSimobserveFamilyGenericTaskRequest(rootURL: rootURL)
+        let request = try makeSimobserveGenericTaskRequest(rootURL: rootURL)
         let client = ProcessGenericTaskClient(queue: DispatchQueue(label: "test.simobserve.family.failure"))
         let semaphore = DispatchSemaphore(value: 0)
         var event: GenericTaskEvent?
@@ -1074,8 +1878,9 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.loadTaskUISchemaIfNeeded("flagdata")
+        store.setGenericTaskValue(taskID: "flagdata", argumentID: "vis", value: "/data/project/input.ms")
 
-        XCTAssertEqual(store.state.genericTaskValues["flagdata"]?["vis"], "/data/project/input.ms")
+        XCTAssertEqual(store.state.genericTaskValues["flagdata"]?["vis"], "input.ms")
         let summary = try XCTUnwrap(store.state.taskRun.requestSummary)
         XCTAssertTrue(summary.contains("vis=input.ms"))
         XCTAssertFalse(summary.contains("/data/project/input.ms"))
@@ -1659,90 +2464,38 @@ final class WorkbenchStoreTests: XCTestCase {
         )
     }
 
-    func testGenericImagerArgumentsIncludeTutorialParametersAndManagedOutput() throws {
-        let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imager")
+    func testGenericImagerExecutionPreservesCatalogArgumentsAndAddsRuntimeControls() throws {
+        let providerArguments = [
+            "--vis", "/data/twhya.ms",
+            "--imagename", "/data/casa-rs-runs/twhya",
+            "--managed-output", "true",
+            "--specmode", "cube",
+            "--channel-count", "15",
+            "--start", "0.0km/s",
+            "--width", "0.5km/s",
+            "--outframe", "LSRK",
+            "--restfreq", "372.67249GHz",
+            "--deconvolver", "mtmfs",
+            "--weighting", "briggsbwtaper",
+            "--perchanweightdensity",
+            "--gridder", "wproject",
+            "--standard-mfs-acceleration", "metal",
+            "--write-pb",
+            "--pbcor",
+            "--no-preview-pngs"
+        ]
         let request = GenericTaskRequest(
             runID: "run-1",
-            task: TaskCatalogEntry(
-                id: "imager",
-                category: "Imaging",
-                displayName: "Imager",
-                binaryName: "casars-imager",
-                cargoPackage: "casars-imager",
-                overrideEnv: "CASARS_IMAGER_BIN",
-                shellKind: "workflow",
-                interaction: "one_shot",
-                browserKind: nil,
-                datasetKinds: ["measurement_set"],
-                schemaSource: "binary",
-                showInTUI: true,
-                showInSwift: true,
-                includeInSuite: true
-            ),
-            schema: schema,
-            values: [
-                "ms": "/data/twhya.ms",
-                "imagename": "/data/casa-rs-runs/twhya",
-                "imsize": "250",
-                "cell_arcsec": "0.08",
-                "field": "5",
-                "phasecenter_field": "5",
-                "spw": "0",
-                "datacolumn": "DATA",
-                "specmode": "cube",
-                "channel_count": "15",
-                "start": "0.0km/s",
-                "width": "0.5km/s",
-                "outframe": "LSRK",
-                "restfreq": "372.67249GHz",
-                "deconvolver": "mtmfs",
-                "weighting": "briggsbwtaper",
-                "robust": "0.5",
-                "gridder": "wproject",
-                "standard_mfs_acceleration": "metal",
-                "restoringbeam": "common",
-                "niter": "1000",
-                "nmajor": "4",
-                "gain": "0.1",
-                "threshold_jy": "0.00015",
-                "usemask": "auto-multithresh",
-                "noisethreshold": "4.25",
-                "sidelobethreshold": "2.0",
-                "lownoisethreshold": "1.5",
-                "minbeamfrac": "0.3",
-                "negativethreshold": "15.0",
-                "scales": "0,6,10,30,60",
-                "smallscalebias": "0.9",
-                "wterm": "wproject",
-                "wprojplanes": "-1",
-                "nterms": "2",
-                "savemodel": "modelcolumn",
-                "outlierfile": "/data/outliers.txt",
-                "pblimit": "-0.01"
-            ],
-            toggles: [
-                "perchanweightdensity": true,
-                "write_pb": true,
-                "pbcor": true,
-                "write_preview_pngs": false
-            ]
+            task: makeImagerTaskCatalogEntry(),
+            providerInvocation: SurfaceProviderInvocation(args: providerArguments)
         )
 
         let arguments = try ProcessGenericTaskClient.arguments(for: request)
-        XCTAssertTrue(arguments.contains("--managed-output"))
-        XCTAssertTrue(arguments.contains("true"))
-        for flag in [
-            "--specmode", "--channel-count", "--start", "--width", "--outframe",
-            "--restfreq", "--deconvolver", "--weighting", "--perchanweightdensity",
-            "--restoringbeam", "--nmajor", "--gain", "--threshold-jy", "--usemask",
-            "--noisethreshold", "--sidelobethreshold", "--lownoisethreshold",
-            "--minbeamfrac", "--negativethreshold", "--scales", "--smallscalebias",
-            "--gridder", "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
-            "--standard-mfs-acceleration", "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
-        ] {
-            XCTAssertTrue(arguments.contains(flag), "missing \(flag)")
-        }
-        XCTAssertTrue(arguments.contains("metal"))
+        XCTAssertEqual(Array(arguments.prefix(providerArguments.count)), providerArguments)
+        XCTAssertEqual(
+            Array(arguments.suffix(6)),
+            ["--progress", "true", "--progress-max-uv-points", "16384", "--progress-min-interval-ms", "250"]
+        )
     }
 
     func testGenericMutatingTaskRequiresConfirmationBeforeStart() throws {
@@ -1815,11 +2568,18 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.loadTaskUISchemaIfNeeded("flagdata")
+        store.setGenericTaskValue(taskID: "flagdata", argumentID: "vis", value: "/data/project/input.ms")
+        XCTAssertFalse(
+            store.taskRequiresConfirmation(taskID: "flagdata"),
+            "historical mutationClass must not override catalog safety for summary mode"
+        )
+        store.setGenericTaskValue(taskID: "flagdata", argumentID: "mode", value: "manual")
+        XCTAssertTrue(store.taskRequiresConfirmation(taskID: "flagdata"))
         store.runTask()
 
         XCTAssertTrue(taskClient.requests.isEmpty)
         XCTAssertEqual(store.state.taskRun.state, .failed)
-        XCTAssertTrue(store.state.taskRun.diagnostics.contains { $0.contains("Confirm this task") })
+        XCTAssertTrue(store.state.taskRun.diagnostics.contains { $0.contains("catalog-declared run risks") })
 
         store.setGenericTaskConfirmation(taskID: "flagdata", confirmed: true)
         store.runTask()
@@ -2645,15 +3405,15 @@ final class WorkbenchStoreTests: XCTestCase {
 
         let state = try XCTUnwrap(store.state.tableBrowsers[tableDataset.id])
         XCTAssertEqual(state.status, .ready)
-        XCTAssertEqual(state.selectedView, "cells")
-        XCTAssertEqual(state.snapshot?.view, "cells")
+        XCTAssertEqual(state.profileView, "summary")
+        XCTAssertEqual(state.snapshot?.view, "overview")
         XCTAssertEqual(state.snapshot?.contentLines.first, "Cells  row=1/12  col=1/3  focus=Main")
         XCTAssertEqual(tableClient.paths, ["/data/MAIN"])
         XCTAssertEqual(store.debugSnapshot().tableBrowsers[tableDataset.id]?.inspectorTitle, "Column DATA")
 
         store.setTableBrowserView("keywords", datasetID: tableDataset.id)
         XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedView, "keywords")
-        XCTAssertEqual(tableClient.requests.map(\.selectedView), ["cells", "keywords"])
+        XCTAssertEqual(tableClient.requests.map(\.selectedView), ["overview", "keywords"])
     }
 
     func testMeasurementSetCanOpenInDedicatedTableBrowserTab() throws {
@@ -2683,11 +3443,12 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.openProject(path: "/data")
         store.openDatasetTableBrowser(msDataset.id)
+        store.setTableBrowserView("cells", datasetID: msDataset.id)
 
         XCTAssertEqual(store.state.activeTabID, "tab-tablebrowser-\(msDataset.id)")
         XCTAssertEqual(store.state.tabs.last?.kind, .tableBrowser)
         XCTAssertEqual(store.state.tabs.last?.title, "Table: example.ms")
-        XCTAssertEqual(tableClient.paths, [msDataset.path])
+        XCTAssertEqual(tableClient.paths, [msDataset.path, msDataset.path])
         waitFor("initial table cell window") {
             store.state.tableBrowsers[msDataset.id]?.cellWindow?.rowCount == 12
         }
@@ -2923,9 +3684,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.count, 3)
         XCTAssertEqual(store.state.tabs.last?.title, "Imager: probed.ms")
         XCTAssertEqual(store.state.activeTaskID, "imager")
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["ms"], "probed.ms")
+        XCTAssertEqual(store.state.genericTaskValues["imager"]?["vis"], "probed.ms")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["field"], "0")
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["phasecenter_field"], "")
+        XCTAssertEqual(store.state.genericTaskValues["imager"]?["phasecenter_field"], "none")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["spw"], "0")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["imagename"], "casa-rs-runs/imager-1/probed.ms-imager")
         XCTAssertEqual(store.state.genericTaskToggles["imager"]?["dirty_only"], true)
@@ -3338,7 +4099,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTaskID, "imager")
         XCTAssertNil(snapshot.taskImagerProgress)
         XCTAssertEqual(store.state.taskRun.state, .idle)
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["ms"], "probed.ms")
+        XCTAssertEqual(store.state.genericTaskValues["imager"]?["vis"], "probed.ms")
     }
 
     func testOpenImagerTaskForImageOpensUnboundSchemaTask() throws {
@@ -3388,7 +4149,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.selectedDatasetID, imageDataset.id)
         XCTAssertEqual(store.state.activeTaskID, "imager")
         XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Imager")
-        XCTAssertNil(store.state.genericTaskValues["imager"]?["ms"])
+        XCTAssertNil(store.state.genericTaskValues["imager"]?["vis"])
         XCTAssertFalse(store.state.lastErrors.contains("Dataset output.image is not a MeasurementSet"))
     }
 
@@ -3422,7 +4183,10 @@ final class WorkbenchStoreTests: XCTestCase {
         store.refreshProjectFromDiskIfNeeded(now: Date(timeIntervalSince1970: 2))
 
         let dataset = try XCTUnwrap(store.state.selectedDataset)
-        let values = try XCTUnwrap(store.state.genericTaskValues["imager"])
+        let values = try XCTUnwrap(
+            store.state.genericTaskValues["imager"],
+            "parameter session errors: \(store.state.lastErrors)"
+        )
         let toggles = try XCTUnwrap(store.state.genericTaskToggles["imager"])
         XCTAssertEqual(store.state.project.source, .directMeasurementSet)
         XCTAssertEqual(probeClient.projectProbeCount, 0)
@@ -3437,20 +4201,20 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(dataset.subtables, ["ANTENNA (required)", "FIELD (required)", "SPECTRAL_WINDOW (required)"])
         XCTAssertTrue(dataset.notes.contains("parent project probe skipped"))
         XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Imager: large.ms")
-        XCTAssertEqual(values["ms"], "large.ms")
+        XCTAssertEqual(values["vis"], "large.ms")
         XCTAssertEqual(values["imagename"], "casa-rs-runs/imager-1/large.ms-imager")
-        XCTAssertEqual(values["field"], "")
+        XCTAssertEqual(values["field"], "none")
         XCTAssertEqual(values["phasecenter_field"], "0")
         XCTAssertEqual(values["specmode"], "cube")
         XCTAssertEqual(values["gridder"], "mosaic")
         XCTAssertEqual(values["interpolation"], "nearest")
         XCTAssertEqual(values["channel_start"], "0")
         XCTAssertEqual(values["channel_count"], "512")
-        XCTAssertEqual(values["imsize"], "1024")
-        XCTAssertEqual(values["cell_arcsec"], "1.0")
+        XCTAssertEqual(values["imsize"], "1024,1024")
+        XCTAssertEqual(values["cell"], "1arcsec,1arcsec")
         XCTAssertEqual(values["weighting"], "briggs")
         XCTAssertEqual(values["niter"], "2048")
-        XCTAssertEqual(values["threshold_jy"], "0.0")
+        XCTAssertEqual(values["threshold"], "0Jy")
         XCTAssertEqual(toggles["dirty_only"], false)
         XCTAssertEqual(toggles["perchanweightdensity"], true)
         XCTAssertEqual(toggles["write_pb"], true)
@@ -3516,7 +4280,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/output")
         store.setGenericTaskValue(taskID: "imager", argumentID: "imsize", value: "256")
-        store.setGenericTaskValue(taskID: "imager", argumentID: "cell_arcsec", value: "0.25")
+        store.setGenericTaskValue(taskID: "imager", argumentID: "cell", value: "0.25arcsec")
         store.setGenericTaskValue(taskID: "imager", argumentID: "weighting", value: "briggs")
         store.setGenericTaskValue(taskID: "imager", argumentID: "channel_start", value: "2")
         store.setGenericTaskValue(taskID: "imager", argumentID: "channel_count", value: "4")
@@ -3756,9 +4520,12 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openProject(path: "/data")
         store.openImagerTaskForSelectedDataset()
 
-        let values = try XCTUnwrap(store.state.genericTaskValues["imager"])
+        let values = try XCTUnwrap(
+            store.state.genericTaskValues["imager"],
+            "parameter session errors: \(store.state.lastErrors)"
+        )
         XCTAssertEqual(values["field"], "5")
-        XCTAssertEqual(values["phasecenter_field"], "")
+        XCTAssertEqual(values["phasecenter_field"], "none")
         XCTAssertEqual(values["spw"], "5")
         XCTAssertEqual(values["polarization"], "YY")
     }
@@ -3808,11 +4575,11 @@ final class WorkbenchStoreTests: XCTestCase {
 
         let values = try XCTUnwrap(store.state.genericTaskValues["imager"])
         XCTAssertEqual(values["field"], "5")
-        XCTAssertEqual(values["phasecenter_field"], "")
+        XCTAssertEqual(values["phasecenter_field"], "none")
         XCTAssertEqual(values["spw"], "0")
         XCTAssertEqual(values["polarization"], "I")
-        XCTAssertEqual(values["imsize"], "250")
-        XCTAssertEqual(values["cell_arcsec"], "0.1")
+        XCTAssertEqual(values["imsize"], "250,250")
+        XCTAssertEqual(values["cell"], "0.1arcsec,0.1arcsec")
         XCTAssertEqual(values["specmode"], "mfs")
         XCTAssertEqual(values["weighting"], "briggs")
     }
@@ -3867,7 +4634,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(plotClient.requests.last?.preset, .uvCoverage)
         XCTAssertNil(plotClient.requests.last?.field)
         XCTAssertNil(plotClient.requests.last?.spectralWindow)
-        XCTAssertEqual(plotClient.requests.last?.maxPlotPoints, WorkbenchState.defaultMeasurementSetPlotMaxPoints)
+        XCTAssertEqual(plotClient.requests.last?.maxPlotPoints, 10_000_000)
         XCTAssertEqual(plotClient.requests.count, 1)
 
         store.setMeasurementSetPlotPreset(.amplitudeVsUvDistance, datasetID: probedDataset.id)
@@ -4143,6 +4910,10 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.runTask()
 
+        XCTAssertNotNil(
+            store.state.taskRun.runID,
+            "task did not start: errors=\(store.state.lastErrors) diagnostics=\(store.state.taskRun.diagnostics)"
+        )
         let runID = tryUnwrap(store.state.taskRun.runID)
         XCTAssertEqual(store.debugSnapshot().runningJobCount, 1)
         XCTAssertEqual(store.debugSnapshot().jobs.first?.kind, .genericTask)
@@ -4281,17 +5052,9 @@ final class WorkbenchStoreTests: XCTestCase {
         let request = GenericTaskRequest(
             runID: "large-stdout",
             task: task,
-            schema: try makeImagerTaskUISchema(),
-            values: [
-                "ms": "/data/probed.ms",
-                "imagename": outputPrefix,
-                "imsize": "256",
-                "cell_arcsec": "1.0",
-                "specmode": "mfs",
-                "weighting": "natural",
-                "deconvolver": "hogbom"
-            ],
-            toggles: ["dirty_only": true]
+            providerInvocation: SurfaceProviderInvocation(
+                args: ["--vis", "/data/probed.ms", "--imagename", outputPrefix]
+            )
         )
         let client = ProcessGenericTaskClient(
             queue: DispatchQueue(label: "casars.mac.test.large-stdout")
@@ -4379,17 +5142,9 @@ final class WorkbenchStoreTests: XCTestCase {
         let request = GenericTaskRequest(
             runID: "jsonl-progress",
             task: task,
-            schema: try makeImagerTaskUISchema(),
-            values: [
-                "ms": "/data/probed.ms",
-                "imagename": outputPrefix,
-                "imsize": "256",
-                "cell_arcsec": "1.0",
-                "specmode": "mfs",
-                "weighting": "natural",
-                "deconvolver": "hogbom"
-            ],
-            toggles: ["dirty_only": true],
+            providerInvocation: SurfaceProviderInvocation(
+                args: ["--vis", "/data/probed.ms", "--imagename", outputPrefix]
+            ),
             workingDirectoryPath: tempRoot.path
         )
         let client = ProcessGenericTaskClient(
@@ -4634,6 +5389,7 @@ private final class StubImageExplorerClient: ImageExplorerClient {
     private(set) var paths: [String] = []
     private(set) var requests: [Request] = []
     var snapshot: ImageExplorerSnapshot
+    var error: Error?
     var failWhenCommandsAreQueued = false
 
     init(snapshot: ImageExplorerSnapshot) {
@@ -4657,6 +5413,9 @@ private final class StubImageExplorerClient: ImageExplorerClient {
                 transientCommands: request.transientCommands
             )
         )
+        if let error {
+            throw error
+        }
         if failWhenCommandsAreQueued && (!request.commands.isEmpty || !request.transientCommands.isEmpty) {
             throw NSError(domain: "StubImageExplorerClient", code: 42, userInfo: [NSLocalizedDescriptionKey: "bad region command sequence"])
         }
@@ -4707,8 +5466,115 @@ private final class StubTableBrowserClient: TableBrowserClient {
         paths.append(request.datasetPath)
         requests.append(Request(request: request))
         var nextSnapshot = snapshot
-        nextSnapshot.view = request.selectedView
+        let views = ["overview", "columns", "keywords", "cells", "subtables"]
+        var viewIndex = views.firstIndex(of: request.selectedView) ?? 0
+        var row = 0
+        var column = "DATA"
+        var configuredAddress: TableBrowserSnapshot.SelectedAddress?
+        for command in request.commands {
+            switch command {
+            case .configure(let parameters):
+                viewIndex = views.firstIndex(of: parameters.view) ?? 0
+                row = parameters.rowStart
+                if let linkedTable = parameters.linkedTable {
+                    nextSnapshot.tablePath = "\(request.datasetPath)/\(linkedTable)"
+                }
+                switch parameters.bookmark {
+                case .cell(let bookmarkRow, let bookmarkColumn):
+                    row = bookmarkRow
+                    column = bookmarkColumn
+                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                        kind: "cell",
+                        tablePath: nextSnapshot.tablePath,
+                        row: bookmarkRow,
+                        column: bookmarkColumn,
+                        keywordPath: nil,
+                        valuePath: nil,
+                        source: nil,
+                        targetPath: nil
+                    )
+                case .tableKeyword(let path):
+                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                        kind: "table_keyword",
+                        tablePath: nextSnapshot.tablePath,
+                        row: nil,
+                        column: nil,
+                        keywordPath: path,
+                        valuePath: nil,
+                        source: nil,
+                        targetPath: nil
+                    )
+                case .columnKeyword(let owner, let path):
+                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                        kind: "column_keyword",
+                        tablePath: nextSnapshot.tablePath,
+                        row: nil,
+                        column: owner,
+                        keywordPath: path,
+                        valuePath: nil,
+                        source: nil,
+                        targetPath: nil
+                    )
+                case .subtable(let name):
+                    configuredAddress = TableBrowserSnapshot.SelectedAddress(
+                        kind: "subtable",
+                        tablePath: nextSnapshot.tablePath,
+                        row: nil,
+                        column: nil,
+                        keywordPath: nil,
+                        valuePath: nil,
+                        source: name,
+                        targetPath: "\(request.datasetPath)/\(name)"
+                    )
+                case nil:
+                    break
+                }
+            case .cycleView(let forward):
+                viewIndex = (viewIndex + (forward ? 1 : views.count - 1)) % views.count
+                row = 0
+            case .moveDown(let steps): row += steps
+            case .moveUp(let steps): row = max(0, row - steps)
+            case .moveRight: column = "DATA"
+            case .moveLeft: column = "TIME"
+            case .activate:
+                viewIndex = 0
+                row = 0
+            default:
+                break
+            }
+        }
+        nextSnapshot.view = views[viewIndex]
         nextSnapshot.focus = request.focus
+        if let configuredAddress {
+            nextSnapshot.selectedAddress = configuredAddress
+        } else {
+            switch nextSnapshot.view {
+        case "cells":
+            nextSnapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+                kind: "cell",
+                tablePath: request.datasetPath,
+                row: row,
+                column: column,
+                keywordPath: nil,
+                valuePath: nil,
+                source: nil,
+                targetPath: nil
+            )
+        case "subtables":
+            nextSnapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+                kind: "subtable",
+                tablePath: request.datasetPath,
+                row: nil,
+                column: nil,
+                keywordPath: nil,
+                valuePath: nil,
+                source: "ANTENNA",
+                targetPath: "\(request.datasetPath)/ANTENNA"
+            )
+        default:
+            break
+            }
+        }
         return nextSnapshot
     }
 
@@ -5136,6 +6002,17 @@ private func repositoryRootURL() -> URL {
     return url
 }
 
+private func canonicalJSONObject(_ value: SurfaceParameterValue) -> Any {
+    switch value {
+    case .bool(let value): value
+    case .integer(let value): value
+    case .float(let value): value
+    case .string(let value): value
+    case .array(let values): values.map(canonicalJSONObject)
+    case .table(let values): values.mapValues(canonicalJSONObject)
+    }
+}
+
 private func makeImheadTaskCatalogEntry() -> TaskCatalogEntry {
     makeTaskCatalogEntry(id: "imhead", displayName: "Image Header")
 }
@@ -5215,10 +6092,10 @@ private func makeImagerTaskUISchema() throws -> TaskUISchema {
         "raw_stderr_available": true
       },
       "arguments": [
-        {"id":"ms","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--ms"],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"measurement_set_path","required":true,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
+        {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--ms"],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"path","required":true,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
         {"id":"imagename","label":"Image Prefix","order":1,"parser":{"kind":"option","flags":["--imagename"],"metavar":"PREFIX","choices":[]},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Products","advanced":false,"hidden_in_tui":false},
         {"id":"imsize","label":"Image Size","order":2,"parser":{"kind":"option","flags":["--imsize"],"metavar":"PIXELS","choices":[]},"value_kind":"string","required":true,"default":"512","help":"","group":"Stage Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"cell_arcsec","label":"Cell Size","order":3,"parser":{"kind":"option","flags":["--cell-arcsec"],"metavar":"ARCSEC","choices":[]},"value_kind":"float","required":true,"default":"1.0","help":"","group":"Stage Parameters","advanced":false,"hidden_in_tui":false},
+        {"id":"cell","label":"Cell Size","order":3,"parser":{"kind":"option","flags":["--cell-arcsec"],"metavar":"ARCSEC","choices":[]},"value_kind":"string","required":true,"default":"1.0arcsec","help":"","group":"Stage Parameters","advanced":false,"hidden_in_tui":false},
         {"id":"datacolumn","label":"Data Column","order":4,"parser":{"kind":"option","flags":["--datacolumn"],"metavar":"NAME","choices":["DATA","CORRECTED_DATA","MODEL_DATA"]},"value_kind":"choice","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
         {"id":"field","label":"Fields","order":7,"parser":{"kind":"option","flags":["--field"],"metavar":"IDS","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
         {"id":"phasecenter_field","label":"Phasecenter Field","order":8,"parser":{"kind":"option","flags":["--phasecenter-field"],"metavar":"ID","choices":[]},"value_kind":"string","required":false,"default":null,"help":"","group":"Context","advanced":false,"hidden_in_tui":false},
@@ -5231,7 +6108,7 @@ private func makeImagerTaskUISchema() throws -> TaskUISchema {
         {"id":"perchanweightdensity","label":"Per-Channel Density","order":23,"parser":{"kind":"toggle","true_flags":["--perchanweightdensity"],"false_flags":["--no-perchanweightdensity"]},"value_kind":"bool","required":false,"default":"cube:true,cubedata:false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
         {"id":"dirty_only","label":"Dirty Only","order":30,"parser":{"kind":"toggle","true_flags":["--dirty-only"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"niter","label":"Iterations","order":31,"parser":{"kind":"option","flags":["--niter"],"metavar":"N","choices":[]},"value_kind":"string","required":false,"default":"0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
-        {"id":"threshold_jy","label":"Threshold","order":32,"parser":{"kind":"option","flags":["--threshold-jy"],"metavar":"JY","choices":[]},"value_kind":"float","required":false,"default":"0.0","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
+        {"id":"threshold","label":"Threshold","order":32,"parser":{"kind":"option","flags":["--threshold-jy"],"metavar":"JY","choices":[]},"value_kind":"string","required":false,"default":"0.0Jy","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"deconvolver","label":"Deconvolver","order":40,"parser":{"kind":"option","flags":["--deconvolver"],"metavar":"MODE","choices":["hogbom","mtmfs","clark","multiscale"]},"value_kind":"choice","required":true,"default":"hogbom","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"weighting","label":"Weighting","order":50,"parser":{"kind":"option","flags":["--weighting"],"metavar":"MODE","choices":["natural","uniform","briggs","briggsbwtaper"]},"value_kind":"choice","required":true,"default":"natural","help":"","group":"Stages","advanced":false,"hidden_in_tui":false},
         {"id":"write_pb","label":"Primary Beam","order":53,"parser":{"kind":"toggle","true_flags":["--write-pb"],"false_flags":[]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Stages","advanced":true,"hidden_in_tui":false},
@@ -5254,42 +6131,10 @@ private func makeImheadTaskUISchema() throws -> TaskUISchema {
       "summary": "Inspect CASA image metadata.",
       "usage": "imexplore imhead <image>",
       "arguments": [
-        {"id":"image_path","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+        {"id":"imagename","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
         {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","list"]},"value_kind":"choice","required":false,"default":"summary","help":"","group":"Output","advanced":false,"hidden_in_tui":false},
-        {"id":"json","label":"JSON","order":2,"parser":{"kind":"toggle","true_flags":["--json"],"false_flags":["--no-json"]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Output","advanced":false,"hidden_in_tui":false}
-      ]
-    }
-    """.utf8))
-}
-
-private func makeSimobserveTaskUISchema() throws -> TaskUISchema {
-    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
-    {
-      "schema_version": 1,
-      "command_id": "simobserve",
-      "invocation_name": "simobserve",
-      "display_name": "SimObserve",
-      "category": "Simulation",
-      "summary": "Generate synthetic MeasurementSets from CLI parameters or saved family JSON.",
-      "usage": "simobserve --json-run family.json",
-      "arguments": [
-        {"id":"request_kind","label":"Request Kind","order":0,"parser":{"kind":"option","flags":[],"metavar":"run|family","choices":["run","family"]},"value_kind":"choice","parameter_type":"simobserve_request_kind","required":false,"default":"run","help":"","group":"Saved JSON","advanced":false,"hidden_in_tui":false},
-        {"id":"request_json","label":"Request JSON","order":1,"parser":{"kind":"option","flags":[],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"output_json_path","required":false,"default":".casa-rs/requests/simobserve-family.json","help":"","group":"Saved JSON","advanced":false,"hidden_in_tui":false},
-        {"id":"source_model","label":"Source Model","order":2,"parser":{"kind":"option","flags":[],"metavar":"JSON","choices":[]},"value_kind":"string","parameter_type":"json_object","required":false,"default":"{\\"kind\\":\\"analytic_components\\",\\"components\\":[{\\"kind\\":\\"point\\",\\"l_rad\\":0.0,\\"m_rad\\":0.0,\\"spectrum\\":{\\"flux_jy\\":1.0}}]}","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"telescope","label":"Telescope","order":3,"parser":{"kind":"option","flags":[],"metavar":"NAME","choices":["VLA","ALMA","ACA"]},"value_kind":"choice","parameter_type":"telescope_family","required":false,"default":"VLA","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"array_config","label":"Array Config","order":4,"parser":{"kind":"option","flags":[],"metavar":"CONFIG","choices":["A","vla.b.cfg","vla.c.cfg","vla.d.cfg","alma.cycle10.5.cfg","aca.cycle10.cfg","synthetic-vla-d","synthetic-alma-compact","synthetic-aca","synthetic-simalma"]},"value_kind":"choice","parameter_type":"array_configuration","required":false,"default":"A","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"band","label":"Band","order":5,"parser":{"kind":"option","flags":[],"metavar":"BAND","choices":["L","S","C","X","Ku","K","Ka","Q","Band 3","Band 6","Band 7","Band 9"]},"value_kind":"choice","parameter_type":"receiver_band","required":false,"default":"Q","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"target_ms_size_gib","label":"Target MS Size","order":6,"parser":{"kind":"option","flags":[],"metavar":"GiB","choices":[]},"value_kind":"float","parameter_type":"data_size_gib","required":false,"default":"0.01","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"output_ms","label":"Family Output MS","order":7,"parser":{"kind":"option","flags":[],"metavar":"PATH","choices":[]},"value_kind":"path","parameter_type":"output_measurement_set_path","required":false,"default":"simobserve-family.ms","help":"","group":"Family Parameters","advanced":false,"hidden_in_tui":false},
-        {"id":"polarizations","label":"Polarizations","order":8,"parser":{"kind":"option","flags":[],"metavar":"N","choices":["1","2","4"]},"value_kind":"choice","parameter_type":"integer_count","required":false,"default":"2","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
-        {"id":"ms_channels","label":"MS Channels","order":9,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"4","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
-        {"id":"image_channels","label":"Image Channels","order":10,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"1","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
-        {"id":"pointing_count","label":"Pointings","order":11,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"1","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
-        {"id":"imaging_mode","label":"Imaging Mode","order":12,"parser":{"kind":"option","flags":[],"metavar":"MODE","choices":["single_field","mfs","mosaic","spectral_cube","cubedata","mt_mfs","simalma","aca"]},"value_kind":"choice","parameter_type":"mode","required":false,"default":"mfs","help":"","group":"Family Dimensions","advanced":false,"hidden_in_tui":false},
-        {"id":"worker_policy","label":"Worker Policy","order":13,"parser":{"kind":"option","flags":[],"metavar":"auto|fixed","choices":["auto","fixed"]},"value_kind":"choice","parameter_type":"worker_policy","required":false,"default":"auto","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false},
-        {"id":"row_workers","label":"Row Workers","order":14,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false},
-        {"id":"channel_workers","label":"Channel Workers","order":15,"parser":{"kind":"option","flags":[],"metavar":"N","choices":[]},"value_kind":"string","parameter_type":"integer_count","required":false,"default":"","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false},
-        {"id":"measure_actual_size","label":"Measure Actual Size","order":16,"parser":{"kind":"option","flags":[],"metavar":"BOOL","choices":[]},"value_kind":"bool","parameter_type":"boolean","required":false,"default":"false","help":"","group":"Family Workers","advanced":false,"hidden_in_tui":false}
+        {"id":"hdkey","label":"Header Key","order":2,"parser":{"kind":"option","flags":["--hdkey"],"metavar":"KEY","choices":[]},"value_kind":"string","required":false,"default":"none","help":"","group":"Header","advanced":false,"hidden_in_tui":false},
+        {"id":"hdvalue","label":"Header Value","order":3,"parser":{"kind":"option","flags":["--hdvalue"],"metavar":"VALUE","choices":[]},"value_kind":"string","required":false,"default":"none","help":"","group":"Header","advanced":false,"hidden_in_tui":false}
       ]
     }
     """.utf8))
@@ -5311,6 +6156,83 @@ private func makeImstatTaskUISchema() throws -> TaskUISchema {
       ]
     }
     """.utf8))
+}
+
+private final class RecordingSurfaceParameterClient: SurfaceParameterClient {
+    struct Write: Equatable {
+        var surfaceID: String
+        var workspace: String
+        var values: [String: SurfaceParameterValue]
+        var successful: Bool
+    }
+
+    private let base = UniFFISurfaceParameterClient()
+    private(set) var writes: [Write] = []
+    var resolveFailure: ((SurfaceParameterPatch, SurfaceParameterPatch) -> Error?)?
+
+    func loadBundle(surfaceID: String) throws -> SurfaceParameterBundle {
+        try base.loadBundle(surfaceID: surfaceID)
+    }
+
+    func defaults(surfaceID: String) throws -> SurfaceParameterSnapshot {
+        try base.defaults(surfaceID: surfaceID)
+    }
+
+    func last(surfaceID _: String, workspace _: String, successful _: Bool) throws -> SurfaceParameterSnapshot? {
+        nil
+    }
+
+    func load(surfaceID: String, profileTOML: String, sourcePath: String) throws -> SurfaceParameterSnapshot {
+        try base.load(surfaceID: surfaceID, profileTOML: profileTOML, sourcePath: sourcePath)
+    }
+
+    func resolve(
+        surfaceID: String,
+        baseSource: SurfaceParameterBaseSource,
+        profileTOML: String?,
+        profilePath: String?,
+        context: SurfaceParameterPatch,
+        override: SurfaceParameterPatch
+    ) throws -> SurfaceParameterSnapshot {
+        if let error = resolveFailure?(context, override) {
+            throw error
+        }
+        return try base.resolve(
+            surfaceID: surfaceID,
+            baseSource: baseSource,
+            profileTOML: profileTOML,
+            profilePath: profilePath,
+            context: context,
+            override: override
+        )
+    }
+
+    func save(
+        surfaceID: String,
+        values: [String: SurfaceParameterValue],
+        destinationPath: String
+    ) throws -> SurfaceParameterWriteResult {
+        try base.save(surfaceID: surfaceID, values: values, destinationPath: destinationPath)
+    }
+
+    func writeLast(
+        surfaceID: String,
+        workspace: String,
+        values: [String: SurfaceParameterValue],
+        successful: Bool
+    ) throws -> SurfaceParameterWriteResult {
+        writes.append(Write(
+            surfaceID: surfaceID,
+            workspace: workspace,
+            values: values,
+            successful: successful
+        ))
+        return SurfaceParameterWriteResult(
+            path: "\(workspace)/.casa-rs/parameters/\(surfaceID)/\(successful ? "last-successful" : "last").toml",
+            bytesWritten: 0,
+            managedKind: successful ? "last_successful" : "last"
+        )
+    }
 }
 
 private final class HoldingGenericTaskClient: GenericTaskClient {
@@ -5344,30 +6266,14 @@ private final class HoldingGenericTaskClient: GenericTaskClient {
     }
 }
 
-private func makeSimobserveFamilyGenericTaskRequest(rootURL: URL) throws -> GenericTaskRequest {
+private func makeSimobserveGenericTaskRequest(rootURL: URL) throws -> GenericTaskRequest {
     GenericTaskRequest(
         runID: "simobserve-1",
         task: makeSimobserveTaskCatalogEntry(),
-        schema: try makeSimobserveTaskUISchema(),
-        values: [
-            "request_kind": "family",
-            "request_json": "requests/family.json",
-            "source_model": #"{"kind":"analytic_components","components":[{"kind":"point","l_rad":0.0,"m_rad":0.0,"spectrum":{"flux_jy":1.0}}]}"#,
-            "telescope": "VLA",
-            "array_config": "synthetic-vla-d",
-            "band": "Q",
-            "target_ms_size_gib": "0.01",
-            "output_ms": "products/family.ms",
-            "polarizations": "4",
-            "ms_channels": "8",
-            "image_channels": "2",
-            "pointing_count": "3",
-            "imaging_mode": "mosaic",
-            "worker_policy": "fixed",
-            "row_workers": "2",
-            "channel_workers": "3"
-        ],
-        toggles: [:],
+        providerInvocation: SurfaceProviderInvocation(
+            args: ["--json-run", "-"],
+            stdin: #"{"kind":"family","request":{"model":"model.image","output_ms":"products/family.ms"}}"#
+        ),
         workingDirectoryPath: rootURL.path
     )
 }
@@ -5395,6 +6301,13 @@ private func waitFor(
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
     }
     XCTFail("Timed out waiting for \(description)")
+}
+
+private func runCurrentRunLoop(for duration: TimeInterval) {
+    let deadline = Date().addingTimeInterval(duration)
+    while Date() < deadline {
+        RunLoop.current.run(mode: .default, before: min(deadline, Date().addingTimeInterval(0.01)))
+    }
 }
 
 private func tryUnwrap<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) -> T {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write as _};
+use std::path::PathBuf;
 use std::process::{Child, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,8 @@ use crate::registry::ResolvedCommand;
 pub(crate) struct ExecutionPlan {
     pub command: ResolvedCommand,
     pub arguments: Vec<OsString>,
+    pub stdin: Option<String>,
+    pub working_directory: PathBuf,
     pub renderer: Option<String>,
     pub file_output_path: Option<String>,
 }
@@ -54,13 +57,26 @@ pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, Stri
     let mut command = plan.command.command();
     command
         .args(&plan.arguments)
-        .stdin(Stdio::null())
+        .current_dir(&plan.working_directory)
+        .stdin(if plan.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawn subprocess: {error}"))?;
+    if let Some(payload) = plan.stdin.as_deref() {
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| "subprocess stdin was not captured".to_string())?
+            .write_all(payload.as_bytes())
+            .map_err(|error| format!("write subprocess stdin: {error}"))?;
+    }
     let stdout = child
         .stdout
         .take()
@@ -159,6 +175,8 @@ mod tests {
                 "-c".into(),
                 "printf 'hello\\n'; printf 'oops\\n' >&2; exit 3".into(),
             ],
+            stdin: None,
+            working_directory: PathBuf::from("."),
             renderer: None,
             file_output_path: None,
         };
@@ -192,6 +210,8 @@ mod tests {
         let plan = ExecutionPlan {
             command: ResolvedCommand::direct("sh"),
             arguments: vec!["-c".into(), "sleep 5".into()],
+            stdin: None,
+            working_directory: PathBuf::from("."),
             renderer: None,
             file_output_path: None,
         };
@@ -215,5 +235,42 @@ mod tests {
         }
 
         assert!(!exit.expect("exit after cancel").success);
+    }
+
+    #[test]
+    fn spawn_process_uses_workspace_and_projected_stdin() {
+        let workspace = tempfile::tempdir().unwrap();
+        let plan = ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec![
+                "-c".into(),
+                "pwd; IFS= read -r line; printf 'stdin=%s\\n' \"$line\"".into(),
+            ],
+            stdin: Some("family-request\n".to_string()),
+            working_directory: workspace.path().to_path_buf(),
+            renderer: None,
+            file_output_path: None,
+        };
+
+        let process = spawn_process(&plan).expect("spawn process");
+        let mut stdout = String::new();
+        let mut exit = None;
+        for _ in 0..80 {
+            match process.try_recv() {
+                Ok(ExecutionEvent::Stdout(chunk)) => stdout.push_str(&chunk),
+                Ok(ExecutionEvent::Exited(status)) => {
+                    exit = Some(status);
+                    break;
+                }
+                Ok(ExecutionEvent::Stderr(_)) | Err(mpsc::TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => panic!("unexpected channel error: {error}"),
+            }
+        }
+
+        assert!(exit.expect("process exit").success);
+        assert!(stdout.contains(&workspace.path().to_string_lossy().into_owned()));
+        assert!(stdout.contains("stdin=family-request"));
     }
 }

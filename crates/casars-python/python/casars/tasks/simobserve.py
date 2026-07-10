@@ -1,11 +1,15 @@
-"""Synthetic-observation task wrapper backed by the canonical Rust JSON contract."""
+"""Synthetic-observation task wrappers for direct machine invocations.
+
+Human-authored and saved configurations use ``casars.parameters`` sparse TOML;
+the dictionary functions in this module remain direct machine-protocol calls
+and never update managed Last state. Use
+:func:`casars.tasks.profiles.simobserve` for the unified CASA-named lifecycle.
+"""
 
 from __future__ import annotations
 
 import os
-import json
 from os import PathLike
-from pathlib import Path
 from typing import Any, TypeAlias
 
 from .._task_runtime import (
@@ -14,7 +18,6 @@ from .._task_runtime import (
     fetch_simobserve_schema,
     get_simobserve_protocol_info,
     invoke_simobserve_task,
-    invoke_simobserve_task_file,
 )
 
 StrPath: TypeAlias = str | PathLike[str]
@@ -49,29 +52,6 @@ def family(request: dict[str, Any], *, binary: StrPath | None = None) -> TaskRes
     """Execute one canonical synthetic-MS family request."""
 
     return invoke_simobserve_task(kind="family", request=request, binary=binary)
-
-
-def run_file(source: StrPath, *, binary: StrPath | None = None) -> TaskResult:
-    """Execute a saved canonical ``simobserve`` JSON request file."""
-
-    return invoke_simobserve_task_file(source, binary=binary)
-
-
-def save_request(path: StrPath, *, kind: str, request: dict[str, Any]) -> None:
-    """Save a canonical ``simobserve`` request envelope."""
-
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        json.dumps({"kind": kind, "request": request}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def load_request(path: StrPath) -> dict[str, Any]:
-    """Load a canonical ``simobserve`` request envelope."""
-
-    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def vla_ppdisk(

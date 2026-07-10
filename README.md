@@ -315,6 +315,14 @@ The current `calibrate` operator guide lives at:
 
 - [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
 
+The accepted cross-surface parameter profile and managed Last contract lives
+at:
+
+- [`docs/task-parameters.md`](docs/task-parameters.md)
+
+It defines sparse TOML profiles shared by all cataloged task and browser-session
+surfaces, including managed Last and Last Successful behavior.
+
 Plot text rendering is platform-dependent today. On macOS, `casars` uses
 Plotters' system-font (`ttf`) path so charts pick up real platform fonts. On
 non-macOS targets, it uses Plotters' `ab_glyph` path instead so the workspace

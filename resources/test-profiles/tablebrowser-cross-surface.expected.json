@@ -1,0 +1,12 @@
+{
+  "surface": "tablebrowser",
+  "values": {
+    "table": "fixtures/MAIN",
+    "view": "keywords",
+    "bookmark": "table-keyword:OBSERVATION/TIME_RANGE",
+    "rowstart": 4,
+    "nrow": 17,
+    "linkedtable": "ANTENNA",
+    "contentmode": "detailed"
+  }
+}

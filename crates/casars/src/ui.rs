@@ -348,7 +348,11 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout) {
 
     draw_form(frame, app, layout, palette);
     draw_result(frame, app, layout, palette);
-    if app.path_chooser_active() {
+    if app.parameter_profile_path_entry_active() {
+        draw_parameter_profile_path_entry(frame, app, layout, palette);
+    } else if app.parameter_source_confirmation_message().is_some() {
+        draw_parameter_source_confirmation(frame, app, layout, palette);
+    } else if app.path_chooser_active() {
         draw_path_chooser(frame, app, layout, palette);
     } else if app.choice_picker_active() {
         draw_choice_picker(frame, app, layout, palette);
@@ -1250,6 +1254,124 @@ fn draw_path_chooser(frame: &mut Frame<'_>, app: &AppState, layout: &UiLayout, p
     }
     frame.render_widget(
         Paragraph::new("Enter/Space choose  Right/l open dir  Backspace parent  Arrows/jk move")
+            .style(Style::default().fg(palette.footer_fg)),
+        Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        },
+    );
+}
+
+fn draw_parameter_profile_path_entry(
+    frame: &mut Frame<'_>,
+    app: &AppState,
+    layout: &UiLayout,
+    palette: Theme,
+) {
+    let area = centered_rect(
+        layout.body.width.min(84),
+        layout.body.height.min(8),
+        layout.body,
+    );
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title(
+            app.parameter_profile_path_entry_title()
+                .unwrap_or("Parameter Profile"),
+        )
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.active_pane_border_fg))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let value = app.parameter_profile_path_entry_value().unwrap_or("");
+    frame.render_widget(
+        Paragraph::new(format!("Path: {value}█"))
+            .style(Style::default().fg(palette.footer_fg))
+            .wrap(Wrap { trim: false }),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 2.min(inner.height),
+        },
+    );
+
+    if let Some(error) = app.parameter_profile_path_entry_error() {
+        frame.render_widget(
+            Paragraph::new(error)
+                .style(Style::default().fg(palette.status_error_fg))
+                .wrap(Wrap { trim: false }),
+            Rect {
+                x: inner.x,
+                y: inner.y.saturating_add(2),
+                width: inner.width,
+                height: inner.height.saturating_sub(3),
+            },
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("Enter open/save  Backspace edit  Paste supported  Esc cancel")
+            .style(Style::default().fg(palette.footer_fg)),
+        Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        },
+    );
+}
+
+fn draw_parameter_source_confirmation(
+    frame: &mut Frame<'_>,
+    app: &AppState,
+    layout: &UiLayout,
+    palette: Theme,
+) {
+    let area = centered_rect(
+        layout.body.width.min(72),
+        layout.body.height.min(7),
+        layout.body,
+    );
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title("Replace Modified Parameters?")
+        .title_style(
+            Style::default()
+                .fg(palette.header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_set(palette.border_set)
+        .border_style(Style::default().fg(palette.status_error_fg))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(
+            app.parameter_source_confirmation_message()
+                .unwrap_or_default(),
+        )
+        .style(Style::default().fg(palette.footer_fg))
+        .wrap(Wrap { trim: false }),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        },
+    );
+    frame.render_widget(
+        Paragraph::new("Enter/y discard and load  Esc/n keep current draft")
             .style(Style::default().fg(palette.footer_fg)),
         Rect {
             x: inner.x,

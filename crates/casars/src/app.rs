@@ -6,6 +6,7 @@ pub(crate) use browser_manager::BrowserManagerRowView;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fmt;
+use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -21,13 +22,17 @@ use casa_images::{
     ImageMovieRenderedBundle, ImageMovieSurfaceKind, ImageMovieSurfaceRequest,
 };
 use casa_ms::msexplore::cli::build_explore_spec_from_args;
-use casa_ms::ui_schema::{
-    UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiManagedOutputSchema, UiValueKind,
-};
+use casa_ms::ui_schema::{UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind};
 use casa_ms::{
     MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOptions, MsExportFormat,
     MsPlotPayload, MsPlotPreset, MsSelectionSpec, build_msexplore_payload_from_spec,
     export_msexplore_plot,
+};
+use casa_provider_contracts::{ParameterValue, SurfaceKind, builtin_surface_bundle};
+use casa_task_runtime::{
+    BaseSource, ManagedProfileKind, ManagedStateStore, ParameterProfile, ParameterSession,
+    SessionLastState, TaskLastState, parse_profile, provider_parameter_applies,
+    write_parameter_profile_atomic,
 };
 use casa_types::measures::direction::{
     angular_increment_arcseconds, format_declination_labeled, format_right_ascension_labeled,
@@ -36,14 +41,16 @@ use casa_types::quanta::{MvAngle, MvTime, Quantity, Unit};
 use casars_imagebrowser_protocol::{
     ImageBackendPlaneCacheResult, ImageBackendTimingState, ImageBrowserCommand, ImageBrowserFocus,
     ImageBrowserParameters, ImageBrowserPreviewRequest, ImageBrowserProbe, ImageBrowserSnapshot,
-    ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState, ImagePlaneContentMode,
-    ImageProfilePayload,
+    ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState,
+    ImageMaskReference as ProtocolImageMaskReference, ImagePlaneContentMode, ImageProfilePayload,
+    ImageRegionReference as ProtocolImageRegionReference,
 };
 use casars_imager::{ManagedImagingOutput, ManagedImagingStageTimings};
 use casars_tablebrowser_protocol::{
-    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
-    BrowserInspectorSnapshot, BrowserScalarValue, BrowserSnapshot, BrowserValueNode,
-    BrowserView as TableBrowserView, BrowserViewport,
+    BrowserBookmark, BrowserCommand, BrowserComplex32Value, BrowserComplex64Value,
+    BrowserContentMode, BrowserFocus, BrowserInspectorSnapshot, BrowserParameters,
+    BrowserScalarValue, BrowserSnapshot, BrowserValueNode, BrowserView as TableBrowserView,
+    BrowserViewport,
 };
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -123,8 +130,8 @@ const IMAGE_PLANE_MIN_TARGET_IMAGE_PIXELS: u32 = 160;
 const IMAGE_SPECTRUM_TARGET_PIXELS_PER_SAMPLE: u32 = 12;
 const IMAGE_SPECTRUM_MIN_TARGET_PLOT_WIDTH: u32 = 256;
 const IMAGE_SPECTRUM_TARGET_PLOT_HEIGHT: u32 = 192;
-const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 9] = [
-    "image_path",
+const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 17] = [
+    "image",
     "blc",
     "trc",
     "inc",
@@ -133,6 +140,14 @@ const IMEXPLORE_LIVE_PARAMETER_FIELD_IDS: [&str; 9] = [
     "clip_low",
     "clip_high",
     "fps",
+    "view",
+    "contentmode",
+    "colormap",
+    "movieaxis",
+    "profileaxis",
+    "loop",
+    "region",
+    "mask",
 ];
 const RESULT_TAB_COUNT: usize = 17;
 const BROWSE_SUFFIX: &str = " [browse]";
@@ -149,6 +164,8 @@ enum InputMode {
     Browser,
     Edit,
     PathChooser,
+    ParameterProfilePath,
+    ParameterSourceConfirmation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +292,13 @@ enum BrowserRequest {
     SetImageViewParameters {
         parameters: ImageBrowserParameters,
     },
+    SetImageProfileAxis {
+        axis: usize,
+    },
+    SetImageSelectionReferences {
+        region: Option<ProtocolImageRegionReference>,
+        mask: Option<ProtocolImageMaskReference>,
+    },
     PageUp {
         pages: usize,
     },
@@ -305,6 +329,20 @@ enum PathChooserAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParameterProfilePathAction {
+    Cancel,
+    Commit,
+    DeleteBackward,
+    Insert(char),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParameterSourceConfirmationAction {
+    Cancel,
+    Confirm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppAction {
     Quit,
     BackToLauncher,
@@ -317,6 +355,10 @@ enum AppAction {
     ToggleAdvanced,
     CancelSession,
     OpenPathChooser,
+    OpenParameterSources,
+    LoadParameterDefaults,
+    LoadParameterLast,
+    RevertParameters,
     ClearSelection,
     ToggleHelp,
     Parameter(ParameterAction),
@@ -324,6 +366,8 @@ enum AppAction {
     Browser(BrowserAction),
     Edit(EditAction),
     PathChooser(PathChooserAction),
+    ParameterProfilePath(ParameterProfilePathAction),
+    ParameterSourceConfirmation(ParameterSourceConfirmationAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -682,6 +726,14 @@ pub(crate) struct AppState {
     schema: Option<UiCommandSchema>,
     schema_error: Option<String>,
     fields: Vec<FormField>,
+    parameter_session: Option<ParameterSession>,
+    pending_live_parameter_rollback: Option<ParameterSession>,
+    parameter_edit_errors: BTreeMap<String, String>,
+    parameter_workspace: PathBuf,
+    save_last: bool,
+    session_last_state: Option<SessionLastState>,
+    parameter_profile_path_entry: Option<ParameterProfilePathEntryState>,
+    pending_parameter_replacement: Option<ParameterDraftReplacement>,
     sections: Vec<FormSection>,
     selected_form: FormSelection,
     show_advanced: bool,
@@ -728,6 +780,7 @@ struct RunningState {
     renderer: Option<String>,
     file_output_path: Option<String>,
     cancel_requested: bool,
+    task_last_state: Option<TaskLastState>,
 }
 
 #[derive(Debug)]
@@ -747,6 +800,30 @@ struct TableBrowserSession {
     client: BrowserClient,
     snapshot: BrowserSnapshot,
     viewport: BrowserViewport,
+}
+
+#[derive(Debug, Clone)]
+struct TableSessionStartupConfig {
+    parameters: BrowserParameters,
+    requires_configure: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ImageSessionStartupConfig {
+    view_parameters: ImageBrowserParameters,
+    view: ImageBrowserView,
+    enforce_view: bool,
+    content_mode: ImagePlaneContentMode,
+    content_mode_explicit: bool,
+    colormap: ImagePlaneColormap,
+    movie_axis: String,
+    profile_axis: String,
+    fps: f64,
+    looping: bool,
+    region: ProtocolImageRegionReference,
+    region_explicit: bool,
+    mask: ProtocolImageMaskReference,
+    mask_explicit: bool,
 }
 
 #[derive(Debug)]
@@ -838,6 +915,7 @@ struct ImageMovieState {
     fps: f64,
     frame_interval: Duration,
     last_advanced_at: Option<Instant>,
+    looping: bool,
     direct_overlay: bool,
     terminal_looping: bool,
 }
@@ -855,6 +933,7 @@ impl ImageMovieState {
             fps,
             frame_interval: Duration::from_secs_f64(1.0 / fps),
             last_advanced_at: None,
+            looping: false,
             direct_overlay: false,
             terminal_looping: false,
         }
@@ -1883,6 +1962,53 @@ struct PathChooserState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParameterProfilePathMode {
+    Open,
+    SaveAs,
+}
+
+impl ParameterProfilePathMode {
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Open => "Open Parameter Profile",
+            Self::SaveAs => "Save Parameter Profile As",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ParameterProfilePathEntryState {
+    mode: ParameterProfilePathMode,
+    buffer: String,
+    error: Option<String>,
+    replace_existing: bool,
+}
+
+#[derive(Debug, Clone)]
+enum ParameterDraftReplacement {
+    Defaults,
+    Last,
+    LastSuccessful,
+    File {
+        path: PathBuf,
+        profile: ParameterProfile,
+    },
+    Revert,
+}
+
+impl ParameterDraftReplacement {
+    fn label(&self) -> String {
+        match self {
+            Self::Defaults => "Defaults".to_string(),
+            Self::Last => "Last".to_string(),
+            Self::LastSuccessful => "Last Successful".to_string(),
+            Self::File { path, .. } => format!("profile {}", path.display()),
+            Self::Revert => "the selected source".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PathChooserTarget {
     Field(usize),
     WorkflowImportChainTable,
@@ -2052,6 +2178,7 @@ struct ChoicePickerState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChoicePickerTarget {
     Field(usize),
+    ParameterSource,
     WorkflowContextSetting(WorkflowContextSettingKind),
     WorkflowProductAction(WorkflowProductActionKind),
     WorkflowChainSetting(usize, WorkflowChainSettingKind),
@@ -2175,11 +2302,15 @@ impl AppState {
 
     pub(crate) fn from_schema_with_config(
         app: RegistryApp,
-        schema: UiCommandSchema,
+        _schema: UiCommandSchema,
         config_store: ConfigStore,
     ) -> Self {
+        let schema = match app.load_schema() {
+            Ok(schema) => schema,
+            Err(error) => return Self::schema_error_with_config(app, error, config_store),
+        };
         let default_summary_view = default_summary_view_for_app(&app.id);
-        let ready_status_line = if app.shell_kind() == AppShellKind::Workflow
+        let mut ready_status_line = if app.shell_kind() == AppShellKind::Workflow
             && app.id == "calibrate"
         {
             "Ready. Choose a stage, review Context and Products, then run the stage action or press r."
@@ -2187,12 +2318,29 @@ impl AppState {
         } else {
             app.ready_status_line().to_string()
         };
+        let parameter_workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let (parameter_session, parameter_warning) =
+            load_interactive_parameter_session(&app.id, &parameter_workspace);
+        if let Some(warning) = &parameter_warning {
+            ready_status_line = warning.clone();
+        }
         let mut fields = schema
             .arguments
             .iter()
             .filter_map(FormField::from_schema)
             .collect::<Vec<_>>();
-        seed_app_field_defaults(&app.id, &mut fields);
+        if let Some(session) = parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut fields, session);
+        }
+        let automatic_save_enabled = !cfg!(test);
+        let session_last_state = app.is_browser_session().then(|| {
+            SessionLastState::new(
+                ManagedStateStore::for_workspace(&parameter_workspace),
+                app.id.clone(),
+                automatic_save_enabled,
+                Duration::from_millis(350),
+            )
+        });
         let sections = build_sections(&app, &fields);
         let selected_form = initial_form_selection(&sections, &fields, false);
 
@@ -2202,6 +2350,14 @@ impl AppState {
             schema: Some(schema),
             schema_error: None,
             fields,
+            parameter_session,
+            pending_live_parameter_rollback: None,
+            parameter_edit_errors: BTreeMap::new(),
+            parameter_workspace: parameter_workspace.clone(),
+            save_last: automatic_save_enabled,
+            session_last_state,
+            parameter_profile_path_entry: None,
+            pending_parameter_replacement: None,
             sections,
             selected_form,
             show_advanced: false,
@@ -2209,7 +2365,11 @@ impl AppState {
             edit_state: None,
             result: ResultState {
                 status_line: ready_status_line,
-                status_kind: StatusKind::Info,
+                status_kind: if parameter_warning.is_some() {
+                    StatusKind::Warning
+                } else {
+                    StatusKind::Info
+                },
                 ..ResultState::default()
             },
             active_result_tab: ResultTab::Overview,
@@ -2273,6 +2433,14 @@ impl AppState {
             schema: None,
             schema_error: Some(error.clone()),
             fields: Vec::new(),
+            parameter_session: None,
+            pending_live_parameter_rollback: None,
+            parameter_edit_errors: BTreeMap::new(),
+            parameter_workspace: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            save_last: true,
+            session_last_state: None,
+            parameter_profile_path_entry: None,
+            pending_parameter_replacement: None,
             sections: Vec::new(),
             selected_form: FormSelection::Section(0),
             show_advanced: false,
@@ -2320,6 +2488,493 @@ impl AppState {
         }
     }
 
+    /// Select the explicit workspace and typed parameter draft for this tab.
+    /// A caller-provided draft preserves its chosen base source; otherwise an
+    /// interactive tab starts from managed Last when it is valid and falls
+    /// back to current defaults with a visible warning.
+    pub(crate) fn configure_parameter_runtime(
+        &mut self,
+        workspace: PathBuf,
+        save_last: bool,
+        session: Option<ParameterSession>,
+    ) {
+        self.parameter_profile_path_entry = None;
+        self.pending_parameter_replacement = None;
+        self.parameter_workspace = workspace;
+        self.save_last = save_last;
+        let (session, warning) = match session {
+            Some(session) => (Some(session), None),
+            None => load_interactive_parameter_session(&self.app.id, &self.parameter_workspace),
+        };
+        self.parameter_session = session;
+        self.pending_live_parameter_rollback = None;
+        self.parameter_edit_errors.clear();
+        if let Some(session) = self.parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        }
+        self.session_last_state = self.app.is_browser_session().then(|| {
+            SessionLastState::new(
+                ManagedStateStore::for_workspace(&self.parameter_workspace),
+                self.app.id.clone(),
+                self.save_last,
+                Duration::from_millis(350),
+            )
+        });
+        if let Some(warning) = warning {
+            self.result.status_line = warning;
+            self.result.status_kind = StatusKind::Warning;
+        }
+    }
+
+    fn record_session_opened(&mut self) {
+        let report = match (
+            self.session_last_state.as_mut(),
+            self.parameter_session.as_ref(),
+        ) {
+            (Some(last), Some(session)) => last.opened(session),
+            _ => return,
+        };
+        match report {
+            Ok(report) => {
+                if let Some(warning) = report.warning {
+                    self.result.status_line = format!(
+                        "{} Warning: could not save session Last: {warning}",
+                        self.result.status_line
+                    );
+                    self.result.status_kind = StatusKind::Warning;
+                    self.result
+                        .stderr
+                        .push_str(&format!("Automatic parameter save warning: {warning}\n"));
+                }
+            }
+            Err(error) => {
+                self.result.status_line = format!(
+                    "{} Warning: could not render session Last: {error}",
+                    self.result.status_line
+                );
+                self.result.status_kind = StatusKind::Warning;
+            }
+        }
+    }
+
+    fn queue_accepted_session_parameter_change(&mut self) {
+        let result = match (
+            self.session_last_state.as_mut(),
+            self.parameter_session.as_ref(),
+        ) {
+            (Some(last), Some(session)) => last.accepted_durable_change(session, Instant::now()),
+            _ => return,
+        };
+        if let Err(error) = result {
+            self.result.status_line =
+                format!("Session updated, but Last could not be prepared: {error}");
+            self.result.status_kind = StatusKind::Warning;
+        }
+    }
+
+    fn flush_session_last_if_due(&mut self) {
+        let Some(last) = self.session_last_state.as_mut() else {
+            return;
+        };
+        if let Some(warning) = last.flush_if_due(Instant::now()).warning {
+            self.result.status_line =
+                format!("Session active. Warning: could not save Last: {warning}");
+            self.result.status_kind = StatusKind::Warning;
+            self.result
+                .stderr
+                .push_str(&format!("Automatic parameter save warning: {warning}\n"));
+        }
+    }
+
+    fn flush_session_last_on_close(&mut self) {
+        let Some(last) = self.session_last_state.as_mut() else {
+            return;
+        };
+        if let Some(warning) = last.flush().warning {
+            self.result.stderr.push_str(&format!(
+                "Automatic parameter save warning on close: {warning}\n"
+            ));
+        }
+    }
+
+    fn load_parameter_defaults(&mut self) {
+        self.request_parameter_replacement(ParameterDraftReplacement::Defaults);
+    }
+
+    fn load_parameter_last(&mut self) {
+        self.request_parameter_replacement(ParameterDraftReplacement::Last);
+    }
+
+    fn revert_parameter_edits(&mut self) {
+        self.request_parameter_replacement(ParameterDraftReplacement::Revert);
+    }
+
+    fn open_parameter_source_picker(&mut self) {
+        let Some(session) = self.parameter_session.as_ref() else {
+            self.result.status_line = "Parameter sources are unavailable for this surface.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        let mut entries = vec![
+            ChoicePickerEntry {
+                value: "defaults".to_string(),
+                label: "Defaults".to_string(),
+            },
+            ChoicePickerEntry {
+                value: "last".to_string(),
+                label: "Last".to_string(),
+            },
+        ];
+        if session.bundle().surface.kind() == SurfaceKind::Task {
+            entries.push(ChoicePickerEntry {
+                value: "last_successful".to_string(),
+                label: "Last Successful".to_string(),
+            });
+        }
+        entries.extend([
+            ChoicePickerEntry {
+                value: "open".to_string(),
+                label: "Open TOML...".to_string(),
+            },
+            ChoicePickerEntry {
+                value: "save_as".to_string(),
+                label: "Save As...".to_string(),
+            },
+            ChoicePickerEntry {
+                value: "revert".to_string(),
+                label: "Revert edits".to_string(),
+            },
+        ]);
+        let current = match session.base_source() {
+            BaseSource::Defaults => "defaults",
+            BaseSource::Last => "last",
+            BaseSource::LastSuccessful => "last_successful",
+            BaseSource::File(_) => "open",
+        };
+        self.open_choice_picker_target(
+            ChoicePickerTarget::ParameterSource,
+            "Parameter Sources".to_string(),
+            entries,
+            current.to_string(),
+        );
+    }
+
+    fn activate_parameter_source_menu_value(&mut self, value: &str) {
+        match value {
+            "defaults" => self.load_parameter_defaults(),
+            "last" => self.load_parameter_last(),
+            "last_successful" => {
+                self.request_parameter_replacement(ParameterDraftReplacement::LastSuccessful)
+            }
+            "open" => self.open_parameter_profile_path_entry(ParameterProfilePathMode::Open),
+            "save_as" => self.open_parameter_profile_path_entry(ParameterProfilePathMode::SaveAs),
+            "revert" => self.revert_parameter_edits(),
+            _ => {
+                self.result.status_line = format!("Unknown parameter source action {value:?}.");
+                self.result.status_kind = StatusKind::Error;
+            }
+        }
+    }
+
+    fn request_parameter_replacement(&mut self, replacement: ParameterDraftReplacement) {
+        let Some(session) = self.parameter_session.as_ref() else {
+            self.result.status_line = "Typed parameter session is unavailable.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        };
+        if session.is_dirty() {
+            let label = replacement.label();
+            self.pending_parameter_replacement = Some(replacement);
+            self.result.status_line =
+                format!("Parameters are modified. Confirm replacement with {label}.");
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        self.perform_parameter_replacement(replacement);
+    }
+
+    fn perform_parameter_replacement(&mut self, replacement: ParameterDraftReplacement) {
+        self.pending_parameter_replacement = None;
+        let result = match replacement {
+            ParameterDraftReplacement::Defaults => self
+                .replace_parameter_base(BaseSource::Defaults, None)
+                .map(|()| "Parameter source replaced with Defaults.".to_string()),
+            ParameterDraftReplacement::Last => self
+                .replace_with_managed_parameter_profile(ManagedProfileKind::Last)
+                .map(|()| "Parameter source replaced with Last.".to_string()),
+            ParameterDraftReplacement::LastSuccessful => self
+                .replace_with_managed_parameter_profile(ManagedProfileKind::LastSuccessful)
+                .map(|()| "Parameter source replaced with Last Successful.".to_string()),
+            ParameterDraftReplacement::File { path, profile } => self
+                .replace_parameter_base(BaseSource::File(path.clone()), Some(&profile))
+                .map(|()| format!("Opened parameter profile {}.", path.display())),
+            ParameterDraftReplacement::Revert => self
+                .revert_parameter_session()
+                .map(|()| "Parameter edits reverted to the selected source.".to_string()),
+        };
+        match result {
+            Ok(message) => {
+                self.result.status_line = message;
+                self.result.status_kind = StatusKind::Info;
+            }
+            Err(error) => {
+                self.result.status_line = error;
+                self.result.status_kind = StatusKind::Error;
+            }
+        }
+    }
+
+    fn replace_with_managed_parameter_profile(
+        &mut self,
+        kind: ManagedProfileKind,
+    ) -> Result<(), String> {
+        if kind == ManagedProfileKind::LastSuccessful
+            && self
+                .parameter_session
+                .as_ref()
+                .is_some_and(|session| session.bundle().surface.kind() == SurfaceKind::Session)
+        {
+            return Err(format!(
+                "Session surface {} does not have Last Successful.",
+                self.app.id
+            ));
+        }
+        let label = match kind {
+            ManagedProfileKind::Last => "Last",
+            ManagedProfileKind::LastSuccessful => "Last Successful",
+        };
+        let source = ManagedStateStore::for_workspace(&self.parameter_workspace)
+            .read(&self.app.id, kind)
+            .map_err(|error| format!("Could not read {label}: {error}"))?
+            .ok_or_else(|| format!("No {label} profile exists for {}.", self.app.id))?;
+        let profile = parse_profile(&source)
+            .map_err(|error| format!("{label} profile is invalid: {error}"))?;
+        let base_source = match kind {
+            ManagedProfileKind::Last => BaseSource::Last,
+            ManagedProfileKind::LastSuccessful => BaseSource::LastSuccessful,
+        };
+        self.replace_parameter_base(base_source, Some(&profile))
+    }
+
+    fn replace_parameter_base(
+        &mut self,
+        source: BaseSource,
+        profile: Option<&ParameterProfile>,
+    ) -> Result<(), String> {
+        {
+            let session = self
+                .parameter_session
+                .as_mut()
+                .ok_or_else(|| "Typed parameter session is unavailable.".to_string())?;
+            session
+                .replace_base(source, profile)
+                .map_err(|error| format!("Could not replace parameter source: {error}"))?;
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        }
+        self.parameter_edit_errors.clear();
+        self.refresh_parameter_field_metadata();
+        Ok(())
+    }
+
+    fn revert_parameter_session(&mut self) -> Result<(), String> {
+        {
+            let session = self
+                .parameter_session
+                .as_mut()
+                .ok_or_else(|| "Typed parameter session is unavailable.".to_string())?;
+            session
+                .revert()
+                .map_err(|error| format!("Could not revert parameters: {error}"))?;
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        }
+        self.parameter_edit_errors.clear();
+        self.refresh_parameter_field_metadata();
+        Ok(())
+    }
+
+    fn confirm_parameter_source_replacement(&mut self) {
+        let Some(replacement) = self.pending_parameter_replacement.take() else {
+            return;
+        };
+        self.perform_parameter_replacement(replacement);
+    }
+
+    fn cancel_parameter_source_replacement(&mut self) {
+        self.pending_parameter_replacement = None;
+        self.result.status_line = "Parameter source replacement canceled.".to_string();
+        self.result.status_kind = StatusKind::Info;
+    }
+
+    fn open_parameter_profile_path_entry(&mut self, mode: ParameterProfilePathMode) {
+        self.choice_picker = None;
+        self.path_chooser = None;
+        self.parameter_profile_path_entry = Some(ParameterProfilePathEntryState {
+            mode,
+            buffer: String::new(),
+            error: None,
+            replace_existing: false,
+        });
+    }
+
+    fn apply_parameter_profile_path_action(&mut self, action: ParameterProfilePathAction) {
+        match action {
+            ParameterProfilePathAction::Cancel => {
+                self.parameter_profile_path_entry = None;
+                self.result.status_line = "Parameter profile path entry canceled.".to_string();
+                self.result.status_kind = StatusKind::Info;
+            }
+            ParameterProfilePathAction::Commit => self.commit_parameter_profile_path(),
+            ParameterProfilePathAction::DeleteBackward => {
+                if let Some(entry) = self.parameter_profile_path_entry.as_mut() {
+                    entry.buffer.pop();
+                    entry.error = None;
+                    entry.replace_existing = false;
+                }
+            }
+            ParameterProfilePathAction::Insert(ch) => {
+                if let Some(entry) = self.parameter_profile_path_entry.as_mut() {
+                    entry.buffer.push(ch);
+                    entry.error = None;
+                    entry.replace_existing = false;
+                }
+            }
+        }
+    }
+
+    fn commit_parameter_profile_path(&mut self) {
+        let Some(entry) = self.parameter_profile_path_entry.as_ref() else {
+            return;
+        };
+        let mode = entry.mode;
+        let raw_path = entry.buffer.trim();
+        if raw_path.is_empty() {
+            self.set_parameter_profile_path_error("Enter a TOML profile path.");
+            return;
+        }
+        let candidate = expand_tilde_path(raw_path);
+        let path = if candidate.is_absolute() {
+            candidate
+        } else {
+            self.parameter_workspace.join(candidate)
+        };
+        match mode {
+            ParameterProfilePathMode::Open => self.prepare_open_parameter_profile(path),
+            ParameterProfilePathMode::SaveAs => {
+                let replace_existing = self
+                    .parameter_profile_path_entry
+                    .as_ref()
+                    .is_some_and(|entry| entry.replace_existing);
+                if path.exists() && !replace_existing {
+                    if let Some(entry) = self.parameter_profile_path_entry.as_mut() {
+                        entry.error = Some(
+                            "The destination exists. Press Enter again to replace it.".to_string(),
+                        );
+                        entry.replace_existing = true;
+                    }
+                    return;
+                }
+                self.save_parameter_profile_as(path);
+            }
+        }
+    }
+
+    fn prepare_open_parameter_profile(&mut self, path: PathBuf) {
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.set_parameter_profile_path_error(format!(
+                    "Could not read {}: {error}",
+                    path.display()
+                ));
+                return;
+            }
+        };
+        let profile = match parse_profile(&source) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.set_parameter_profile_path_error(format!(
+                    "Invalid profile {}: {error}",
+                    path.display()
+                ));
+                return;
+            }
+        };
+        let validation = self
+            .parameter_session
+            .as_ref()
+            .ok_or_else(|| "Typed parameter session is unavailable.".to_string())
+            .and_then(|session| {
+                ParameterSession::from_profile(
+                    session.bundle().clone(),
+                    BaseSource::File(path.clone()),
+                    &profile,
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            });
+        if let Err(error) = validation {
+            self.set_parameter_profile_path_error(format!(
+                "Profile {} does not match this surface: {error}",
+                path.display()
+            ));
+            return;
+        }
+        self.parameter_profile_path_entry = None;
+        self.request_parameter_replacement(ParameterDraftReplacement::File { path, profile });
+    }
+
+    fn save_parameter_profile_as(&mut self, path: PathBuf) {
+        if let Some((name, error)) = self.parameter_edit_errors.iter().next() {
+            self.set_parameter_profile_path_error(format!(
+                "Cannot save while {name} is invalid: {error}"
+            ));
+            return;
+        }
+        let source = match self
+            .parameter_session
+            .as_ref()
+            .ok_or_else(|| "Typed parameter session is unavailable.".to_string())
+            .and_then(|session| session.render_sparse().map_err(|error| error.to_string()))
+        {
+            Ok(source) => source,
+            Err(error) => {
+                self.set_parameter_profile_path_error(format!("Could not render profile: {error}"));
+                return;
+            }
+        };
+        if let Err(error) = write_parameter_profile_atomic(&path, &source) {
+            self.set_parameter_profile_path_error(format!(
+                "Could not save {}: {error}",
+                path.display()
+            ));
+            return;
+        }
+        let profile = match parse_profile(&source) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.set_parameter_profile_path_error(format!(
+                    "Saved profile could not be reloaded: {error}"
+                ));
+                return;
+            }
+        };
+        if let Err(error) =
+            self.replace_parameter_base(BaseSource::File(path.clone()), Some(&profile))
+        {
+            self.set_parameter_profile_path_error(error);
+            return;
+        }
+        self.parameter_profile_path_entry = None;
+        self.result.status_line = format!("Saved parameter profile as {}.", path.display());
+        self.result.status_kind = StatusKind::Ok;
+    }
+
+    fn set_parameter_profile_path_error(&mut self, error: impl Into<String>) {
+        if let Some(entry) = self.parameter_profile_path_entry.as_mut() {
+            entry.error = Some(error.into());
+        }
+    }
+
     pub(crate) fn should_quit(&self) -> bool {
         self.quit
     }
@@ -2338,6 +2993,39 @@ impl AppState {
 
     pub(crate) fn path_chooser_active(&self) -> bool {
         self.path_chooser.is_some()
+    }
+
+    pub(crate) fn parameter_profile_path_entry_active(&self) -> bool {
+        self.parameter_profile_path_entry.is_some()
+    }
+
+    pub(crate) fn parameter_profile_path_entry_title(&self) -> Option<&str> {
+        self.parameter_profile_path_entry
+            .as_ref()
+            .map(|entry| entry.mode.title())
+    }
+
+    pub(crate) fn parameter_profile_path_entry_value(&self) -> Option<&str> {
+        self.parameter_profile_path_entry
+            .as_ref()
+            .map(|entry| entry.buffer.as_str())
+    }
+
+    pub(crate) fn parameter_profile_path_entry_error(&self) -> Option<&str> {
+        self.parameter_profile_path_entry
+            .as_ref()
+            .and_then(|entry| entry.error.as_deref())
+    }
+
+    pub(crate) fn parameter_source_confirmation_message(&self) -> Option<String> {
+        self.pending_parameter_replacement
+            .as_ref()
+            .map(|replacement| {
+                format!(
+                    "The current parameter draft is modified. Discard those edits and load {}?",
+                    replacement.label()
+                )
+            })
     }
 
     pub(crate) fn path_chooser_title(&self) -> Option<String> {
@@ -2430,6 +3118,7 @@ impl AppState {
             .as_ref()
             .map(|picker| match picker.target {
                 ChoicePickerTarget::Field(field_index) => FormSelection::Field(field_index),
+                ChoicePickerTarget::ParameterSource => self.selected_form,
                 ChoicePickerTarget::WorkflowContextSetting(kind) => {
                     FormSelection::WorkflowContextSetting(kind)
                 }
@@ -2466,7 +3155,7 @@ impl AppState {
         else {
             return false;
         };
-        let text = field.render_line(self.edit_state.as_ref(), field_index);
+        let text = self.render_field_line(field_index);
         let browse_len = BROWSE_SUFFIX.chars().count() as u16;
         let text_end = row
             .rect
@@ -2698,10 +3387,21 @@ impl AppState {
             self.close_choice_picker();
             return;
         };
+        if target == ChoicePickerTarget::ParameterSource {
+            self.close_choice_picker();
+            self.activate_parameter_source_menu_value(&value);
+            return;
+        }
         match target {
             ChoicePickerTarget::Field(field_index) => {
                 if let Some(field) = self.fields.get_mut(field_index) {
                     field.set_text(value.clone());
+                }
+                if let Err(error) = self.sync_parameter_from_field(field_index) {
+                    self.close_choice_picker();
+                    self.result.status_line = error;
+                    self.result.status_kind = StatusKind::Warning;
+                    return;
                 }
                 self.apply_live_image_view_parameters_if_needed(field_index);
                 self.mark_plot_snapshot_dirty();
@@ -2731,6 +3431,7 @@ impl AppState {
                     return;
                 }
             }
+            ChoicePickerTarget::ParameterSource => unreachable!("handled above"),
         }
         self.close_choice_picker();
         self.result.status_line = format!("Selected {}.", label);
@@ -2852,6 +3553,7 @@ impl AppState {
                     field.set_text(edit_state.buffer);
                     self.mark_plot_snapshot_dirty();
                 }
+                let _ = self.sync_parameter_from_field(field_index);
             }
             _ => {
                 self.edit_state = Some(edit_state);
@@ -2893,6 +3595,11 @@ impl AppState {
                     field.set_text(value.clone());
                     self.mark_plot_snapshot_dirty();
                 }
+                if let Err(error) = self.sync_parameter_from_field(selected_field_index) {
+                    self.result.status_line = error;
+                    self.result.status_kind = StatusKind::Warning;
+                    return;
+                }
             }
             PathChooserTarget::WorkflowImportChainTable => {
                 self.append_workflow_chain_path(value.clone());
@@ -2924,6 +3631,7 @@ impl AppState {
 
     pub(crate) fn on_tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % spinner_frames(self.theme_mode()).len();
+        self.flush_session_last_if_due();
         self.ensure_current_summary_snapshot_if_needed();
         self.pump_plot_panel();
         if self.image_movie_scheduler_enabled() {
@@ -2958,7 +3666,11 @@ impl AppState {
     }
 
     fn input_mode(&self) -> InputMode {
-        if self.path_chooser.is_some() {
+        if self.parameter_profile_path_entry.is_some() {
+            InputMode::ParameterProfilePath
+        } else if self.pending_parameter_replacement.is_some() {
+            InputMode::ParameterSourceConfirmation
+        } else if self.path_chooser.is_some() {
             InputMode::PathChooser
         } else if self.edit_state.is_some() {
             InputMode::Edit
@@ -3133,6 +3845,45 @@ impl AppState {
         let mode = self.input_mode();
         let plots_active = mode == InputMode::Result && self.result_tab_uses_plot_workspace();
 
+        if mode == InputMode::ParameterProfilePath {
+            return match key_event.code {
+                KeyCode::Esc => Some(AppAction::ParameterProfilePath(
+                    ParameterProfilePathAction::Cancel,
+                )),
+                KeyCode::Enter if key_event.modifiers.is_empty() => Some(
+                    AppAction::ParameterProfilePath(ParameterProfilePathAction::Commit),
+                ),
+                KeyCode::Backspace if key_event.modifiers.is_empty() => Some(
+                    AppAction::ParameterProfilePath(ParameterProfilePathAction::DeleteBackward),
+                ),
+                KeyCode::Char(ch)
+                    if key_event.modifiers.is_empty()
+                        || key_event.modifiers == KeyModifiers::SHIFT =>
+                {
+                    Some(AppAction::ParameterProfilePath(
+                        ParameterProfilePathAction::Insert(ch),
+                    ))
+                }
+                _ => None,
+            };
+        }
+
+        if mode == InputMode::ParameterSourceConfirmation {
+            return match key_event.code {
+                KeyCode::Enter | KeyCode::Char('y') if key_event.modifiers.is_empty() => {
+                    Some(AppAction::ParameterSourceConfirmation(
+                        ParameterSourceConfirmationAction::Confirm,
+                    ))
+                }
+                KeyCode::Esc | KeyCode::Char('n') if key_event.modifiers.is_empty() => {
+                    Some(AppAction::ParameterSourceConfirmation(
+                        ParameterSourceConfirmationAction::Cancel,
+                    ))
+                }
+                _ => None,
+            };
+        }
+
         if mode == InputMode::PathChooser {
             return match key_event.code {
                 KeyCode::Esc => Some(AppAction::PathChooser(PathChooserAction::Cancel)),
@@ -3207,6 +3958,26 @@ impl AppState {
                     && (!self.has_active_session() || self.browser_uses_parameter_pane()) =>
             {
                 return Some(AppAction::OpenPathChooser);
+            }
+            KeyCode::Char('p')
+                if key_event.modifiers == KeyModifiers::CONTROL && mode != InputMode::Edit =>
+            {
+                return Some(AppAction::OpenParameterSources);
+            }
+            KeyCode::Char('d')
+                if key_event.modifiers == KeyModifiers::CONTROL && mode != InputMode::Edit =>
+            {
+                return Some(AppAction::LoadParameterDefaults);
+            }
+            KeyCode::Char('l')
+                if key_event.modifiers == KeyModifiers::CONTROL && mode != InputMode::Edit =>
+            {
+                return Some(AppAction::LoadParameterLast);
+            }
+            KeyCode::Char('r')
+                if key_event.modifiers == KeyModifiers::CONTROL && mode != InputMode::Edit =>
+            {
+                return Some(AppAction::RevertParameters);
             }
             KeyCode::Char('g')
                 if key_event.modifiers.is_empty()
@@ -3338,7 +4109,8 @@ impl AppState {
             }
             KeyCode::Delete
                 if key_event.modifiers.is_empty()
-                    && mode != InputMode::Edit
+                    && (mode == InputMode::Browser
+                        || matches!(self.selected_form, FormSelection::BrowserPane(_)))
                     && self.image_browser_session_state().is_some() =>
             {
                 return Some(AppAction::Browser(BrowserAction::DeleteRegionDefinition));
@@ -3426,7 +4198,9 @@ impl AppState {
             InputMode::Result => resolve_result_action(key_event).map(AppAction::Result),
             InputMode::Browser => resolve_browser_action(key_event).map(AppAction::Browser),
             InputMode::Edit => resolve_edit_action(key_event).map(AppAction::Edit),
-            InputMode::PathChooser => None,
+            InputMode::PathChooser
+            | InputMode::ParameterProfilePath
+            | InputMode::ParameterSourceConfirmation => None,
         }
     }
 
@@ -3463,6 +4237,10 @@ impl AppState {
             AppAction::ToggleAdvanced => self.toggle_advanced(),
             AppAction::CancelSession => self.cancel_current(),
             AppAction::OpenPathChooser => self.open_path_chooser_for_selected_field(),
+            AppAction::OpenParameterSources => self.open_parameter_source_picker(),
+            AppAction::LoadParameterDefaults => self.load_parameter_defaults(),
+            AppAction::LoadParameterLast => self.load_parameter_last(),
+            AppAction::RevertParameters => self.revert_parameter_edits(),
             AppAction::ClearSelection => self.clear_output_selection(),
             AppAction::ToggleHelp => self.show_help = !self.show_help,
             AppAction::Parameter(action) => self.apply_parameter_action(action),
@@ -3470,6 +4248,17 @@ impl AppState {
             AppAction::Browser(action) => self.apply_browser_action(action),
             AppAction::Edit(action) => self.apply_edit_action(action),
             AppAction::PathChooser(action) => self.apply_path_chooser_action(action),
+            AppAction::ParameterProfilePath(action) => {
+                self.apply_parameter_profile_path_action(action)
+            }
+            AppAction::ParameterSourceConfirmation(action) => match action {
+                ParameterSourceConfirmationAction::Cancel => {
+                    self.cancel_parameter_source_replacement()
+                }
+                ParameterSourceConfirmationAction::Confirm => {
+                    self.confirm_parameter_source_replacement()
+                }
+            },
         }
     }
 
@@ -3527,6 +4316,13 @@ impl AppState {
             return;
         }
 
+        if let Some(entry) = self.parameter_profile_path_entry.as_mut() {
+            entry.buffer.push_str(&pasted);
+            entry.error = None;
+            entry.replace_existing = false;
+            return;
+        }
+
         if let Some(edit_state) = self.edit_state.as_mut() {
             edit_state.buffer.push_str(&pasted);
             return;
@@ -3541,6 +4337,8 @@ impl AppState {
         if matches!(field.value, FormValue::Text(_)) {
             field.set_text(pasted);
         }
+        let _ = field;
+        let _ = self.sync_parameter_from_field(field_index);
     }
 
     pub(crate) fn handle_mouse_event(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
@@ -3552,6 +4350,11 @@ impl AppState {
             ));
         }
         if movie_input_fully_ignored_for_debug() && self.image_movie_active() {
+            return;
+        }
+        if self.parameter_profile_path_entry.is_some()
+            || self.pending_parameter_replacement.is_some()
+        {
             return;
         }
         if self.choice_picker.is_some() {
@@ -3754,6 +4557,14 @@ impl AppState {
                 parts.push("x cancel".to_string());
             }
         }
+        if self.parameter_session.is_some() && self.edit_state.is_none() {
+            parts.push("^p sources".to_string());
+            if self.current_focus_target() == FocusTarget::ParametersPane
+                && matches!(self.selected_form, FormSelection::Field(_))
+            {
+                parts.push("Del reset".to_string());
+            }
+        }
         parts.extend([
             "p pane".to_string(),
             "? help".to_string(),
@@ -3782,7 +4593,6 @@ impl AppState {
             lines.push("Global: x close browser session".to_string());
         }
         lines.push(String::new());
-
         if self.edit_state.is_some() {
             lines.extend([
                 "Edit: Enter save  Tab next field  Shift-Tab previous field".to_string(),
@@ -3799,6 +4609,14 @@ impl AppState {
                     "Adjust: Left/Right".to_string(),
                     "Activate: Enter or Space".to_string(),
                 ]);
+                if self.parameter_session.is_some() {
+                    lines.extend([
+                        "Sources: Ctrl-P Defaults, Last, Last Successful, Open, Save As, Revert"
+                            .to_string(),
+                        "Sources: Ctrl-D Defaults  Ctrl-L Last  Ctrl-R Revert".to_string(),
+                        "Field: Delete reset to the current default".to_string(),
+                    ]);
+                }
                 match self.selected_form {
                     FormSelection::WorkflowProductAction(_) => {
                         lines.push("Workflow action: Enter opens picker or chooser".to_string());
@@ -3963,9 +4781,10 @@ impl AppState {
             ThemeMode::DenseAnsi => "Parameters",
             ThemeMode::RichPanel => "◈ Parameters",
         };
+        let source = self.parameter_source_label();
         if self.running.is_some() {
             format!(
-                "{title} [{}] locked{}",
+                "{title} [{}; {source}] locked{}",
                 spinner_frames(self.theme_mode())[self.spinner_frame],
                 focus
             )
@@ -3975,10 +4794,7 @@ impl AppState {
                     .image_browser_session_state()
                     .map(|state| state.left_pane_mode.label().to_ascii_lowercase())
                     .unwrap_or_else(|| "live".to_string());
-                match self.theme_mode() {
-                    ThemeMode::DenseAnsi => format!("Parameters [{mode}]{focus}"),
-                    ThemeMode::RichPanel => format!("◈ Parameters [{mode}]{focus}"),
-                }
+                format!("{title} [{mode}; {source}]{focus}")
             } else {
                 match self.theme_mode() {
                     ThemeMode::DenseAnsi => format!("Inspector [live]{focus}"),
@@ -3988,8 +4804,31 @@ impl AppState {
         } else if self.schema_error.is_some() {
             format!("{title} (schema unavailable){focus}")
         } else {
-            format!("{title}{focus}")
+            format!("{title} [{source}]{focus}")
         }
+    }
+
+    fn parameter_source_label(&self) -> String {
+        let Some(session) = self.parameter_session.as_ref() else {
+            return "Unavailable".to_string();
+        };
+        let mut label = match session.base_source() {
+            BaseSource::Defaults => "Defaults".to_string(),
+            BaseSource::Last => "Last".to_string(),
+            BaseSource::LastSuccessful => "Last Successful".to_string(),
+            BaseSource::File(path) => {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| path.display().to_string());
+                format!("File: {name}")
+            }
+        };
+        if session.is_dirty() {
+            label.push_str(" *");
+        }
+        label
     }
 
     pub(crate) fn result_title(&self) -> String {
@@ -4195,13 +5034,17 @@ impl AppState {
                 .copied()
                 .filter(|item| match item {
                     StaticFormItem::Field(index) => {
-                        (self.show_advanced || !self.fields[*index].schema.advanced)
+                        self.parameter_session.as_ref().is_some_and(|session| {
+                            let field_id = self.fields[*index].schema.id.as_str();
+                            session
+                                .states()
+                                .get(field_id)
+                                .is_some_and(|state| state.active)
+                                && (!self.is_calibrate_workflow_stage_parameters(section)
+                                    || provider_parameter_applies(session, field_id)
+                                        .unwrap_or(false))
+                        }) && (self.show_advanced || !self.fields[*index].schema.advanced)
                             && !self.workflow_context_owns_field(section, *index)
-                            && (!self.is_calibrate_workflow_stage_parameters(section)
-                                || calibrate_argument_applies_to_mode(
-                                    self.fields[*index].schema.id.as_str(),
-                                    self.current_workflow_stage().cli_mode(),
-                                ))
                     }
                     StaticFormItem::SummaryView(_)
                     | StaticFormItem::BrowserView(_)
@@ -4565,12 +5408,33 @@ impl AppState {
             return String::new();
         };
         let mut rendered = field.render_line(self.edit_state.as_ref(), field_index);
+        if field.is_path() {
+            rendered.truncate(rendered.len().saturating_sub(BROWSE_SUFFIX.len()));
+        }
         if !field.is_path()
             && self
                 .field_picker_entries(field_index)
                 .is_some_and(|entries| !entries.is_empty())
         {
             rendered.push_str(" [pick]");
+        }
+        if self.parameter_edit_errors.contains_key(&field.schema.id) {
+            rendered.push_str(" [invalid]");
+        } else if let Some(state) = self
+            .parameter_session
+            .as_ref()
+            .and_then(|session| session.states().get(&field.schema.id))
+        {
+            let origin = match state.origin {
+                casa_task_runtime::ParameterOrigin::Default => "default",
+                casa_task_runtime::ParameterOrigin::BaseProfile => "base",
+                casa_task_runtime::ParameterOrigin::Context => "context",
+                casa_task_runtime::ParameterOrigin::Override => "override",
+            };
+            rendered.push_str(&format!(" [{origin}]"));
+        }
+        if field.is_path() {
+            rendered.push_str(BROWSE_SUFFIX);
         }
         rendered
     }
@@ -5198,7 +6062,8 @@ impl AppState {
             .iter()
             .position(|field| field.schema.id == id)
             .expect("known test field");
-        self.fields[field_index].set_text(value.to_string());
+        self.apply_startup_text_value(id, value.to_string())
+            .expect("valid test parameter");
         self.apply_live_image_view_parameters_if_needed(field_index);
     }
 
@@ -5208,18 +6073,31 @@ impl AppState {
             .expect("set toggle value in test");
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_toggle_value_and_apply(&mut self, id: &str, value: bool) {
+        let field_index = self
+            .fields
+            .iter()
+            .position(|field| field.schema.id == id)
+            .expect("known test field");
+        self.apply_startup_toggle_value(id, value)
+            .expect("valid test parameter");
+        self.apply_live_image_view_parameters_if_needed(field_index);
+    }
+
     pub(crate) fn apply_startup_text_value(
         &mut self,
         id: &str,
         value: String,
     ) -> Result<(), String> {
-        let field = self
+        let field_index = self
             .fields
-            .iter_mut()
-            .find(|field| field.schema.id == id)
+            .iter()
+            .position(|field| field.schema.id == id)
             .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
-        let result = field.apply_text_value(value);
+        let result = self.fields[field_index].apply_text_value(value);
         if result.is_ok() {
+            self.sync_parameter_from_field(field_index)?;
             self.mark_plot_snapshot_dirty();
         }
         result
@@ -5230,16 +6108,98 @@ impl AppState {
         id: &str,
         value: bool,
     ) -> Result<(), String> {
-        let field = self
+        let field_index = self
             .fields
-            .iter_mut()
-            .find(|field| field.schema.id == id)
+            .iter()
+            .position(|field| field.schema.id == id)
             .ok_or_else(|| format!("unknown startup field {id:?} for {}", self.app.id))?;
-        let result = field.apply_toggle_value(value);
+        let result = self.fields[field_index].apply_toggle_value(value);
         if result.is_ok() {
+            self.sync_parameter_from_field(field_index)?;
             self.mark_plot_snapshot_dirty();
         }
         result
+    }
+
+    fn sync_parameter_from_field(&mut self, field_index: usize) -> Result<(), String> {
+        let Some(field) = self.fields.get(field_index) else {
+            return Err("parameter field index is out of range".to_string());
+        };
+        let name = field.schema.id.clone();
+        let live_parameter_rollback = (self.pending_live_parameter_rollback.is_none()
+            && IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&name.as_str())
+            && self
+                .browser_session()
+                .is_some_and(|session| session.kind() == BrowserAppKind::Image))
+        .then(|| self.parameter_session.clone())
+        .flatten();
+        let raw = match &field.value {
+            FormValue::Toggle(value) => Some(ParameterValue::Bool(*value)),
+            FormValue::Text(value) | FormValue::Choice { value, .. } => {
+                if value.trim().is_empty() {
+                    None
+                } else {
+                    let session = self
+                        .parameter_session
+                        .as_ref()
+                        .ok_or_else(|| "typed parameter session is unavailable".to_string())?;
+                    let binding = session
+                        .bundle()
+                        .surface
+                        .bindings()
+                        .iter()
+                        .find(|binding| binding.name == name)
+                        .ok_or_else(|| format!("unknown parameter {name:?}"))?;
+                    let concept = session
+                        .bundle()
+                        .catalog
+                        .concept(&binding.concept)
+                        .ok_or_else(|| format!("missing concept for {name}"))?;
+                    match crate::parameters_cli::parse_cli_value(value, &concept.value_domain) {
+                        Ok(value) => Some(value),
+                        Err(error) => {
+                            self.parameter_edit_errors
+                                .insert(name.clone(), error.clone());
+                            return Err(error);
+                        }
+                    }
+                }
+            }
+        };
+        let session = self
+            .parameter_session
+            .as_mut()
+            .ok_or_else(|| "typed parameter session is unavailable".to_string())?;
+        let result = match raw {
+            Some(value) => session.set(name.clone(), value),
+            None => session.reset(&name),
+        }
+        .map_err(|error| error.to_string());
+        match result {
+            Ok(()) => {
+                if self.pending_live_parameter_rollback.is_none() {
+                    self.pending_live_parameter_rollback = live_parameter_rollback;
+                }
+                self.parameter_edit_errors.remove(&name);
+                self.refresh_parameter_field_metadata();
+                Ok(())
+            }
+            Err(error) => {
+                self.parameter_edit_errors.insert(name, error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn refresh_parameter_field_metadata(&mut self) {
+        let Some(session) = self.parameter_session.as_ref() else {
+            return;
+        };
+        for field in &mut self.fields {
+            if let Some(state) = session.states().get(&field.schema.id) {
+                field.schema.required = state.required;
+            }
+        }
     }
 
     pub(crate) fn start_run_on_launch(&mut self) {
@@ -5295,8 +6255,13 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn start_run_for_test(&mut self) {
-        self.pending_run_confirmation = self.requires_run_confirmation();
+        self.pending_run_confirmation = self.requires_run_confirmation().unwrap_or(false);
         self.start_run();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn requires_run_confirmation_for_test(&self) -> Result<bool, String> {
+        self.requires_run_confirmation()
     }
 
     #[cfg(test)]
@@ -5356,6 +6321,16 @@ impl AppState {
     }
 
     #[cfg(test)]
+    pub(crate) fn parameter_value_for_test(&self, id: &str) -> Option<&ParameterValue> {
+        self.session_parameter_value(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_parameter_session_for_test(&mut self) {
+        self.parameter_session = None;
+    }
+
+    #[cfg(test)]
     pub(crate) fn structured_for_test(&self) -> Option<&MeasurementSetSummary> {
         self.current_structured_summary()
     }
@@ -5384,6 +6359,11 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn execution_arguments_for_test(&self) -> Result<Vec<OsString>, String> {
         Ok(self.build_execution_plan()?.arguments)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn execution_stdin_for_test(&self) -> Result<Option<String>, String> {
+        Ok(self.build_execution_plan()?.stdin)
     }
 
     #[cfg(test)]
@@ -5580,6 +6560,25 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn image_movie_playing_for_test(&self) -> bool {
         self.image_movie_active()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_movie_configuration_for_test(&self) -> Option<(f64, bool)> {
+        self.image_browser_session_state()
+            .map(|state| (state.movie.fps, state.movie.looping))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_colormap_for_test(&self) -> Option<&'static str> {
+        self.image_browser_session_state()
+            .map(|state| image_colormap_parameter(state.plane_colormap))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_movie_axis_for_test(&self) -> Option<usize> {
+        self.image_browser_session_state()?
+            .selected_non_display_axis_state()
+            .map(|axis| axis.axis)
     }
 
     #[cfg(test)]
@@ -6825,6 +7824,43 @@ impl AppState {
     fn delete_selected_parameter_item(&mut self) {
         if let FormSelection::WorkflowChainEntry(index) = self.selected_form {
             self.remove_workflow_chain_entry(index);
+            return;
+        }
+        let FormSelection::Field(field_index) = self.selected_form else {
+            return;
+        };
+        let Some(name) = self
+            .fields
+            .get(field_index)
+            .map(|field| field.schema.id.clone())
+        else {
+            return;
+        };
+        let live_parameter_rollback = (self.pending_live_parameter_rollback.is_none()
+            && IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&name.as_str())
+            && self
+                .browser_session()
+                .is_some_and(|session| session.kind() == BrowserAppKind::Image))
+        .then(|| self.parameter_session.clone())
+        .flatten();
+        let Some(session) = self.parameter_session.as_mut() else {
+            return;
+        };
+        match session.reset(&name) {
+            Ok(()) => {
+                if self.pending_live_parameter_rollback.is_none() {
+                    self.pending_live_parameter_rollback = live_parameter_rollback;
+                }
+                self.parameter_edit_errors.remove(&name);
+                sync_form_fields_from_parameter_session(&mut self.fields, session);
+                self.result.status_line = format!("{name} reset to its current default.");
+                self.result.status_kind = StatusKind::Info;
+                self.apply_live_image_view_parameters_if_needed(field_index);
+            }
+            Err(error) => {
+                self.result.status_line = format!("Could not reset {name}: {error}");
+                self.result.status_kind = StatusKind::Error;
+            }
         }
     }
 
@@ -7066,9 +8102,11 @@ impl AppState {
             BrowserAction::MoveDown => {
                 self.send_browser_command(BrowserRequest::MoveDown { steps: 1 });
             }
-            BrowserAction::PageUp => self.send_browser_command(BrowserRequest::PageUp { pages: 1 }),
+            BrowserAction::PageUp => {
+                self.send_browser_command(BrowserRequest::PageUp { pages: 1 });
+            }
             BrowserAction::PageDown => {
-                self.send_browser_command(BrowserRequest::PageDown { pages: 1 })
+                self.send_browser_command(BrowserRequest::PageDown { pages: 1 });
             }
             BrowserAction::Activate => {
                 if !self.close_image_region_shape() {
@@ -7092,7 +8130,7 @@ impl AppState {
     }
 
     fn toggle_image_plane_mode(&mut self) {
-        let Some(state) = self.image_browser_session_state_mut() else {
+        let Some(state) = self.image_browser_session_state() else {
             return;
         };
         if state.snapshot.active_view != ImageBrowserView::Plane {
@@ -7101,22 +8139,27 @@ impl AppState {
             self.result.status_kind = StatusKind::Warning;
             return;
         }
-        state.plane_mode = match state.plane_mode {
+        let next_mode = match state.plane_mode {
             ImagePlaneMode::Raster => ImagePlaneMode::Spreadsheet,
             ImagePlaneMode::Spreadsheet => ImagePlaneMode::Raster,
         };
-        let mode_label = state.plane_mode.label();
-        if state.plane_mode == ImagePlaneMode::Spreadsheet {
-            keep_image_plane_selection_visible(state);
-        }
-        let content_mode = match state.plane_mode {
+        let content_mode = match next_mode {
             ImagePlaneMode::Raster => ImagePlaneContentMode::Raster,
             ImagePlaneMode::Spreadsheet => ImagePlaneContentMode::Spreadsheet,
         };
-        let _ = state;
-        self.send_browser_command(BrowserRequest::SetImagePlaneContentMode { mode: content_mode });
+        if !self
+            .send_browser_command(BrowserRequest::SetImagePlaneContentMode { mode: content_mode })
+        {
+            return;
+        }
+        if let Some(state) = self.image_browser_session_state_mut() {
+            state.plane_mode = next_mode;
+            if state.plane_mode == ImagePlaneMode::Spreadsheet {
+                keep_image_plane_selection_visible(state);
+            }
+        }
         self.clear_output_selection_for_target(OutputPane::Result);
-        self.result.status_line = format!("Plane view switched to {mode_label} mode.");
+        self.result.status_line = format!("Plane view switched to {} mode.", next_mode.label());
         self.result.status_kind = StatusKind::Info;
     }
 
@@ -8344,6 +9387,13 @@ impl AppState {
         if let Some(field) = self.fields.get_mut(field_index) {
             field.toggle();
         }
+        match self.sync_parameter_from_field(field_index) {
+            Ok(()) => self.apply_live_image_view_parameters_if_needed(field_index),
+            Err(error) => {
+                self.result.status_line = error;
+                self.result.status_kind = StatusKind::Warning;
+            }
+        }
         self.sync_result_tab_visibility();
     }
 
@@ -8351,7 +9401,13 @@ impl AppState {
         if let Some(field) = self.fields.get_mut(field_index) {
             field.cycle_choice(forward);
         }
-        self.apply_live_image_view_parameters_if_needed(field_index);
+        match self.sync_parameter_from_field(field_index) {
+            Ok(()) => self.apply_live_image_view_parameters_if_needed(field_index),
+            Err(error) => {
+                self.result.status_line = error;
+                self.result.status_kind = StatusKind::Warning;
+            }
+        }
     }
 
     fn adjust_selected_choice(&mut self, forward: bool) {
@@ -8871,7 +9927,18 @@ impl AppState {
             return;
         }
 
-        if self.requires_run_confirmation() && !self.pending_run_confirmation {
+        let requires_run_confirmation = match self.requires_run_confirmation() {
+            Ok(required) => required,
+            Err(error) => {
+                self.pending_run_confirmation = false;
+                self.result.status_line = "Cannot evaluate run safety.".to_string();
+                self.result.status_kind = StatusKind::Error;
+                self.result.stderr = format!("{error}\n");
+                self.active_result_tab = ResultTab::Stderr;
+                return;
+            }
+        };
+        if requires_run_confirmation && !self.pending_run_confirmation {
             self.pending_run_confirmation = true;
             self.result.status_line = format!(
                 "{} may modify data or create products. Press r again to confirm.",
@@ -8884,33 +9951,71 @@ impl AppState {
         self.pending_run_confirmation = false;
 
         match self.build_execution_plan() {
-            Ok(plan) => match spawn_process(&plan) {
-                Ok(process) => {
-                    self.result = ResultState {
-                        status_line: format!("Running {}...", self.app.id),
-                        status_kind: StatusKind::Running,
-                        file_output_path: plan.file_output_path.clone(),
-                        ..ResultState::default()
-                    };
-                    self.edit_state = None;
-                    self.pane_focus = PaneFocus::Result;
-                    self.active_result_tab = ResultTab::Overview;
-                    self.result_scrolls = [0; RESULT_TAB_COUNT];
-                    self.result_hscrolls = [0; RESULT_TAB_COUNT];
-                    self.running = Some(RunningState {
-                        process,
-                        renderer: plan.renderer,
-                        file_output_path: plan.file_output_path,
-                        cancel_requested: false,
-                    });
+            Ok(plan) => {
+                let mut task_last_state = TaskLastState::new(
+                    ManagedStateStore::for_workspace(&self.parameter_workspace),
+                    self.app.id.clone(),
+                    self.save_last,
+                );
+                let attempted = match self.parameter_session.as_ref() {
+                    Some(session) => task_last_state
+                        .before_execution(session)
+                        .map_err(|error| error.to_string()),
+                    None => Err("typed parameter session is unavailable".to_string()),
+                };
+                let last_warning = match attempted {
+                    Ok(report) => report.warning,
+                    Err(error) => {
+                        self.result.status_line = "Cannot save resolved task parameters.".into();
+                        self.result.status_kind = StatusKind::Error;
+                        self.result.stderr = format!("{error}\n");
+                        self.active_result_tab = ResultTab::Stderr;
+                        return;
+                    }
+                };
+                match spawn_process(&plan) {
+                    Ok(process) => {
+                        let status_line = last_warning.as_ref().map_or_else(
+                            || format!("Running {}...", self.app.id),
+                            |warning| {
+                                format!(
+                                    "Running {}... Warning: could not save Last: {warning}",
+                                    self.app.id
+                                )
+                            },
+                        );
+                        self.result = ResultState {
+                            status_line,
+                            status_kind: StatusKind::Running,
+                            stderr: last_warning
+                                .map(|warning| {
+                                    format!("Automatic parameter save warning: {warning}\n")
+                                })
+                                .unwrap_or_default(),
+                            file_output_path: plan.file_output_path.clone(),
+                            ..ResultState::default()
+                        };
+                        self.edit_state = None;
+                        self.pane_focus = PaneFocus::Result;
+                        self.active_result_tab = ResultTab::Overview;
+                        self.result_scrolls = [0; RESULT_TAB_COUNT];
+                        self.result_hscrolls = [0; RESULT_TAB_COUNT];
+                        self.running = Some(RunningState {
+                            process,
+                            renderer: plan.renderer,
+                            file_output_path: plan.file_output_path,
+                            cancel_requested: false,
+                            task_last_state: Some(task_last_state),
+                        });
+                    }
+                    Err(error) => {
+                        self.result.status_line = format!("Failed to launch {}.", self.app.id);
+                        self.result.status_kind = StatusKind::Error;
+                        self.result.stderr = format!("{error}\n");
+                        self.active_result_tab = ResultTab::Stderr;
+                    }
                 }
-                Err(error) => {
-                    self.result.status_line = format!("Failed to launch {}.", self.app.id);
-                    self.result.status_kind = StatusKind::Error;
-                    self.result.stderr = format!("{error}\n");
-                    self.active_result_tab = ResultTab::Stderr;
-                }
-            },
+            }
             Err(error) => {
                 self.result.status_line = "Cannot start command.".to_string();
                 self.result.status_kind = StatusKind::Error;
@@ -8920,29 +10025,17 @@ impl AppState {
         }
     }
 
-    fn requires_run_confirmation(&self) -> bool {
-        matches!(
-            self.app.id.as_str(),
-            "calibrate"
-                | "importvla"
-                | "imager"
-                | "simobserve"
-                | "immoments"
-                | "exportfits"
-                | "mstransform"
-                | "flagdata"
-                | "flagmanager"
-                | "impv"
-                | "imsubimage"
-                | "immath"
-                | "imregrid"
-                | "feather"
-                | "importfits"
-        )
+    fn requires_run_confirmation(&self) -> Result<bool, String> {
+        self.parameter_session
+            .as_ref()
+            .ok_or_else(|| "typed parameter session is unavailable".to_string())?
+            .required_run_safety()
+            .map(|requirements| requirements.requires_interactive_confirmation())
+            .map_err(|error| format!("evaluate {} run safety: {error}", self.app.id))
     }
 
     fn run_calibrate_dataset_summary_inline(&mut self) {
-        let Some(ms_path) = self.non_empty_field_text("measurement_set") else {
+        let Some(ms_path) = self.non_empty_field_text("vis") else {
             self.result.status_line =
                 "Enter a MeasurementSet path before running dataset summary.".to_string();
             self.result.status_kind = StatusKind::Warning;
@@ -8981,6 +10074,22 @@ impl AppState {
 
     fn start_browser_session(&mut self) {
         self.clear_output_selection();
+        if let Some((name, error)) = self.parameter_edit_errors.iter().next() {
+            self.result.status_line = format!("Invalid parameter {name}: {error}");
+            self.result.status_kind = StatusKind::Error;
+            return;
+        }
+        let Some(session) = self.parameter_session.as_ref() else {
+            self.result.status_line =
+                "Cannot open session: the typed parameter contract is unavailable.".to_string();
+            self.result.status_kind = StatusKind::Error;
+            return;
+        };
+        if let Err(error) = session.render_sparse() {
+            self.result.status_line = format!("Cannot open session: {error}");
+            self.result.status_kind = StatusKind::Error;
+            return;
+        }
         let Some(path_field) = self.app.browser_path_field_id() else {
             self.result.status_line =
                 "Browser session is missing a startup path field.".to_string();
@@ -8988,7 +10097,7 @@ impl AppState {
             return;
         };
         let Some(path) = self
-            .field_text(path_field)
+            .session_parameter_text(path_field)
             .filter(|value| !value.trim().is_empty())
         else {
             self.result.status_line = format!(
@@ -9011,6 +10120,16 @@ impl AppState {
 
         match browser_kind {
             BrowserAppKind::Table => {
+                let startup = match self.table_session_startup_config() {
+                    Ok(startup) => startup,
+                    Err(error) => {
+                        self.report_browser_error(
+                            "Cannot open table browser with these startup parameters.",
+                            format!("{error}\n"),
+                        );
+                        return;
+                    }
+                };
                 let (width, height, _) = self.browser_startup_viewport_cells();
                 let viewport = BrowserViewport::new(width, height);
                 match self
@@ -9022,26 +10141,51 @@ impl AppState {
                         path: path.clone(),
                         viewport,
                     }) {
-                        Ok(snapshot) => {
-                            self.result = ResultState {
-                                status_line: snapshot.status_line.clone(),
-                                status_kind: StatusKind::Info,
-                                ..ResultState::default()
-                            };
-                            self.edit_state = None;
-                            self.pane_focus = PaneFocus::Result;
-                            self.browser_session = Some(BrowserSession {
-                                root_path: path,
-                                kind: BrowserSessionKind::Table(Box::new(TableBrowserSession {
-                                    client,
-                                    snapshot,
-                                    viewport,
-                                })),
-                            });
-                            self.result_scrolls = [0; RESULT_TAB_COUNT];
-                            self.result_hscrolls = [0; RESULT_TAB_COUNT];
-                            self.sync_browser_shell_state(true);
-                        }
+                        Ok(snapshot) => match if startup.requires_configure {
+                            client
+                                .request_startup(BrowserCommand::Configure {
+                                    parameters: startup.parameters.clone(),
+                                })
+                                .map_err(|error| error.message().to_string())
+                        } else {
+                            Ok(snapshot)
+                        } {
+                            Ok(snapshot) => {
+                                self.result = ResultState {
+                                    status_line: snapshot.status_line.clone(),
+                                    status_kind: StatusKind::Info,
+                                    ..ResultState::default()
+                                };
+                                self.edit_state = None;
+                                self.pane_focus = PaneFocus::Result;
+                                self.browser_session = Some(BrowserSession {
+                                    root_path: path,
+                                    kind: BrowserSessionKind::Table(Box::new(
+                                        TableBrowserSession {
+                                            client,
+                                            snapshot,
+                                            viewport,
+                                        },
+                                    )),
+                                });
+                                self.result_scrolls = [0; RESULT_TAB_COUNT];
+                                self.result_hscrolls = [0; RESULT_TAB_COUNT];
+                                self.sync_browser_shell_state(true);
+                                self.record_session_opened();
+                            }
+                            Err(error) => {
+                                let stderr = client.stderr_text();
+                                let _ = client.cancel();
+                                self.report_browser_error(
+                                    "Failed to apply table browser startup parameters.",
+                                    if stderr.trim().is_empty() {
+                                        format!("{error}\n")
+                                    } else {
+                                        format!("{error}\n{stderr}")
+                                    },
+                                );
+                            }
+                        },
                         Err(error) => {
                             let _ = client.cancel();
                             self.report_browser_error(
@@ -9059,6 +10203,16 @@ impl AppState {
                 }
             }
             BrowserAppKind::Image => {
+                let startup = match self.image_session_startup_config() {
+                    Ok(startup) => startup,
+                    Err(error) => {
+                        self.report_browser_error(
+                            "Cannot open imexplore with these startup parameters.",
+                            format!("{error}\n"),
+                        );
+                        return;
+                    }
+                };
                 let (width, height, inspector_height) = self.browser_startup_viewport_cells();
                 let font_size = self.image_plane_font_size();
                 let startup_context = image_startup_perf_context(
@@ -9089,7 +10243,7 @@ impl AppState {
                         match client.request_startup(ImageBrowserCommand::OpenRoot {
                             path: path.clone(),
                             viewport,
-                            parameters: Some(self.current_image_browser_parameters()),
+                            parameters: Some(startup.view_parameters.clone()),
                         }) {
                             Ok(snapshot) => {
                                 self.movie_perf.startup_browser_open_completed(
@@ -9098,6 +10252,23 @@ impl AppState {
                                     snapshot.active_view == ImageBrowserView::Plane
                                         && snapshot.profile.is_some(),
                                 );
+                                let (snapshot, selected_movie_axis) =
+                                    match apply_image_startup_config(&client, snapshot, &startup) {
+                                        Ok(configured) => configured,
+                                        Err(error) => {
+                                            let stderr = client.stderr_text();
+                                            let _ = client.cancel();
+                                            self.report_browser_error(
+                                                "Failed to apply imexplore startup parameters.",
+                                                if stderr.trim().is_empty() {
+                                                    format!("{error}\n")
+                                                } else {
+                                                    format!("{error}\n{stderr}")
+                                                },
+                                            );
+                                            return;
+                                        }
+                                    };
                                 self.result = ResultState {
                                     status_line: snapshot.status_line.clone(),
                                     status_kind: StatusKind::Info,
@@ -9113,21 +10284,23 @@ impl AppState {
                                     left_pane_mode: ImageBrowserLeftPaneMode::Live,
                                     selected_saved_region_index: 0,
                                     selected_mask_index: 0,
-                                    selected_non_display_axis: 0,
+                                    selected_non_display_axis: selected_movie_axis,
                                     pinned_probes: Vec::new(),
                                     selected_pinned_probe_id: None,
                                     next_pinned_probe_id: 1,
                                     restoring_selected_pinned_probe: false,
                                     show_live_reticle: true,
-                                    plane_mode: ImagePlaneMode::Raster,
-                                    plane_colormap: ImagePlaneColormap::Grayscale,
+                                    plane_mode: image_plane_mode(startup.content_mode),
+                                    plane_colormap: startup.colormap,
                                     plane_invert: false,
                                     panel: None,
                                     spectrum_panel: None,
                                     snapshot_generation: 1,
-                                    movie: ImageMovieState::with_fps(
-                                        self.current_image_movie_fps(),
-                                    ),
+                                    movie: {
+                                        let mut movie = ImageMovieState::with_fps(startup.fps);
+                                        movie.looping = startup.looping;
+                                        movie
+                                    },
                                     movie_scheduler: None,
                                     movie_frame_seq: None,
                                     direct_movie_engine: new_direct_image_movie_engine(),
@@ -9144,8 +10317,20 @@ impl AppState {
                                     .browser_session()
                                     .and_then(BrowserSession::image_parameters)
                                 {
-                                    self.sync_image_parameter_fields(&parameters);
+                                    if let Err(error) =
+                                        self.sync_accepted_image_window_parameters(&parameters)
+                                    {
+                                        if let Some(session) = self.browser_session.take() {
+                                            let _ = session.cancel();
+                                        }
+                                        self.report_browser_error(
+                                            "Failed to record accepted imexplore startup parameters.",
+                                            format!("{error}\n"),
+                                        );
+                                        return;
+                                    }
                                 }
+                                self.record_session_opened();
                                 self.keep_active_image_plane_selection_visible();
                                 if std::env::var_os("CASARS_IMEXPLORE_AUTOSTART_MOVIE").is_some() {
                                     if let Some(fps_text) =
@@ -9161,9 +10346,16 @@ impl AppState {
                                             .position(|field| field.schema.id == "fps")
                                         {
                                             self.fields[field_index].set_text(fps_text);
-                                            self.apply_live_image_view_parameters_if_needed(
-                                                field_index,
-                                            );
+                                            match self.sync_parameter_from_field(field_index) {
+                                                Ok(()) => self
+                                                    .apply_live_image_view_parameters_if_needed(
+                                                        field_index,
+                                                    ),
+                                                Err(error) => {
+                                                    self.result.status_line = error;
+                                                    self.result.status_kind = StatusKind::Warning;
+                                                }
+                                            }
                                         }
                                     }
                                     crate::movie_debug_log(
@@ -9192,12 +10384,15 @@ impl AppState {
         }
     }
 
-    fn send_browser_command(&mut self, command: BrowserRequest) {
+    fn send_browser_command(&mut self, command: BrowserRequest) -> bool {
+        let accepted_command = command.clone();
         let movie_perf = &mut self.movie_perf;
         let mut sync_image_parameters = None::<ImageBrowserParameters>;
+        let mut accepted_axis_selection = None::<usize>;
+        let mut prior_axis_selection = None::<usize>;
         let result = {
             let Some(session) = self.browser_session.as_mut() else {
-                return;
+                return false;
             };
             match &mut session.kind {
                 BrowserSessionKind::Table(state) => {
@@ -9276,10 +10471,12 @@ impl AppState {
                         | BrowserRequest::DeleteImageMask { .. }
                         | BrowserRequest::WriteImageRegionMask
                         | BrowserRequest::SetImagePlaneContentMode { .. }
-                        | BrowserRequest::SetImageViewParameters { .. } => None,
+                        | BrowserRequest::SetImageViewParameters { .. }
+                        | BrowserRequest::SetImageProfileAxis { .. }
+                        | BrowserRequest::SetImageSelectionReferences { .. } => None,
                     };
                     let Some(request) = request else {
-                        return;
+                        return false;
                     };
                     match state.client.request(request) {
                         Ok(snapshot) => {
@@ -9385,9 +10582,11 @@ impl AppState {
                             if state.snapshot.focus == ImageBrowserFocus::Inspector
                                 && state.snapshot.non_display_axes.len() > 1
                             {
+                                prior_axis_selection = Some(state.selected_non_display_axis);
                                 state.selected_non_display_axis =
                                     state.selected_non_display_axis.saturating_sub(steps);
                                 state.selected_non_display_axis_state().map(|axis_state| {
+                                    accepted_axis_selection = Some(axis_state.axis);
                                     ImageBrowserCommand::SetSelectedNonDisplayAxis {
                                         axis: axis_state.axis,
                                     }
@@ -9403,11 +10602,13 @@ impl AppState {
                             if state.snapshot.focus == ImageBrowserFocus::Inspector
                                 && state.snapshot.non_display_axes.len() > 1
                             {
+                                prior_axis_selection = Some(state.selected_non_display_axis);
                                 state.selected_non_display_axis = state
                                     .selected_non_display_axis
                                     .saturating_add(steps)
                                     .min(state.snapshot.non_display_axes.len().saturating_sub(1));
                                 state.selected_non_display_axis_state().map(|axis_state| {
+                                    accepted_axis_selection = Some(axis_state.axis);
                                     ImageBrowserCommand::SetSelectedNonDisplayAxis {
                                         axis: axis_state.axis,
                                     }
@@ -9493,12 +10694,22 @@ impl AppState {
                                 parameters: parameters.clone(),
                             })
                         }
+                        BrowserRequest::SetImageProfileAxis { axis } => {
+                            Some(ImageBrowserCommand::SetSelectedNonDisplayAxis { axis })
+                        }
+                        BrowserRequest::SetImageSelectionReferences {
+                            ref region,
+                            ref mask,
+                        } => Some(ImageBrowserCommand::SetSelectionReferences {
+                            region: region.clone(),
+                            mask: mask.clone(),
+                        }),
                         BrowserRequest::Activate
                         | BrowserRequest::Back
                         | BrowserRequest::Escape => None,
                     };
                     let Some(request) = request else {
-                        return;
+                        return true;
                     };
                     let movie_frame_seq =
                         matches!(command, BrowserRequest::StepImageNonDisplayAxis { .. })
@@ -9586,12 +10797,22 @@ impl AppState {
             }
         };
 
-        if let Some(parameters) = sync_image_parameters.as_ref() {
-            sync_image_parameter_fields(&mut self.fields, parameters);
-        }
-
         match result {
             Ok(()) => {
+                let durable_parameter_change = match self.sync_accepted_browser_parameters(
+                    &accepted_command,
+                    accepted_axis_selection,
+                    sync_image_parameters.as_ref(),
+                ) {
+                    Ok(durable) => durable,
+                    Err(error) => {
+                        self.result.status_line = format!(
+                            "Browser updated, but accepted parameters could not be recorded: {error}"
+                        );
+                        self.result.status_kind = StatusKind::Warning;
+                        return true;
+                    }
+                };
                 self.clear_output_selection();
                 self.sync_browser_shell_state(true);
                 self.pane_focus = match self.browser_session() {
@@ -9608,8 +10829,23 @@ impl AppState {
                     .map(|session| session.status_line().to_string())
                     .unwrap_or_else(|| "Browser session updated.".to_string());
                 self.result.status_kind = StatusKind::Info;
+                if durable_parameter_change {
+                    self.accept_live_parameter_changes();
+                }
+                true
             }
             Err((error, stderr)) => {
+                if let Some(index) = prior_axis_selection
+                    && let Some(state) = self.image_browser_session_state_mut()
+                {
+                    state.selected_non_display_axis = index;
+                }
+                if browser_request_may_change_durable_parameters(
+                    &accepted_command,
+                    accepted_axis_selection,
+                ) {
+                    self.rollback_rejected_live_parameter_change();
+                }
                 let keep_session = !error.is_transport()
                     && self
                         .browser_session()
@@ -9636,8 +10872,153 @@ impl AppState {
                     "Browser command failed. Session closed.".to_string()
                 };
                 self.report_browser_error(status, details);
+                false
             }
         }
+    }
+
+    fn sync_accepted_browser_parameters(
+        &mut self,
+        command: &BrowserRequest,
+        accepted_axis_selection: Option<usize>,
+        image_parameters: Option<&ImageBrowserParameters>,
+    ) -> Result<bool, String> {
+        let table_view = self
+            .browser_session
+            .as_ref()
+            .and_then(|session| match &session.kind {
+                BrowserSessionKind::Table(state) => Some(state.snapshot.view),
+                BrowserSessionKind::Image(_) => None,
+            });
+        let image_snapshot = self
+            .image_browser_session_state()
+            .map(|state| state.snapshot.clone());
+        let mut durable = false;
+
+        if let Some(axis) = accepted_axis_selection {
+            self.set_accepted_parameter_value(
+                "movieaxis",
+                ParameterValue::String(axis.to_string()),
+            )?;
+            self.set_accepted_parameter_value(
+                "profileaxis",
+                ParameterValue::String(axis.to_string()),
+            )?;
+            durable = true;
+        }
+
+        match command {
+            BrowserRequest::CycleView { .. } => {
+                if let Some(view) = table_view.and_then(table_session_view_parameter) {
+                    self.set_accepted_parameter_value(
+                        "view",
+                        ParameterValue::String(view.to_string()),
+                    )?;
+                    durable = true;
+                } else if let Some(snapshot) = image_snapshot.as_ref() {
+                    self.set_accepted_parameter_value(
+                        "view",
+                        ParameterValue::String(
+                            image_session_view_parameter(snapshot.active_view).to_string(),
+                        ),
+                    )?;
+                    durable = true;
+                }
+            }
+            BrowserRequest::SetImageViewParameters { .. } => {
+                if let Some(parameters) = image_parameters {
+                    self.sync_accepted_image_window_parameters(parameters)?;
+                    durable = true;
+                }
+            }
+            BrowserRequest::SetImageProfileAxis { axis } => {
+                self.set_accepted_parameter_value(
+                    "profileaxis",
+                    ParameterValue::String(axis.to_string()),
+                )?;
+                durable = true;
+            }
+            BrowserRequest::SetImagePlaneContentMode { mode } => {
+                let value = match mode {
+                    ImagePlaneContentMode::Raster => "raster",
+                    ImagePlaneContentMode::Spreadsheet => "spreadsheet",
+                };
+                self.set_accepted_parameter_value(
+                    "contentmode",
+                    ParameterValue::String(value.to_string()),
+                )?;
+                durable = true;
+            }
+            BrowserRequest::SetImageSelectionReferences { region, mask } => {
+                if let Some(region) = region {
+                    self.set_accepted_parameter_value(
+                        "region",
+                        ParameterValue::String(image_region_reference_parameter(region)),
+                    )?;
+                    durable = true;
+                }
+                if let Some(mask) = mask {
+                    self.set_accepted_parameter_value(
+                        "mask",
+                        ParameterValue::String(image_mask_reference_parameter(mask)),
+                    )?;
+                    durable = true;
+                }
+            }
+            BrowserRequest::ClearImageRegion => {
+                self.set_accepted_parameter_value(
+                    "region",
+                    ParameterValue::String("none".to_string()),
+                )?;
+                durable = true;
+            }
+            BrowserRequest::LoadImageRegionDefinition { name } => {
+                self.set_accepted_parameter_value(
+                    "region",
+                    ParameterValue::String(format!("definition:{name}")),
+                )?;
+                durable = true;
+            }
+            BrowserRequest::SaveImageRegionDefinition
+            | BrowserRequest::LoadNextImageRegionDefinition
+            | BrowserRequest::RenameImageRegionDefinition { .. }
+            | BrowserRequest::DeleteImageRegionDefinition { .. } => {
+                let region = image_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.active_region_definition_name.as_ref())
+                    .map(|name| format!("definition:{name}"))
+                    .unwrap_or_else(|| "none".to_string());
+                self.set_accepted_parameter_value("region", ParameterValue::String(region))?;
+                durable = true;
+            }
+            BrowserRequest::SetImageDefaultMask { name } => {
+                self.set_accepted_parameter_value("mask", ParameterValue::String(name.clone()))?;
+                durable = true;
+            }
+            BrowserRequest::UnsetImageDefaultMask => {
+                self.set_accepted_parameter_value(
+                    "mask",
+                    ParameterValue::String("none".to_string()),
+                )?;
+                durable = true;
+            }
+            BrowserRequest::DeleteImageMask { .. } | BrowserRequest::WriteImageRegionMask => {
+                let mask = image_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.default_mask_name.clone())
+                    .unwrap_or_else(|| "none".to_string());
+                self.set_accepted_parameter_value("mask", ParameterValue::String(mask))?;
+                durable = true;
+            }
+            _ => {}
+        }
+
+        if durable && let Some(session) = self.parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        } else if let Some(parameters) = image_parameters {
+            sync_image_parameter_fields(&mut self.fields, parameters);
+        }
+        Ok(durable)
     }
 
     fn report_browser_error(&mut self, status_line: impl Into<String>, stderr: String) {
@@ -9743,12 +11124,27 @@ impl AppState {
     }
 
     fn cycle_image_plane_colormap(&mut self) {
-        let Some(state) = self.image_browser_session_state_mut() else {
+        let Some(colormap) = self.image_browser_session_state_mut().map(|state| {
+            state.plane_colormap = state.plane_colormap.next();
+            state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+            state.plane_colormap
+        }) else {
             return;
         };
-        state.plane_colormap = state.plane_colormap.next();
-        state.snapshot_generation = state.snapshot_generation.saturating_add(1);
-        self.result.status_line = format!("Colormap: {}.", state.plane_colormap.label());
+        if let Err(error) = self.set_accepted_parameter_value(
+            "colormap",
+            ParameterValue::String(image_colormap_parameter(colormap).to_string()),
+        ) {
+            self.result.status_line =
+                format!("Colormap changed, but its parameter could not be recorded: {error}");
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
+        if let Some(session) = self.parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        }
+        self.accept_live_parameter_changes();
+        self.result.status_line = format!("Colormap: {}.", colormap.label());
         self.result.status_kind = StatusKind::Info;
     }
 
@@ -9891,7 +11287,7 @@ impl AppState {
                     },
                 ));
             }
-            let ms_path = self.field_text("measurement_set").unwrap_or_default();
+            let ms_path = self.field_text("vis").unwrap_or_default();
             return Some(render_workflow_diagnostic_summary(
                 &WorkflowDiagnosticSummaryDisplay {
                     description: preset.summary().to_string(),
@@ -9929,7 +11325,7 @@ impl AppState {
                 | PlotCatalogTarget::PageSpec => "Choose an imaging diagnostic.".to_string(),
             });
         }
-        let ms_path = self.field_text("ms_path").unwrap_or_default();
+        let ms_path = self.field_text("vis").unwrap_or_default();
         if ms_path.trim().is_empty() {
             return Some(
                 "Enter a MeasurementSet path to preview the current msexplore form.".to_string(),
@@ -10271,7 +11667,7 @@ impl AppState {
         &self,
     ) -> Result<(PathBuf, MeasurementSetSummaryOptions), String> {
         let ms_path = self
-            .field_text("ms_path")
+            .field_text("vis")
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| {
@@ -10280,7 +11676,7 @@ impl AppState {
         let selection_value =
             |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
         let selection = MsSelectionSpec {
-            selectdata: self.bool_field_value("selectdata").unwrap_or(false),
+            selectdata: self.required_parameter_bool("selectdata")?,
             field: selection_value("field"),
             spw: selection_value("spw"),
             timerange: selection_value("timerange"),
@@ -10301,7 +11697,7 @@ impl AppState {
         &self,
     ) -> Result<(PathBuf, MeasurementSetSummaryOptions), String> {
         let ms_path = self
-            .field_text("measurement_set")
+            .field_text("vis")
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| {
@@ -10311,7 +11707,7 @@ impl AppState {
             |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
         let options = MeasurementSetSummaryOptions {
             verbose: self.verbose_enabled(),
-            selectdata: self.bool_field_value("selectdata").unwrap_or(true),
+            selectdata: self.required_parameter_bool("selectdata")?,
             field: selection_value("field"),
             spw: selection_value("spw"),
             antenna: selection_value("antenna"),
@@ -10334,7 +11730,7 @@ impl AppState {
         &self,
     ) -> Result<(PathBuf, MeasurementSetSummaryOptions), String> {
         let ms_path = self
-            .field_text("ms")
+            .field_text("vis")
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| {
@@ -10367,7 +11763,12 @@ impl AppState {
         let selection_value =
             |id: &str| self.field_text(id).filter(|value| !value.trim().is_empty());
         MsSelectionSpec {
-            selectdata: self.bool_field_value("selectdata").unwrap_or(true),
+            // This non-fallible plot-preview path fails closed if its typed
+            // session is unavailable; it never recreates the catalog default.
+            selectdata: matches!(
+                self.session_parameter_value("selectdata"),
+                Some(ParameterValue::Bool(true))
+            ),
             field: selection_value("field"),
             spw: selection_value("spw"),
             timerange: selection_value("timerange"),
@@ -10386,7 +11787,7 @@ impl AppState {
     fn current_calibration_plot_request(&self) -> CalibrationPlotRequest {
         CalibrationPlotRequest {
             measurement_set_path: self
-                .field_text("measurement_set")
+                .field_text("vis")
                 .filter(|value| !value.trim().is_empty())
                 .map(PathBuf::from),
             calibration_table_path: self.current_calibration_plot_table_path(),
@@ -10642,7 +12043,7 @@ impl AppState {
                 .unwrap_or_else(|| self.default_calibration_plot_target());
             let mut parts = vec![self.selected_plot_label()];
             if let Some(path) = self
-                .field_text("measurement_set")
+                .field_text("vis")
                 .filter(|value| !value.trim().is_empty())
             {
                 parts.push(format!("ms={}", path.trim()));
@@ -11296,6 +12697,10 @@ impl AppState {
             self.stop_image_movie(false, "movie axis unavailable");
             return;
         };
+        if index + 1 >= length && !state.movie.looping {
+            self.stop_image_movie(false, "movie reached the final frame");
+            return;
+        }
         let delta = if index + 1 < length {
             1
         } else {
@@ -12037,7 +13442,13 @@ impl AppState {
                     field.set_text(edit_state.buffer);
                     self.mark_plot_snapshot_dirty();
                 }
-                self.apply_live_image_view_parameters_if_needed(field_index);
+                match self.sync_parameter_from_field(field_index) {
+                    Ok(()) => self.apply_live_image_view_parameters_if_needed(field_index),
+                    Err(error) => {
+                        self.result.status_line = error;
+                        self.result.status_kind = StatusKind::Warning;
+                    }
+                }
             }
             EditTarget::RenameImageRegionDefinition => {
                 let new_name = edit_state.buffer.trim();
@@ -12313,31 +13724,22 @@ impl AppState {
             .as_ref()
             .ok_or_else(|| "missing command schema".to_string())?;
 
-        let mut arguments = Vec::<OsString>::new();
-        append_hidden_default_arguments(schema, &mut arguments)?;
-        let force_selectdata = self.selection_inputs_present();
-        let calibrate_mode = if self.app.id == "calibrate" {
-            self.field_text("mode")
-                .unwrap_or_else(|| "apply".to_string())
-        } else {
-            String::new()
-        };
-        for field in &self.fields {
-            if field.schema.id == "selectdata" {
-                continue;
-            }
-            if self.app.id == "calibrate"
-                && !calibrate_argument_applies_to_mode(field.schema.id.as_str(), &calibrate_mode)
-            {
-                continue;
-            }
-            field.append_arguments(&mut arguments)?;
+        if let Some((name, error)) = self.parameter_edit_errors.iter().next() {
+            return Err(format!("Invalid parameter {name}: {error}"));
         }
-        let include_selectdata = self.app.id != "calibrate"
-            || calibrate_argument_applies_to_mode("selectdata", &calibrate_mode);
-        if include_selectdata {
-            self.append_effective_selectdata_argument(&mut arguments, force_selectdata)?;
-        }
+        let parameter_session = self
+            .parameter_session
+            .as_ref()
+            .ok_or_else(|| "typed parameter session is unavailable".to_string())?;
+        parameter_session
+            .render_sparse()
+            .map_err(|error| error.to_string())?;
+        let invocation = crate::parameters_cli::project_task_invocation(parameter_session)?;
+        let arguments = invocation
+            .args
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
 
         let output = self.field_text("output");
         let listfile = self.field_text("listfile");
@@ -12351,13 +13753,11 @@ impl AppState {
             .filter(|value| !value.is_empty())
             .or_else(|| listfile.filter(|value| !value.is_empty()));
 
-        if let Some(managed_output) = &schema.managed_output {
-            inject_managed_arguments(&mut arguments, managed_output);
-        }
-
         Ok(ExecutionPlan {
             command: self.app.resolve_command()?,
             arguments,
+            stdin: invocation.stdin,
+            working_directory: self.parameter_workspace.clone(),
             renderer: schema
                 .managed_output
                 .as_ref()
@@ -12378,6 +13778,13 @@ impl AppState {
             .iter()
             .find(|field| field.schema.id == id)
             .and_then(|field| field.text_value())
+            .map(|value| {
+                if value.trim() == "none" {
+                    String::new()
+                } else {
+                    value
+                }
+            })
     }
 
     fn non_empty_field_text(&self, id: &str) -> Option<String> {
@@ -12614,7 +14021,7 @@ impl AppState {
         workflow_stage_states(
             &self.workflow_run_snapshots(),
             &self.workflow_product_snapshots(),
-            self.non_empty_field_text("measurement_set").is_some(),
+            self.non_empty_field_text("vis").is_some(),
         )
     }
 
@@ -12700,13 +14107,10 @@ impl AppState {
             WorkflowStageId::FluxScale => self
                 .non_empty_field_text("fluxscale_input")
                 .map(PathBuf::from)
-                .or_else(|| {
-                    self.non_empty_field_text("measurement_set")
-                        .map(PathBuf::from)
-                }),
-            WorkflowStageId::SolveGain | WorkflowStageId::SolveBandpass => self
-                .non_empty_field_text("measurement_set")
-                .map(PathBuf::from),
+                .or_else(|| self.non_empty_field_text("vis").map(PathBuf::from)),
+            WorkflowStageId::SolveGain | WorkflowStageId::SolveBandpass => {
+                self.non_empty_field_text("vis").map(PathBuf::from)
+            }
             WorkflowStageId::InspectDataset
             | WorkflowStageId::Apply
             | WorkflowStageId::InspectResults => None,
@@ -13229,14 +14633,14 @@ impl AppState {
             WorkflowProductActionKind::ImportChainTable => {
                 let start_hint = self
                     .non_empty_field_text("table_path")
-                    .or_else(|| self.non_empty_field_text("measurement_set"));
+                    .or_else(|| self.non_empty_field_text("vis"));
                 let start = chooser_start_path(start_hint.as_deref());
                 self.open_path_chooser_target(PathChooserTarget::WorkflowImportChainTable, start);
             }
             WorkflowProductActionKind::ChooseCallibrary => {
                 let start_hint = self
                     .non_empty_field_text("callib")
-                    .or_else(|| self.non_empty_field_text("measurement_set"));
+                    .or_else(|| self.non_empty_field_text("vis"));
                 let start = chooser_start_path(start_hint.as_deref());
                 self.open_path_chooser_target(PathChooserTarget::WorkflowChooseCallibrary, start);
             }
@@ -13273,31 +14677,194 @@ impl AppState {
         )
     }
 
-    fn current_image_browser_parameters(&self) -> ImageBrowserParameters {
-        ImageBrowserParameters {
-            blc: self.field_text("blc").unwrap_or_default(),
-            trc: self.field_text("trc").unwrap_or_default(),
-            inc: self.field_text("inc").unwrap_or_default(),
-            stretch: self
-                .field_text("stretch")
-                .unwrap_or_else(|| "percentile99".into()),
-            autoscale: self
-                .field_text("autoscale")
-                .unwrap_or_else(|| "per_plane".into()),
-            clip_low: self.field_text("clip_low").unwrap_or_default(),
-            clip_high: self.field_text("clip_high").unwrap_or_default(),
+    fn current_image_browser_parameters(&self) -> Result<ImageBrowserParameters, String> {
+        Ok(ImageBrowserParameters {
+            blc: self.required_session_parameter_text("blc")?,
+            trc: self.required_session_parameter_text("trc")?,
+            inc: self.required_session_parameter_text("inc")?,
+            stretch: self.required_session_parameter_text("stretch")?,
+            autoscale: self.required_session_parameter_text("autoscale")?,
+            clip_low: self.required_session_parameter_text("clip_low")?,
+            clip_high: self.required_session_parameter_text("clip_high")?,
+        })
+    }
+
+    fn session_parameter_value(&self, id: &str) -> Option<&ParameterValue> {
+        self.parameter_session
+            .as_ref()?
+            .states()
+            .get(id)?
+            .value
+            .as_ref()
+    }
+
+    fn session_parameter_text(&self, id: &str) -> Option<String> {
+        self.session_parameter_value(id).map(parameter_value_text)
+    }
+
+    fn required_session_parameter_text(&self, id: &str) -> Result<String, String> {
+        self.session_parameter_text(id)
+            .ok_or_else(|| format!("resolved session parameter {id:?} is unavailable"))
+    }
+
+    fn required_session_parameter_is_explicit(&self, id: &str) -> Result<bool, String> {
+        self.parameter_session
+            .as_ref()
+            .and_then(|session| session.states().get(id))
+            .map(|state| state.explicit)
+            .ok_or_else(|| format!("resolved session parameter {id:?} is unavailable"))
+    }
+
+    fn table_session_startup_config(&self) -> Result<TableSessionStartupConfig, String> {
+        let view_text = self.required_session_parameter_text("view")?;
+        let view = parse_table_session_view(&view_text)?;
+
+        let rowstart = parameter_integer(self.session_parameter_value("rowstart"), "rowstart")?;
+        let row_start = usize::try_from(rowstart)
+            .map_err(|_| "tablebrowser rowstart must be non-negative".to_string())?;
+        let nrow = parameter_integer(self.session_parameter_value("nrow"), "nrow")?;
+        let row_count = usize::try_from(nrow)
+            .ok()
+            .filter(|count| *count > 0)
+            .ok_or_else(|| "tablebrowser nrow must be greater than zero".to_string())?;
+
+        let linked_table_text = self.required_session_parameter_text("linkedtable")?;
+        let linked_table = (!parameter_reference_is_none(&linked_table_text))
+            .then(|| linked_table_text.trim().to_string());
+
+        let bookmark_text = self.required_session_parameter_text("bookmark")?;
+        let bookmark = parse_table_bookmark(&bookmark_text)?;
+
+        let content_mode_text = self.required_session_parameter_text("contentmode")?;
+        let content_mode = parse_table_content_mode(&content_mode_text)?;
+        let requires_configure = [
+            "view",
+            "bookmark",
+            "rowstart",
+            "nrow",
+            "linkedtable",
+            "contentmode",
+        ]
+        .into_iter()
+        .try_fold(false, |any, name| {
+            self.required_session_parameter_is_explicit(name)
+                .map(|explicit| any || explicit)
+        })?;
+
+        Ok(TableSessionStartupConfig {
+            parameters: BrowserParameters {
+                view,
+                row_start,
+                row_count,
+                linked_table,
+                bookmark,
+                content_mode,
+            },
+            requires_configure,
+        })
+    }
+
+    fn image_session_startup_config(&self) -> Result<ImageSessionStartupConfig, String> {
+        let view = parse_image_session_view(&self.required_session_parameter_text("view")?)?;
+        let colormap = parse_image_colormap(&self.required_session_parameter_text("colormap")?)?;
+        let content_mode =
+            parse_image_content_mode(&self.required_session_parameter_text("contentmode")?)?;
+        let movie_axis = self.required_session_parameter_text("movieaxis")?;
+        let profile_axis = self.required_session_parameter_text("profileaxis")?;
+        let fps = parameter_f64(self.session_parameter_value("fps"), "fps")?;
+        if !fps.is_finite() || fps <= 0.0 {
+            return Err("FPS must be a positive number.".to_string());
+        }
+        let looping = parameter_bool(self.session_parameter_value("loop"), "loop")?;
+        let region =
+            parse_image_region_reference(&self.required_session_parameter_text("region")?)?;
+        let mask = parse_image_mask_reference(&self.required_session_parameter_text("mask")?)?;
+
+        Ok(ImageSessionStartupConfig {
+            view_parameters: self.current_image_browser_parameters()?,
+            view,
+            enforce_view: self.required_session_parameter_is_explicit("view")?,
+            content_mode,
+            content_mode_explicit: self.required_session_parameter_is_explicit("contentmode")?,
+            colormap,
+            movie_axis,
+            profile_axis,
+            fps,
+            looping,
+            region,
+            region_explicit: self.required_session_parameter_is_explicit("region")?,
+            mask,
+            mask_explicit: self.required_session_parameter_is_explicit("mask")?,
+        })
+    }
+
+    fn set_accepted_parameter_value(
+        &mut self,
+        name: &str,
+        value: ParameterValue,
+    ) -> Result<(), String> {
+        let Some(session) = self.parameter_session.as_mut() else {
+            return Err("typed parameter session is unavailable".to_string());
+        };
+        if session
+            .states()
+            .get(name)
+            .and_then(|state| state.value.as_ref())
+            == Some(&value)
+        {
+            return Ok(());
+        }
+        session
+            .set(name.to_string(), value)
+            .map_err(|error| error.to_string())
+    }
+
+    fn sync_accepted_image_window_parameters(
+        &mut self,
+        parameters: &ImageBrowserParameters,
+    ) -> Result<(), String> {
+        for (name, value) in [
+            ("blc", parameters.blc.as_str()),
+            ("trc", parameters.trc.as_str()),
+            ("inc", parameters.inc.as_str()),
+            ("stretch", parameters.stretch.as_str()),
+            ("autoscale", parameters.autoscale.as_str()),
+            ("clip_low", parameters.clip_low.as_str()),
+            ("clip_high", parameters.clip_high.as_str()),
+        ] {
+            self.set_accepted_parameter_value(name, ParameterValue::String(value.to_string()))?;
+        }
+        if let Some(session) = self.parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
+        }
+        Ok(())
+    }
+
+    fn rollback_rejected_live_parameter_change(&mut self) {
+        let Some(session) = self.pending_live_parameter_rollback.take() else {
+            return;
+        };
+        self.parameter_session = Some(session);
+        self.parameter_edit_errors.clear();
+        if let Some(session) = self.parameter_session.as_ref() {
+            sync_form_fields_from_parameter_session(&mut self.fields, session);
         }
     }
 
-    fn sync_image_parameter_fields(&mut self, parameters: &ImageBrowserParameters) {
-        sync_image_parameter_fields(&mut self.fields, parameters);
+    fn accept_live_parameter_changes(&mut self) {
+        self.pending_live_parameter_rollback = None;
+        self.queue_accepted_session_parameter_change();
     }
 
     fn apply_live_image_view_parameters_if_needed(&mut self, field_index: usize) {
-        let Some(field) = self.fields.get(field_index) else {
+        let Some(field_id) = self
+            .fields
+            .get(field_index)
+            .map(|field| field.schema.id.clone())
+        else {
             return;
         };
-        if !IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&field.schema.id.as_str()) {
+        if !IMEXPLORE_LIVE_PARAMETER_FIELD_IDS.contains(&field_id.as_str()) {
             return;
         }
         if !self
@@ -13306,28 +14873,201 @@ impl AppState {
         {
             return;
         }
-        if field.schema.id == "fps" {
-            self.apply_live_image_movie_fps();
-            return;
+        match field_id.as_str() {
+            "image" => self.reject_live_parameter_edit(
+                "Close the active imexplore session before changing Image Path.".to_string(),
+            ),
+            "blc" | "trc" | "inc" | "stretch" | "autoscale" | "clip_low" | "clip_high" => {
+                match self.current_image_browser_parameters() {
+                    Ok(parameters) => {
+                        self.send_browser_command(BrowserRequest::SetImageViewParameters {
+                            parameters,
+                        });
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "fps" => self.apply_live_image_movie_fps(),
+            "view" => {
+                let result = self
+                    .session_parameter_text("view")
+                    .ok_or_else(|| "imexplore view is unavailable".to_string())
+                    .and_then(|value| parse_image_session_view(&value));
+                match result {
+                    Ok(view) => self.apply_live_image_view(view),
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "contentmode" => {
+                let result = self
+                    .session_parameter_text("contentmode")
+                    .ok_or_else(|| "imexplore content mode is unavailable".to_string())
+                    .and_then(|value| parse_image_content_mode(&value));
+                match result {
+                    Ok(mode) => {
+                        if self
+                            .send_browser_command(BrowserRequest::SetImagePlaneContentMode { mode })
+                            && let Some(state) = self.image_browser_session_state_mut()
+                        {
+                            state.plane_mode = image_plane_mode(mode);
+                            state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+                        }
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "colormap" => {
+                let result = self
+                    .session_parameter_text("colormap")
+                    .ok_or_else(|| "imexplore colormap is unavailable".to_string())
+                    .and_then(|value| parse_image_colormap(&value));
+                match result {
+                    Ok(colormap) => {
+                        if let Some(state) = self.image_browser_session_state_mut() {
+                            state.plane_colormap = colormap;
+                            state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+                        }
+                        self.accept_live_parameter_changes();
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "movieaxis" => {
+                let selector = match self.required_session_parameter_text("movieaxis") {
+                    Ok(selector) => selector,
+                    Err(error) => {
+                        self.reject_live_parameter_edit(error);
+                        return;
+                    }
+                };
+                let Some(state) = self.image_browser_session_state() else {
+                    return;
+                };
+                let resolved = resolve_image_axis_selector(&state.snapshot, &selector, "movieaxis");
+                match resolved {
+                    Ok(selected) => {
+                        let index = selected.map(|(index, _)| index).unwrap_or(0);
+                        if let Some(state) = self.image_browser_session_state_mut() {
+                            state.selected_non_display_axis = index;
+                            state.clamp_selected_non_display_axis();
+                            state.snapshot_generation = state.snapshot_generation.saturating_add(1);
+                        }
+                        self.accept_live_parameter_changes();
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "profileaxis" => {
+                let selector = match self.required_session_parameter_text("profileaxis") {
+                    Ok(selector) => selector,
+                    Err(error) => {
+                        self.reject_live_parameter_edit(error);
+                        return;
+                    }
+                };
+                let Some(state) = self.image_browser_session_state() else {
+                    return;
+                };
+                let resolved =
+                    resolve_image_axis_selector(&state.snapshot, &selector, "profileaxis");
+                match resolved {
+                    Ok(Some((_, axis))) => {
+                        self.send_browser_command(BrowserRequest::SetImageProfileAxis { axis });
+                    }
+                    Ok(None) => {
+                        self.accept_live_parameter_changes();
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "loop" => match parameter_bool(self.session_parameter_value("loop"), "loop") {
+                Ok(looping) => {
+                    if let Some(state) = self.image_browser_session_state_mut() {
+                        state.movie.looping = looping;
+                    }
+                    self.accept_live_parameter_changes();
+                }
+                Err(error) => self.reject_live_parameter_edit(error),
+            },
+            "region" => {
+                let value = match self.required_session_parameter_text("region") {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.reject_live_parameter_edit(error);
+                        return;
+                    }
+                };
+                match parse_image_region_reference(&value) {
+                    Ok(region) => {
+                        self.send_browser_command(BrowserRequest::SetImageSelectionReferences {
+                            region: Some(region),
+                            mask: None,
+                        });
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            "mask" => {
+                let value = match self.required_session_parameter_text("mask") {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.reject_live_parameter_edit(error);
+                        return;
+                    }
+                };
+                match parse_image_mask_reference(&value) {
+                    Ok(mask) => {
+                        self.send_browser_command(BrowserRequest::SetImageSelectionReferences {
+                            region: None,
+                            mask: Some(mask),
+                        });
+                    }
+                    Err(error) => self.reject_live_parameter_edit(error),
+                }
+            }
+            _ => {}
         }
-        self.send_browser_command(BrowserRequest::SetImageViewParameters {
-            parameters: self.current_image_browser_parameters(),
-        });
     }
 
-    fn current_image_movie_fps(&self) -> f64 {
-        self.field_text("fps")
-            .and_then(|value| parse_image_movie_fps(&value).ok())
-            .unwrap_or(IMAGE_MOVIE_DEFAULT_FPS)
+    fn reject_live_parameter_edit(&mut self, error: String) {
+        self.rollback_rejected_live_parameter_change();
+        self.result.status_line = error;
+        self.result.status_kind = StatusKind::Warning;
+    }
+
+    fn apply_live_image_view(&mut self, target: ImageBrowserView) {
+        for _ in 0..4 {
+            let Some(active) = self
+                .image_browser_session_state()
+                .map(|state| state.snapshot.active_view)
+            else {
+                return;
+            };
+            if active == target {
+                self.accept_live_parameter_changes();
+                return;
+            }
+            if !self.send_browser_command(BrowserRequest::CycleView { forward: true }) {
+                return;
+            }
+        }
+        self.reject_live_parameter_edit(format!(
+            "imexplore backend did not expose requested view {}",
+            target.label()
+        ));
     }
 
     fn apply_live_image_movie_fps(&mut self) {
-        let fps_text = self.field_text("fps").unwrap_or_else(|| "1".into());
-        let Ok(fps) = parse_image_movie_fps(&fps_text) else {
+        let Ok(fps) = parameter_f64(self.session_parameter_value("fps"), "fps") else {
             self.result.status_line = "FPS must be a positive number.".into();
             self.result.status_kind = StatusKind::Warning;
             return;
         };
+        if !fps.is_finite() || fps <= 0.0 {
+            self.result.status_line = "FPS must be a positive number.".into();
+            self.result.status_kind = StatusKind::Warning;
+            return;
+        }
         let context = self
             .image_browser_session_state()
             .map(|state| image_movie_perf_context_from_state(state, None, None, None))
@@ -13342,6 +15082,7 @@ impl AppState {
             format!("Movie FPS set to {}.", trim_float_text(format!("{fps:.3}")));
         self.result.status_kind = StatusKind::Info;
         self.movie_perf.fps_changed(context);
+        self.accept_live_parameter_changes();
     }
 
     fn bool_field_value(&self, id: &str) -> Option<bool> {
@@ -13352,6 +15093,16 @@ impl AppState {
                 FormValue::Toggle(value) => Some(*value),
                 _ => None,
             })
+    }
+
+    fn required_parameter_bool(&self, id: &str) -> Result<bool, String> {
+        match self.session_parameter_value(id) {
+            Some(ParameterValue::Bool(value)) => Ok(*value),
+            Some(value) => Err(format!(
+                "resolved parameter {id:?} must be boolean, got {value:?}"
+            )),
+            None => Err(format!("resolved parameter {id:?} is unavailable")),
+        }
     }
 
     fn verbose_enabled(&self) -> bool {
@@ -13416,51 +15167,9 @@ impl AppState {
         }
     }
 
-    fn selection_inputs_present(&self) -> bool {
-        self.fields.iter().any(|field| {
-            field.schema.group == "Selection"
-                && field.schema.id != "selectdata"
-                && match &field.value {
-                    FormValue::Text(value) => !value.trim().is_empty(),
-                    FormValue::Choice { value, .. } => !value.trim().is_empty(),
-                    FormValue::Toggle(_) => false,
-                }
-        })
-    }
-
-    fn append_effective_selectdata_argument(
-        &self,
-        arguments: &mut Vec<OsString>,
-        force_selectdata: bool,
-    ) -> Result<(), String> {
-        let Some(field) = self
-            .fields
-            .iter()
-            .find(|field| field.schema.id == "selectdata")
-        else {
-            return Ok(());
-        };
-        let FormValue::Toggle(raw_value) = &field.value else {
-            return Err("internal selectdata field mismatch".to_string());
-        };
-        let effective = *raw_value || force_selectdata;
-        let UiArgumentParser::Toggle {
-            true_flags,
-            false_flags,
-        } = &field.schema.parser
-        else {
-            return Err("internal selectdata parser mismatch".to_string());
-        };
-        match (effective, true_flags.first(), false_flags.first()) {
-            (true, Some(flag), _) => arguments.push(OsString::from(flag)),
-            (false, _, Some(flag)) => arguments.push(OsString::from(flag)),
-            _ => {}
-        }
-        Ok(())
-    }
-
     fn cancel_current(&mut self) {
         if let Some(session) = self.browser_session.take() {
+            self.flush_session_last_on_close();
             let _ = session.cancel();
             self.result.status_line = "Browser session closed.".to_string();
             self.result.status_kind = StatusKind::Info;
@@ -13490,14 +15199,28 @@ impl AppState {
     }
 
     fn finish_execution(&mut self, exit_code: Option<i32>, success: bool) {
-        let Some(running) = self.running.take() else {
+        let Some(mut running) = self.running.take() else {
             return;
         };
+        let completed_successfully = success && !running.cancel_requested;
+        let automatic_save_warning = running
+            .task_last_state
+            .as_mut()
+            .and_then(|state| state.after_completion(completed_successfully).warning);
+        if let Some(warning) = &automatic_save_warning {
+            self.result
+                .stderr
+                .push_str(&format!("Automatic parameter save warning: {warning}\n"));
+        }
+        let save_warning_suffix = automatic_save_warning
+            .as_ref()
+            .map(|warning| format!(" Parameter save warning: {warning}"))
+            .unwrap_or_default();
         self.result.exit_code = exit_code;
         self.result.file_output_path = running.file_output_path.clone();
 
         if running.cancel_requested {
-            self.result.status_line = "Execution canceled.".to_string();
+            self.result.status_line = format!("Execution canceled.{save_warning_suffix}");
             self.result.status_kind = StatusKind::Warning;
             self.result.structured = None;
             self.result.structured_error = Some(
@@ -13519,7 +15242,8 @@ impl AppState {
         }
 
         if success {
-            self.result.status_line = "Execution completed successfully.".to_string();
+            self.result.status_line =
+                format!("Execution completed successfully.{save_warning_suffix}");
             self.result.status_kind = StatusKind::Ok;
             if let Some(path) = running.file_output_path {
                 self.result.structured = None;
@@ -13633,7 +15357,7 @@ impl AppState {
                 );
             }
         } else {
-            self.result.status_line = "Execution failed.".to_string();
+            self.result.status_line = format!("Execution failed.{save_warning_suffix}");
             self.result.status_kind = StatusKind::Error;
             self.result.structured = None;
             self.result.structured_error = None;
@@ -13709,8 +15433,7 @@ impl AppState {
         if self.app.shell_kind() == AppShellKind::Workflow {
             return render_workflow_overview_lines(&WorkflowOverviewDisplay {
                 dataset_path: self
-                    .non_empty_field_text("measurement_set")
-                    .or_else(|| self.non_empty_field_text("ms")),
+                    .non_empty_field_text("vis"),
                 recommended_stage: self
                     .current_calibration_report()
                     .and_then(|_| {
@@ -13753,7 +15476,7 @@ impl AppState {
 
         if self.app.shell_kind() == AppShellKind::Inspect {
             return render_inspect_overview_lines(&InspectOverviewDisplay {
-                dataset_path: self.non_empty_field_text("ms_path"),
+                dataset_path: self.non_empty_field_text("vis"),
                 current_view: self.selected_summary_view.label().to_string(),
                 current_plot: Some(self.selected_plot_label()),
                 tab_labels: self
@@ -14068,99 +15791,6 @@ fn render_managed_stage_timing_summary(timings: &ManagedImagingStageTimings) -> 
         .join("  ")
 }
 
-fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
-    match field_id {
-        "mode" | "format" | "output" | "overwrite" => true,
-        "selectdata" => matches!(
-            mode,
-            "apply" | "continuum_subtract" | "solve_gain" | "solve_bandpass"
-        ),
-        "measurement_set" => {
-            matches!(
-                mode,
-                "apply"
-                    | "export_corrected_data"
-                    | "continuum_subtract"
-                    | "solve_gain"
-                    | "solve_bandpass"
-            )
-        }
-        "output_measurement_set" => matches!(mode, "export_corrected_data" | "continuum_subtract"),
-        "gaintables" | "callib" | "gainfield" | "interp" | "spwmap" | "parang" | "field"
-        | "spw" | "antenna" | "scan" | "observation" | "array" | "timerange" | "msselect" => {
-            matches!(
-                mode,
-                "apply" | "continuum_subtract" | "solve_gain" | "solve_bandpass"
-            )
-        }
-        "apply_mode" | "calwt" => mode == "apply",
-        "summary_paths" => mode == "summary",
-        "table_path" | "stats_axis" | "use_flags" => mode == "stats",
-        "fit_spw" | "fit_order" => mode == "continuum_subtract",
-        "stats_datacolumn" => matches!(mode, "stats" | "continuum_subtract"),
-        "out_table" | "refant" => matches!(mode, "solve_gain" | "solve_bandpass"),
-        "gain_type" | "solve_mode" | "solint" | "gain_combine" | "gain_model_source"
-        | "min_snr" => mode == "solve_gain",
-        "smodel" => matches!(mode, "solve_gain" | "solve_bandpass"),
-        "solnorm" => matches!(mode, "solve_gain" | "solve_bandpass"),
-        "bandpass_combine" | "bandtype" => mode == "solve_bandpass",
-        "fluxscale_input" | "reference_fields" | "transfer_fields" | "refspwmap"
-        | "gainthreshold" | "incremental" => mode == "fluxscale",
-        _ => true,
-    }
-}
-
-fn append_hidden_default_arguments(
-    schema: &UiCommandSchema,
-    arguments: &mut Vec<OsString>,
-) -> Result<(), String> {
-    for argument in schema
-        .arguments
-        .iter()
-        .filter(|argument| argument.hidden_in_tui)
-        .filter(|argument| !matches!(argument.parser, UiArgumentParser::Action { .. }))
-    {
-        let value = argument.default.as_deref().unwrap_or_default().trim();
-        if value.is_empty() {
-            if argument.required {
-                return Err(format!("{} is required.", argument.label));
-            }
-            continue;
-        }
-        match &argument.parser {
-            UiArgumentParser::Positional { .. } => {
-                arguments.push(path_argument_value(
-                    argument.value_kind == UiValueKind::Path,
-                    value,
-                ));
-            }
-            UiArgumentParser::Option { flags, .. } => {
-                let Some(flag) = flags.first() else {
-                    continue;
-                };
-                arguments.push(OsString::from(flag));
-                arguments.push(path_argument_value(
-                    argument.value_kind == UiValueKind::Path,
-                    value,
-                ));
-            }
-            UiArgumentParser::Toggle {
-                true_flags,
-                false_flags,
-            } => {
-                let enabled = argument.default_bool().unwrap_or(false);
-                match (enabled, true_flags.first(), false_flags.first()) {
-                    (true, Some(flag), _) => arguments.push(OsString::from(flag)),
-                    (false, _, Some(flag)) => arguments.push(OsString::from(flag)),
-                    _ => {}
-                }
-            }
-            UiArgumentParser::Action { .. } => {}
-        }
-    }
-    Ok(())
-}
-
 fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
@@ -14191,21 +15821,99 @@ fn browser_render_theme(theme_mode: ThemeMode) -> BrowserRenderTheme {
     }
 }
 
-fn seed_app_field_defaults(app_id: &str, fields: &mut [FormField]) {
-    if app_id != "msexplore" {
-        return;
+#[cfg(not(test))]
+fn load_interactive_parameter_session(
+    surface_id: &str,
+    workspace: &Path,
+) -> (Option<ParameterSession>, Option<String>) {
+    let bundle = match builtin_surface_bundle(surface_id) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            return (
+                None,
+                Some(format!(
+                    "Parameter contract for {surface_id} is unavailable: {error}"
+                )),
+            );
+        }
+    };
+    let defaults = || ParameterSession::defaults(bundle.clone());
+    let store = ManagedStateStore::for_workspace(workspace);
+    match store.read(surface_id, ManagedProfileKind::Last) {
+        Ok(Some(source)) => match parse_profile(&source)
+            .map_err(|error| error.to_string())
+            .and_then(|profile| {
+                ParameterSession::from_profile(bundle.clone(), BaseSource::Last, &profile)
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(session) => (Some(session), None),
+            Err(error) => (
+                defaults().ok(),
+                Some(format!(
+                    "Last profile for {surface_id} is invalid; using Defaults. {error}"
+                )),
+            ),
+        },
+        Ok(None) => (defaults().ok(), None),
+        Err(error) => (
+            defaults().ok(),
+            Some(format!(
+                "Could not read Last profile for {surface_id}; using Defaults. {error}"
+            )),
+        ),
     }
-    if let Some(field) = fields
-        .iter_mut()
-        .find(|field| field.schema.id == "showlegend")
+}
+
+#[cfg(test)]
+fn load_interactive_parameter_session(
+    surface_id: &str,
+    _workspace: &Path,
+) -> (Option<ParameterSession>, Option<String>) {
+    match builtin_surface_bundle(surface_id)
+        .and_then(|bundle| ParameterSession::defaults(bundle).map_err(|error| error.to_string()))
     {
-        let _ = field.apply_toggle_value(true);
+        Ok(session) => (Some(session), None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "Parameter contract for {surface_id} is unavailable: {error}"
+            )),
+        ),
     }
-    if let Some(field) = fields
-        .iter_mut()
-        .find(|field| field.schema.id == "legendposition")
-    {
-        let _ = field.apply_text_value("exteriorRight".to_string());
+}
+
+fn sync_form_fields_from_parameter_session(fields: &mut [FormField], session: &ParameterSession) {
+    for field in fields {
+        let Some(state) = session.states().get(&field.schema.id) else {
+            continue;
+        };
+        field.schema.required = state.required;
+        match (&mut field.value, state.value.as_ref()) {
+            (FormValue::Toggle(current), Some(ParameterValue::Bool(value))) => *current = *value,
+            (FormValue::Text(current), Some(value))
+            | (FormValue::Choice { value: current, .. }, Some(value)) => {
+                *current = parameter_value_text(value);
+            }
+            (FormValue::Text(current), None) | (FormValue::Choice { value: current, .. }, None) => {
+                current.clear()
+            }
+            _ => {}
+        }
+    }
+}
+
+fn parameter_value_text(value: &ParameterValue) -> String {
+    match value {
+        ParameterValue::Bool(value) => value.to_string(),
+        ParameterValue::Integer(value) => value.to_string(),
+        ParameterValue::Float(value) => value.to_string(),
+        ParameterValue::String(value) => value.clone(),
+        ParameterValue::Array(values) => values
+            .iter()
+            .map(parameter_value_text)
+            .collect::<Vec<_>>()
+            .join(","),
+        ParameterValue::Table(values) => serde_json::to_string(values).unwrap_or_default(),
     }
 }
 
@@ -14277,47 +15985,6 @@ impl FormField {
 
     fn is_path(&self) -> bool {
         self.schema.value_kind == UiValueKind::Path
-    }
-
-    fn append_arguments(&self, arguments: &mut Vec<OsString>) -> Result<(), String> {
-        match (&self.schema.parser, &self.value) {
-            (UiArgumentParser::Positional { .. }, FormValue::Text(value)) => {
-                if self.schema.required && value.trim().is_empty() {
-                    return Err(format!("{} is required.", self.schema.label));
-                }
-                if !value.trim().is_empty() {
-                    arguments.push(path_argument_value(self.is_path(), value));
-                }
-            }
-            (UiArgumentParser::Option { flags, .. }, FormValue::Text(value)) => {
-                if !value.trim().is_empty() {
-                    arguments.push(OsString::from(&flags[0]));
-                    arguments.push(path_argument_value(self.is_path(), value));
-                }
-            }
-            (UiArgumentParser::Option { flags, .. }, FormValue::Choice { value, .. }) => {
-                if self.schema.required && value.trim().is_empty() {
-                    return Err(format!("{} is required.", self.schema.label));
-                }
-                if !value.trim().is_empty() {
-                    arguments.push(OsString::from(&flags[0]));
-                    arguments.push(OsString::from(value));
-                }
-            }
-            (
-                UiArgumentParser::Toggle {
-                    true_flags,
-                    false_flags,
-                },
-                FormValue::Toggle(value),
-            ) => match (*value, true_flags.first(), false_flags.first()) {
-                (true, Some(flag), _) => arguments.push(OsString::from(flag)),
-                (false, _, Some(flag)) => arguments.push(OsString::from(flag)),
-                _ => {}
-            },
-            _ => return Err(format!("internal argument mismatch for {}", self.schema.id)),
-        }
-        Ok(())
     }
 
     fn cycle_choice(&mut self, forward: bool) {
@@ -14421,7 +16088,7 @@ fn build_inspect_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection
         return build_browser_sections(None, fields);
     }
     let context_ids = [
-        "ms_path",
+        "vis",
         "selectdata",
         "field",
         "spw",
@@ -14443,7 +16110,7 @@ fn build_inspect_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection
         "x_axis",
         "y_axis",
         "y_axis2",
-        "data_column",
+        "datacolumn",
         "color_by",
         "avgchannel",
         "avgtime",
@@ -14511,7 +16178,7 @@ fn build_inspect_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection
 fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSection> {
     if app_id == "imager" {
         let context_ids = [
-            "ms",
+            "vis",
             "datacolumn",
             "field",
             "phasecenter_field",
@@ -14535,7 +16202,7 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             "perchanweightdensity",
             "dirty_only",
             "niter",
-            "threshold_jy",
+            "threshold",
             "deconvolver",
             "nterms",
             "scales",
@@ -14584,7 +16251,7 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
         return build_browser_sections(None, fields);
     }
     let context_ids = [
-        "measurement_set",
+        "vis",
         "selectdata",
         "field",
         "refant",
@@ -14920,13 +16587,6 @@ fn dynamic_field_picker_entries(app: &AppState, field_id: &str) -> Option<Vec<Ch
             (!entries.is_empty()).then_some(entries)
         }
         _ => None,
-    }
-}
-
-fn inject_managed_arguments(arguments: &mut Vec<OsString>, managed_output: &UiManagedOutputSchema) {
-    for argument in &managed_output.inject_arguments {
-        arguments.push(OsString::from(&argument.flag));
-        arguments.push(OsString::from(&argument.value));
     }
 }
 
@@ -15550,18 +17210,431 @@ fn sync_image_parameter_fields(fields: &mut [FormField], parameters: &ImageBrows
     }
 }
 
-fn parse_image_movie_fps(text: &str) -> Result<f64, String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Ok(IMAGE_MOVIE_DEFAULT_FPS);
+fn parameter_reference_is_none(value: &str) -> bool {
+    value.trim().is_empty() || value.trim().eq_ignore_ascii_case("none")
+}
+
+fn browser_request_may_change_durable_parameters(
+    command: &BrowserRequest,
+    accepted_axis_selection: Option<usize>,
+) -> bool {
+    accepted_axis_selection.is_some()
+        || matches!(
+            command,
+            BrowserRequest::CycleView { .. }
+                | BrowserRequest::SetImageViewParameters { .. }
+                | BrowserRequest::SetImageProfileAxis { .. }
+                | BrowserRequest::SetImageSelectionReferences { .. }
+                | BrowserRequest::ClearImageRegion
+                | BrowserRequest::SaveImageRegionDefinition
+                | BrowserRequest::LoadNextImageRegionDefinition
+                | BrowserRequest::LoadImageRegionDefinition { .. }
+                | BrowserRequest::RenameImageRegionDefinition { .. }
+                | BrowserRequest::DeleteImageRegionDefinition { .. }
+                | BrowserRequest::SetImageDefaultMask { .. }
+                | BrowserRequest::UnsetImageDefaultMask
+                | BrowserRequest::DeleteImageMask { .. }
+                | BrowserRequest::WriteImageRegionMask
+        )
+}
+
+fn parameter_integer(value: Option<&ParameterValue>, parameter: &str) -> Result<i64, String> {
+    match value {
+        None => Err(format!(
+            "resolved integer parameter {parameter:?} is unavailable"
+        )),
+        Some(ParameterValue::Integer(value)) => Ok(*value),
+        Some(ParameterValue::String(value)) => value
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| format!("expected an integer parameter, got {value:?}")),
+        Some(value) => Err(format!("expected an integer parameter, got {value:?}")),
     }
-    let fps = trimmed
-        .parse::<f64>()
-        .map_err(|_| "FPS must be a positive number.".to_string())?;
-    if !fps.is_finite() || fps <= 0.0 {
-        return Err("FPS must be a positive number.".to_string());
+}
+
+fn parameter_f64(value: Option<&ParameterValue>, parameter: &str) -> Result<f64, String> {
+    match value {
+        None => Err(format!(
+            "resolved numeric parameter {parameter:?} is unavailable"
+        )),
+        Some(ParameterValue::Integer(value)) => Ok(*value as f64),
+        Some(ParameterValue::Float(value)) => Ok(*value),
+        Some(ParameterValue::String(value)) => value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| format!("expected a numeric parameter, got {value:?}")),
+        Some(value) => Err(format!("expected a numeric parameter, got {value:?}")),
     }
-    Ok(fps)
+}
+
+fn parameter_bool(value: Option<&ParameterValue>, parameter: &str) -> Result<bool, String> {
+    match value {
+        None => Err(format!(
+            "resolved boolean parameter {parameter:?} is unavailable"
+        )),
+        Some(ParameterValue::Bool(value)) => Ok(*value),
+        Some(ParameterValue::String(value)) if value.trim().eq_ignore_ascii_case("true") => {
+            Ok(true)
+        }
+        Some(ParameterValue::String(value)) if value.trim().eq_ignore_ascii_case("false") => {
+            Ok(false)
+        }
+        Some(value) => Err(format!("expected a boolean parameter, got {value:?}")),
+    }
+}
+
+fn parse_table_session_view(value: &str) -> Result<TableBrowserView, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "summary" => Ok(TableBrowserView::Overview),
+        "columns" => Ok(TableBrowserView::Columns),
+        "keywords" => Ok(TableBrowserView::Keywords),
+        "rows" => Ok(TableBrowserView::Cells),
+        _ => Err(format!(
+            "unsupported tablebrowser view {value:?}; expected summary, columns, keywords, or rows"
+        )),
+    }
+}
+
+fn table_session_view_parameter(view: TableBrowserView) -> Option<&'static str> {
+    match view {
+        TableBrowserView::Overview => Some("summary"),
+        TableBrowserView::Columns => Some("columns"),
+        TableBrowserView::Keywords => Some("keywords"),
+        TableBrowserView::Cells => Some("rows"),
+        TableBrowserView::Subtables => None,
+    }
+}
+
+fn parse_image_session_view(value: &str) -> Result<ImageBrowserView, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "plane" => Ok(ImageBrowserView::Plane),
+        "spectrum" => Ok(ImageBrowserView::Spectrum),
+        "metadata" => Ok(ImageBrowserView::Metadata),
+        "coordinates" => Ok(ImageBrowserView::Coordinates),
+        _ => Err(format!(
+            "unsupported imexplore view {value:?}; expected plane, spectrum, metadata, or coordinates"
+        )),
+    }
+}
+
+fn image_session_view_parameter(view: ImageBrowserView) -> &'static str {
+    match view {
+        ImageBrowserView::Plane => "plane",
+        ImageBrowserView::Spectrum => "spectrum",
+        ImageBrowserView::Metadata => "metadata",
+        ImageBrowserView::Coordinates => "coordinates",
+    }
+}
+
+fn parse_image_colormap(value: &str) -> Result<ImagePlaneColormap, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "gray" | "grayscale" => Ok(ImagePlaneColormap::Grayscale),
+        "viridis" => Ok(ImagePlaneColormap::Viridis),
+        "inferno" => Ok(ImagePlaneColormap::Inferno),
+        _ => Err(format!(
+            "unsupported imexplore colormap {value:?}; expected gray, viridis, or inferno"
+        )),
+    }
+}
+
+fn parse_image_content_mode(value: &str) -> Result<ImagePlaneContentMode, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "raster" => Ok(ImagePlaneContentMode::Raster),
+        "spreadsheet" => Ok(ImagePlaneContentMode::Spreadsheet),
+        _ => Err(format!(
+            "unsupported imexplore contentmode {value:?}; expected raster or spreadsheet"
+        )),
+    }
+}
+
+const fn image_plane_mode(mode: ImagePlaneContentMode) -> ImagePlaneMode {
+    match mode {
+        ImagePlaneContentMode::Raster => ImagePlaneMode::Raster,
+        ImagePlaneContentMode::Spreadsheet => ImagePlaneMode::Spreadsheet,
+    }
+}
+
+fn image_colormap_parameter(colormap: ImagePlaneColormap) -> &'static str {
+    match colormap {
+        ImagePlaneColormap::Grayscale => "gray",
+        ImagePlaneColormap::Viridis => "viridis",
+        ImagePlaneColormap::Inferno => "inferno",
+    }
+}
+
+fn parse_table_bookmark(value: &str) -> Result<Option<BrowserBookmark>, String> {
+    let value = value.trim();
+    if parameter_reference_is_none(value) {
+        return Ok(None);
+    }
+    let bookmark = if let Some(rest) = value.strip_prefix("cell:") {
+        let mut parts = rest.splitn(2, ':');
+        let row = parts.next().and_then(|row| row.parse::<usize>().ok());
+        let column = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        match (row, column) {
+            (Some(row), Some(column)) => Some(BrowserBookmark::Cell {
+                row,
+                column: column.to_string(),
+            }),
+            _ => None,
+        }
+    } else if let Some(rest) = value.strip_prefix("table-keyword:") {
+        let path = parse_bookmark_path(rest);
+        (!path.is_empty()).then_some(BrowserBookmark::TableKeyword { path })
+    } else if let Some(rest) = value.strip_prefix("column-keyword:") {
+        let mut parts = rest.splitn(2, ':');
+        let column = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let path = parts.next().map(parse_bookmark_path).unwrap_or_default();
+        column
+            .filter(|_| !path.is_empty())
+            .map(|column| BrowserBookmark::ColumnKeyword {
+                column: column.to_string(),
+                path,
+            })
+    } else if let Some(rest) = value.strip_prefix("subtable:") {
+        let name = rest.trim();
+        (!name.is_empty()).then(|| BrowserBookmark::Subtable {
+            name: name.to_string(),
+        })
+    } else {
+        None
+    };
+    bookmark.map(Some).ok_or_else(|| {
+        format!(
+            "invalid tablebrowser bookmark {value:?}; expected cell:ROW:COLUMN, table-keyword:PATH, column-keyword:COLUMN:PATH, or subtable:NAME"
+        )
+    })
+}
+
+fn parse_bookmark_path(value: &str) -> Vec<String> {
+    value
+        .split(['.', '/'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn parse_table_content_mode(value: &str) -> Result<BrowserContentMode, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Ok(BrowserContentMode::Auto),
+        "compact" => Ok(BrowserContentMode::Compact),
+        "detailed" => Ok(BrowserContentMode::Detailed),
+        _ => Err(format!(
+            "unsupported tablebrowser contentmode {value:?}; expected auto, compact, or detailed"
+        )),
+    }
+}
+
+fn looks_like_image_expression(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| "[](){}&|=<>!*+;".contains(character))
+}
+
+fn parse_image_region_reference(value: &str) -> Result<ProtocolImageRegionReference, String> {
+    let value = value.trim();
+    if parameter_reference_is_none(value) {
+        return Ok(ProtocolImageRegionReference::None);
+    }
+    if let Some(path) = value.strip_prefix("file:") {
+        let path = path.trim();
+        return if path.is_empty() {
+            Err("imexplore region file reference cannot be empty".to_string())
+        } else {
+            Ok(ProtocolImageRegionReference::File {
+                path: path.to_string(),
+            })
+        };
+    }
+    if let Some(name) = value.strip_prefix("definition:") {
+        let name = name.trim();
+        return if name.is_empty() {
+            Err("imexplore saved region definition name cannot be empty".to_string())
+        } else {
+            Ok(ProtocolImageRegionReference::Definition {
+                name: name.to_string(),
+            })
+        };
+    }
+    if looks_like_image_expression(value) {
+        return Ok(ProtocolImageRegionReference::Expression {
+            expression: value.to_string(),
+        });
+    }
+    if value.contains('/')
+        || value.contains('\\')
+        || value.ends_with(".crtf")
+        || value.ends_with(".reg")
+        || value.ends_with(".region")
+    {
+        Ok(ProtocolImageRegionReference::File {
+            path: value.to_string(),
+        })
+    } else {
+        Ok(ProtocolImageRegionReference::Definition {
+            name: value.to_string(),
+        })
+    }
+}
+
+fn parse_image_mask_reference(value: &str) -> Result<ProtocolImageMaskReference, String> {
+    let value = value.trim();
+    if parameter_reference_is_none(value) {
+        return Ok(ProtocolImageMaskReference::None);
+    }
+    if let Some(name) = value.strip_prefix("name:") {
+        let name = name.trim();
+        return if name.is_empty() {
+            Err("imexplore mask name cannot be empty".to_string())
+        } else {
+            Ok(ProtocolImageMaskReference::Name {
+                name: name.to_string(),
+            })
+        };
+    }
+    if value.is_empty() {
+        return Err("imexplore mask name cannot be empty".to_string());
+    }
+    if looks_like_image_expression(value) {
+        return Ok(ProtocolImageMaskReference::Expression {
+            expression: value.to_string(),
+        });
+    }
+    Ok(ProtocolImageMaskReference::Name {
+        name: value.to_string(),
+    })
+}
+
+fn image_region_reference_parameter(reference: &ProtocolImageRegionReference) -> String {
+    match reference {
+        ProtocolImageRegionReference::None => "none".to_string(),
+        ProtocolImageRegionReference::Definition { name } => format!("definition:{name}"),
+        ProtocolImageRegionReference::File { path } => format!("file:{path}"),
+        ProtocolImageRegionReference::Expression { expression } => expression.clone(),
+    }
+}
+
+fn image_mask_reference_parameter(reference: &ProtocolImageMaskReference) -> String {
+    match reference {
+        ProtocolImageMaskReference::None => "none".to_string(),
+        ProtocolImageMaskReference::Name { name } => name.clone(),
+        ProtocolImageMaskReference::Expression { expression } => expression.clone(),
+    }
+}
+
+fn resolve_image_axis_selector(
+    snapshot: &ImageBrowserSnapshot,
+    selector: &str,
+    parameter: &str,
+) -> Result<Option<(usize, usize)>, String> {
+    let selector = selector.trim();
+    if selector.is_empty() || selector.eq_ignore_ascii_case("auto") {
+        return Ok(None);
+    }
+    let selected = selector
+        .parse::<usize>()
+        .ok()
+        .and_then(|axis| {
+            snapshot
+                .non_display_axes
+                .iter()
+                .enumerate()
+                .find(|(_, state)| state.axis == axis)
+        })
+        .or_else(|| {
+            snapshot
+                .non_display_axes
+                .iter()
+                .enumerate()
+                .find(|(_, state)| state.label.eq_ignore_ascii_case(selector))
+        });
+    selected
+        .map(|(index, state)| Some((index, state.axis)))
+        .ok_or_else(|| {
+            let available = snapshot
+                .non_display_axes
+                .iter()
+                .map(|state| format!("{} ({})", state.label, state.axis))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "imexplore {parameter}={selector:?} does not identify a non-display axis; available axes: {}",
+                if available.is_empty() {
+                    "none"
+                } else {
+                    &available
+                }
+            )
+        })
+}
+
+fn cycle_image_startup_view(
+    client: &ImageBrowserClient,
+    mut snapshot: ImageBrowserSnapshot,
+    target: ImageBrowserView,
+) -> Result<ImageBrowserSnapshot, String> {
+    for _ in 0..4 {
+        if snapshot.active_view == target {
+            return Ok(snapshot);
+        }
+        snapshot = client
+            .request_startup(ImageBrowserCommand::CycleView { forward: true })
+            .map_err(|error| error.message().to_string())?;
+    }
+    Err(format!(
+        "imexplore backend did not expose requested startup view {}",
+        target.label()
+    ))
+}
+
+fn apply_image_startup_config(
+    client: &ImageBrowserClient,
+    snapshot: ImageBrowserSnapshot,
+    config: &ImageSessionStartupConfig,
+) -> Result<(ImageBrowserSnapshot, usize), String> {
+    let mut snapshot = if config.enforce_view {
+        cycle_image_startup_view(client, snapshot, config.view)?
+    } else {
+        snapshot
+    };
+
+    if config.content_mode_explicit {
+        snapshot = client
+            .request_startup(ImageBrowserCommand::SetPlaneContentMode {
+                mode: config.content_mode,
+            })
+            .map_err(|error| error.message().to_string())?;
+    }
+
+    if let Some((_, axis)) =
+        resolve_image_axis_selector(&snapshot, &config.profile_axis, "profileaxis")?
+    {
+        snapshot = client
+            .request_startup(ImageBrowserCommand::SetSelectedNonDisplayAxis { axis })
+            .map_err(|error| error.message().to_string())?;
+    }
+
+    if config.region_explicit || config.mask_explicit {
+        snapshot = client
+            .request_startup(ImageBrowserCommand::SetSelectionReferences {
+                region: config.region_explicit.then(|| config.region.clone()),
+                mask: config.mask_explicit.then(|| config.mask.clone()),
+            })
+            .map_err(|error| error.message().to_string())?;
+    }
+
+    let selected_movie_axis =
+        resolve_image_axis_selector(&snapshot, &config.movie_axis, "movieaxis")?
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+    Ok((snapshot, selected_movie_axis))
 }
 
 fn movie_stop_input_ignored_for_debug() -> bool {
@@ -16857,14 +18930,6 @@ fn chooser_start_path(value: Option<&str>) -> PathBuf {
         .unwrap_or(cwd)
 }
 
-fn path_argument_value(is_path: bool, value: &str) -> OsString {
-    if is_path {
-        expand_tilde_path(value.trim()).into_os_string()
-    } else {
-        OsString::from(value)
-    }
-}
-
 fn expand_tilde_path(raw: &str) -> PathBuf {
     expand_tilde_path_with_home(raw, home_dir_path())
 }
@@ -17103,18 +19168,16 @@ mod tests {
         ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneCursorState, ImagePlaneRaster,
         ImageProfilePayload, ImageProfileSampleState,
     };
-    use casars_imager::command_schema as imager_command_schema;
     use ratatui::layout::Rect;
 
     use super::{
         AppState, BrowserSession, BrowserSessionKind, ConfigStore, FormField, FormSectionContent,
         ImageBrowserLeftPaneMode, ImageBrowserSessionState, ImageMovieState, ImagePlaneColormap,
-        ImagePlaneMode, StaticFormItem, append_hidden_default_arguments, build_workflow_sections,
-        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
-        image_plane_draw_rect, image_zoom_parameters, new_direct_image_movie_engine,
+        ImagePlaneMode, StaticFormItem, build_workflow_sections, centered_window_start,
+        expand_tilde_path_with_home, image_pan_parameters, image_plane_draw_rect,
+        image_zoom_parameters, new_direct_image_movie_engine,
     };
     use std::{
-        ffi::OsString,
         path::{Path, PathBuf},
         time::Duration,
     };
@@ -17244,8 +19307,10 @@ mod tests {
             region: None,
             saved_region_names: Vec::new(),
             active_region_definition_name: None,
+            region_reference: casars_imagebrowser_protocol::ImageRegionReference::None,
             mask_names: Vec::new(),
             default_mask_name: None,
+            mask_reference: casars_imagebrowser_protocol::ImageMaskReference::None,
             backend_timing: None,
             capabilities: ImageBrowserCapabilities {
                 renderable_plane: true,
@@ -17644,7 +19709,10 @@ mod tests {
 
     #[test]
     fn imager_stage_parameters_exclude_meta_arguments() {
-        let schema = imager_command_schema("casars-imager");
+        let schema: UiCommandSchema = serde_json::from_value(casa_task_runtime::project_ui_schema(
+            &casa_provider_contracts::builtin_surface_bundle("imager").unwrap(),
+        ))
+        .unwrap();
         let fields = schema
             .arguments
             .iter()
@@ -17677,97 +19745,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(stage_ids.contains(&"dirty_only"));
         assert!(stage_ids.contains(&"niter"));
-        assert!(stage_ids.contains(&"threshold_jy"));
+        assert!(stage_ids.contains(&"threshold"));
         assert!(ids.contains(&"imsize"));
         assert!(!ids.contains(&"ui_schema"));
         assert!(!ids.contains(&"help"));
-    }
-
-    #[test]
-    fn hidden_default_arguments_are_invoked_without_form_fields() {
-        let schema: UiCommandSchema = serde_json::from_value(serde_json::json!({
-            "schema_version": 1,
-            "command_id": "applycal",
-            "invocation_name": "calibrate",
-            "display_name": "Applycal",
-            "category": "Calibration",
-            "summary": "Apply calibration.",
-            "usage": "calibrate --mode apply --ms <input.ms>",
-            "arguments": [
-                {
-                    "id": "mode",
-                    "label": "Mode",
-                    "order": 0,
-                    "parser": {
-                        "kind": "option",
-                        "flags": ["--mode"],
-                        "metavar": "MODE",
-                        "choices": ["apply"]
-                    },
-                    "value_kind": "choice",
-                    "required": false,
-                    "default": "apply",
-                    "help": "",
-                    "group": "Mode",
-                    "advanced": true,
-                    "hidden_in_tui": true
-                },
-                {
-                    "id": "ui_schema",
-                    "label": "UI schema",
-                    "order": 1,
-                    "parser": {
-                        "kind": "action",
-                        "flags": ["--ui-schema"],
-                        "action": "ui_schema"
-                    },
-                    "value_kind": "bool",
-                    "required": false,
-                    "default": null,
-                    "help": "",
-                    "group": "Meta",
-                    "advanced": true,
-                    "hidden_in_tui": true
-                }
-            ],
-            "managed_output": null
-        }))
-        .expect("schema");
-        let fields = schema
-            .arguments
-            .iter()
-            .filter_map(FormField::from_schema)
-            .collect::<Vec<_>>();
-        let mut arguments = Vec::new();
-
-        append_hidden_default_arguments(&schema, &mut arguments).expect("hidden defaults");
-
-        assert!(fields.is_empty());
-        assert_eq!(
-            arguments,
-            vec![OsString::from("--mode"), OsString::from("apply")]
-        );
-    }
-
-    #[test]
-    fn hidden_default_positionals_are_invoked_before_visible_fields() {
-        let schema = crate::registry::imhead_app()
-            .load_schema()
-            .expect("imhead schema");
-        let fields = schema
-            .arguments
-            .iter()
-            .filter_map(FormField::from_schema)
-            .collect::<Vec<_>>();
-        let mut arguments = Vec::new();
-
-        append_hidden_default_arguments(&schema, &mut arguments).expect("hidden defaults");
-
-        assert!(
-            fields
-                .iter()
-                .any(|field| field.schema.id.as_str() == "image_path")
-        );
-        assert_eq!(arguments, vec![OsString::from("imhead")]);
     }
 }

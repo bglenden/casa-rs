@@ -2,11 +2,8 @@
 //! Shared frontend services exposed to Swift and Python through UniFFI.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
@@ -22,7 +19,16 @@ use casa_ms::{
     MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
     MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
+use casa_provider_contracts::{
+    ParameterValue, ProviderInvocationAdaptation, RunSafetyClass, SurfaceContractBundle,
+    SurfaceKind, builtin_surface_bundle, builtin_surface_catalog,
+};
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
+use casa_task_runtime::{
+    BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, ParameterSession,
+    ResolutionPatch, parse_profile, project_provider_invocation, project_ui_schema,
+    write_parameter_profile_atomic,
+};
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
     format_right_ascension_labeled,
@@ -655,6 +661,8 @@ pub enum FrontendServiceError {
     ImageExplorer { reason: String },
     #[error("table explorer failed: {reason}")]
     TableExplorer { reason: String },
+    #[error("parameter service failed: {reason}")]
+    Parameters { reason: String },
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
@@ -732,26 +740,398 @@ pub fn task_context_options_json(dataset_path: String) -> FrontendResult<String>
     })
 }
 
-#[uniffi::export]
-pub fn task_ui_schema_json(task_id: String) -> FrontendResult<String> {
-    let catalog: FrontendTaskCatalog =
-        serde_json::from_str(TASK_CATALOG_JSON).map_err(|error| FrontendServiceError::Probe {
-            reason: format!("parse task catalog: {error}"),
-        })?;
-    let task = catalog
-        .tasks
-        .into_iter()
-        .find(|task| task.id == task_id)
-        .ok_or_else(|| FrontendServiceError::Probe {
-            reason: format!("unknown task id {task_id:?}"),
-        })?;
-    if task.schema_source == "none" {
-        return Err(FrontendServiceError::Probe {
-            reason: format!("task {:?} does not expose a UI schema", task.id),
-        });
+#[derive(Debug, Serialize)]
+struct ParameterBridgeSnapshot<'a> {
+    schema_version: u32,
+    surface_id: &'a str,
+    surface_kind: SurfaceKind,
+    contract_version: u32,
+    base_source: &'a BaseSource,
+    dirty: bool,
+    states: &'a BTreeMap<String, casa_task_runtime::ParameterState>,
+    diagnostics: &'a [casa_task_runtime::Diagnostic],
+    profile_toml: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ParameterWriteResult {
+    path: String,
+    bytes_written: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    managed_kind: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ParameterRunSafetyBridge {
+    classes: Vec<RunSafetyClass>,
+    requires_interactive_confirmation: bool,
+    requires_overwrite_confirmation: bool,
+    requires_input_mutation_confirmation: bool,
+}
+
+fn parameter_error(context: &str, error: impl std::fmt::Display) -> FrontendServiceError {
+    FrontendServiceError::Parameters {
+        reason: format!("{context}: {error}"),
+    }
+}
+
+fn parameter_bundle(surface_id: &str) -> FrontendResult<SurfaceContractBundle> {
+    builtin_surface_bundle(surface_id)
+        .map_err(|error| parameter_error("load parameter surface", error))
+}
+
+fn parameter_snapshot_json(session: &ParameterSession) -> FrontendResult<String> {
+    let profile_toml = match session.render_sparse() {
+        Ok(profile_toml) => Some(profile_toml),
+        Err(_)
+            if session
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::MissingRequired) =>
+        {
+            None
+        }
+        Err(error) => {
+            return Err(parameter_error("render sparse parameter profile", error));
+        }
+    };
+    let snapshot = ParameterBridgeSnapshot {
+        schema_version: session.bundle().schema_version,
+        surface_id: session.bundle().surface.id(),
+        surface_kind: session.bundle().surface.kind(),
+        contract_version: session.bundle().surface.contract_version(),
+        base_source: session.base_source(),
+        dirty: session.is_dirty(),
+        states: session.states(),
+        diagnostics: session.diagnostics(),
+        profile_toml,
+    };
+    serde_json::to_string(&snapshot)
+        .map_err(|error| parameter_error("serialize parameter state", error))
+}
+
+fn parameter_session_from_source(
+    surface_id: &str,
+    source: &str,
+    profile_toml: Option<&str>,
+    profile_path: Option<PathBuf>,
+) -> FrontendResult<ParameterSession> {
+    let bundle = parameter_bundle(surface_id)?;
+    if source == "defaults" {
+        if profile_toml.is_some() {
+            return Err(parameter_error(
+                "resolve parameter source",
+                "the defaults source cannot carry profile TOML",
+            ));
+        }
+        return ParameterSession::defaults(bundle)
+            .map_err(|error| parameter_error("resolve parameter defaults", error));
     }
 
-    load_task_ui_schema(&task)
+    let profile_toml = profile_toml.ok_or_else(|| {
+        parameter_error(
+            "resolve parameter source",
+            format!("parameter source {source:?} requires profile TOML"),
+        )
+    })?;
+    let profile = parse_profile(profile_toml)
+        .map_err(|error| parameter_error("parse parameter profile", error))?;
+    let source = match source {
+        "file" => BaseSource::File(profile_path.unwrap_or_else(|| PathBuf::from("<memory>"))),
+        "last" => BaseSource::Last,
+        "last_successful" => BaseSource::LastSuccessful,
+        other => {
+            return Err(parameter_error(
+                "resolve parameter source",
+                format!(
+                    "unknown parameter source {other:?}; expected defaults, file, last, or last_successful"
+                ),
+            ));
+        }
+    };
+    ParameterSession::from_profile(bundle, source, &profile)
+        .map_err(|error| parameter_error("resolve parameter profile", error))
+}
+
+fn parse_parameter_patch(source: &str, kind: &str) -> FrontendResult<ResolutionPatch> {
+    serde_json::from_str(source)
+        .map_err(|error| parameter_error(&format!("parse {kind} parameter patch"), error))
+}
+
+fn parse_parameter_values(source: &str) -> FrontendResult<BTreeMap<String, ParameterValue>> {
+    serde_json::from_str(source)
+        .map_err(|error| parameter_error("parse resolved parameter values", error))
+}
+
+fn render_parameter_values(surface_id: &str, values_json: &str) -> FrontendResult<String> {
+    let session = parameter_session_from_values(surface_id, values_json)?;
+    session
+        .render_sparse()
+        .map_err(|error| parameter_error("render sparse parameter profile", error))
+}
+
+fn parameter_session_from_values(
+    surface_id: &str,
+    values_json: &str,
+) -> FrontendResult<ParameterSession> {
+    let values = parse_parameter_values(values_json)?;
+    let mut session = ParameterSession::defaults(parameter_bundle(surface_id)?)
+        .map_err(|error| parameter_error("resolve parameter defaults", error))?;
+    if !values.is_empty() {
+        session
+            .apply_override_patch(ResolutionPatch {
+                values,
+                unset: BTreeSet::new(),
+            })
+            .map_err(|error| parameter_error("resolve parameter values", error))?;
+    }
+    Ok(session)
+}
+
+/// Return the validated aggregate catalog of canonical parameter concepts and surfaces.
+#[uniffi::export]
+pub fn parameter_catalog_json() -> FrontendResult<String> {
+    let catalog = builtin_surface_catalog()
+        .map_err(|error| parameter_error("load parameter catalog", error))?;
+    serde_json::to_string(catalog)
+        .map_err(|error| parameter_error("serialize parameter catalog", error))
+}
+
+/// Return the aggregate parameter catalog under a surface-oriented API name.
+#[uniffi::export]
+pub fn parameter_surface_catalog_json() -> FrontendResult<String> {
+    parameter_catalog_json()
+}
+
+/// Return one canonical task or session definition without duplicating its concepts.
+#[uniffi::export]
+pub fn parameter_surface_definition_json(surface_id: String) -> FrontendResult<String> {
+    let catalog = builtin_surface_catalog()
+        .map_err(|error| parameter_error("load parameter catalog", error))?;
+    let surface = catalog.surface(&surface_id).ok_or_else(|| {
+        parameter_error(
+            "load parameter surface",
+            format!("unknown configurable surface {surface_id:?}"),
+        )
+    })?;
+    serde_json::to_string(surface)
+        .map_err(|error| parameter_error("serialize parameter definition", error))
+}
+
+/// Return one self-contained surface definition and its referenced concepts.
+#[uniffi::export]
+pub fn parameter_surface_bundle_json(surface_id: String) -> FrontendResult<String> {
+    serde_json::to_string(&parameter_bundle(&surface_id)?)
+        .map_err(|error| parameter_error("serialize parameter contract", error))
+}
+
+/// Resolve the current defaults and UI state for one surface.
+#[uniffi::export]
+pub fn parameter_defaults_json(surface_id: String) -> FrontendResult<String> {
+    let session = parameter_session_from_source(&surface_id, "defaults", None, None)?;
+    parameter_snapshot_json(&session)
+}
+
+/// Load and resolve an explicit sparse TOML profile supplied by the frontend.
+#[uniffi::export]
+pub fn parameter_load_json(
+    surface_id: String,
+    profile_toml: String,
+    source_path: String,
+) -> FrontendResult<String> {
+    let session = parameter_session_from_source(
+        &surface_id,
+        "file",
+        Some(&profile_toml),
+        Some(PathBuf::from(source_path)),
+    )?;
+    parameter_snapshot_json(&session)
+}
+
+/// Load Last or Last Successful from the managed store, if present.
+#[uniffi::export]
+pub fn parameter_last_json(
+    surface_id: String,
+    workspace: String,
+    successful: bool,
+) -> FrontendResult<Option<String>> {
+    let bundle = parameter_bundle(&surface_id)?;
+    if successful && bundle.surface.kind() == SurfaceKind::Session {
+        return Err(parameter_error(
+            "read managed parameter profile",
+            format!("session surface {surface_id:?} does not have Last Successful"),
+        ));
+    }
+    let kind = if successful {
+        ManagedProfileKind::LastSuccessful
+    } else {
+        ManagedProfileKind::Last
+    };
+    let Some(profile_toml) = ManagedStateStore::for_workspace(workspace)
+        .read(&surface_id, kind)
+        .map_err(|error| parameter_error("read managed parameter profile", error))?
+    else {
+        return Ok(None);
+    };
+    let source = if successful {
+        "last_successful"
+    } else {
+        "last"
+    };
+    let session = parameter_session_from_source(&surface_id, source, Some(&profile_toml), None)?;
+    parameter_snapshot_json(&session).map(Some)
+}
+
+/// Resolve typed context and explicit override patches over one selected base source.
+#[uniffi::export]
+pub fn parameter_resolve_json(
+    surface_id: String,
+    base_source: String,
+    profile_toml: Option<String>,
+    profile_path: Option<String>,
+    context_patch_json: String,
+    override_patch_json: String,
+) -> FrontendResult<String> {
+    let mut session = parameter_session_from_source(
+        &surface_id,
+        &base_source,
+        profile_toml.as_deref(),
+        profile_path.map(PathBuf::from),
+    )?;
+    let context_patch = parse_parameter_patch(&context_patch_json, "context")?;
+    if !context_patch.values.is_empty() || !context_patch.unset.is_empty() {
+        session
+            .apply_context_patch(context_patch)
+            .map_err(|error| parameter_error("resolve parameter context", error))?;
+    }
+    let override_patch = parse_parameter_patch(&override_patch_json, "override")?;
+    if !override_patch.values.is_empty() || !override_patch.unset.is_empty() {
+        session
+            .apply_override_patch(override_patch)
+            .map_err(|error| parameter_error("resolve parameter mutations", error))?;
+    }
+    parameter_snapshot_json(&session)
+}
+
+/// Render typed resolved values as a sparse current-contract TOML profile.
+#[uniffi::export]
+pub fn parameter_render_toml(surface_id: String, values_json: String) -> FrontendResult<String> {
+    render_parameter_values(&surface_id, &values_json)
+}
+
+/// Evaluate catalog-owned run risks for one resolved task value set.
+#[uniffi::export]
+pub fn parameter_run_safety_json(
+    surface_id: String,
+    values_json: String,
+) -> FrontendResult<String> {
+    let session = parameter_session_from_values(&surface_id, &values_json)?;
+    let safety = session
+        .required_run_safety()
+        .map_err(|error| parameter_error("evaluate task run safety", error))?;
+    let bridge = ParameterRunSafetyBridge {
+        classes: safety.classes().iter().copied().collect(),
+        requires_interactive_confirmation: safety.requires_interactive_confirmation(),
+        requires_overwrite_confirmation: safety.requires_overwrite_confirmation(),
+        requires_input_mutation_confirmation: safety.requires_input_mutation_confirmation(),
+    };
+    serde_json::to_string(&bridge)
+        .map_err(|error| parameter_error("serialize task run safety", error))
+}
+
+/// Project one complete task invocation for CLI/TUI/GUI consumers.
+#[uniffi::export]
+pub fn parameter_provider_invocation_json(
+    surface_id: String,
+    values_json: String,
+) -> FrontendResult<String> {
+    let session = parameter_session_from_values(&surface_id, &values_json)?;
+    session
+        .render_sparse()
+        .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
+    let invocation = project_provider_invocation(&session, |family, values, direct| match family {
+        "simobserve" => {
+            casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
+        }
+        _ => Ok(ProviderInvocationAdaptation::direct(direct)),
+    })
+    .map_err(|error| parameter_error("project provider invocation", error))?;
+    serde_json::to_string(&invocation)
+        .map_err(|error| parameter_error("serialize provider invocation", error))
+}
+
+/// Atomically save typed resolved values to an explicit sparse TOML profile.
+#[uniffi::export]
+pub fn parameter_save_json(
+    surface_id: String,
+    values_json: String,
+    destination_path: String,
+) -> FrontendResult<String> {
+    let profile = render_parameter_values(&surface_id, &values_json)?;
+    let result = write_parameter_profile(Path::new(&destination_path), &profile)?;
+    serde_json::to_string(&result)
+        .map_err(|error| parameter_error("serialize parameter save result", error))
+}
+
+/// Explicitly write Last or Last Successful for a validated resolved value set.
+#[uniffi::export]
+pub fn parameter_write_last_json(
+    surface_id: String,
+    workspace: String,
+    values_json: String,
+    successful: bool,
+) -> FrontendResult<String> {
+    let bundle = parameter_bundle(&surface_id)?;
+    if successful && bundle.surface.kind() == SurfaceKind::Session {
+        return Err(parameter_error(
+            "write managed parameter profile",
+            format!("session surface {surface_id:?} does not have Last Successful"),
+        ));
+    }
+    let profile = render_parameter_values(&surface_id, &values_json)?;
+    let kind = if successful {
+        ManagedProfileKind::LastSuccessful
+    } else {
+        ManagedProfileKind::Last
+    };
+    let outcome = ManagedStateStore::for_workspace(workspace)
+        .write(&surface_id, kind, &profile)
+        .map_err(|error| parameter_error("write managed parameter profile", error))?;
+    let result = ParameterWriteResult {
+        path: outcome.path.to_string_lossy().into_owned(),
+        bytes_written: outcome.bytes_written as u64,
+        managed_kind: Some(if successful {
+            "last_successful".to_string()
+        } else {
+            "last".to_string()
+        }),
+    };
+    serde_json::to_string(&result)
+        .map_err(|error| parameter_error("serialize parameter save result", error))
+}
+
+/// Project a canonical task or session definition into the launcher UI schema shape.
+#[uniffi::export]
+pub fn parameter_ui_schema_json(surface_id: String) -> FrontendResult<String> {
+    let schema = project_ui_schema(&parameter_bundle(&surface_id)?);
+    serde_json::to_string(&schema)
+        .map_err(|error| parameter_error("serialize parameter UI projection", error))
+}
+
+/// Compatibility entrypoint for task launchers; delegates to the canonical projection.
+#[uniffi::export]
+pub fn task_ui_schema_json(task_id: String) -> FrontendResult<String> {
+    parameter_ui_schema_json(task_id)
+}
+
+fn write_parameter_profile(path: &Path, contents: &str) -> FrontendResult<ParameterWriteResult> {
+    let outcome = write_parameter_profile_atomic(path, contents)
+        .map_err(|error| parameter_error("save parameter profile", error))?;
+    Ok(ParameterWriteResult {
+        path: path.to_string_lossy().into_owned(),
+        bytes_written: outcome.bytes_written as u64,
+        managed_kind: None,
+    })
 }
 
 #[uniffi::export]
@@ -763,1067 +1143,6 @@ fn insert_first_default(defaults: &mut BTreeMap<String, String>, key: &str, valu
     if let Some(value) = values.first().filter(|value| !value.is_empty()) {
         defaults.insert(key.to_string(), value.clone());
     }
-}
-
-#[derive(Debug, Clone)]
-struct ResolvedFrontendCommand {
-    program: OsString,
-    prefix_args: Vec<OsString>,
-}
-
-impl ResolvedFrontendCommand {
-    fn command(&self) -> Command {
-        let mut command = Command::new(&self.program);
-        command.args(&self.prefix_args);
-        command
-    }
-}
-
-fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String> {
-    let resolved = resolve_frontend_task_command(task)?;
-    let mut json_schema_command = resolved.command();
-    add_frontend_schema_args(&mut json_schema_command, task);
-    let json_schema_output =
-        json_schema_command
-            .arg("--json-schema")
-            .output()
-            .map_err(|error| FrontendServiceError::Probe {
-                reason: format!("spawn {} --json-schema: {error}", task.binary_name),
-            })?;
-    if json_schema_output.status.success() {
-        let bundle = serde_json::from_slice::<serde_json::Value>(&json_schema_output.stdout)
-            .map_err(|error| FrontendServiceError::Probe {
-                reason: format!("parse {} --json-schema output: {error}", task.binary_name),
-            })?;
-        if let Some(ui_schema) = bundle.pointer("/projections/ui_schema").cloned() {
-            let ui_schema = enrich_task_ui_schema(task, ui_schema);
-            return serde_json::to_string(&ui_schema).map_err(|error| {
-                FrontendServiceError::Probe {
-                    reason: format!(
-                        "serialize {} projected UI schema: {error}",
-                        task.binary_name
-                    ),
-                }
-            });
-        }
-    }
-
-    let mut ui_schema_command = resolved.command();
-    add_frontend_schema_args(&mut ui_schema_command, task);
-    let output = ui_schema_command
-        .arg("--ui-schema")
-        .output()
-        .map_err(|error| FrontendServiceError::Probe {
-            reason: format!("spawn {} --ui-schema: {error}", task.binary_name),
-        })?;
-    if !output.status.success() {
-        return Err(FrontendServiceError::Probe {
-            reason: format!(
-                "{} --ui-schema exited with {}: {}",
-                task.binary_name,
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        });
-    }
-    let schema = serde_json::from_slice::<serde_json::Value>(&output.stdout).map_err(|error| {
-        FrontendServiceError::Probe {
-            reason: format!("parse {} --ui-schema output: {error}", task.binary_name),
-        }
-    })?;
-    let schema = enrich_task_ui_schema(task, schema);
-    serde_json::to_string(&schema).map_err(|error| FrontendServiceError::Probe {
-        reason: format!("serialize {} UI schema: {error}", task.binary_name),
-    })
-}
-
-fn add_frontend_schema_args(command: &mut Command, task: &FrontendTaskCatalogEntry) {
-    if task.binary_name == "casars-casa-task" {
-        command.arg("--task").arg(&task.id);
-    }
-}
-
-fn enrich_task_ui_schema(
-    task: &FrontendTaskCatalogEntry,
-    mut schema: serde_json::Value,
-) -> serde_json::Value {
-    let task_id = task.id.as_str();
-    apply_task_alias_schema(task, &mut schema);
-    if let Some(arguments) = schema
-        .get_mut("arguments")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for argument in arguments {
-            let Some(argument_object) = argument.as_object_mut() else {
-                continue;
-            };
-            let argument_id = argument_object
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let value_kind = argument_object
-                .get("value_kind")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if let Some(parameter_type) = infer_task_parameter_type(task, &argument_id, value_kind)
-            {
-                argument_object.insert(
-                    "parameter_type".to_string(),
-                    serde_json::Value::String(parameter_type.to_string()),
-                );
-            }
-            if argument_object
-                .get("label")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(str::is_empty)
-            {
-                argument_object.insert(
-                    "label".to_string(),
-                    serde_json::Value::String(default_task_parameter_label(&argument_id)),
-                );
-            }
-        }
-    }
-    if schema.get("command_id").and_then(serde_json::Value::as_str) != Some(task_id) {
-        schema
-            .as_object_mut()
-            .map(|object| object.insert("command_id".to_string(), task_id.into()));
-    }
-    schema
-}
-
-fn apply_task_alias_schema(task: &FrontendTaskCatalogEntry, schema: &mut serde_json::Value) {
-    let Some(alias) = task_alias(task.id.as_str()) else {
-        return;
-    };
-    let Some(object) = schema.as_object_mut() else {
-        return;
-    };
-    object.insert("command_id".to_string(), task.id.clone().into());
-    object.insert("display_name".to_string(), task.display_name.clone().into());
-    object.insert("category".to_string(), task.category.clone().into());
-    object.insert("summary".to_string(), alias.summary.into());
-    object.insert("usage".to_string(), alias.usage.into());
-
-    let visible = alias
-        .visible_arguments
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let required = alias
-        .required_arguments
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    if let Some(arguments) = object
-        .get_mut("arguments")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for extra in alias.extra_arguments {
-            arguments.push(extra_argument_schema(*extra));
-        }
-        arguments.retain_mut(|argument| {
-            let Some(argument_object) = argument.as_object_mut() else {
-                return false;
-            };
-            let id = argument_object
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            if argument_object
-                .get("hidden_in_tui")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-                && argument_object.get("default").is_some()
-            {
-                return true;
-            }
-            if id == "mode"
-                && let Some(mode) = alias.mode
-            {
-                argument_object.insert("default".to_string(), mode.into());
-                argument_object.insert("hidden_in_tui".to_string(), true.into());
-                argument_object.insert("required".to_string(), false.into());
-                argument_object.insert("advanced".to_string(), true.into());
-                argument_object.insert("order".to_string(), 0.into());
-                return true;
-            }
-            if id == "help" || id == "ui_schema" {
-                return true;
-            }
-            if visible.contains(id.as_str()) {
-                if alias.subcommand.is_some() && id == "image_path" {
-                    argument_object.insert("order".to_string(), 1.into());
-                }
-                argument_object.insert(
-                    "required".to_string(),
-                    required.contains(id.as_str()).into(),
-                );
-                return true;
-            }
-            false
-        });
-    }
-}
-
-struct TaskAlias {
-    mode: Option<&'static str>,
-    subcommand: Option<&'static str>,
-    summary: &'static str,
-    usage: &'static str,
-    visible_arguments: &'static [&'static str],
-    required_arguments: &'static [&'static str],
-    extra_arguments: &'static [ExtraAliasArgument],
-}
-
-#[derive(Clone, Copy)]
-struct ExtraAliasArgument {
-    id: &'static str,
-    label: &'static str,
-    order: u64,
-    parser: ExtraAliasParser,
-    value_kind: &'static str,
-    required: bool,
-    default: Option<&'static str>,
-    help: &'static str,
-    group: &'static str,
-    advanced: bool,
-    hidden: bool,
-}
-
-#[derive(Clone, Copy)]
-enum ExtraAliasParser {
-    Option {
-        flags: &'static [&'static str],
-        metavar: &'static str,
-        choices: &'static [&'static str],
-    },
-    Positional {
-        metavar: &'static str,
-    },
-    Toggle {
-        true_flags: &'static [&'static str],
-        false_flags: &'static [&'static str],
-    },
-}
-
-fn task_alias(task_id: &str) -> Option<TaskAlias> {
-    match task_id {
-        "uvcontsub" => Some(TaskAlias {
-            mode: Some("continuum_subtract"),
-            subcommand: None,
-            summary: "Subtract continuum emission from a MeasurementSet.",
-            usage: "calibrate --mode continuum_subtract --ms <input.ms> --output-ms <output.ms> --fitspw <spw:channels>",
-            visible_arguments: &[
-                "measurement_set",
-                "output_measurement_set",
-                "fit_spw",
-                "fit_order",
-                "stats_datacolumn",
-                "format",
-                "output",
-                "overwrite",
-                "selectdata",
-                "field",
-                "spw",
-                "antenna",
-                "scan",
-                "observation",
-                "array",
-                "timerange",
-                "msselect",
-            ],
-            required_arguments: &["measurement_set", "output_measurement_set", "fit_spw"],
-            extra_arguments: &[],
-        }),
-        "applycal" => Some(TaskAlias {
-            mode: Some("apply"),
-            subcommand: None,
-            summary: "Apply one or more calibration tables to a MeasurementSet.",
-            usage: "calibrate --mode apply --ms <input.ms> --gaintables <caltable[,caltable...]>",
-            visible_arguments: &[
-                "measurement_set",
-                "gaintables",
-                "callib",
-                "gainfield",
-                "interp",
-                "spwmap",
-                "apply_mode",
-                "calwt",
-                "parang",
-                "format",
-                "output",
-                "overwrite",
-                "selectdata",
-                "field",
-                "spw",
-                "antenna",
-                "scan",
-                "observation",
-                "array",
-                "timerange",
-                "msselect",
-            ],
-            required_arguments: &["measurement_set"],
-            extra_arguments: &[],
-        }),
-        "gaincal" => Some(TaskAlias {
-            mode: Some("solve_gain"),
-            subcommand: None,
-            summary: "Solve antenna gain calibration for a MeasurementSet.",
-            usage: "calibrate --mode solve_gain --ms <input.ms> --out <gain.cal> --refant <antenna>",
-            visible_arguments: &[
-                "measurement_set",
-                "out_table",
-                "refant",
-                "gaintables",
-                "callib",
-                "gainfield",
-                "interp",
-                "spwmap",
-                "gain_type",
-                "solve_mode",
-                "solint",
-                "gain_combine",
-                "gain_model_source",
-                "smodel",
-                "min_snr",
-                "solnorm",
-                "format",
-                "output",
-                "overwrite",
-                "selectdata",
-                "field",
-                "spw",
-                "antenna",
-                "scan",
-                "observation",
-                "array",
-                "timerange",
-                "msselect",
-            ],
-            required_arguments: &["measurement_set", "out_table", "refant"],
-            extra_arguments: &[],
-        }),
-        "bandpass" => Some(TaskAlias {
-            mode: Some("solve_bandpass"),
-            subcommand: None,
-            summary: "Solve bandpass calibration for a MeasurementSet.",
-            usage: "calibrate --mode solve_bandpass --ms <input.ms> --out <bandpass.cal> --refant <antenna>",
-            visible_arguments: &[
-                "measurement_set",
-                "out_table",
-                "refant",
-                "gaintables",
-                "callib",
-                "gainfield",
-                "interp",
-                "spwmap",
-                "bandpass_combine",
-                "bandtype",
-                "smodel",
-                "min_snr",
-                "solnorm",
-                "format",
-                "output",
-                "overwrite",
-                "selectdata",
-                "field",
-                "spw",
-                "antenna",
-                "scan",
-                "observation",
-                "array",
-                "timerange",
-                "msselect",
-            ],
-            required_arguments: &["measurement_set", "out_table", "refant"],
-            extra_arguments: &[],
-        }),
-        "fluxscale" => Some(TaskAlias {
-            mode: Some("fluxscale"),
-            subcommand: None,
-            summary: "Scale gain solutions using reference calibrator fields.",
-            usage: "calibrate --mode fluxscale --in <gain.cal> --out <flux.cal> --reference <field[,field...]>",
-            visible_arguments: &[
-                "fluxscale_input",
-                "out_table",
-                "reference_fields",
-                "transfer_fields",
-                "refspwmap",
-                "gainthreshold",
-                "incremental",
-                "format",
-                "output",
-                "overwrite",
-            ],
-            required_arguments: &["fluxscale_input", "out_table", "reference_fields"],
-            extra_arguments: &[],
-        }),
-        "gencal" => Some(TaskAlias {
-            mode: Some("gencal"),
-            subcommand: None,
-            summary: "Generate a calibration table such as antpos, gceff, or opac.",
-            usage: "calibrate --mode gencal --ms <input.ms> --out <caltable> --caltype antpos|gceff|opac",
-            visible_arguments: &[
-                "measurement_set",
-                "out_table",
-                "caltype",
-                "antenna",
-                "spw",
-                "parameter",
-                "gaincurve_table",
-                "format",
-                "output",
-                "overwrite",
-            ],
-            required_arguments: &["measurement_set", "out_table", "caltype"],
-            extra_arguments: &[
-                ExtraAliasArgument {
-                    id: "caltype",
-                    label: "Calibration Type",
-                    order: 16,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--caltype"],
-                        metavar: "TYPE",
-                        choices: &["antpos", "gceff", "opac"],
-                    },
-                    value_kind: "choice",
-                    required: true,
-                    default: None,
-                    help: "Generated calibration family.",
-                    group: "Gencal",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "parameter",
-                    label: "Parameter",
-                    order: 19,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--parameter"],
-                        metavar: "VALUE[,VALUE...]",
-                        choices: &[],
-                    },
-                    value_kind: "string",
-                    required: false,
-                    default: None,
-                    help: "Numeric parameter list for the selected generated calibration type.",
-                    group: "Gencal",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "gaincurve_table",
-                    label: "Gaincurve Table",
-                    order: 20,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--gaincurve-table"],
-                        metavar: "PATH",
-                        choices: &[],
-                    },
-                    value_kind: "path",
-                    required: false,
-                    default: None,
-                    help: "Optional gaincurve input table for gceff.",
-                    group: "Gencal",
-                    advanced: true,
-                    hidden: false,
-                },
-            ],
-        }),
-        "split" => Some(TaskAlias {
-            mode: None,
-            subcommand: None,
-            summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
-            usage: "mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--width <n>]",
-            visible_arguments: &[
-                "ms",
-                "out",
-                "spw",
-                "width",
-                "field",
-                "scan",
-                "antenna",
-                "timerange",
-                "msselect",
-                "datacolumn",
-                "keepflags",
-            ],
-            required_arguments: &["ms", "out"],
-            extra_arguments: &[],
-        }),
-        "plotms" => Some(TaskAlias {
-            mode: None,
-            subcommand: None,
-            summary: "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
-            usage: "msexplore <input.ms> --preset amp-vs-uvdist --plot-output <plot.png>",
-            visible_arguments: &[
-                "ms_path",
-                "format",
-                "output",
-                "overwrite",
-                "selectdata",
-                "field",
-                "spw",
-                "timerange",
-                "uvrange",
-                "antenna",
-                "scan",
-                "correlation",
-                "observation",
-                "array",
-                "intent",
-                "feed",
-                "msselect",
-                "page_spec",
-                "preset",
-                "x_axis",
-                "y_axis",
-                "y_axis2",
-                "data_column",
-                "color_by",
-                "avgchannel",
-                "avgtime",
-                "avgscan",
-                "avgfield",
-                "avgbaseline",
-                "avgantenna",
-                "avgspw",
-                "scalar",
-                "freqframe",
-                "restfreq",
-                "veldef",
-                "iteraxis",
-                "gridrows",
-                "gridcols",
-                "xselfscale",
-                "yselfscale",
-                "xsharedaxis",
-                "ysharedaxis",
-                "title",
-                "xlabel",
-                "ylabel",
-                "symbol_size",
-                "showlegend",
-                "legendposition",
-                "showmajorgrid",
-                "showminorgrid",
-                "headeritems",
-                "max_points",
-                "plot_output",
-                "plot_format",
-                "plot_width",
-                "plot_height",
-                "flag_action",
-                "flag_xmin",
-                "flag_xmax",
-                "flag_ymin",
-                "flag_ymax",
-                "flag_plotindex",
-                "flag_panel",
-                "flag_extcorr",
-                "flag_extchannel",
-                "flag_selected",
-                "flag_apply",
-                "flag_output",
-            ],
-            required_arguments: &["ms_path"],
-            extra_arguments: &[],
-        }),
-        "imhead" => Some(TaskAlias {
-            mode: None,
-            subcommand: Some("imhead"),
-            summary: "Inspect or update CASA image header metadata.",
-            usage: "imexplore imhead <image> [--json] [--mode summary|list|put] [--hdkey key --hdvalue value]",
-            visible_arguments: &["image_path", "json", "mode", "hdkey", "hdvalue"],
-            required_arguments: &["image_path"],
-            extra_arguments: &[
-                ExtraAliasArgument {
-                    id: "subcommand",
-                    label: "Subcommand",
-                    order: 0,
-                    parser: ExtraAliasParser::Positional { metavar: "TASK" },
-                    value_kind: "string",
-                    required: false,
-                    default: Some("imhead"),
-                    help: "Hidden imexplore subcommand used to invoke imhead.",
-                    group: "Meta",
-                    advanced: true,
-                    hidden: true,
-                },
-                ExtraAliasArgument {
-                    id: "json",
-                    label: "JSON",
-                    order: 2,
-                    parser: ExtraAliasParser::Toggle {
-                        true_flags: &["--json"],
-                        false_flags: &[],
-                    },
-                    value_kind: "bool",
-                    required: false,
-                    default: Some("false"),
-                    help: "Emit machine-readable JSON.",
-                    group: "Output",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "mode",
-                    label: "Mode",
-                    order: 3,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--mode"],
-                        metavar: "MODE",
-                        choices: &["summary", "list", "put"],
-                    },
-                    value_kind: "choice",
-                    required: false,
-                    default: Some("summary"),
-                    help: "Header operation mode.",
-                    group: "Header",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "hdkey",
-                    label: "Header Key",
-                    order: 4,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--hdkey"],
-                        metavar: "KEY",
-                        choices: &[],
-                    },
-                    value_kind: "string",
-                    required: false,
-                    default: None,
-                    help: "Header keyword to update when mode is put.",
-                    group: "Header",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "hdvalue",
-                    label: "Header Value",
-                    order: 5,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--hdvalue"],
-                        metavar: "VALUE",
-                        choices: &[],
-                    },
-                    value_kind: "string",
-                    required: false,
-                    default: None,
-                    help: "Header value to write when mode is put.",
-                    group: "Header",
-                    advanced: false,
-                    hidden: false,
-                },
-            ],
-        }),
-        "imstat" => Some(TaskAlias {
-            mode: None,
-            subcommand: Some("imstat"),
-            summary: "Compute CASA image statistics over optional pixel, region, and channel selections.",
-            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--region path|box[[x0pix,y0pix],[x1pix,y1pix]]|world CRTF box] [--chans 0~4] [--json]",
-            visible_arguments: &["image_path", "box", "region", "chans", "json"],
-            required_arguments: &["image_path"],
-            extra_arguments: &[
-                ExtraAliasArgument {
-                    id: "subcommand",
-                    label: "Subcommand",
-                    order: 0,
-                    parser: ExtraAliasParser::Positional { metavar: "TASK" },
-                    value_kind: "string",
-                    required: false,
-                    default: Some("imstat"),
-                    help: "Hidden imexplore subcommand used to invoke imstat.",
-                    group: "Meta",
-                    advanced: true,
-                    hidden: true,
-                },
-                ExtraAliasArgument {
-                    id: "box",
-                    label: "Box",
-                    order: 2,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--box"],
-                        metavar: "x0,y0,x1,y1",
-                        choices: &[],
-                    },
-                    value_kind: "string",
-                    required: false,
-                    default: None,
-                    help: "Inclusive pixel box.",
-                    group: "Selection",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "chans",
-                    label: "Channels",
-                    order: 4,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--chans"],
-                        metavar: "range",
-                        choices: &[],
-                    },
-                    value_kind: "string",
-                    required: false,
-                    default: None,
-                    help: "CASA channel range, for example 4~12.",
-                    group: "Selection",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "region",
-                    label: "Region",
-                    order: 3,
-                    parser: ExtraAliasParser::Option {
-                        flags: &["--region"],
-                        metavar: "path|CRTF box",
-                        choices: &[],
-                    },
-                    value_kind: "path",
-                    required: false,
-                    default: None,
-                    help: "CASA CRTF region file, inline CRTF pixel box such as box[[100pix,100pix],[150pix,150pix]], or a world-coordinate CRTF box exported by the image explorer.",
-                    group: "Selection",
-                    advanced: false,
-                    hidden: false,
-                },
-                ExtraAliasArgument {
-                    id: "json",
-                    label: "JSON",
-                    order: 5,
-                    parser: ExtraAliasParser::Toggle {
-                        true_flags: &["--json"],
-                        false_flags: &[],
-                    },
-                    value_kind: "bool",
-                    required: false,
-                    default: Some("false"),
-                    help: "Emit machine-readable JSON.",
-                    group: "Output",
-                    advanced: false,
-                    hidden: false,
-                },
-            ],
-        }),
-        _ => None,
-    }
-}
-
-fn extra_argument_schema(argument: ExtraAliasArgument) -> serde_json::Value {
-    let parser = match argument.parser {
-        ExtraAliasParser::Option {
-            flags,
-            metavar,
-            choices,
-        } => serde_json::json!({
-            "kind": "option",
-            "flags": flags,
-            "metavar": metavar,
-            "choices": choices,
-        }),
-        ExtraAliasParser::Positional { metavar } => serde_json::json!({
-            "kind": "positional",
-            "metavar": metavar,
-        }),
-        ExtraAliasParser::Toggle {
-            true_flags,
-            false_flags,
-        } => serde_json::json!({
-            "kind": "toggle",
-            "true_flags": true_flags,
-            "false_flags": false_flags,
-        }),
-    };
-    serde_json::json!({
-        "id": argument.id,
-        "label": argument.label,
-        "order": argument.order,
-        "parser": parser,
-        "value_kind": argument.value_kind,
-        "required": argument.required,
-        "default": argument.default,
-        "help": argument.help,
-        "group": argument.group,
-        "advanced": argument.advanced,
-        "hidden_in_tui": argument.hidden,
-    })
-}
-
-fn infer_task_parameter_type(
-    task: &FrontendTaskCatalogEntry,
-    argument_id: &str,
-    value_kind: &str,
-) -> Option<&'static str> {
-    let task_id = task.id.as_str();
-    let parameter_type = match argument_id {
-        "help" | "ui_schema" | "json" => "action",
-        "vis" if task_id == "importvla" => "output_measurement_set_path",
-        "ms" | "vis" | "measurement_set" => "measurement_set_path",
-        "out" if matches!(task_id, "simobserve" | "mstransform" | "split") => {
-            "output_measurement_set_path"
-        }
-        "output_ms" if task_id == "simobserve" => "output_measurement_set_path",
-        "request_json" if task_id == "simobserve" => "output_json_path",
-        "output_measurement_set" | "outputms" | "outputvis" | "concatvis" => {
-            "output_measurement_set_path"
-        }
-        "archivefiles" => "archive_path",
-        "table_path" => "table_path",
-        "caltable" | "bandpass" | "fluxtable" | "fluxscale_input" | "gain_model_source"
-        | "gaincurve_table" => "calibration_table_path",
-        "gaintable" | "gaintables" => "calibration_table_list",
-        "callib" => "calibration_library_path",
-        "out_table" => "output_calibration_table_path",
-        "model" if task_id == "simobserve" => "fits_path",
-        "model" if task_id == "ft" => "image_path_list",
-        "fitsimage" if task_id == "exportfits" => "output_fits_path",
-        "fitsimage" | "fitsfile" => "fits_path",
-        "imagename" if task_id == "imager" => "output_image_path",
-        "imagename"
-            if matches!(
-                task_id,
-                "immoments" | "exportfits" | "impv" | "imsubimage" | "imregrid" | "feather"
-            ) =>
-        {
-            "image_path"
-        }
-        "imagename" if task_id == "immath" => "image_path_list",
-        "imagename" if task_id == "importfits" => "output_image_path",
-        "outfile" | "output" | "linefile" | "contfile"
-            if task.dataset_kinds.iter().any(|kind| kind == "image") =>
-        {
-            "output_image_path"
-        }
-        "residual" | "model" if task_id == "imfit" => "output_image_path",
-        "startmodel" | "mask_image" | "mask" | "image" | "template" | "highres" | "lowres"
-        | "infile" | "pbimage" | "skymodel" | "modelimage" => "image_path",
-        "complist" => "component_list_path",
-        "ptgfile" => "pointing_file_path",
-        "outlierfile" => "outlier_definition_path",
-        "spw" | "fit_spw" => "spectral_window_selector",
-        "field" | "gainfield" | "reference_fields" | "transfer_fields" => "field_selector",
-        "phasecenter_field" => "field_id",
-        "scan" => "scan_selector",
-        "antenna" | "refant" => "antenna_selector",
-        "observation" => "observation_selector",
-        "array" => "array_selector",
-        "timerange" => "timerange_selector",
-        "msselect" => "measurement_set_selection",
-        "datacolumn" | "stats_datacolumn" => "data_column",
-        "polarization" => "correlation_or_stokes",
-        "ddid" => "data_description_id",
-        "chans" => "channel_selector",
-        "channel_start" => "channel_start",
-        "channel_count" => "channel_count",
-        "start" if task_id == "impv" => "pixel_coordinate",
-        "end" if task_id == "impv" => "pixel_coordinate",
-        "start" => "cube_axis_start",
-        "width" if task_id == "impv" => "pixel_width",
-        "width" => "cube_axis_width",
-        "outframe" => "spectral_frame",
-        "restfreq" | "start_frequency_hz" | "channel_width_hz" | "frequencytol" => "frequency",
-        "veltype" => "velocity_convention",
-        "interpolation" => "interpolation_mode",
-        "phasecenter" => "direction",
-        "box" | "mask_box" => "pixel_box",
-        "region" => "region_path_or_box",
-        "includepix" => "pixel_range",
-        "moments" => "image_moment_list",
-        "expr" => "image_math_expression",
-        "summary_paths" => "path_list",
-        "project" => "project_code",
-        "starttime" | "stoptime" => "timestamp",
-        "comment" => "comment",
-        "versionname" | "oldname" => "version_name",
-        "bandname" => "vla_band",
-        "antnamescheme" => "antenna_name_scheme",
-        "mode" if task_id == "flagdata" => "flagdata_mode",
-        "mode" if task_id == "flagmanager" => "flagmanager_mode",
-        "mode" if task_id == "calibrate" => "calibration_mode",
-        "mode" => "mode",
-        "action" => "flag_action",
-        "quackmode" => "quack_mode",
-        "merge" => "flagmanager_merge_mode",
-        "format" => "output_format",
-        "stats_axis" => "statistics_axis",
-        "apply_mode" => "applycal_mode",
-        "gain_type" => "gain_type",
-        "caltype" => "gencal_type",
-        "parameter" => "gencal_parameter_list",
-        "solve_mode" => "solve_mode",
-        "gain_mode" | "bandpass_mode" => "corruption_mode",
-        "request_kind" if task_id == "simobserve" => "simobserve_request_kind",
-        "source_model" if task_id == "simobserve" => "json_object",
-        "telescope" if task_id == "simobserve" => "telescope_family",
-        "array_config" if task_id == "simobserve" => "array_configuration",
-        "band" if task_id == "simobserve" => "receiver_band",
-        "target_ms_size_gib" if task_id == "simobserve" => "data_size_gib",
-        "ms_channels" | "image_channels" | "pointing_count" if task_id == "simobserve" => {
-            "integer_count"
-        }
-        "worker_policy" if task_id == "simobserve" => "worker_policy",
-        "row_workers" | "channel_workers" if task_id == "simobserve" => "integer_count",
-        "measure_actual_size" if task_id == "simobserve" => "boolean",
-        "specmode" => "spectral_mode",
-        "deconvolver" => "deconvolver",
-        "weighting" => "weighting",
-        "savemodel" => "save_model_mode",
-        "wterm" => "w_term_mode",
-        "restoringbeam" => "restoring_beam",
-        "usemask" => "mask_mode",
-        "imsize" => "image_size_pixels",
-        "cell_arcsec" => "angular_cell_size_arcsec",
-        "pointing_offset_ra_arcsec" | "pointing_offset_dec_arcsec" => "angular_offset_arcsec",
-        "duration" | "integration" | "gain_interval_seconds" | "bandpass_interval_seconds" => {
-            "duration_seconds"
-        }
-        "threshold_jy" | "noise_simplenoise_jy" => "flux_density_jy",
-        "inbright" => "surface_brightness",
-        "robust" => "robust_parameter",
-        "gain" => "loop_gain",
-        "niter" | "nmajor" | "nterms" | "wprojplanes" | "minor_cycle_length" | "growiterations"
-        | "fit_order" | "corruption_seed" => "integer_count",
-        "scales" => "pixel_scale_list",
-        "smallscalebias" => "small_scale_bias",
-        "pblimit" | "minbeamfrac" | "minpsffraction" | "maxpsffraction" | "psfcutoff"
-        | "sdfactor" => "fraction",
-        "cyclefactor" | "sidelobethreshold" | "noisethreshold" | "lownoisethreshold"
-        | "negativethreshold" => "threshold_factor",
-        "quackinterval" | "timecutoff" | "freqcutoff" | "timedev" | "freqdev" => "flag_threshold",
-        "gain_amplitude" | "bandpass_amplitude" | "leakage_amplitude" | "leakage_offset" => {
-            "corruption_amplitude"
-        }
-        "solint" => "solution_interval",
-        "gain_combine" => "combine_selector",
-        "interp" => "calibration_interpolation",
-        "spwmap" => "spectral_window_map",
-        "calwt" => "calibration_weight_mode",
-        _ => fallback_parameter_type(value_kind),
-    };
-    Some(parameter_type)
-}
-
-fn fallback_parameter_type(value_kind: &str) -> &'static str {
-    match value_kind {
-        "bool" => "boolean",
-        "choice" => "enum",
-        "float" | "number" => "float",
-        "path" => "path",
-        "path-list" => "path_list",
-        "none" => "action",
-        _ => "text",
-    }
-}
-
-fn default_task_parameter_label(argument_id: &str) -> String {
-    argument_id
-        .split('_')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn resolve_frontend_task_command(
-    task: &FrontendTaskCatalogEntry,
-) -> FrontendResult<ResolvedFrontendCommand> {
-    if let Some(path) = env::var_os(&task.override_env).filter(|path| !path.is_empty()) {
-        return Ok(ResolvedFrontendCommand {
-            program: path,
-            prefix_args: Vec::new(),
-        });
-    }
-
-    if let Some(path) = env::var_os(format!("CARGO_BIN_EXE_{}", task.binary_name)) {
-        return Ok(ResolvedFrontendCommand {
-            program: path,
-            prefix_args: Vec::new(),
-        });
-    }
-
-    if let Some(path) = bundled_or_sibling_binary(&task.binary_name) {
-        return Ok(ResolvedFrontendCommand {
-            program: path.into_os_string(),
-            prefix_args: Vec::new(),
-        });
-    }
-
-    if let Some(path) = repo_local_binary(&task.binary_name) {
-        return Ok(ResolvedFrontendCommand {
-            program: path.into_os_string(),
-            prefix_args: Vec::new(),
-        });
-    }
-
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    Ok(ResolvedFrontendCommand {
-        program: cargo,
-        prefix_args: vec![
-            OsString::from("run"),
-            OsString::from("--manifest-path"),
-            workspace_manifest_path().into_os_string(),
-            OsString::from("-q"),
-            OsString::from("-p"),
-            OsString::from(&task.cargo_package),
-            OsString::from("--bin"),
-            OsString::from(&task.binary_name),
-            OsString::from("--"),
-        ],
-    })
-}
-
-fn bundled_or_sibling_binary(binary_name: &str) -> Option<PathBuf> {
-    let mut path = env::current_exe().ok()?;
-    path.pop();
-    path.push(binary_name);
-    path.set_extension(env::consts::EXE_EXTENSION);
-    path.exists().then_some(path)
-}
-
-fn repo_local_binary(binary_name: &str) -> Option<PathBuf> {
-    if let Some(repo_root) = env::var_os("CASA_RS_REPO_ROOT").filter(|path| !path.is_empty()) {
-        let candidate = PathBuf::from(repo_root)
-            .join("target")
-            .join("debug")
-            .join(binary_name);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    let mut cursor = env::current_dir().ok()?;
-    for _ in 0..6 {
-        let candidate = cursor.join("target").join("debug").join(binary_name);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-        if !cursor.pop() {
-            break;
-        }
-    }
-    None
-}
-
-fn workspace_manifest_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("casars frontend services should live under <workspace>/crates")
-        .join("Cargo.toml")
 }
 
 #[uniffi::export]
@@ -5618,309 +4937,359 @@ mod tests {
     }
 
     #[test]
-    fn task_ui_schema_json_loads_cataloged_binary_schema() {
+    fn parameter_catalog_and_definitions_cover_task_and_session_surfaces() {
+        let catalog_json = parameter_surface_catalog_json().expect("parameter catalog");
+        let catalog: serde_json::Value =
+            serde_json::from_str(&catalog_json).expect("parameter catalog json");
+        let surfaces = catalog["surfaces"].as_array().expect("surface array");
+        assert_eq!(surfaces.len(), 42);
+        assert_eq!(
+            surfaces
+                .iter()
+                .filter(|surface| surface["kind"] == "task")
+                .count(),
+            40
+        );
+        assert_eq!(
+            surfaces
+                .iter()
+                .filter(|surface| surface["kind"] == "session")
+                .count(),
+            2
+        );
+
+        let definition_json =
+            parameter_surface_definition_json("imexplore".to_string()).expect("definition");
+        let definition: serde_json::Value =
+            serde_json::from_str(&definition_json).expect("definition json");
+        assert_eq!(definition["id"], "imexplore");
+        assert_eq!(definition["kind"], "session");
+        assert!(
+            definition["bindings"]
+                .as_array()
+                .expect("bindings")
+                .iter()
+                .any(|binding| {
+                    binding["name"] == "image" && binding["concept"]["id"] == "imexplore.image"
+                })
+        );
+    }
+
+    #[test]
+    fn task_ui_schema_is_the_runtime_projection_of_the_builtin_definition() {
         let schema_json = task_ui_schema_json("flagdata".to_string()).expect("flagdata schema");
         let schema: serde_json::Value =
             serde_json::from_str(&schema_json).expect("flagdata schema json");
-
+        assert_eq!(schema["schema_version"], 2);
         assert_eq!(schema["command_id"], "flagdata");
-        assert!(
-            schema["arguments"]
-                .as_array()
-                .expect("arguments")
-                .iter()
-                .any(|argument| {
-                    argument["id"] == "mode"
-                        && argument["parser"]["choices"]
-                            .as_array()
-                            .expect("mode choices")
-                            .contains(&serde_json::json!("summary"))
-                })
-        );
-        assert!(
-            schema["arguments"]
-                .as_array()
-                .expect("arguments")
-                .iter()
-                .any(|argument| {
-                    argument["id"] == "vis" && argument["parameter_type"] == "measurement_set_path"
-                })
-        );
-
-        let imager_schema_json = task_ui_schema_json("imager".to_string()).expect("imager schema");
-        let imager_schema: serde_json::Value =
-            serde_json::from_str(&imager_schema_json).expect("imager schema json");
-        let imager_arguments = imager_schema["arguments"]
-            .as_array()
-            .expect("imager arguments");
-        assert!(imager_arguments.iter().any(|argument| {
-            argument["id"] == "ms" && argument["parameter_type"] == "measurement_set_path"
-        }));
-        assert!(imager_arguments.iter().any(|argument| {
-            argument["id"] == "imagename" && argument["parameter_type"] == "output_image_path"
-        }));
-        assert!(imager_arguments.iter().all(|argument| {
-            argument["parameter_type"]
-                .as_str()
-                .is_some_and(|parameter_type| !parameter_type.is_empty())
-        }));
-
-        let simobserve_schema_json =
-            task_ui_schema_json("simobserve".to_string()).expect("simobserve schema");
-        let simobserve_schema: serde_json::Value =
-            serde_json::from_str(&simobserve_schema_json).expect("simobserve schema json");
-        let simobserve_arguments = simobserve_schema["arguments"]
-            .as_array()
-            .expect("simobserve arguments");
-        assert!(simobserve_arguments.iter().any(|argument| {
-            argument["id"] == "request_kind"
-                && argument["parameter_type"] == "simobserve_request_kind"
-                && argument["parser"]["choices"]
-                    .as_array()
-                    .expect("request_kind choices")
-                    .contains(&serde_json::json!("family"))
-        }));
-        assert!(simobserve_arguments.iter().any(|argument| {
-            argument["id"] == "source_model" && argument["parameter_type"] == "json_object"
-        }));
-        assert!(simobserve_arguments.iter().any(|argument| {
-            argument["id"] == "output_ms"
-                && argument["parameter_type"] == "output_measurement_set_path"
-        }));
-        assert!(simobserve_arguments.iter().any(|argument| {
-            argument["id"] == "worker_policy" && argument["parameter_type"] == "worker_policy"
-        }));
-
-        let split_schema_json = task_ui_schema_json("split".to_string()).expect("split schema");
-        let split_schema: serde_json::Value =
-            serde_json::from_str(&split_schema_json).expect("split schema json");
-        let split_arguments = split_schema["arguments"]
-            .as_array()
-            .expect("split arguments");
-        assert_eq!(split_schema["command_id"], "split");
-        assert!(split_arguments.iter().any(|argument| {
-            argument["id"] == "ms" && argument["parameter_type"] == "measurement_set_path"
-        }));
-        assert!(split_arguments.iter().any(|argument| {
-            argument["id"] == "out"
-                && argument["required"] == true
-                && argument["parameter_type"] == "output_measurement_set_path"
-        }));
-        assert!(
-            split_arguments
-                .iter()
-                .any(|argument| { argument["id"] == "spw" && argument["required"] == false })
-        );
-        assert!(split_arguments.iter().any(|argument| {
-            argument["id"] == "width" && argument["required"] == false && argument["default"] == "1"
-        }));
-
-        let uvcontsub_schema_json =
-            task_ui_schema_json("uvcontsub".to_string()).expect("uvcontsub schema");
-        let uvcontsub_schema: serde_json::Value =
-            serde_json::from_str(&uvcontsub_schema_json).expect("uvcontsub schema json");
-        let uvcontsub_arguments = uvcontsub_schema["arguments"]
-            .as_array()
-            .expect("uvcontsub arguments");
-        assert_eq!(uvcontsub_schema["command_id"], "uvcontsub");
-        assert!(uvcontsub_arguments.iter().any(|argument| {
-            argument["id"] == "mode"
-                && argument["default"] == "continuum_subtract"
-                && argument["hidden_in_tui"] == true
-        }));
-        assert!(uvcontsub_arguments.iter().any(|argument| {
-            argument["id"] == "fit_spw"
-                && argument["required"] == true
-                && argument["hidden_in_tui"] == false
-        }));
-        assert!(
-            !uvcontsub_arguments
-                .iter()
-                .any(|argument| argument["id"] == "gain_type")
-        );
-
-        let gencal_schema_json = task_ui_schema_json("gencal".to_string()).expect("gencal schema");
-        let gencal_schema: serde_json::Value =
-            serde_json::from_str(&gencal_schema_json).expect("gencal schema json");
-        let gencal_arguments = gencal_schema["arguments"]
-            .as_array()
-            .expect("gencal arguments");
-        assert!(gencal_arguments.iter().any(|argument| {
-            argument["id"] == "caltype"
-                && argument["required"] == true
-                && argument["parameter_type"] == "gencal_type"
-                && argument["parser"]["choices"]
-                    .as_array()
-                    .expect("caltype choices")
-                    .contains(&serde_json::json!("opac"))
-        }));
-
-        let plotms_schema_json = task_ui_schema_json("plotms".to_string()).expect("plotms schema");
-        let plotms_schema: serde_json::Value =
-            serde_json::from_str(&plotms_schema_json).expect("plotms schema json");
-        let plotms_arguments = plotms_schema["arguments"]
-            .as_array()
-            .expect("plotms arguments");
-        assert_eq!(plotms_schema["command_id"], "plotms");
-        assert!(plotms_arguments.iter().any(|argument| {
-            argument["id"] == "ms_path" && argument["parameter_type"] == "path"
-        }));
-        assert!(plotms_arguments.iter().any(|argument| {
-            argument["id"] == "plot_output" && argument["parameter_type"] == "path"
-        }));
-        assert!(
-            !plotms_arguments
-                .iter()
-                .any(|argument| argument["id"] == "stretch")
-        );
-
-        let imhead_schema_json = task_ui_schema_json("imhead".to_string()).expect("imhead schema");
-        let imhead_schema: serde_json::Value =
-            serde_json::from_str(&imhead_schema_json).expect("imhead schema json");
-        let imhead_arguments = imhead_schema["arguments"]
-            .as_array()
-            .expect("imhead arguments");
-        assert_eq!(imhead_schema["command_id"], "imhead");
-        assert!(imhead_arguments.iter().any(|argument| {
-            argument["id"] == "subcommand"
-                && argument["default"] == "imhead"
-                && argument["hidden_in_tui"] == true
-        }));
-        assert!(imhead_arguments.iter().any(|argument| {
-            argument["id"] == "mode"
-                && argument["hidden_in_tui"] == false
-                && argument["parser"]["choices"]
-                    .as_array()
-                    .expect("imhead mode choices")
-                    .contains(&serde_json::json!("put"))
-        }));
-
-        let imstat_schema_json = task_ui_schema_json("imstat".to_string()).expect("imstat schema");
-        let imstat_schema: serde_json::Value =
-            serde_json::from_str(&imstat_schema_json).expect("imstat schema json");
-        let imstat_arguments = imstat_schema["arguments"]
-            .as_array()
-            .expect("imstat arguments");
-        assert_eq!(imstat_schema["command_id"], "imstat");
-        assert!(imstat_arguments.iter().any(|argument| {
-            argument["id"] == "box" && argument["parameter_type"] == "pixel_box"
-        }));
-        assert!(imstat_arguments.iter().any(|argument| {
-            argument["id"] == "region" && argument["parameter_type"] == "region_path_or_box"
-        }));
-    }
-
-    #[test]
-    fn swift_visible_task_schemas_expose_path_parameter_roles() {
-        let catalog: serde_json::Value =
-            serde_json::from_str(TASK_CATALOG_JSON).expect("task catalog json");
-        let tasks = catalog["tasks"].as_array().expect("tasks array");
-
-        for task in tasks
+        let arguments = schema["arguments"].as_array().expect("arguments");
+        let vis = arguments
             .iter()
-            .filter(|task| task["show_in_swift"].as_bool() == Some(true))
-        {
-            let task_id = task["id"].as_str().expect("task id");
-            let schema_json =
-                task_ui_schema_json(task_id.to_string()).expect("Swift-visible task schema");
-            let schema: serde_json::Value =
-                serde_json::from_str(&schema_json).expect("Swift-visible schema json");
-            let arguments = schema["arguments"].as_array().expect("schema arguments");
+            .find(|argument| argument["id"] == "vis")
+            .expect("vis projection");
+        assert_eq!(vis["concept_id"], "data.input.vis");
+        assert_eq!(vis["concept_revision"], 1);
+        assert_eq!(vis["context_role"], "input_dataset");
+        assert_eq!(vis["parameter_type"], "array");
+        assert_eq!(vis["parser"]["flags"][0], "--vis");
 
-            assert!(
-                !arguments.is_empty(),
-                "{task_id} should expose at least one schema argument"
-            );
-            for argument in arguments
+        let mode = arguments
+            .iter()
+            .find(|argument| argument["id"] == "mode")
+            .expect("mode projection");
+        assert_eq!(mode["concept_id"], "flagdata.mode");
+        assert!(
+            mode["parser"]["choices"]
+                .as_array()
+                .expect("mode choices")
+                .contains(&serde_json::json!("summary"))
+        );
+
+        let session_json =
+            parameter_ui_schema_json("imexplore".to_string()).expect("session schema");
+        let session: serde_json::Value =
+            serde_json::from_str(&session_json).expect("session schema json");
+        assert_eq!(session["command_id"], "imexplore");
+        assert!(
+            session["arguments"]
+                .as_array()
+                .expect("session arguments")
                 .iter()
-                .filter(|argument| argument["hidden_in_tui"].as_bool() != Some(true))
-            {
-                if argument["value_kind"].as_str() == Some("path") {
-                    assert!(
-                        argument["parameter_type"]
-                            .as_str()
-                            .is_some_and(|parameter_type| !parameter_type.is_empty()),
-                        "{task_id}.{} should expose a path parameter_type",
-                        argument["id"].as_str().unwrap_or("<unknown>")
-                    );
-                }
-            }
-        }
-
-        let exportfits_schema: serde_json::Value = serde_json::from_str(
-            &task_ui_schema_json("exportfits".to_string()).expect("exportfits schema"),
-        )
-        .expect("exportfits schema json");
-        let exportfits_arguments = exportfits_schema["arguments"]
-            .as_array()
-            .expect("exportfits arguments");
-        assert!(exportfits_arguments.iter().any(|argument| {
-            argument["id"] == "fitsimage" && argument["parameter_type"] == "output_fits_path"
-        }));
-
-        let importfits_schema: serde_json::Value = serde_json::from_str(
-            &task_ui_schema_json("importfits".to_string()).expect("importfits schema"),
-        )
-        .expect("importfits schema json");
-        let importfits_arguments = importfits_schema["arguments"]
-            .as_array()
-            .expect("importfits arguments");
-        assert!(importfits_arguments.iter().any(|argument| {
-            argument["id"] == "fitsimage" && argument["parameter_type"] == "fits_path"
-        }));
-        assert!(importfits_arguments.iter().any(|argument| {
-            argument["id"] == "imagename" && argument["parameter_type"] == "output_image_path"
-        }));
+                .any(|argument| {
+                    argument["id"] == "image" && argument["concept_id"] == "imexplore.image"
+                })
+        );
     }
 
     #[test]
-    fn tutorial_task_parameter_audit_matches_exposed_task_schemas() {
-        let audit: serde_json::Value =
-            serde_json::from_str(TUTORIAL_TASK_PARAMETER_AUDIT_JSON).expect("audit json");
-        let matrix: serde_json::Value =
-            serde_json::from_str(TASK_EXECUTION_MATRIX_JSON).expect("matrix json");
-        let matrix_rows = matrix["rows"].as_array().expect("matrix rows");
-
-        for workflow in audit["workflows"].as_array().expect("audit workflows") {
-            let task_id = workflow["task_id"].as_str().expect("task id");
+    fn ui_projection_preserves_ambiguous_concepts_instead_of_inferring_from_names() {
+        for (surface_id, parameter, expected_concept) in [
+            ("imager", "vis", "data.input.vis"),
+            ("importvla", "vis", "data.output.vis"),
+            ("imstat", "imagename", "image.input.imagename"),
+            ("imager", "imagename", "image.output.imagename"),
+            ("imager", "width", "imager.width"),
+            ("impv", "width", "impv.width"),
+            ("flagdata", "mode", "flagdata.mode"),
+            ("imhead", "mode", "imhead.mode"),
+        ] {
             let schema_json =
-                task_ui_schema_json(task_id.to_string()).expect("workflow task schema");
+                parameter_ui_schema_json(surface_id.to_string()).expect("UI projection");
             let schema: serde_json::Value =
-                serde_json::from_str(&schema_json).expect("workflow schema json");
-            let arguments = schema["arguments"].as_array().expect("schema arguments");
-
-            for parameter in workflow["parameters"].as_array().expect("parameters") {
-                let parameter = parameter.as_str().expect("parameter string");
-                let argument = arguments
-                    .iter()
-                    .find(|argument| argument["id"].as_str() == Some(parameter))
-                    .unwrap_or_else(|| panic!("{task_id} schema missing {parameter}"));
-                assert_eq!(
-                    argument["hidden_in_tui"].as_bool(),
-                    Some(false),
-                    "{task_id}.{parameter} must be invokable from the TUI"
-                );
-                assert!(
-                    argument["parameter_type"]
-                        .as_str()
-                        .is_some_and(|parameter_type| !parameter_type.is_empty()),
-                    "{task_id}.{parameter} should expose a parameter_type"
-                );
-            }
-
-            let matrix_row = matrix_rows
+                serde_json::from_str(&schema_json).expect("UI projection JSON");
+            let argument = schema["arguments"]
+                .as_array()
+                .expect("arguments")
                 .iter()
-                .find(|row| row["task_id"].as_str() == Some(task_id))
-                .unwrap_or_else(|| panic!("matrix missing {task_id}"));
-            assert!(
-                matches!(matrix_row["tui_status"].as_str(), Some("invokable")),
-                "{task_id} is not TUI invokable"
-            );
-            assert!(
-                matches!(matrix_row["gui_status"].as_str(), Some("invokable")),
-                "{task_id} is not GUI invokable"
+                .find(|argument| argument["id"] == parameter)
+                .unwrap_or_else(|| panic!("{surface_id} is missing {parameter}"));
+            assert_eq!(
+                argument["concept_id"], expected_concept,
+                "{surface_id}.{parameter} must retain its reviewed concept"
             );
         }
+    }
+
+    #[test]
+    fn parameter_resolution_preserves_context_and_override_origins() {
+        let defaults_json = parameter_defaults_json("imager".to_string()).expect("defaults");
+        let defaults: serde_json::Value =
+            serde_json::from_str(&defaults_json).expect("defaults json");
+        assert_eq!(defaults["base_source"]["kind"], "defaults");
+        assert_eq!(defaults["dirty"], false);
+        assert_eq!(defaults["states"]["niter"]["origin"], "default");
+
+        let context = serde_json::json!({
+            "values": {
+                "vis": {"kind": "string", "value": "input.ms"},
+                "imagename": {"kind": "string", "value": "products/image"}
+            },
+            "unset": []
+        });
+        let overrides = serde_json::json!({
+            "values": {"niter": {"kind": "integer", "value": 7}},
+            "unset": []
+        });
+        let resolved_json = parameter_resolve_json(
+            "imager".to_string(),
+            "defaults".to_string(),
+            None,
+            None,
+            context.to_string(),
+            overrides.to_string(),
+        )
+        .expect("resolved parameters");
+        let resolved: serde_json::Value =
+            serde_json::from_str(&resolved_json).expect("resolved json");
+        assert_eq!(resolved["dirty"], true);
+        assert_eq!(resolved["states"]["vis"]["origin"], "context");
+        assert_eq!(resolved["states"]["niter"]["origin"], "override");
+        assert_eq!(resolved["states"]["niter"]["value"]["value"], 7);
+        assert!(
+            resolved["profile_toml"]
+                .as_str()
+                .expect("profile TOML")
+                .contains("niter = 7")
+        );
+    }
+
+    #[test]
+    fn parameter_run_safety_json_exposes_catalog_owned_frontend_gates() {
+        let values = serde_json::json!({
+            "savemodel": {"kind": "string", "value": "modelcolumn"}
+        });
+        let safety_json = parameter_run_safety_json("imager".to_string(), values.to_string())
+            .expect("imager safety");
+        let safety: serde_json::Value = serde_json::from_str(&safety_json).unwrap();
+        assert_eq!(safety["requires_interactive_confirmation"], true);
+        assert_eq!(safety["requires_overwrite_confirmation"], false);
+        assert_eq!(safety["requires_input_mutation_confirmation"], true);
+        assert!(
+            safety["classes"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("product_write"))
+        );
+        assert!(
+            safety["classes"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("input_mutation"))
+        );
+    }
+
+    #[test]
+    fn parameter_provider_invocation_json_uses_simobserve_family_stdin() {
+        let values = serde_json::json!({
+            "request_kind": {"kind": "string", "value": "family"}
+        });
+        let invocation_json =
+            parameter_provider_invocation_json("simobserve".to_string(), values.to_string())
+                .expect("family invocation");
+        let invocation: serde_json::Value = serde_json::from_str(&invocation_json).unwrap();
+        assert_eq!(invocation["args"], serde_json::json!(["--json-run", "-"]));
+        let request: serde_json::Value =
+            serde_json::from_str(invocation["stdin"].as_str().expect("stdin JSON")).unwrap();
+        assert_eq!(request["kind"], "family");
+        assert_eq!(request["request"]["telescope"], "VLA");
+        assert_eq!(request["request"]["output_ms"], "simobserve-family.ms");
+        assert!(request["request"].get("model").is_none());
+        assert!(request["request"].get("out").is_none());
+    }
+
+    #[test]
+    fn one_profile_matches_runtime_ui_projection_and_uniffi_json() {
+        let source_path = PathBuf::from("profiles/imager.toml");
+        let profile_toml = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/test-profiles/imager-cross-surface.toml"
+        ));
+        let bundle = builtin_surface_bundle("imager").expect("builtin imager surface");
+        let profile = parse_profile(profile_toml).expect("parse profile");
+        let direct = ParameterSession::from_profile(
+            bundle.clone(),
+            BaseSource::File(source_path.clone()),
+            &profile,
+        )
+        .expect("direct runtime resolution");
+
+        assert_eq!(
+            direct.states()["imsize"].value,
+            Some(ParameterValue::Array(vec![
+                ParameterValue::Integer(1024),
+                ParameterValue::Integer(1024),
+            ]))
+        );
+        assert_eq!(
+            direct.states()["cell"].value,
+            Some(ParameterValue::Array(vec![
+                ParameterValue::String("1arcsec".to_string()),
+                ParameterValue::String("1arcsec".to_string()),
+            ]))
+        );
+
+        let uniffi_snapshot_json = parameter_load_json(
+            "imager".to_string(),
+            profile_toml.to_string(),
+            source_path.to_string_lossy().into_owned(),
+        )
+        .expect("UniFFI profile resolution");
+        let uniffi_snapshot: serde_json::Value =
+            serde_json::from_str(&uniffi_snapshot_json).expect("snapshot json");
+        assert_eq!(
+            uniffi_snapshot["states"],
+            serde_json::to_value(direct.states()).expect("direct states json")
+        );
+        assert_eq!(
+            uniffi_snapshot["diagnostics"],
+            serde_json::to_value(direct.diagnostics()).expect("direct diagnostics json")
+        );
+        let canonical_profile = uniffi_snapshot["profile_toml"]
+            .as_str()
+            .expect("canonical profile TOML");
+        assert!(canonical_profile.contains("imsize = [1024, 1024]"));
+        assert!(!canonical_profile.contains("cell ="));
+
+        let direct_ui = project_ui_schema(&bundle);
+        let uniffi_ui_json =
+            parameter_ui_schema_json("imager".to_string()).expect("UniFFI UI projection");
+        let uniffi_ui: serde_json::Value =
+            serde_json::from_str(&uniffi_ui_json).expect("UI projection json");
+        assert_eq!(uniffi_ui, direct_ui);
+        let arguments = uniffi_ui["arguments"].as_array().expect("UI arguments");
+        for binding in bundle.surface.bindings().iter().filter(|binding| {
+            matches!(
+                binding.name.as_str(),
+                "vis" | "imagename" | "imsize" | "cell" | "niter"
+            )
+        }) {
+            let argument = arguments
+                .iter()
+                .find(|argument| argument["id"] == binding.name)
+                .unwrap_or_else(|| panic!("UI projection missing {}", binding.name));
+            assert_eq!(argument["concept_id"], binding.concept.id.as_str());
+            assert_eq!(
+                argument["concept_revision"],
+                binding.concept.semantic_revision.0
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_and_managed_parameter_profiles_round_trip() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let values = serde_json::json!({
+            "vis": {"kind": "string", "value": "input.ms"},
+            "imagename": {"kind": "string", "value": "products/image"},
+            "niter": {"kind": "integer", "value": 42}
+        })
+        .to_string();
+        let profile_path = temp.path().join("profiles/imager.toml");
+        let save_json = parameter_save_json(
+            "imager".to_string(),
+            values.clone(),
+            profile_path.to_string_lossy().into_owned(),
+        )
+        .expect("save profile");
+        let save: serde_json::Value = serde_json::from_str(&save_json).expect("save json");
+        assert_eq!(save["path"], profile_path.to_string_lossy().as_ref());
+        assert!(
+            save["bytes_written"]
+                .as_u64()
+                .is_some_and(|bytes| bytes > 0)
+        );
+        assert!(save.get("managed_kind").is_none());
+
+        let profile_toml = fs::read_to_string(&profile_path).expect("read profile");
+        assert!(profile_toml.contains("surface = \"imager\""));
+        assert!(profile_toml.contains("niter = 42"));
+        assert!(!profile_toml.contains("cell ="));
+        let loaded_json = parameter_load_json(
+            "imager".to_string(),
+            profile_toml,
+            profile_path.to_string_lossy().into_owned(),
+        )
+        .expect("load profile");
+        let loaded: serde_json::Value = serde_json::from_str(&loaded_json).expect("loaded json");
+        assert_eq!(loaded["base_source"]["kind"], "file");
+        assert_eq!(loaded["states"]["niter"]["origin"], "base_profile");
+        assert_eq!(loaded["states"]["niter"]["value"]["value"], 42);
+
+        let workspace = temp.path().join("workspace");
+        let write_json = parameter_write_last_json(
+            "imager".to_string(),
+            workspace.to_string_lossy().into_owned(),
+            values,
+            false,
+        )
+        .expect("write Last");
+        let write: serde_json::Value = serde_json::from_str(&write_json).expect("write json");
+        assert_eq!(write["managed_kind"], "last");
+        assert!(
+            write["path"]
+                .as_str()
+                .expect("Last path")
+                .ends_with("last.toml")
+        );
+
+        let last_json = parameter_last_json(
+            "imager".to_string(),
+            workspace.to_string_lossy().into_owned(),
+            false,
+        )
+        .expect("load Last")
+        .expect("Last exists");
+        let last: serde_json::Value = serde_json::from_str(&last_json).expect("Last json");
+        assert_eq!(last["base_source"]["kind"], "last");
+        assert_eq!(last["states"]["niter"]["value"]["value"], 42);
+
+        let error = parameter_last_json(
+            "imexplore".to_string(),
+            workspace.to_string_lossy().into_owned(),
+            true,
+        )
+        .expect_err("sessions do not have Last Successful");
+        assert!(error.to_string().contains("does not have Last Successful"));
     }
 
     #[test]
@@ -6373,7 +5742,6 @@ mod tests {
             },
             "cursor_x": 1,
             "cursor_y": 1,
-            "selected_profile_axis": 0,
             "non_display_indices": [],
             "include_profile": true
         })

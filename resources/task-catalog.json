@@ -3,6 +3,7 @@
   "tasks": [
     {
       "id": "msexplore",
+      "provider_family": "msexplore",
       "category": "MeasurementSet",
       "display_name": "MSExplore",
       "binary_name": "msexplore",
@@ -19,6 +20,7 @@
     },
     {
       "id": "calibrate",
+      "provider_family": "calibration",
       "category": "Calibration",
       "display_name": "Calibrate",
       "binary_name": "calibrate",
@@ -35,6 +37,7 @@
     },
     {
       "id": "importvla",
+      "provider_family": "importvla",
       "category": "Import",
       "display_name": "ImportVLA",
       "binary_name": "casars-importvla",
@@ -51,6 +54,7 @@
     },
     {
       "id": "imager",
+      "provider_family": "imager",
       "category": "Imaging",
       "display_name": "Imager",
       "binary_name": "casars-imager",
@@ -67,6 +71,7 @@
     },
     {
       "id": "simobserve",
+      "provider_family": "simobserve",
       "category": "Simulation",
       "display_name": "SimObserve",
       "binary_name": "simobserve",
@@ -83,6 +88,7 @@
     },
     {
       "id": "tablebrowser",
+      "provider_family": "table_browser",
       "category": "Tables",
       "display_name": "Table Browser",
       "binary_name": "tablebrowser",
@@ -99,6 +105,7 @@
     },
     {
       "id": "imexplore",
+      "provider_family": "image_browser",
       "category": "Images",
       "display_name": "ImExplore",
       "binary_name": "imexplore",
@@ -115,6 +122,7 @@
     },
     {
       "id": "imhead",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Image Header",
       "binary_name": "imexplore",
@@ -131,6 +139,7 @@
     },
     {
       "id": "imstat",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Image Statistics",
       "binary_name": "imexplore",
@@ -147,6 +156,7 @@
     },
     {
       "id": "immoments",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Image Moments",
       "binary_name": "immoments",
@@ -163,6 +173,7 @@
     },
     {
       "id": "exportfits",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Export FITS",
       "binary_name": "exportfits",
@@ -179,6 +190,7 @@
     },
     {
       "id": "mstransform",
+      "provider_family": "mstransform",
       "category": "MeasurementSet",
       "display_name": "MSTransform",
       "binary_name": "mstransform",
@@ -195,6 +207,7 @@
     },
     {
       "id": "split",
+      "provider_family": "mstransform",
       "category": "MeasurementSet",
       "display_name": "Split",
       "binary_name": "mstransform",
@@ -211,6 +224,7 @@
     },
     {
       "id": "uvcontsub",
+      "provider_family": "calibration",
       "category": "MeasurementSet",
       "display_name": "UV Continuum Subtraction",
       "binary_name": "calibrate",
@@ -227,6 +241,7 @@
     },
     {
       "id": "applycal",
+      "provider_family": "calibration",
       "category": "Calibration",
       "display_name": "Applycal",
       "binary_name": "calibrate",
@@ -243,6 +258,7 @@
     },
     {
       "id": "gaincal",
+      "provider_family": "calibration",
       "category": "Calibration",
       "display_name": "Gaincal",
       "binary_name": "calibrate",
@@ -259,6 +275,7 @@
     },
     {
       "id": "bandpass",
+      "provider_family": "calibration",
       "category": "Calibration",
       "display_name": "Bandpass",
       "binary_name": "calibrate",
@@ -275,6 +292,7 @@
     },
     {
       "id": "fluxscale",
+      "provider_family": "calibration",
       "category": "Calibration",
       "display_name": "Fluxscale",
       "binary_name": "calibrate",
@@ -291,6 +309,7 @@
     },
     {
       "id": "gencal",
+      "provider_family": "calibration",
       "category": "Calibration",
       "display_name": "Gencal",
       "binary_name": "calibrate",
@@ -307,6 +326,7 @@
     },
     {
       "id": "plotms",
+      "provider_family": "msexplore",
       "category": "Plotting",
       "display_name": "PlotMS",
       "binary_name": "msexplore",
@@ -323,6 +343,7 @@
     },
     {
       "id": "plotcal",
+      "provider_family": "casa_task_adapter",
       "category": "Plotting",
       "display_name": "PlotCal",
       "binary_name": "casars-casa-task",
@@ -339,6 +360,7 @@
     },
     {
       "id": "flagdata",
+      "provider_family": "flagdata",
       "category": "Flagging",
       "display_name": "Flag Data",
       "binary_name": "flagdata",
@@ -355,6 +377,7 @@
     },
     {
       "id": "flagmanager",
+      "provider_family": "flagmanager",
       "category": "Flagging",
       "display_name": "Flag Manager",
       "binary_name": "flagmanager",
@@ -371,6 +394,7 @@
     },
     {
       "id": "imcollapse",
+      "provider_family": "casa_task_adapter",
       "category": "Images",
       "display_name": "Image Collapse",
       "binary_name": "casars-casa-task",
@@ -387,6 +411,7 @@
     },
     {
       "id": "imfit",
+      "provider_family": "casa_task_adapter",
       "category": "Images",
       "display_name": "Image Fit",
       "binary_name": "casars-casa-task",
@@ -403,6 +428,7 @@
     },
     {
       "id": "impbcor",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Primary Beam Correction",
       "binary_name": "impbcor",
@@ -419,6 +445,7 @@
     },
     {
       "id": "widebandpbcor",
+      "provider_family": "casa_task_adapter",
       "category": "Images",
       "display_name": "Wideband PB Correction",
       "binary_name": "casars-casa-task",
@@ -435,6 +462,7 @@
     },
     {
       "id": "imcontsub",
+      "provider_family": "casa_task_adapter",
       "category": "Images",
       "display_name": "Image Continuum Subtraction",
       "binary_name": "casars-casa-task",
@@ -451,6 +479,7 @@
     },
     {
       "id": "impv",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Position Velocity",
       "binary_name": "impv",
@@ -467,6 +496,7 @@
     },
     {
       "id": "imsubimage",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Subimage",
       "binary_name": "imsubimage",
@@ -483,6 +513,7 @@
     },
     {
       "id": "immath",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Image Math",
       "binary_name": "immath",
@@ -499,6 +530,7 @@
     },
     {
       "id": "imregrid",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Image Regrid",
       "binary_name": "imregrid",
@@ -515,6 +547,7 @@
     },
     {
       "id": "feather",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Feather",
       "binary_name": "feather",
@@ -531,6 +564,7 @@
     },
     {
       "id": "importfits",
+      "provider_family": "image_analysis",
       "category": "Images",
       "display_name": "Import FITS",
       "binary_name": "importfits",
@@ -547,6 +581,7 @@
     },
     {
       "id": "concat",
+      "provider_family": "casa_task_adapter",
       "category": "MeasurementSet",
       "display_name": "Concat",
       "binary_name": "casars-casa-task",
@@ -563,6 +598,7 @@
     },
     {
       "id": "statwt",
+      "provider_family": "casa_task_adapter",
       "category": "MeasurementSet",
       "display_name": "StatWT",
       "binary_name": "casars-casa-task",
@@ -579,6 +615,7 @@
     },
     {
       "id": "hanningsmooth",
+      "provider_family": "casa_task_adapter",
       "category": "MeasurementSet",
       "display_name": "Hanning Smooth",
       "binary_name": "casars-casa-task",
@@ -595,6 +632,7 @@
     },
     {
       "id": "clearcal",
+      "provider_family": "casa_task_adapter",
       "category": "Calibration",
       "display_name": "Clearcal",
       "binary_name": "casars-casa-task",
@@ -611,6 +649,7 @@
     },
     {
       "id": "delmod",
+      "provider_family": "casa_task_adapter",
       "category": "Calibration",
       "display_name": "Delmod",
       "binary_name": "casars-casa-task",
@@ -627,6 +666,7 @@
     },
     {
       "id": "ft",
+      "provider_family": "casa_task_adapter",
       "category": "Calibration",
       "display_name": "FT",
       "binary_name": "casars-casa-task",
@@ -643,6 +683,7 @@
     },
     {
       "id": "simanalyze",
+      "provider_family": "casa_task_adapter",
       "category": "Simulation",
       "display_name": "SimAnalyze",
       "binary_name": "casars-casa-task",
@@ -659,6 +700,7 @@
     },
     {
       "id": "simalma",
+      "provider_family": "casa_task_adapter",
       "category": "Simulation",
       "display_name": "SimALMA",
       "binary_name": "casars-casa-task",
@@ -675,6 +717,7 @@
     },
     {
       "id": "casars",
+      "provider_family": "launcher",
       "category": "Launcher",
       "display_name": "CASA-rs Shell",
       "binary_name": "casars",

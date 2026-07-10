@@ -28,6 +28,9 @@ for path in "${required_files[@]}"; do
   }
 done
 
+python3 scripts/check-parameter-surface-catalog.py
+python3 scripts/check-parameter-contract-history.py
+
 for heading in "${required_sections[@]}"; do
   grep -Fq "$heading" ARCHITECTURE.md || {
     echo "arch-check: ARCHITECTURE.md is missing section: $heading" >&2

@@ -391,6 +391,15 @@ struct DatasetExplorerPanel: View {
 
     private func tableBrowserRoot(for dataset: DatasetSummary) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            SessionParameterProfileBar(
+                store: store,
+                surfaceID: "tablebrowser",
+                datasetID: dataset.id,
+                instanceID: "tab-tablebrowser-\(dataset.id)"
+            )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            Divider()
             tableBrowserToolbar(for: dataset)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -399,12 +408,6 @@ struct DatasetExplorerPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
-            let selectedView = store.state.tableBrowsers[dataset.id]?.selectedView
-            if selectedView != nil && !Self.tableBrowserDisplayViews.contains(selectedView ?? "") {
-                store.setTableBrowserView("cells", datasetID: dataset.id)
-            }
-        }
     }
 
     private var dataset: DatasetSummary? {
@@ -466,6 +469,13 @@ struct DatasetExplorerPanel: View {
     private func imageExplorerContent(for dataset: DatasetSummary) -> some View {
         let explorerState = store.state.imageExplorers[dataset.id]
         VStack(alignment: .leading, spacing: 8) {
+            SessionParameterProfileBar(
+                store: store,
+                surfaceID: "imexplore",
+                datasetID: dataset.id,
+                instanceID: dataset.explorerTabID
+            )
+
             HStack(spacing: 8) {
                 Button {
                     store.refreshImageExplorer(datasetID: dataset.id)
@@ -550,6 +560,7 @@ struct DatasetExplorerPanel: View {
                     cellWindow: browserState?.cellWindow,
                     hiddenColumns: browserState?.hiddenCellColumns ?? [],
                     arrayInlineLimits: browserState?.cellColumnArrayInlineLimits ?? [:],
+                    contentMode: browserState?.contentMode ?? "auto",
                     interfaceFontSize: interfaceFontSize,
                     selectedCellRow: browserState?.selectedCellRow,
                     selectedCellColumn: browserState?.selectedCellColumn,
@@ -614,17 +625,30 @@ struct DatasetExplorerPanel: View {
         let browserState = store.state.tableBrowsers[dataset.id]
         return HStack(spacing: 10) {
             Picker("View", selection: Binding(
-                get: { Self.tableBrowserViewSelection(browserState?.selectedView) },
+                get: { Self.tableBrowserViewSelection(browserState?.snapshot?.view ?? browserState?.selectedView) },
                 set: { store.setTableBrowserView($0, datasetID: dataset.id) }
             )) {
+                Text("Summary").tag("overview")
+                Text("Columns").tag("columns")
                 Text("Cells").tag("cells")
                 Text("Keywords").tag("keywords")
                 Text("Subtables").tag("subtables")
             }
             .pickerStyle(.segmented)
-            .frame(width: 260)
+            .frame(width: 430)
             .labelsHidden()
             .accessibilityIdentifier("tableBrowser.view.\(dataset.id)")
+
+            Picker("Content", selection: Binding(
+                get: { browserState?.contentMode ?? "auto" },
+                set: { store.setTableBrowserContentMode($0, datasetID: dataset.id) }
+            )) {
+                Text("Auto").tag("auto")
+                Text("Compact").tag("compact")
+                Text("Detailed").tag("detailed")
+            }
+            .frame(width: 130)
+            .labelsHidden()
 
             Button {
                 store.refreshTableBrowser(datasetID: dataset.id)
@@ -662,11 +686,11 @@ struct DatasetExplorerPanel: View {
         }
     }
 
-    private static let tableBrowserDisplayViews = ["cells", "keywords", "subtables"]
+    private static let tableBrowserDisplayViews = ["overview", "columns", "cells", "keywords", "subtables"]
 
     private static func tableBrowserViewSelection(_ view: String?) -> String {
         guard let view, tableBrowserDisplayViews.contains(view) else {
-            return "cells"
+            return "overview"
         }
         return view
     }
@@ -803,6 +827,141 @@ private struct ExplorerPlot: Identifiable {
     let caption: String
 
     var id: String { title }
+}
+
+private struct SessionParameterProfileBar: View {
+    @ObservedObject var store: WorkbenchStore
+    let surfaceID: String
+    let datasetID: String
+    let instanceID: String
+
+    var body: some View {
+        if let session = store.parameterSession(surfaceID: surfaceID, instanceID: instanceID) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Label("Profile", systemImage: "slider.horizontal.3")
+                        .workbenchFont(.caption, weight: .semibold)
+                    Text(session.selectedSource.title)
+                        .workbenchFont(.caption, weight: .semibold)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                    if session.snapshot.dirty {
+                        Text("Edited")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.orange)
+                    }
+
+                    Menu("Start From") {
+                        Button("Defaults") { replaceSource(.defaults) }
+                        Button("Last") { replaceSource(.last) }
+                        if session.snapshot.surfaceKind == "task" {
+                            Button("Last Successful") { replaceSource(.lastSuccessful) }
+                        }
+                    }
+                    Button("Open") { openProfile() }
+                    Button("Save As") { saveProfile() }
+                        .disabled(session.hasErrors)
+                    Button("Revert") {
+                        store.revertParameters(surfaceID: surfaceID, instanceID: instanceID)
+                        applyProfile()
+                    }
+                    .disabled(!session.snapshot.dirty)
+                    Menu("Reset Field") {
+                        ForEach(session.bundle.surface.bindings.sorted { $0.order < $1.order }) { binding in
+                            Button("\(binding.name) - \(session.origin(for: binding.name))") {
+                                store.resetParameter(surfaceID: surfaceID, instanceID: instanceID, name: binding.name)
+                                applyProfile()
+                            }
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                    Toggle("Save Last", isOn: Binding(
+                        get: { store.parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.saveLast ?? true },
+                        set: { store.setParameterSaveLast(surfaceID: surfaceID, instanceID: instanceID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                }
+
+                HStack(spacing: 6) {
+                    Text("Workspace")
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                    TextField("Workspace", text: Binding(
+                        get: { store.parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.workspace ?? "" },
+                        set: { store.setParameterWorkspace(surfaceID: surfaceID, instanceID: instanceID, path: $0) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                ForEach(session.snapshot.diagnostics) { diagnostic in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: diagnostic.level == "error" ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(diagnostic.level == "error" ? .red : .orange)
+                        Text(diagnostic.message)
+                            .workbenchFont(.caption)
+                        if let location = diagnostic.location {
+                            Text("\(location.line):\(location.column)")
+                                .workbenchFont(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+        }
+    }
+
+    private func replaceSource(_ source: SurfaceParameterBaseSource) {
+        guard confirmDiscardIfNeeded() else { return }
+        store.selectParameterSource(source, surfaceID: surfaceID, instanceID: instanceID, discardEdits: true)
+        applyProfile()
+    }
+
+    private func openProfile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "toml") ?? .plainText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: store.parameterProfileDirectory(), isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url, confirmDiscardIfNeeded() else { return }
+        store.selectParameterSource(
+            .file,
+            surfaceID: surfaceID,
+            instanceID: instanceID,
+            profilePath: url.path,
+            discardEdits: true
+        )
+        applyProfile()
+    }
+
+    private func saveProfile() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "toml") ?? .plainText]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(surfaceID).toml"
+        panel.directoryURL = URL(fileURLWithPath: store.parameterProfileDirectory(), isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.saveParameterProfile(surfaceID: surfaceID, instanceID: instanceID, to: url.path)
+    }
+
+    private func applyProfile() {
+        store.applySurfaceParameterProfile(surfaceID: surfaceID, datasetID: datasetID, instanceID: instanceID)
+    }
+
+    private func confirmDiscardIfNeeded() -> Bool {
+        guard store.parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.snapshot.dirty == true else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Replace edited parameters?"
+        alert.informativeText = "Loading another source replaces this session draft. Save it first if you want to keep the edits."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
 }
 
 private struct ImageExplorerControlsView: View {
@@ -1198,6 +1357,11 @@ private struct ImageExplorerControlsView: View {
                     value: $regionLoadText,
                     help: "CASA CRTF region file to load into this Image Explorer pane.",
                     choices: regionPathChoices(),
+                    browseIntent: TaskParameterPathIntent(
+                        resourceKind: "file",
+                        isOutput: false,
+                        allowsInlineRegion: true
+                    ),
                     canBrowse: true,
                     actionTitle: nil,
                     actionSystemImage: "square.and.arrow.up",
@@ -3210,6 +3374,7 @@ private struct TableBrowserSnapshotView: View {
     let cellWindow: TableBrowserCellWindowSnapshot?
     let hiddenColumns: Set<Int>
     let arrayInlineLimits: [Int: Int]
+    let contentMode: String
     let interfaceFontSize: Double
     let selectedCellRow: Int?
     let selectedCellColumn: Int?
@@ -3242,6 +3407,7 @@ private struct TableBrowserSnapshotView: View {
                 cellWindow: cellWindow,
                 hiddenColumns: hiddenColumns,
                 arrayInlineLimits: arrayInlineLimits,
+                contentMode: contentMode,
                 interfaceFontSize: interfaceFontSize,
                 selectedCellRow: selectedCellRow,
                 selectedCellColumn: selectedCellColumn,
@@ -3275,6 +3441,7 @@ private struct TableBrowserMainPane: View {
     let cellWindow: TableBrowserCellWindowSnapshot?
     let hiddenColumns: Set<Int>
     let arrayInlineLimits: [Int: Int]
+    let contentMode: String
     let interfaceFontSize: Double
     let selectedCellRow: Int?
     let selectedCellColumn: Int?
@@ -3305,7 +3472,7 @@ private struct TableBrowserMainPane: View {
                     openSelectedSubtable: openSelectedSubtable
                 )
             default:
-                if let cellWindow {
+                if let cellWindow, contentMode != "compact" {
                     VStack(alignment: .leading, spacing: 0) {
                         TableBrowserCellsToolbar(
                             grid: cellWindow,
@@ -4646,7 +4813,7 @@ struct MeasurementSetPlotPanel: View {
     @State private var summaryStatus: MeasurementSetPlotStatus = .idle
     @State private var summaryResult: MeasurementSetSummaryResultSummary?
     @State private var summaryError: String?
-    @State private var summaryFormat = "text"
+    @State private var summaryFormat: String
     @State private var showingAdvancedSetup = false
     @State private var showingPlotControls = false
     @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
@@ -4683,18 +4850,36 @@ struct MeasurementSetPlotPanel: View {
     ) {
         self.store = store
         self.dataset = dataset
+        _ = store.measurementSetExplorerPlotState(datasetID: dataset.id)
+        let resolvedFormat = store.parameterText(
+            surfaceID: "msexplore",
+            instanceID: dataset.explorerTabID,
+            name: "format"
+        )
+        _summaryFormat = State(initialValue: resolvedFormat)
         _explorerMode = State(initialValue: initialExplorerMode)
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            if explorerMode == .summary {
-                summarySurface
-            } else {
-                plotSurface
+        VStack(alignment: .leading, spacing: 0) {
+            SessionParameterProfileBar(
+                store: store,
+                surfaceID: "msexplore",
+                datasetID: dataset.id,
+                instanceID: dataset.explorerTabID
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            ZStack(alignment: .top) {
+                if explorerMode == .summary {
+                    summarySurface
+                } else {
+                    plotSurface
+                }
+                explorerCommandBar
+                    .padding(.top, 14)
             }
-            explorerCommandBar
-                .padding(.top, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
@@ -4709,14 +4894,29 @@ struct MeasurementSetPlotPanel: View {
             }
         }
         .onChange(of: summaryFormat) { _ in
+            store.setGenericTaskValue(
+                taskID: "msexplore",
+                instanceID: dataset.explorerTabID,
+                argumentID: "format",
+                value: summaryFormat
+            )
             if explorerMode == .summary {
                 runMeasurementSetSummary()
+            }
+        }
+        .onChange(of: store.parameterText(
+            surfaceID: "msexplore",
+            instanceID: dataset.explorerTabID,
+            name: "format"
+        )) { resolvedFormat in
+            if !resolvedFormat.isEmpty, resolvedFormat != summaryFormat {
+                summaryFormat = resolvedFormat
             }
         }
     }
 
     private var plotState: MeasurementSetExplorerPlotState {
-        store.state.measurementSetPlots[dataset.id] ?? MeasurementSetExplorerPlotState.defaultState(for: dataset)
+        store.measurementSetExplorerPlotState(datasetID: dataset.id)
     }
 
     private var visiblePlotResult: MeasurementSetPlotResultSummary? {
@@ -7955,7 +8155,8 @@ struct GenericTaskPanel: View {
                     showingTaskList
                         || store.state.taskRun.state == .running
                         || schema == nil
-                        || (store.taskRequiresConfirmation(taskID: activeTaskID) && !store.taskHasConfirmation(taskID: activeTaskID))
+                        || (store.taskRequiresConfirmation(taskID: activeTaskID, instanceID: tabID)
+                            && !store.taskHasConfirmation(taskID: activeTaskID, instanceID: tabID))
                 )
 
                 Button {
@@ -7984,8 +8185,8 @@ struct GenericTaskPanel: View {
                             showingTaskList = false
                         }
                     } else if let schema {
+                        parameterProfileBlock
                         genericParameterBlock(schema: schema)
-                        genericSavedJSONBlock
                         genericSafetyBlock
                     } else {
                         Text("Loading task schema...")
@@ -8001,7 +8202,7 @@ struct GenericTaskPanel: View {
         }
         .task {
             if !activeTaskID.isEmpty {
-                store.loadTaskUISchemaIfNeeded(activeTaskID)
+                store.loadTaskUISchemaIfNeeded(activeTaskID, instanceID: tabID)
             }
         }
         .onAppear {
@@ -8019,13 +8220,7 @@ struct GenericTaskPanel: View {
         if activeTaskID != "imager" {
             return true
         }
-        if let values = store.state.genericTaskValues[activeTaskID], !values.isEmpty {
-            return true
-        }
-        if let toggles = store.state.genericTaskToggles[activeTaskID], !toggles.isEmpty {
-            return true
-        }
-        return false
+        return store.parameterSession(surfaceID: activeTaskID, instanceID: tabID) != nil
     }
 
     private func revealActiveTaskIfNeeded() {
@@ -8056,7 +8251,7 @@ struct GenericTaskPanel: View {
             }
     }
 
-    private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+    private static let explorerTaskIDs: Set<String> = ["imexplore", "tablebrowser"]
 
     private var prioritizesRunStatus: Bool {
         !showingTaskList && activeTaskID == "imager" && store.state.taskRun.imagerProgress != nil
@@ -8065,7 +8260,14 @@ struct GenericTaskPanel: View {
     private func genericParameterBlock(schema: TaskUISchema) -> some View {
         let groups = parameterGroups(for: schema)
         let hiddenAdvancedCount = schema.arguments
-            .filter { !$0.hiddenInTUI && $0.advanced && !shouldRevealAdvancedArgument($0) }
+            .filter {
+                let presentation = parameterBinding(for: $0)?.projections.presentation
+                return presentation?.hidden == false
+                    && presentation?.advanced == true
+                    && store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?
+                        .snapshot.states[$0.id]?.active == true
+                    && !shouldRevealAdvancedArgument($0)
+            }
             .count
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -8100,12 +8302,12 @@ struct GenericTaskPanel: View {
 
     private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
         let arguments = schema.arguments
-            .filter { !$0.hiddenInTUI }
             .filter { shouldShowArgument($0) }
-            .sorted { $0.order < $1.order }
+            .sorted { parameterOrder(for: $0) < parameterOrder(for: $1) }
         var groups: [TaskParameterGroup] = []
         for argument in arguments {
-            let groupName = argument.group.trimmingCharacters(in: .whitespacesAndNewlines)
+            let groupName = (parameterBinding(for: argument)?.projections.presentation.group ?? argument.group)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let name = groupName.isEmpty ? "General" : groupName
             if let index = groups.firstIndex(where: { $0.name == name }) {
                 groups[index].arguments.append(argument)
@@ -8117,134 +8319,175 @@ struct GenericTaskPanel: View {
     }
 
     private func shouldShowArgument(_ argument: TaskUIArgument) -> Bool {
-        if activeTaskID == "imager",
-           ["niter", "threshold_jy"].contains(argument.id),
-            genericTaskToggle("dirty_only") {
+        guard let session = store.parameterSession(surfaceID: activeTaskID, instanceID: tabID),
+              let binding = session.bundle.surface.bindings.first(where: { $0.name == argument.id }),
+              binding.projections.presentation.hidden == false,
+              session.snapshot.states[argument.id]?.active == true
+        else {
             return false
         }
-        return !argument.advanced
+        return !binding.projections.presentation.advanced
             || showingAdvancedParameters
             || shouldRevealAdvancedArgument(argument)
     }
 
     private func shouldRevealAdvancedArgument(_ argument: TaskUIArgument) -> Bool {
-        guard activeTaskID == "imager" else {
-            return hasNonDefaultGenericValue(argument)
-        }
-
-        switch argument.id {
-        case "robust":
-            return ["briggs", "briggsbwtaper"].contains(genericTaskValue("weighting"))
-        case "start", "width", "outframe", "veltype", "interpolation", "restfreq", "restoringbeam",
-             "channel_start", "channel_count", "perchanweightdensity":
-            return ["cube", "cubedata"].contains(genericTaskValue("specmode"))
-        case "nterms":
-            return genericTaskValue("deconvolver") == "mtmfs"
-        case "scales", "smallscalebias":
-            return genericTaskValue("deconvolver") == "multiscale"
-        case "sidelobethreshold", "noisethreshold", "lownoisethreshold", "negativethreshold",
-             "minbeamfrac", "growiterations":
-            return genericTaskValue("usemask") == "auto-multithresh"
-        case "wprojplanes":
-            return genericTaskValue("gridder") == "wproject" || genericTaskValue("wterm") == "wproject"
-        case "usepointing":
-            return ["mosaic", "awproject", "awp2", "awphpg"].contains(genericTaskValue("gridder"))
-        case "pblimit", "pbcor":
-            return genericTaskToggle("write_pb") || genericTaskToggle("pbcor") || ["mosaic", "awproject", "awp2", "awphpg"].contains(genericTaskValue("gridder"))
-        default:
-            return hasNonDefaultGenericValue(argument)
-        }
+        hasNonDefaultGenericValue(argument)
     }
 
     private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
-        if argument.parser.kind == "toggle" {
-            let current = genericTaskToggle(argument.id)
-            let defaultValue = argument.defaultToggleValue(values: store.state.genericTaskValues[activeTaskID] ?? [:])
-            return current != defaultValue
-        }
-        let current = genericTaskValue(argument.id)
-        let defaultValue = argument.default ?? ""
-        return !current.isEmpty && current != defaultValue
+        store.parameterOrigin(surfaceID: activeTaskID, instanceID: tabID, name: argument.id) != "default"
     }
 
     private func genericTaskValue(_ argumentID: String) -> String {
-        store.state.genericTaskValues[activeTaskID]?[argumentID]
-            ?? schema?.arguments.first { $0.id == argumentID }?.default
-            ?? ""
+        store.parameterText(surfaceID: activeTaskID, instanceID: tabID, name: argumentID)
     }
 
     private func genericTaskToggle(_ argumentID: String) -> Bool {
-        store.state.genericTaskToggles[activeTaskID]?[argumentID]
-            ?? (schema?.arguments.first { $0.id == argumentID }?.defaultToggleValue(values: store.state.genericTaskValues[activeTaskID] ?? [:]) ?? false)
+        store.parameterToggle(surfaceID: activeTaskID, instanceID: tabID, name: argumentID)
     }
 
     @ViewBuilder
-    private var genericSavedJSONBlock: some View {
-        if activeTaskID == "simobserve", genericTaskValue("request_kind") == "family" {
+    private var parameterProfileBlock: some View {
+        if let session = store.parameterSession(surfaceID: activeTaskID, instanceID: tabID) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Saved JSON")
-                    .workbenchFont(.headline)
                 HStack {
-                    Button {
-                        saveActiveGenericTaskRequest()
-                    } label: {
-                        Label("Save Request", systemImage: "square.and.arrow.down")
-                    }
-                    .disabled(!store.hasSaveableActiveGenericTaskRequest())
-                    Button {
-                        openGenericTaskRequest()
-                    } label: {
-                        Label("Open Request", systemImage: "folder")
+                    Text("Parameter Profile")
+                        .workbenchFont(.headline)
+                    Text(session.selectedSource.title)
+                        .workbenchFont(.caption, weight: .semibold)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                    if session.snapshot.dirty {
+                        Text("Edited")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.orange)
                     }
                     Spacer()
-                    Text(genericTaskValue("request_json"))
-                        .workbenchFont(.caption)
+                    Menu("Start From") {
+                        Button("Defaults") {
+                            replaceParameterSource(.defaults)
+                        }
+                        Button("Last") {
+                            replaceParameterSource(.last)
+                        }
+                        Button("Last Successful") {
+                            replaceParameterSource(.lastSuccessful)
+                        }
+                        .disabled(session.snapshot.surfaceKind == "session")
+                    }
+                    Button {
+                        openParameterProfile()
+                    } label: {
+                        Label("Open", systemImage: "folder")
+                    }
+                    Button {
+                        saveActiveParameterProfile()
+                    } label: {
+                        Label("Save As", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(!store.hasSaveableActiveParameterProfile())
+                    Button("Revert") {
+                        store.revertParameters(surfaceID: activeTaskID, instanceID: tabID)
+                    }
+                    .disabled(!session.snapshot.dirty)
+                }
+                HStack {
+                    Text("Workspace")
+                        .workbenchFont(.caption, weight: .semibold)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    TextField("Workspace", text: Binding(
+                        get: { store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?.workspace ?? "" },
+                        set: { store.setParameterWorkspace(surfaceID: activeTaskID, instanceID: tabID, path: $0) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    Toggle("Save Last", isOn: Binding(
+                        get: { store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?.saveLast ?? true },
+                        set: { store.setParameterSaveLast(surfaceID: activeTaskID, instanceID: tabID, enabled: $0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .help("Disable managed Last and Last Successful writes for this tab.")
+                }
+                if !session.snapshot.diagnostics.isEmpty {
+                    ForEach(session.snapshot.diagnostics) { diagnostic in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: diagnostic.level == "error" ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(diagnostic.level == "error" ? .red : .orange)
+                            Text(diagnostic.message)
+                                .workbenchFont(.caption)
+                            if let location = diagnostic.location {
+                                Text("\(location.line):\(location.column)")
+                                    .workbenchFont(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
             }
             .taskCard()
         }
     }
 
-    private func saveActiveGenericTaskRequest() {
+    private func saveActiveParameterProfile() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = [UTType(filenameExtension: "toml") ?? .plainText]
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = store.taskRequestSaveFilename()
-        panel.directoryURL = URL(fileURLWithPath: store.taskRequestSaveDirectory(), isDirectory: true)
+        panel.nameFieldStringValue = store.parameterProfileFilename()
+        panel.directoryURL = URL(fileURLWithPath: store.parameterProfileDirectory(), isDirectory: true)
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
-        store.saveActiveGenericTaskRequest(to: url.path)
+        store.saveActiveParameterProfile(to: url.path)
     }
 
-    private func openGenericTaskRequest() {
+    private func openParameterProfile() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = [UTType(filenameExtension: "toml") ?? .plainText]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.directoryURL = URL(fileURLWithPath: store.taskRequestSaveDirectory(), isDirectory: true)
+        panel.directoryURL = URL(fileURLWithPath: store.parameterProfileDirectory(), isDirectory: true)
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
-        store.loadGenericTaskRequest(from: url.path, tabID: tabID)
+        guard confirmDiscardParameterEditsIfNeeded() else { return }
+        store.loadActiveParameterProfile(from: url.path, discardEdits: true)
+    }
+
+    private func replaceParameterSource(_ source: SurfaceParameterBaseSource) {
+        guard confirmDiscardParameterEditsIfNeeded() else { return }
+        store.selectParameterSource(source, surfaceID: activeTaskID, instanceID: tabID, discardEdits: true)
+    }
+
+    private func confirmDiscardParameterEditsIfNeeded() -> Bool {
+        guard store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?.snapshot.dirty == true else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Replace edited parameters?"
+        alert.informativeText = "Loading another source replaces this draft. Save it first if you want to keep the edits."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @ViewBuilder
     private var genericSafetyBlock: some View {
-        if store.taskRequiresConfirmation(taskID: activeTaskID) {
+        if let safety = store.taskRunSafety(taskID: activeTaskID, instanceID: tabID),
+           safety.requiresInteractiveConfirmation {
             let taskID = activeTaskID
             let confirmed = Binding(
-                get: { store.taskHasConfirmation(taskID: taskID) },
-                set: { store.setGenericTaskConfirmation(taskID: taskID, confirmed: $0) }
+                get: { store.taskHasConfirmation(taskID: taskID, instanceID: tabID) },
+                set: { store.setGenericTaskConfirmation(taskID: taskID, instanceID: tabID, confirmed: $0) }
             )
             VStack(alignment: .leading, spacing: 10) {
                 Text("Safety")
                     .workbenchFont(.headline)
-                Toggle("Confirm this task may modify data or create products", isOn: confirmed)
+                Toggle("Confirm catalog-declared run risks", isOn: confirmed)
+                Text(safety.classes.joined(separator: ", "))
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
                 if let row = store.taskExecutionMatrixRow(taskID: taskID) {
-                    Text("\(row.mutationClass) / \(row.confirmation)")
+                    Text("Historical execution matrix: \(row.mutationClass) / \(row.confirmation)")
                         .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -8257,33 +8500,40 @@ struct GenericTaskPanel: View {
     private func genericControl(argument: TaskUIArgument) -> some View {
         let taskID = activeTaskID
         let value = Binding(
-            get: { store.state.genericTaskValues[taskID]?[argument.id] ?? argument.default ?? "" },
-            set: { store.setGenericTaskValue(taskID: taskID, argumentID: argument.id, value: $0) }
+            get: { store.parameterText(surfaceID: taskID, instanceID: tabID, name: argument.id) },
+            set: { store.setGenericTaskValue(taskID: taskID, instanceID: tabID, argumentID: argument.id, value: $0) }
         )
         let toggle = Binding(
-            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? argument.defaultToggleValue(values: store.state.genericTaskValues[taskID] ?? [:]) },
-            set: { store.setGenericTaskToggle(taskID: taskID, argumentID: argument.id, value: $0) }
+            get: { store.parameterToggle(surfaceID: taskID, instanceID: tabID, name: argument.id) },
+            set: { store.setGenericTaskToggle(taskID: taskID, instanceID: tabID, argumentID: argument.id, value: $0) }
         )
         let label = displayLabel(for: argument)
         let selectableChoices = choices(for: argument)
 
-        if argument.parser.kind == "toggle" {
-            Toggle(label, isOn: toggle)
-                .help(argument.help)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        if isBooleanArgument(argument) {
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle(label, isOn: toggle)
+                    .help(argument.help)
+                parameterOriginRow(argument.id)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             VStack(alignment: .leading, spacing: 3) {
-                Text(label)
-                    .workbenchFont(.caption, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(label)
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    parameterOriginRow(argument.id)
+                }
                 if isRegionArgument(argument) {
                     DatasetPathInputControl(
                         store: store,
                         label: label,
                         value: value,
-                        help: argument.help,
+                        help: helpText(for: argument),
                         choices: datasetPathChoices(for: argument),
-                        browseParameterType: argument.parameterType,
+                        browseIntent: pathIntent(for: argument),
                         canBrowse: true,
                         actionTitle: nil,
                         actionSystemImage: "folder",
@@ -8296,9 +8546,9 @@ struct GenericTaskPanel: View {
                         store: store,
                         label: label,
                         value: value,
-                        help: argument.help,
+                        help: helpText(for: argument),
                         choices: datasetPathChoices(for: argument),
-                        browseParameterType: argument.parameterType,
+                        browseIntent: pathIntent(for: argument),
                         canBrowse: canBrowse(argument: argument),
                         actionTitle: nil,
                         actionSystemImage: "folder",
@@ -8323,6 +8573,24 @@ struct GenericTaskPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func parameterOriginRow(_ parameter: String) -> some View {
+        let origin = store.parameterOrigin(surfaceID: activeTaskID, instanceID: tabID, name: parameter)
+        return HStack(spacing: 4) {
+            Text(origin.replacingOccurrences(of: "_", with: " ").capitalized)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+            if origin != "default" {
+                Button {
+                    store.resetParameter(surfaceID: activeTaskID, instanceID: tabID, name: parameter)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Reset to the current contract default")
+            }
         }
     }
 
@@ -8544,39 +8812,28 @@ struct GenericTaskPanel: View {
     }
 
     private func isChannelSelectionArgument(_ argument: TaskUIArgument) -> Bool {
-        argument.id == "chans" || argument.parameterType == "channel_selector"
+        parameterConcept(for: argument)?.id == "image.selection.chans"
     }
 
     private func prompt(for argument: TaskUIArgument) -> String {
-        switch argument.id {
-        case "chans":
-            return "4~12 or 0~14^2"
-        case "includepix":
-            return "0.03,100"
-        default:
-            if let metavar = argument.parser.metavar?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !metavar.isEmpty {
-                return metavar
-            }
-            return displayLabel(for: argument)
+        if let example = parameterConcept(for: argument)?.documentation.examples.first,
+           !example.isEmpty {
+            return example
         }
+        if let metavar = parameterBinding(for: argument)?.projections.cli?.metavar?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !metavar.isEmpty {
+            return metavar
+        }
+        return displayLabel(for: argument)
     }
 
     private func helpText(for argument: TaskUIArgument) -> String {
-        let base = argument.help.trimmingCharacters(in: .whitespacesAndNewlines)
-        let example: String?
-        switch argument.id {
-        case "chans":
-            example = "Accepted channel syntax: single channel 4, inclusive range 4~12, or stepped range 0~14^2. Leave blank for all channels."
-        case "includepix":
-            example = "Accepted pixel range syntax: min,max, for example 0.03,100. Pixels outside the inclusive range are excluded."
-        default:
-            example = nil
-        }
-        guard let example else {
-            return base
-        }
-        return base.isEmpty ? example : "\(base) \(example)"
+        guard let concept = parameterConcept(for: argument) else { return argument.help }
+        return [concept.documentation.summary, concept.documentation.details, parameterBinding(for: argument)?.surfaceNote]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func genericImageChannelLimit() -> Int? {
@@ -8594,16 +8851,15 @@ struct GenericTaskPanel: View {
         guard let schema else {
             return store.state.selectedDataset?.kind == .imageCube ? store.state.selectedDataset : nil
         }
-        let values = store.state.genericTaskValues[schema.commandID] ?? [:]
         let imageArgument = schema.arguments.first { argument in
-            argument.id == "imagename"
-                || argument.id == "image_path"
-                || argument.parameterType == "image_path"
+            guard let concept = parameterConcept(for: argument) else { return false }
+            return concept.valueDomain.resourceKind == "image" && concept.semanticRole == "input_data"
         }
-        if let argument = imageArgument,
-           let value = values[argument.id],
-           let dataset = imageDataset(matching: value) {
-            return dataset
+        if let argument = imageArgument {
+            let value = store.parameterText(surfaceID: schema.commandID, instanceID: tabID, name: argument.id)
+            if !value.isEmpty, let dataset = imageDataset(matching: value) {
+                return dataset
+            }
         }
         return store.state.selectedDataset?.kind == .imageCube ? store.state.selectedDataset : nil
     }
@@ -8619,39 +8875,31 @@ struct GenericTaskPanel: View {
     }
 
     private func choices(for argument: TaskUIArgument) -> [String] {
-        if argument.parameterType == "measurement_set_path" || ["ms", "vis"].contains(argument.id) {
+        let concept = parameterConcept(for: argument)
+        let binding = parameterBinding(for: argument)
+        switch concept?.valueDomain.resourceKind {
+        case "measurement_set":
             let measurementSets = store.state.project.datasets
                 .filter { $0.kind == .measurementSet }
                 .map(\.path)
             if !measurementSets.isEmpty {
                 return measurementSets
             }
-        }
-        if argument.parameterType == "image_path" {
+        case "image":
             let images = store.state.project.datasets
                 .filter { $0.kind == .imageCube }
                 .map(\.path)
             if !images.isEmpty {
                 return images
             }
-        }
-        if argument.parameterType == "fits_path" {
+        case "file":
             let fits = store.state.project.datasets
                 .filter(isFitsDataset)
                 .map(\.path)
             if !fits.isEmpty {
                 return fits
             }
-        }
-        if argument.parameterType == "region_path_or_box" || argument.id == "region" {
-            let regions = store.state.project.datasets
-                .filter { $0.kind == .region }
-                .map(\.path)
-            if !regions.isEmpty {
-                return regions
-            }
-        }
-        if ["table_path", "calibration_table_path"].contains(argument.parameterType ?? "") {
+        case "table", "calibration_table":
             let tables = store.state.project.datasets
                 .filter { dataset in
                     dataset.kind == .table || dataset.kind == .calibrationTable
@@ -8660,44 +8908,57 @@ struct GenericTaskPanel: View {
             if !tables.isEmpty {
                 return tables
             }
+        default:
+            break
         }
-        if argument.parameterType == "spectral_window_selector" || argument.id == "spw",
+        if binding?.contextRole == "region_reference" {
+            let regions = store.state.project.datasets
+                .filter { $0.kind == .region }
+                .map(\.path)
+            if !regions.isEmpty {
+                return regions
+            }
+        }
+        if binding?.contextRole == "spectral_window_selection",
            let spectralWindows = store.state.selectedDataset?.spectralWindows,
            !spectralWindows.isEmpty {
             return spectralWindows.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if ["field_selector", "field_id"].contains(argument.parameterType ?? "") || ["field", "phasecenter_field"].contains(argument.id),
+        if binding?.contextRole == "field_selection" || concept?.id == "ms.selection.field",
            let fields = store.state.selectedDataset?.fields,
            !fields.isEmpty {
             return fields.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if argument.parameterType == "scan_selector" || argument.id == "scan",
+        if concept?.id == "ms.selection.scan",
            let scans = store.state.selectedDataset?.scans,
            !scans.isEmpty {
             return scans.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if argument.parameterType == "antenna_selector" || argument.id == "antenna",
+        if concept?.id == "ms.selection.antenna",
            let antennas = store.state.selectedDataset?.antennas,
            !antennas.isEmpty {
             return antennas
         }
-        if argument.parameterType == "correlation_or_stokes" || argument.id == "correlation",
+        if concept?.id == "ms.selection.correlation",
            let correlations = store.state.selectedDataset?.correlations,
            !correlations.isEmpty {
             return correlations
         }
-        if argument.parameterType == "data_column" || argument.id == "datacolumn",
+        if concept?.id == "parameter.datacolumn",
            let columns = store.state.selectedDataset?.dataColumns,
            !columns.isEmpty {
             return columns
         }
-        return argument.parser.choices ?? []
+        if let concept, case .choice(let values) = concept.valueDomain {
+            return values
+        }
+        return []
     }
 
     private func datasetPathChoices(for argument: TaskUIArgument) -> [DatasetPathChoice] {
@@ -8719,7 +8980,8 @@ struct GenericTaskPanel: View {
     }
 
     private func displayLabel(for argument: TaskUIArgument) -> String {
-        let label = argument.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = (parameterBinding(for: argument)?.projections.presentation.label ?? argument.label)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if !label.isEmpty {
             return label
         }
@@ -8732,11 +8994,11 @@ struct GenericTaskPanel: View {
     }
 
     private func isPathArgument(_ argument: TaskUIArgument) -> Bool {
-        argument.valueKind == "path" || argument.parameterType?.contains("path") == true
+        parameterConcept(for: argument)?.valueDomain.isPathLike == true
     }
 
     private func isRegionArgument(_ argument: TaskUIArgument) -> Bool {
-        argument.parameterType == "region_path_or_box" || argument.id == "region"
+        parameterBinding(for: argument)?.contextRole == "region_reference"
     }
 
     private func canBrowse(argument: TaskUIArgument) -> Bool {
@@ -8744,6 +9006,15 @@ struct GenericTaskPanel: View {
             return false
         }
         return true
+    }
+
+    private func pathIntent(for argument: TaskUIArgument) -> TaskParameterPathIntent {
+        let concept = parameterConcept(for: argument)
+        return TaskParameterPathIntent(
+            resourceKind: concept?.valueDomain.resourceKind,
+            isOutput: concept?.semanticRole == "output_data",
+            allowsInlineRegion: isRegionArgument(argument)
+        )
     }
 
     private func taskPathChooserRoot() -> URL? {
@@ -8763,7 +9034,7 @@ struct GenericTaskPanel: View {
     }
 
     private func pathDisplayBinding(rawValue: Binding<String>, argument: TaskUIArgument) -> Binding<String> {
-        guard argument.parameterType == "region_path_or_box" else {
+        guard isRegionArgument(argument) else {
             return pathValueBinding(rawValue: rawValue)
         }
         return Binding(
@@ -8774,6 +9045,23 @@ struct GenericTaskPanel: View {
                 rawValue.wrappedValue = isInlineRegionSyntax(value) ? value : storedPathValue(fromDisplayedPath: value)
             }
         )
+    }
+
+    private func parameterBinding(for argument: TaskUIArgument) -> SurfaceParameterBinding? {
+        store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?
+            .bundle.surface.bindings.first { $0.name == argument.id }
+    }
+
+    private func parameterConcept(for argument: TaskUIArgument) -> SurfaceParameterConcept? {
+        store.parameterSession(surfaceID: activeTaskID, instanceID: tabID)?.bundle.concept(for: argument.id)
+    }
+
+    private func parameterOrder(for argument: TaskUIArgument) -> Int {
+        parameterBinding(for: argument)?.order ?? argument.order
+    }
+
+    private func isBooleanArgument(_ argument: TaskUIArgument) -> Bool {
+        parameterConcept(for: argument)?.valueDomain == .bool
     }
 
     private func isInlineRegionSyntax(_ value: String) -> Bool {
@@ -8910,7 +9198,7 @@ private struct DatasetPathInputControl: View {
     @Binding var value: String
     let help: String
     let choices: [DatasetPathChoice]
-    var browseParameterType: String? = nil
+    var browseIntent: TaskParameterPathIntent
     let canBrowse: Bool
     let actionTitle: String?
     let actionSystemImage: String
@@ -8942,7 +9230,7 @@ private struct DatasetPathInputControl: View {
             if canBrowse {
                 Button {
                     if let url = TaskParameterOpenPanel.choosePath(
-                        parameterType: browseParameterType ?? "region_path_or_box",
+                        intent: browseIntent,
                         directoryURL: projectRootURL()
                     ) {
                         value = storedPathValue(fromDisplayedPath: url.path)
@@ -9075,15 +9363,21 @@ private struct DatasetPathInputControl: View {
     }
 }
 
+private struct TaskParameterPathIntent {
+    var resourceKind: String?
+    var isOutput: Bool
+    var allowsInlineRegion: Bool
+}
+
 private enum TaskParameterOpenPanel {
-    static func choosePath(parameterType: String?, directoryURL: URL?) -> URL? {
-        if isOutputPath(parameterType: parameterType) {
+    static func choosePath(intent: TaskParameterPathIntent, directoryURL: URL?) -> URL? {
+        if intent.isOutput {
             let panel = NSSavePanel()
             panel.prompt = "Choose"
-            panel.message = message(for: parameterType)
+            panel.message = message(for: intent)
             panel.directoryURL = directoryURL
             panel.canCreateDirectories = true
-            if isFitsPath(parameterType: parameterType) {
+            if intent.resourceKind == "fits" {
                 panel.allowedContentTypes = ["fit", "fits", "fts"].compactMap { UTType(filenameExtension: $0) }
             }
             guard panel.runModal() == .OK, let url = panel.url else {
@@ -9094,75 +9388,58 @@ private enum TaskParameterOpenPanel {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = message(for: parameterType)
+        panel.message = message(for: intent)
         panel.directoryURL = directoryURL
-        panel.canChooseDirectories = acceptsDirectories(parameterType: parameterType)
-        panel.canChooseFiles = acceptsFiles(parameterType: parameterType)
-        if isFitsPath(parameterType: parameterType) {
+        panel.canChooseDirectories = intent.resourceKind != "file" && intent.resourceKind != "fits"
+        panel.canChooseFiles = intent.resourceKind == "file" || intent.resourceKind == "fits" || intent.allowsInlineRegion
+        if intent.resourceKind == "fits" {
             panel.allowedContentTypes = ["fit", "fits", "fts"].compactMap { UTType(filenameExtension: $0) }
         }
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
         }
-        guard selectedPathIsAllowed(url, parameterType: parameterType) else {
+        guard selectedPathIsAllowed(url, intent: intent) else {
             NSSound.beep()
             return nil
         }
         return url
     }
 
-    private static func message(for parameterType: String?) -> String {
-        switch parameterType {
-        case "measurement_set_path":
+    private static func message(for intent: TaskParameterPathIntent) -> String {
+        if intent.allowsInlineRegion {
+            return "Choose a CASA CRTF region file, or enter inline CRTF syntax."
+        }
+        switch (intent.resourceKind, intent.isOutput) {
+        case ("measurement_set", false):
             return "Choose a MeasurementSet directory ending in .ms."
-        case "image_path":
+        case ("image", false):
             return "Choose a CASA image directory."
-        case "calibration_table_path":
+        case ("calibration_table", false):
             return "Choose a CASA calibration table directory."
-        case "table_path":
+        case ("table", false):
             return "Choose a CASA table directory."
-        case "fits_path":
+        case ("fits", false):
             return "Choose a FITS file."
-        case "output_fits_path":
+        case ("fits", true):
             return "Choose where to write the FITS file."
-        case "output_image_path":
+        case ("image", true):
             return "Choose where to write the CASA image directory."
-        case "output_measurement_set_path":
+        case ("measurement_set", true):
             return "Choose where to write the MeasurementSet directory."
-        case "output_calibration_table_path":
+        case ("calibration_table", true):
             return "Choose where to write the calibration table directory."
-        case "region_path_or_box":
-            return "Choose a CASA CRTF region file, or type inline CRTF such as box[[100pix,100pix],[150pix,150pix]] or poly [[100pix,100pix],...]."
         default:
             return "Choose a path."
         }
     }
 
-    private static func acceptsDirectories(parameterType: String?) -> Bool {
-        switch parameterType {
-        case "fits_path", "output_fits_path":
-            return false
-        default:
-            return true
-        }
-    }
-
-    private static func acceptsFiles(parameterType: String?) -> Bool {
-        switch parameterType {
-        case "measurement_set_path", "image_path", "calibration_table_path", "table_path":
-            return false
-        default:
-            return true
-        }
-    }
-
-    private static func selectedPathIsAllowed(_ url: URL, parameterType: String?) -> Bool {
-        switch parameterType {
-        case "measurement_set_path":
+    private static func selectedPathIsAllowed(_ url: URL, intent: TaskParameterPathIntent) -> Bool {
+        switch intent.resourceKind {
+        case "measurement_set":
             return isDirectory(url) && url.pathExtension.localizedCaseInsensitiveCompare("ms") == .orderedSame
-        case "fits_path", "output_fits_path":
+        case "fits":
             return ["fit", "fits", "fts"].contains(url.pathExtension.lowercased())
-        case "image_path", "calibration_table_path", "table_path":
+        case "image", "calibration_table", "table":
             return isDirectory(url)
         default:
             return true
@@ -9174,13 +9451,6 @@ private enum TaskParameterOpenPanel {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
-    private static func isOutputPath(parameterType: String?) -> Bool {
-        parameterType?.hasPrefix("output_") == true
-    }
-
-    private static func isFitsPath(parameterType: String?) -> Bool {
-        parameterType == "fits_path" || parameterType == "output_fits_path"
-    }
 }
 
 struct TaskCatalogBlock: View {
@@ -9189,7 +9459,7 @@ struct TaskCatalogBlock: View {
     @Binding var categoryFilter: CasaTaskCategoryFilter
     @Binding var searchText: String
     var selectTask: ((String) -> Void)? = nil
-    private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+    private static let explorerTaskIDs: Set<String> = ["imexplore", "tablebrowser"]
 
     private var taskRows: [TaskCatalogEntry] {
         tasks.filter { !Self.explorerTaskIDs.contains($0.id) }

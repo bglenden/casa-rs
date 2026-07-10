@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/casa-provider-contracts",
+    "crates/casa-task-runtime",
     "crates/casars",
     "crates/casars-importvla",
     "crates/casars-imager",

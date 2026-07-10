@@ -16,11 +16,12 @@ pub use casars_tablebrowser_protocol::BrowserView as TableBrowserView;
 
 use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casars_tablebrowser_protocol::{
-    BrowserAddress, BrowserArrayElement, BrowserBreadcrumbEntry, BrowserCapabilities,
-    BrowserCommand, BrowserComplex32Value, BrowserComplex64Value, BrowserFocus,
-    BrowserInspectorSnapshot, BrowserInspectorTrailEntry, BrowserNavigationMetrics,
-    BrowserPrimitiveType, BrowserRecordFieldSummary, BrowserResponseEnvelope, BrowserScalarValue,
-    BrowserSnapshot, BrowserValueKind, BrowserValueNode, BrowserViewport, ValuePathSegment,
+    BrowserAddress, BrowserArrayElement, BrowserBookmark, BrowserBreadcrumbEntry,
+    BrowserCapabilities, BrowserCommand, BrowserComplex32Value, BrowserComplex64Value,
+    BrowserContentMode, BrowserFocus, BrowserInspectorSnapshot, BrowserInspectorTrailEntry,
+    BrowserNavigationMetrics, BrowserParameters, BrowserPrimitiveType, BrowserRecordFieldSummary,
+    BrowserResponseEnvelope, BrowserScalarValue, BrowserSnapshot, BrowserValueKind,
+    BrowserValueNode, BrowserViewport, ValuePathSegment,
 };
 use thiserror::Error;
 
@@ -63,6 +64,8 @@ pub enum TableBrowserError {
 pub struct TableBrowser {
     stack: Vec<OpenedTable>,
     view: TableBrowserView,
+    parameters: BrowserParameters,
+    row_window_configured: bool,
     focus: BrowserFocus,
     viewport: BrowserViewport,
     status_line: String,
@@ -145,6 +148,8 @@ impl TableBrowser {
         Ok(Self {
             stack: vec![opened],
             view: TableBrowserView::Overview,
+            parameters: BrowserParameters::default(),
+            row_window_configured: false,
             focus: BrowserFocus::Main,
             viewport: BrowserViewport::default(),
             status_line: format!("Browsing {current_path}."),
@@ -173,10 +178,15 @@ impl TableBrowser {
                 self.stack.clear();
                 self.stack.push(opened);
                 self.view = TableBrowserView::Overview;
+                self.parameters = BrowserParameters::default();
+                self.row_window_configured = true;
                 self.focus = BrowserFocus::Main;
                 self.viewport = viewport;
                 self.reset_navigation_state();
                 self.reset_browsing_status_line();
+            }
+            BrowserCommand::Configure { parameters } => {
+                self.configure(parameters)?;
             }
             BrowserCommand::Resize { viewport } => {
                 self.viewport = viewport;
@@ -266,6 +276,7 @@ impl TableBrowser {
             return;
         }
         self.view = view;
+        self.parameters.view = view;
         self.focus = BrowserFocus::Main;
         self.clear_inspector_state();
         self.clamp_all();
@@ -292,6 +303,123 @@ impl TableBrowser {
             index - 1
         };
         self.set_view(ALL[next]);
+    }
+
+    /// Apply durable parameters to the currently opened root table.
+    pub fn configure(&mut self, parameters: BrowserParameters) -> Result<(), TableBrowserError> {
+        if parameters.row_count == 0 {
+            return Err(TableBrowserError::InvalidCommand(
+                "row_count must be greater than zero".to_string(),
+            ));
+        }
+        let linked_target = parameters
+            .linked_table
+            .as_deref()
+            .map(|selector| self.linked_table_path(selector))
+            .transpose()?;
+        let target = linked_target
+            .as_deref()
+            .unwrap_or_else(|| self.current_path());
+
+        // Configuration is transactional: validate and materialize the full
+        // requested state against a separately opened table before changing
+        // the live browser. In particular, a bad row window or bookmark after
+        // selecting a linked table must not leave that table on the live stack.
+        let mut staged = Self::open(target)?;
+        staged.viewport = self.viewport;
+        staged.configure_current(parameters)?;
+
+        let mut live_stack = std::mem::take(&mut self.stack);
+        if linked_target.is_some() {
+            let opened = staged
+                .stack
+                .pop()
+                .expect("a staged table browser always has one open table");
+            live_stack.push(opened);
+        }
+        staged.stack = live_stack;
+        *self = staged;
+        Ok(())
+    }
+
+    fn configure_current(
+        &mut self,
+        parameters: BrowserParameters,
+    ) -> Result<(), TableBrowserError> {
+        let total_rows = self.current().table.row_count();
+        if total_rows > 0 && parameters.row_start >= total_rows {
+            return Err(TableBrowserError::InvalidCommand(format!(
+                "row_start {} is outside table row count {total_rows}",
+                parameters.row_start
+            )));
+        }
+        self.parameters = parameters.clone();
+        self.row_window_configured = true;
+        self.cells_row_selected = parameters.row_start.min(total_rows.saturating_sub(1));
+        self.cells_row_scroll = self.cells_row_selected;
+        self.set_view(parameters.view);
+        if let Some(bookmark) = parameters.bookmark.as_ref() {
+            self.restore_bookmark(bookmark)?;
+        }
+        if parameters.content_mode == BrowserContentMode::Detailed
+            && self.current_selection_context().is_some()
+        {
+            self.focus = BrowserFocus::Inspector;
+        }
+        self.parameters.view = self.view;
+        self.clamp_all();
+        self.status_line = format!("Configured {}.", self.current().path.display());
+        Ok(())
+    }
+
+    fn linked_table_path(&self, selector: &str) -> Result<PathBuf, TableBrowserError> {
+        let selector = selector.trim();
+        let target = self
+            .current()
+            .linked_tables
+            .iter()
+            .find(|linked| linked_table_matches_selector(linked, selector))
+            .map(|linked| linked.resolved_path.clone())
+            .ok_or_else(|| {
+                TableBrowserError::InvalidCommand(format!(
+                    "unknown linked table selector {selector:?}"
+                ))
+            })?;
+        if !target.exists() {
+            return Err(TableBrowserError::InvalidCommand(format!(
+                "linked table path does not exist: {}",
+                target.display()
+            )));
+        }
+        Ok(target)
+    }
+
+    fn restore_bookmark(&mut self, bookmark: &BrowserBookmark) -> Result<(), TableBrowserError> {
+        match bookmark {
+            BrowserBookmark::Cell { row, column } => self.select_cell(*row, column),
+            BrowserBookmark::TableKeyword { path } => self.select_table_keyword(path),
+            BrowserBookmark::ColumnKeyword { column, path } => {
+                self.select_column_keyword(column, path)
+            }
+            BrowserBookmark::Subtable { name } => {
+                let index = self
+                    .current()
+                    .linked_tables
+                    .iter()
+                    .position(|linked| linked_table_matches_selector(linked, name))
+                    .ok_or_else(|| {
+                        TableBrowserError::InvalidCommand(format!(
+                            "unknown subtable bookmark {name:?}"
+                        ))
+                    })?;
+                self.view = TableBrowserView::Subtables;
+                self.focus = BrowserFocus::Main;
+                self.subtables_selected = index;
+                self.clear_inspector_state();
+                self.clamp_all();
+                Ok(())
+            }
+        }
     }
 
     /// Set the active browser focus when the target is currently reachable.
@@ -341,6 +469,12 @@ impl TableBrowser {
 
     /// Select a cell by `(row, column)` for CLI inspection.
     pub fn select_cell(&mut self, row: usize, column: &str) -> Result<(), TableBrowserError> {
+        let (row_start, row_end) = self.cell_row_bounds();
+        if row < row_start || row >= row_end {
+            return Err(TableBrowserError::InvalidCommand(format!(
+                "row {row} is outside configured row window {row_start}..{row_end}"
+            )));
+        }
         let Some(index) = self
             .current()
             .columns
@@ -476,6 +610,11 @@ impl TableBrowser {
         BrowserSnapshot {
             capabilities: BrowserCapabilities { editable: false },
             view: self.view,
+            parameters: {
+                let mut parameters = self.parameters.clone();
+                parameters.view = self.view;
+                parameters
+            },
             focus: self.focus,
             table_path: self.current().path.display().to_string(),
             breadcrumb: self
@@ -526,6 +665,16 @@ impl TableBrowser {
         self.stack
             .last()
             .expect("table browser always has an opened table")
+    }
+
+    fn cell_row_bounds(&self) -> (usize, usize) {
+        let total = self.current().table.row_count();
+        if !self.row_window_configured {
+            return (0, total);
+        }
+        let start = self.parameters.row_start.min(total);
+        let end = start.saturating_add(self.parameters.row_count).min(total);
+        (start, end)
     }
 
     fn apply_viewport(&mut self, viewport: Option<BrowserViewport>) {
@@ -594,11 +743,14 @@ impl TableBrowser {
                 total_items: self.current().keyword_entries.len(),
                 viewport_items: self.main_height().saturating_sub(1).max(1),
             }),
-            TableBrowserView::Cells => Some(BrowserNavigationMetrics {
-                selected_index: self.cells_row_selected,
-                total_items: self.current().table.row_count(),
-                viewport_items: self.main_height().saturating_sub(2).max(1),
-            }),
+            TableBrowserView::Cells => {
+                let (start, end) = self.cell_row_bounds();
+                Some(BrowserNavigationMetrics {
+                    selected_index: self.cells_row_selected.saturating_sub(start),
+                    total_items: end.saturating_sub(start),
+                    viewport_items: self.main_height().saturating_sub(2).max(1),
+                })
+            }
             TableBrowserView::Subtables => Some(BrowserNavigationMetrics {
                 selected_index: self.subtables_selected,
                 total_items: self.current().linked_tables.len(),
@@ -631,9 +783,11 @@ impl TableBrowser {
         self.keywords_selected = self
             .keywords_selected
             .min(self.current().keyword_entries.len().saturating_sub(1));
+        let (row_start, row_end) = self.cell_row_bounds();
         self.cells_row_selected = self
             .cells_row_selected
-            .min(self.current().table.row_count().saturating_sub(1));
+            .max(row_start)
+            .min(row_end.saturating_sub(1));
         self.cells_column_selected = self
             .cells_column_selected
             .min(self.current().columns.len().saturating_sub(1));
@@ -669,12 +823,21 @@ impl TableBrowser {
             }
             TableBrowserView::Cells => {
                 let row_capacity = main_height.saturating_sub(3);
-                self.cells_row_scroll = clamp_scroll_for_selection(
-                    self.cells_row_scroll,
-                    self.cells_row_selected,
-                    row_capacity,
-                    self.current().table.row_count(),
-                );
+                let (row_start, row_end) = self.cell_row_bounds();
+                self.cells_row_scroll = self.cells_row_scroll.max(row_start);
+                if self.cells_row_selected < self.cells_row_scroll {
+                    self.cells_row_scroll = self.cells_row_selected;
+                } else if self.cells_row_selected
+                    >= self.cells_row_scroll.saturating_add(row_capacity.max(1))
+                {
+                    self.cells_row_scroll = self
+                        .cells_row_selected
+                        .saturating_sub(row_capacity.saturating_sub(1));
+                }
+                self.cells_row_scroll = self
+                    .cells_row_scroll
+                    .min(row_end.saturating_sub(row_capacity.max(1)))
+                    .max(row_start);
                 self.cells_column_offset = self.compute_column_offset();
             }
             TableBrowserView::Subtables => {
@@ -773,9 +936,11 @@ impl TableBrowser {
             }
             TableBrowserView::Cells => {
                 self.cells_row_selected = adjust_index(self.cells_row_selected, steps, forward);
+                let (row_start, row_end) = self.cell_row_bounds();
                 self.cells_row_selected = self
                     .cells_row_selected
-                    .min(self.current().table.row_count().saturating_sub(1));
+                    .max(row_start)
+                    .min(row_end.saturating_sub(1));
                 self.clear_inspector_state();
                 self.ensure_main_selection_visible();
             }
@@ -1153,13 +1318,20 @@ impl TableBrowser {
         let columns = &self.current().columns;
         let row_capacity = height.saturating_sub(2);
         let visible_columns = visible_cell_columns(columns, self.cells_column_offset, width);
-        let visible_end = self.cells_row_scroll.saturating_add(row_capacity);
+        let (row_start, row_end) = self.cell_row_bounds();
+        let visible_end = self
+            .cells_row_scroll
+            .saturating_add(row_capacity)
+            .min(row_end);
         let mut lines = vec![format!(
-            "Cells  row={}/{}  col={}/{}  focus={:?}",
+            "Cells  row={}/{}  window={}..{}  col={}/{}  mode={:?}  focus={:?}",
             self.cells_row_selected.saturating_add(1),
             self.current().table.row_count(),
+            row_start,
+            row_end,
             self.cells_column_selected.saturating_add(1),
             columns.len(),
+            self.parameters.content_mode,
             self.focus
         )];
         if columns.is_empty() {
@@ -1176,7 +1348,7 @@ impl TableBrowser {
         }
         lines.push(header);
 
-        for row_index in self.cells_row_scroll..min(visible_end, self.current().table.row_count()) {
+        for row_index in self.cells_row_scroll.max(row_start)..visible_end {
             let mut line =
                 if row_index == self.cells_row_selected && self.focus == BrowserFocus::Main {
                     format!(">{row_index:>3} |")
@@ -1777,6 +1949,23 @@ fn collect_linked_tables(table: &Table, owner_path: &Path) -> Vec<LinkedTableRef
             .then_with(|| left.source.cmp(&right.source))
     });
     discovered
+}
+
+fn linked_table_matches_selector(linked: &LinkedTableRef, selector: &str) -> bool {
+    linked.label.eq_ignore_ascii_case(selector)
+        || linked.relative_path == selector
+        || linked.source.eq_ignore_ascii_case(selector)
+        || linked
+            .source
+            .rsplit('.')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(selector))
+        || linked.resolved_path.to_string_lossy() == selector
+        || linked
+            .resolved_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(selector))
 }
 
 fn collect_record_links(
@@ -2660,6 +2849,90 @@ mod tests {
     }
 
     #[test]
+    fn configure_applies_linked_table_row_window_bookmark_and_content_mode() {
+        let dir = tempdir().expect("tempdir");
+        let mut browser = create_type_matrix_browser(dir.path());
+
+        let snapshot = browser
+            .apply(BrowserCommand::Configure {
+                parameters: BrowserParameters {
+                    view: TableBrowserView::Cells,
+                    row_start: 0,
+                    row_count: 1,
+                    linked_table: Some("CHILD".to_string()),
+                    bookmark: Some(BrowserBookmark::Cell {
+                        row: 0,
+                        column: "id".to_string(),
+                    }),
+                    content_mode: BrowserContentMode::Detailed,
+                },
+            })
+            .expect("configure linked child table");
+
+        assert!(snapshot.table_path.ends_with("child.tab"));
+        assert_eq!(snapshot.view, TableBrowserView::Cells);
+        assert_eq!(snapshot.focus, BrowserFocus::Inspector);
+        assert_eq!(snapshot.parameters.row_start, 0);
+        assert_eq!(snapshot.parameters.row_count, 1);
+        assert_eq!(
+            snapshot.parameters.content_mode,
+            BrowserContentMode::Detailed
+        );
+        assert!(matches!(
+            snapshot.selected_address,
+            Some(BrowserAddress::Cell {
+                row: 0,
+                ref column,
+                ref value_path,
+                ..
+            }) if column == "id" && value_path.is_empty()
+        ));
+    }
+
+    #[test]
+    fn rejected_configure_leaves_linked_table_and_navigation_state_unchanged() {
+        let dir = tempdir().expect("tempdir");
+        let mut browser = create_type_matrix_browser(dir.path());
+        browser
+            .apply(BrowserCommand::Resize {
+                viewport: BrowserViewport::new(96, 24),
+            })
+            .expect("resize root browser");
+        browser.set_view(TableBrowserView::Columns);
+        browser.move_vertical(3, true);
+        let before = browser.snapshot();
+
+        let rejected = [
+            BrowserParameters {
+                view: TableBrowserView::Cells,
+                row_start: 99,
+                row_count: 1,
+                linked_table: Some("CHILD".to_string()),
+                bookmark: None,
+                content_mode: BrowserContentMode::Detailed,
+            },
+            BrowserParameters {
+                view: TableBrowserView::Cells,
+                row_start: 0,
+                row_count: 1,
+                linked_table: Some("CHILD".to_string()),
+                bookmark: Some(BrowserBookmark::Cell {
+                    row: 0,
+                    column: "missing_column".to_string(),
+                }),
+                content_mode: BrowserContentMode::Detailed,
+            },
+        ];
+
+        for parameters in rejected {
+            browser
+                .apply(BrowserCommand::Configure { parameters })
+                .expect_err("invalid linked-table configuration must be rejected");
+            assert_eq!(browser.snapshot(), before);
+        }
+    }
+
+    #[test]
     fn browser_release_perf_targets_on_real_fixture() {
         if cfg!(debug_assertions) {
             eprintln!("[perf] skipping tablebrowser perf thresholds in debug mode");
@@ -3399,6 +3672,8 @@ subtable_back={subtable_back_elapsed:?}"
             inspector_path: Vec::new(),
             inspector_selected_child: 0,
             inspector_page_start: 0,
+            parameters: BrowserParameters::default(),
+            row_window_configured: false,
         }
     }
 
