@@ -353,7 +353,7 @@
         {"group_id": "mosaic_cube_large_overlap", "role": "parallel_auto"},
         {"group_id": "mosaic_cube_large_overlap", "role": "parallel_chanchunks"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air Apple M4",
       "mode": "dirty cube",
       "gridder": "mosaic",
@@ -555,7 +555,7 @@
         {"group_id": "gpu_residency_medium_large", "role": "cpu_f32_baseline"},
         {"group_id": "gpu_residency_medium_large", "role": "metal_f32_candidate"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
       "gridder": "mosaic",
@@ -824,7 +824,7 @@
         {"group_id": "mosaic_mtmfs_gpu_residency_large", "role": "cpu_f32_baseline"},
         {"group_id": "mosaic_mtmfs_gpu_residency_large", "role": "metal_f32_candidate"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air Apple M4",
       "mode": "clean mfs niter=0",
       "gridder": "mosaic",
@@ -911,7 +911,7 @@
       "evidence_roles": [
         {"group_id": "mosaic_mtmfs_gpu_residency_large", "role": "parallel_auto"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air Apple M4",
       "mode": "clean mfs niter=0",
       "gridder": "mosaic",
@@ -970,7 +970,7 @@
       "evidence_roles": [
         {"group_id": "standard_mfs_single_block_control", "role": "read_ahead_negative_control"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air",
       "mode": "dirty mfs",
       "gridder": "standard",
@@ -1034,7 +1034,7 @@
         {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "mosaic_mtmfs_candidate"},
         {"group_id": "mtmfs_mosaic_medium_correctness_perf", "role": "casa_oracle"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air",
       "mode": "clean mfs niter=1",
       "gridder": "mosaic",
@@ -1107,7 +1107,7 @@
         {"group_id": "wprojection_medium_cpu_metal", "role": "multi_cpu_baseline"},
         {"group_id": "wprojection_medium_cpu_metal", "role": "metal_candidate"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air Apple M4",
       "mode": "dirty mfs",
       "gridder": "wproject auto planes=55",
@@ -1191,7 +1191,7 @@
       "evidence_roles": [
         {"group_id": "wprojection_medium_cpu_metal", "role": "casa_oracle"}
       ],
-      "commit": "worktree-before-final-commit",
+      "commit": "9e0084f63",
       "machine": "bg-macbook-air Apple M4",
       "mode": "dirty mfs",
       "gridder": "wproject auto planes=55",
