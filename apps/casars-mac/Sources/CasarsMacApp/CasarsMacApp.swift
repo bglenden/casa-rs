@@ -546,7 +546,7 @@ struct CasarsMacApp: App {
             store.setGenericTaskValue(taskID: "imager", argumentID: "imsize", value: "\(imageWidth)")
         }
         if let cellArcsec = argumentValue(after: "--cell-arcsec", in: arguments).flatMap(Double.init) {
-            store.setGenericTaskValue(taskID: "imager", argumentID: "cell_arcsec", value: "\(cellArcsec)")
+            store.setGenericTaskValue(taskID: "imager", argumentID: "cell", value: "\(cellArcsec)arcsec")
         }
         if let spectralMode = (
             argumentValue(after: "--spectral-mode", in: arguments)
@@ -564,7 +564,7 @@ struct CasarsMacApp: App {
             store.setGenericTaskValue(taskID: "imager", argumentID: "niter", value: "\(niter)")
         }
         if let thresholdJy = argumentValue(after: "--threshold-jy", in: arguments).flatMap(Double.init) {
-            store.setGenericTaskValue(taskID: "imager", argumentID: "threshold_jy", value: "\(thresholdJy)")
+            store.setGenericTaskValue(taskID: "imager", argumentID: "threshold", value: "\(thresholdJy)Jy")
         }
         if let dirtyOnly = argumentBool(after: "--dirty-only", defaultIfPresent: true, in: arguments) {
             store.setGenericTaskToggle(taskID: "imager", argumentID: "dirty_only", value: dirtyOnly)

@@ -1,4 +1,9 @@
-"""Imaging task wrapper backed by the canonical ``casars-imager`` executable."""
+"""Raw ``casars-imager`` provider request/result object API.
+
+This module intentionally does not load profiles or update managed Last state.
+Use :func:`casars.tasks.profiles.imager` for the unified CASA-named parameter
+lifecycle.
+"""
 
 from __future__ import annotations
 

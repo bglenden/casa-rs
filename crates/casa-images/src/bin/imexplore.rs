@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use casa_images::{
-    ImageBrowserSession, ImmomentsRequest, ImpvRequest, imexplore_ui_schema_json, imhead,
-    imhead_put, immoments, impv, imstat,
+    ImageBrowserSession, ImmomentsRequest, ImpvRequest, image_analysis_ui_schema_json,
+    imexplore_ui_schema_json, imhead, imhead_put, immoments, impv, imstat,
 };
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserProtocolInfo, ImageBrowserRequestEnvelope,
@@ -27,11 +27,25 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let mut args = env::args().skip(1).peekable();
+    let raw_args = env::args().skip(1).collect::<Vec<_>>();
+    if raw_args.len() == 2
+        && raw_args[1] == "--ui-schema"
+        && matches!(
+            raw_args[0].as_str(),
+            "imhead" | "imstat" | "immoments" | "impv"
+        )
+    {
+        print!(
+            "{}",
+            image_analysis_ui_schema_json(&raw_args[0]).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    let mut args = raw_args.into_iter().peekable();
     if args.peek().is_some_and(|arg| arg == "--json-schema") {
         print!(
             "{}",
-            schema_bundle_json(ui_schema_value()?)
+            schema_bundle_json()
                 .map_err(|error| format!("serialize imexplore schema bundle: {error}"))?
         );
         return Ok(());
@@ -470,11 +484,6 @@ fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String>
         );
     }
     Ok(PathBuf::from(&args[0]))
-}
-
-fn ui_schema_value() -> Result<serde_json::Value, String> {
-    serde_json::from_str(&imexplore_ui_schema_json("imexplore")?)
-        .map_err(|error| format!("parse imexplore ui schema: {error}"))
 }
 
 fn run_snapshot(path: &PathBuf) -> Result<(), String> {

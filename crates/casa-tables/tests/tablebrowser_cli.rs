@@ -7,7 +7,7 @@ use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casars_tablebrowser_protocol::{
     BrowserCommand, BrowserRequestEnvelope, BrowserResponse, BrowserResponseEnvelope,
-    BrowserViewport,
+    BrowserSessionSchemaBundle, BrowserViewport,
 };
 use tempfile::tempdir;
 
@@ -20,12 +20,16 @@ fn ui_schema_matches_launcher_contract() {
     assert!(output.status.success());
 
     let schema = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse schema");
-    assert_eq!(schema["schema_version"], 1);
+    let expected = BrowserSessionSchemaBundle::current()
+        .ui_schema_projection()
+        .expect("canonical tablebrowser UI projection");
+    assert_eq!(schema, expected);
+    assert_eq!(schema["schema_version"], 2);
     assert_eq!(schema["command_id"], "tablebrowser");
     assert_eq!(schema["invocation_name"], "tablebrowser");
     assert_eq!(schema["display_name"], "Table Browser");
     assert_eq!(schema["managed_output"], serde_json::Value::Null);
-    assert_eq!(schema["arguments"][0]["id"], "table_path");
+    assert_eq!(schema["arguments"][0]["id"], "table");
     assert_eq!(schema["arguments"][0]["value_kind"], "path");
 }
 

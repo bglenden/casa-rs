@@ -8,6 +8,7 @@ mod execution;
 mod graphics;
 mod imaging_workflow;
 mod movie_perf;
+mod parameters_cli;
 mod registry;
 mod shell;
 mod startup;
@@ -809,11 +810,14 @@ pub fn run() -> Result<(), CasarsError> {
 /// Run the `casars` terminal user interface for a specific registered app.
 pub fn run_with_app(app_id: Option<&str>) -> Result<(), CasarsError> {
     let selection = match app_id {
-        Some(id) => StartupSelection::App(StartupLaunch {
+        Some(id) => StartupSelection::App(Box::new(StartupLaunch {
             app: resolve_app(Some(id)).map_err(CasarsError::Launcher)?,
             prefill: Vec::new(),
             auto_run: false,
-        }),
+            workspace: std::env::current_dir().unwrap_or_else(|_| ".".into()),
+            save_last: true,
+            parameter_session: None,
+        })),
         None => StartupSelection::Launcher,
     };
     run_with_selection(selection)
@@ -823,6 +827,23 @@ pub fn run_with_app(app_id: Option<&str>) -> Result<(), CasarsError> {
 pub fn run_with_cli_args(
     args: impl IntoIterator<Item = std::ffi::OsString>,
 ) -> Result<(), CasarsError> {
+    let args = args.into_iter().collect::<Vec<_>>();
+    if let Some(dispatch) = parameters_cli::dispatch(&args).map_err(CasarsError::Launcher)? {
+        match dispatch {
+            parameters_cli::ParameterCliDispatch::Print(text) => {
+                let mut stdout = io::stdout();
+                stdout
+                    .write_all(text.as_bytes())
+                    .map_err(CasarsError::TerminalSetup)?;
+                stdout.flush().map_err(CasarsError::TerminalSetup)?;
+                return Ok(());
+            }
+            parameters_cli::ParameterCliDispatch::Done => return Ok(()),
+            parameters_cli::ParameterCliDispatch::Launch(launch) => {
+                return run_with_selection(StartupSelection::App(launch));
+            }
+        }
+    }
     let selection = parse_startup_args(args).map_err(CasarsError::Launcher)?;
     match selection {
         StartupSelection::PrintText(text) => {
@@ -840,12 +861,15 @@ pub fn run_with_cli_args(
 fn run_with_selection(selection: StartupSelection) -> Result<(), CasarsError> {
     let mut terminal = TerminalGuard::enter()?;
     let mut launch = match selection {
-        StartupSelection::App(launch) => launch,
+        StartupSelection::App(launch) => *launch,
         StartupSelection::Launcher => match choose_app(&mut terminal)? {
             Some(app) => StartupLaunch {
                 app,
                 prefill: Vec::new(),
                 auto_run: false,
+                workspace: std::env::current_dir().unwrap_or_else(|_| ".".into()),
+                save_last: true,
+                parameter_session: None,
             },
             None => {
                 terminal.leave()?;
@@ -861,6 +885,9 @@ fn run_with_selection(selection: StartupSelection) -> Result<(), CasarsError> {
             launch.app.clone(),
             &launch.prefill,
             launch.auto_run,
+            launch.workspace.clone(),
+            launch.save_last,
+            launch.parameter_session.clone(),
         )? {
             RunOutcome::Quit => break,
             RunOutcome::Launcher => {
@@ -871,6 +898,9 @@ fn run_with_selection(selection: StartupSelection) -> Result<(), CasarsError> {
                     app: next_app,
                     prefill: Vec::new(),
                     auto_run: false,
+                    workspace: std::env::current_dir().unwrap_or_else(|_| ".".into()),
+                    save_last: true,
+                    parameter_session: None,
                 };
             }
         }
@@ -885,12 +915,16 @@ fn run_selected_app(
     app_entry: RegistryApp,
     prefill: &[crate::startup::StartupPrefill],
     auto_run: bool,
+    workspace: std::path::PathBuf,
+    save_last: bool,
+    parameter_session: Option<casa_task_runtime::ParameterSession>,
 ) -> Result<RunOutcome, CasarsError> {
     let schema_result = app_entry.load_schema();
     let mut app = match schema_result {
         Ok(schema) => AppState::from_schema(app_entry, schema),
         Err(error) => AppState::schema_error(app_entry, error),
     };
+    app.configure_parameter_runtime(workspace, save_last, parameter_session);
     for value in prefill {
         let result = match &value.value {
             StartupValue::Text(text) => app.apply_startup_text_value(&value.id, text.clone()),

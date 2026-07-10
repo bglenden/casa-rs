@@ -6,14 +6,26 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from . import tasks
+from . import parameters, sessions, tasks
+from .parameters import SessionParameters, SurfaceParameters, TaskParameters
 
 try:
     __version__ = version("casa-rs-python")
 except PackageNotFoundError:  # pragma: no cover - editable local builds
     __version__ = "0+unknown"
 
-__all__ = ["Image", "Table", "data", "tasks", "__version__"]
+__all__ = [
+    "Image",
+    "SessionParameters",
+    "SurfaceParameters",
+    "Table",
+    "TaskParameters",
+    "data",
+    "parameters",
+    "sessions",
+    "tasks",
+    "__version__",
+]
 
 
 def __getattr__(name: str) -> Any:

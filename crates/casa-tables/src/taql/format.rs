@@ -159,7 +159,8 @@ pub fn format_rows(columns: &[String], rows: &[RecordValue]) -> String {
             .zip(&col_widths)
             .map(|(cell, w)| {
                 if cell.len() > *w {
-                    format!("{}…", &cell[..*w - 1])
+                    let truncated = &cell[..*w - 1];
+                    format!("{truncated}…")
                 } else {
                     format!("{:<width$}", cell, width = *w)
                 }

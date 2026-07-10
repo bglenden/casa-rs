@@ -226,9 +226,11 @@ impl<'a> ScalarQuantColumn<'a> {
             TableError::Storage(format!("column '{column}' has no quantum keywords"))
         })?;
         let fixed_unit = if !desc.is_unit_variable() && !desc.units.is_empty() {
-            Some(Unit::new(&desc.units[0]).map_err(|e| {
-                TableError::Storage(format!("invalid unit '{}': {e}", desc.units[0]))
-            })?)
+            let unit_name = &desc.units[0];
+            Some(
+                Unit::new(unit_name)
+                    .map_err(|e| TableError::Storage(format!("invalid unit '{unit_name}': {e}")))?,
+            )
         } else {
             None
         };

@@ -7,25 +7,35 @@ public protocol TaskExecution {
 public struct GenericTaskRequest: Equatable {
     public var runID: String
     public var task: TaskCatalogEntry
-    public var schema: TaskUISchema
-    public var values: [String: String]
-    public var toggles: [String: Bool]
+    public var parameterBundle: SurfaceParameterBundle?
+    public var providerInvocation: SurfaceProviderInvocation
+    public var parameterValues: [String: SurfaceParameterValue]
     public var workingDirectoryPath: String?
 
     public init(
         runID: String,
         task: TaskCatalogEntry,
-        schema: TaskUISchema,
-        values: [String: String],
-        toggles: [String: Bool],
+        providerInvocation: SurfaceProviderInvocation,
+        parameterBundle: SurfaceParameterBundle? = nil,
+        parameterValues: [String: SurfaceParameterValue] = [:],
         workingDirectoryPath: String? = nil
     ) {
         self.runID = runID
         self.task = task
-        self.schema = schema
-        self.values = values
-        self.toggles = toggles
+        self.parameterBundle = parameterBundle
+        self.providerInvocation = providerInvocation
+        self.parameterValues = parameterValues
         self.workingDirectoryPath = workingDirectoryPath
+    }
+}
+
+public struct SurfaceProviderInvocation: Codable, Equatable, Sendable {
+    public var args: [String]
+    public var stdin: String?
+
+    public init(args: [String], stdin: String? = nil) {
+        self.args = args
+        self.stdin = stdin
     }
 }
 
@@ -34,20 +44,17 @@ public struct GenericTaskResult: Equatable {
     public var arguments: [String]
     public var stdout: String
     public var stderr: String
-    public var requestJSONPath: String?
 
     public init(
         taskID: String,
         arguments: [String],
         stdout: String,
-        stderr: String,
-        requestJSONPath: String? = nil
+        stderr: String
     ) {
         self.taskID = taskID
         self.arguments = arguments
         self.stdout = stdout
         self.stderr = stderr
-        self.requestJSONPath = requestJSONPath
     }
 }
 
@@ -233,17 +240,9 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         request: GenericTaskRequest,
         eventHandler: @escaping (GenericTaskEvent) -> Void
     ) throws -> TaskExecution {
-        var executionRequest = request
+        let executionRequest = request
         let progressTelemetryPath = try Self.progressTelemetryPathIfNeeded(for: request)
-        let requestJSONPath = try Self.saveJSONRequestIfNeeded(for: request)
-        if let requestJSONPath {
-            executionRequest.values["request_json"] = requestJSONPath
-        }
-        let arguments = if let requestJSONPath {
-            ["--json-run", requestJSONPath] + Self.progressTelemetryArguments(progressTelemetryPath)
-        } else {
-            try Self.arguments(for: executionRequest, progressTelemetryPath: progressTelemetryPath)
-        }
+        let arguments = try Self.arguments(for: executionRequest, progressTelemetryPath: progressTelemetryPath)
         let execution = ProcessTaskExecution()
         queue.async {
             do {
@@ -289,6 +288,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                     binaryName: executionRequest.task.binaryName,
                     overrideEnv: executionRequest.task.overrideEnv,
                     arguments: arguments,
+                    standardInput: executionRequest.providerInvocation.stdin,
                     workingDirectoryPath: executionRequest.workingDirectoryPath,
                     execution: execution,
                     stderrChunkHandler: handleProgressChunk,
@@ -331,8 +331,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                         taskID: executionRequest.task.id,
                         arguments: arguments,
                         stdout: output.stdout,
-                        stderr: stderr,
-                        requestJSONPath: requestJSONPath
+                        stderr: stderr
                     )))
                 } else {
                     eventHandler(.failed(GenericTaskFailure(
@@ -347,61 +346,6 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         return execution
     }
 
-    static func savedJSONRequestData(for request: GenericTaskRequest) throws -> Data {
-        let excludedKeys = Set(["request_kind", "request_json"])
-        var payload: [String: Any] = [:]
-        for argument in request.schema.arguments.sorted(by: { $0.order < $1.order }) {
-            guard !excludedKeys.contains(argument.id) else { continue }
-            let value = (request.values[argument.id] ?? argument.default ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { continue }
-            payload[argument.id] = try jsonValue(from: value)
-        }
-        let envelope: [String: Any] = [
-            "kind": request.values["request_kind"] ?? "family",
-            "request": payload
-        ]
-        return try JSONSerialization.data(withJSONObject: envelope, options: [.prettyPrinted, .sortedKeys])
-    }
-
-    private static func saveJSONRequestIfNeeded(for request: GenericTaskRequest) throws -> String? {
-        let requestKind = request.values["request_kind"] ?? request.schema.arguments
-            .first { $0.id == "request_kind" }?
-            .default
-        guard requestKind == "family",
-              let path = request.values["request_json"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !path.isEmpty
-        else {
-            return nil
-        }
-        let url = resolvedTaskPath(path, workingDirectoryPath: request.workingDirectoryPath)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try savedJSONRequestData(for: request)
-        try data.write(to: url, options: .atomic)
-        return url.path
-    }
-
-    private static func jsonValue(from value: String) throws -> Any {
-        if let data = value.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data),
-           JSONSerialization.isValidJSONObject(object) {
-            return object
-        }
-        if value == "true" {
-            return true
-        }
-        if value == "false" {
-            return false
-        }
-        if let integer = Int(value) {
-            return integer
-        }
-        if let double = Double(value) {
-            return double
-        }
-        return value
-    }
-
     static func createOutputParentDirectories(for request: GenericTaskRequest) throws {
         for path in outputArgumentPaths(for: request) {
             let url = resolvedTaskPath(path, workingDirectoryPath: request.workingDirectoryPath)
@@ -413,25 +357,25 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
     }
 
     static func outputArgumentPaths(for request: GenericTaskRequest) -> [String] {
-        request.schema.arguments
-            .filter { argument in
-                !argument.hiddenInTUI
-                    && ["option", "positional"].contains(argument.parser.kind)
-                    && argumentLooksLikeOutput(argument)
-            }
-            .compactMap { argument in
-                let value = (request.values[argument.id] ?? argument.default ?? "")
+        guard let bundle = request.parameterBundle else { return [] }
+        return bundle.surface.bindings
+            .filter { argumentIsOutput($0.name, bundle: bundle) }
+            .compactMap { binding in
+                guard let parameterValue = request.parameterValues[binding.name] else {
+                    return nil
+                }
+                let value = parameterValue.displayText
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                return value.isEmpty ? nil : value
+                return value.isEmpty || value == "none" ? nil : value
             }
     }
 
-    private static func argumentLooksLikeOutput(_ argument: TaskUIArgument) -> Bool {
-        if argument.parameterType?.hasPrefix("output_") == true {
-            return true
-        }
-        return ["outfile", "output", "outputvis", "outputms", "fitsimage"].contains(argument.id)
-            && argument.parameterType != "fits_path"
+    private static func argumentIsOutput(_ name: String, bundle: SurfaceParameterBundle?) -> Bool {
+        guard let bundle,
+              let binding = bundle.surface.bindings.first(where: { $0.name == name }),
+              let concept = bundle.concept(for: name)
+        else { return false }
+        return binding.contextRole == "output_product" || concept.semanticRole == "output_data"
     }
 
     private static func resolvedTaskPath(_ path: String, workingDirectoryPath: String?) -> URL {
@@ -452,54 +396,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
     }
 
     static func arguments(for request: GenericTaskRequest, progressTelemetryPath: String?) throws -> [String] {
-        var arguments: [String] = []
-        for argument in request.schema.arguments.sorted(by: { $0.order < $1.order }) {
-            let isHiddenAction = argument.hiddenInTUI && argument.parser.kind == "action"
-            if isHiddenAction {
-                continue
-            }
-            switch argument.parser.kind {
-            case "option":
-                let value = (request.values[argument.id] ?? argument.default ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if value.isEmpty {
-                    if argument.required {
-                        throw GenericTaskFailure(message: "\(argument.label) is required.", diagnostics: [])
-                    }
-                    continue
-                }
-                guard let flag = argument.parser.flags?.first else { continue }
-                arguments.append(flag)
-                arguments.append(value)
-            case "positional":
-                let value = (request.values[argument.id] ?? argument.default ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if value.isEmpty {
-                    if argument.required {
-                        throw GenericTaskFailure(message: "\(argument.label) is required.", diagnostics: [])
-                    }
-                    continue
-                }
-                arguments.append(value)
-            case "toggle":
-                let value = request.toggles[argument.id] ?? argument.defaultToggleValue(values: request.values)
-                if value, let flag = argument.parser.trueFlags?.first {
-                    arguments.append(flag)
-                } else if !value, let flag = argument.parser.falseFlags?.first {
-                    arguments.append(flag)
-                }
-            default:
-                continue
-            }
-        }
-        if let managedOutput = request.schema.managedOutput {
-            for injected in managedOutput.injectArguments {
-                arguments.append(injected.flag)
-                if let value = injected.value {
-                    arguments.append(value)
-                }
-            }
-        }
+        var arguments = request.providerInvocation.args
         if request.task.id == "imager" {
             arguments.append(contentsOf: [
                 "--progress",
@@ -558,6 +455,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         binaryName: String,
         overrideEnv: String,
         arguments: [String],
+        standardInput: String?,
         workingDirectoryPath: String?,
         execution: ProcessTaskExecution,
         stderrChunkHandler: ((String) -> Void)? = nil,
@@ -577,8 +475,10 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         }
         let stdout = Pipe()
         let stderr = Pipe()
+        let stdin = standardInput.map { _ in Pipe() }
         process.standardOutput = stdout
         process.standardError = stderr
+        process.standardInput = stdin
         if let workingDirectoryPath, !workingDirectoryPath.isEmpty {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectoryPath, isDirectory: true)
         }
@@ -599,6 +499,10 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 stderrCollector.append(handle.availableData)
             }
             try process.run()
+            if let standardInput, let stdin {
+                stdin.fileHandleForWriting.write(Data(standardInput.utf8))
+                try? stdin.fileHandleForWriting.close()
+            }
             process.waitUntilExit()
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil

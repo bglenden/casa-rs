@@ -42,6 +42,11 @@ groups. CLI schemas remain important for scripting, tests, and subprocess
 invocation, but the TUI should be organized around user workflow rather than
 flag layout.
 
+Parameter semantics come from the provider-owned `ParameterCatalog` and task or
+session `SurfaceDefinition`. The TUI may organize those parameters for the
+workflow, but it must not invent different defaults, aliases, validation, or
+persistence rules.
+
 ## Shell family
 
 `casars` currently has three shell kinds.
@@ -138,6 +143,10 @@ These are framework concerns and should not be reinvented per app:
 - shared workflow graph presentation
 - shared workflow display formatting helpers
 - shell-specific overview presentation
+- parameter source selection and origin display
+- Defaults, Last, Last Successful where applicable, Open, Save As, Revert,
+  and Reset to Default
+- typed validation, dirty-state tracking, and managed Last persistence
 
 Implementation anchors:
 
@@ -176,6 +185,39 @@ Bad app code duplicates:
 - workflow row rendering
 - history handling
 - output-pane conventions
+- parameter defaults, aliases, migrations, or TOML handling
+
+## Parameter sessions
+
+Every parameterized app edits a framework-owned parameter session. Its base is
+exactly one of Defaults, Last, Last Successful for task surfaces, or an explicit
+sparse TOML profile. Accepted context and direct user edits layer over that base
+with visible origins.
+
+Required behavior:
+
+- show the active source and whether the form is modified
+- show defaults, units, validation, and per-field origins
+- reset a field by removing its override, revealing the current default
+- confirm before replacing a dirty form with another source
+- never overwrite an explicitly opened profile without Save As
+- keep runtime controls and safety confirmation outside science parameters
+
+Interactive editors open a valid Last source when their launch context requests
+the CASA-style resume behavior; otherwise they open Defaults. They must surface
+a missing or invalid Last file and fall back visibly rather than silently
+changing source.
+
+For a one-shot task, validated intent is written to managed Last immediately
+before execution and to Last Successful only after success. For a browser
+session, Last is written after a successful root open and after debounced,
+validated changes to durable startup settings.
+
+Browser navigation is not a parameter edit. Viewport and focus changes, cursor
+movement, scrolling, current movie frame, playback, inspector expansion,
+caches, and protocol commands remain live state. If a future feature restores
+that state, it must use a separate session-resume artifact rather than the
+human sparse profile.
 
 ## Shell selection rules for new apps
 
@@ -333,6 +375,9 @@ When adding a new `casars` app:
 8. add targeted unit tests for the shell behavior
 9. add or update the ratatui smoke harness if the app is shipped
 10. write user-facing documentation for how to operate the app
+11. bind every public parameter to the shared catalog and record whether it is
+    persistable
+12. verify Defaults, Last, explicit profile, reset, and validation behavior
 
 ## Testing expectations for new apps
 
@@ -342,6 +387,7 @@ Every new app or major shell migration should have:
 - unit tests for picker-backed edits
 - unit tests for key workflow actions
 - a smoke-harness path if the app is user-facing
+- parameter-source, origin, sparse-save, and invalid-profile tests
 
 For workflow apps, add tests for:
 
@@ -378,4 +424,5 @@ subprocess bridging.
 
 That is acceptable for now. The important invariant is that new applications
 must conform to the shell-family conventions above rather than extending the old
-schema-first UI model.
+schema-first UI model. ADR-0006 also requires existing parameterized apps to
+migrate away from schema-local defaults as the unified runtime reaches them.

@@ -26,9 +26,10 @@ use casars_imagebrowser_protocol::{
     ImageBrowserCapabilities, ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters,
     ImageBrowserPreviewPayload, ImageBrowserPreviewRequest, ImageBrowserProbe,
     ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState,
-    ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneContentMode, ImagePlaneCursorState,
-    ImagePlaneRaster, ImageProfilePayload, ImageProfileSampleState, ImageRegionOverlayShapeState,
-    ImageRegionOverlayVertex, ImageRegionState, ImageRegionStatsState,
+    ImageMaskReference, ImageNavigationMetrics, ImageNonDisplayAxisState, ImagePlaneContentMode,
+    ImagePlaneCursorState, ImagePlaneRaster, ImageProfilePayload, ImageProfileSampleState,
+    ImageRegionOverlayShapeState, ImageRegionOverlayVertex, ImageRegionReference, ImageRegionState,
+    ImageRegionStatsState,
 };
 
 /// Long-lived read-only image browser session.
@@ -51,6 +52,8 @@ pub struct ImageBrowserSession {
     region_revision: u64,
     mask_revision: u64,
     active_region_definition_name: Option<String>,
+    region_reference: ImageRegionReference,
+    mask_reference: ImageMaskReference,
     saved_region_cycle_index: usize,
     perf_enabled: bool,
     plane_cache: RecentCache<PlaneCacheKey, PlaneRaster>,
@@ -86,6 +89,12 @@ impl SessionStretchState {
             manual_clip: self.manual_clip,
         }
     }
+}
+
+struct PreparedRegionReference {
+    region: Option<ImageRegion>,
+    active_definition_name: Option<String>,
+    reset_saved_cycle: bool,
 }
 
 const SESSION_PLANE_CACHE_CAPACITY: usize = 48;
@@ -418,6 +427,8 @@ impl ImageBrowserSession {
             region_revision: 0,
             mask_revision: 0,
             active_region_definition_name: None,
+            region_reference: ImageRegionReference::None,
+            mask_reference: ImageMaskReference::None,
             saved_region_cycle_index: 0,
             perf_enabled,
             plane_cache: RecentCache::new(SESSION_PLANE_CACHE_CAPACITY),
@@ -541,7 +552,7 @@ impl ImageBrowserSession {
                 self.snapshot()
             }
             ImageBrowserCommand::SetSelectedNonDisplayAxis { axis } => {
-                self.set_selected_profile_axis(axis);
+                self.set_selected_profile_axis(axis)?;
                 self.snapshot()
             }
             ImageBrowserCommand::SetViewWindow { parameters } => {
@@ -550,6 +561,10 @@ impl ImageBrowserSession {
             }
             ImageBrowserCommand::SetPlaneContentMode { mode } => {
                 self.plane_content_mode = mode;
+                self.snapshot()
+            }
+            ImageBrowserCommand::SetSelectionReferences { region, mask } => {
+                self.set_selection_references(region, mask)?;
                 self.snapshot()
             }
             ImageBrowserCommand::StartRegionShape => {
@@ -578,6 +593,7 @@ impl ImageBrowserSession {
             }
             ImageBrowserCommand::ClearRegion => {
                 self.clear_region();
+                self.region_reference = ImageRegionReference::None;
                 self.snapshot()
             }
             ImageBrowserCommand::SaveRegionDefinition => {
@@ -586,10 +602,16 @@ impl ImageBrowserSession {
             }
             ImageBrowserCommand::LoadNextRegionDefinition => {
                 self.load_next_region_definition()?;
+                self.region_reference = self
+                    .active_region_definition_name
+                    .as_ref()
+                    .map(|name| ImageRegionReference::Definition { name: name.clone() })
+                    .unwrap_or_default();
                 self.snapshot()
             }
             ImageBrowserCommand::LoadRegionDefinition { name } => {
                 self.load_region_definition(&name)?;
+                self.region_reference = ImageRegionReference::Definition { name };
                 self.snapshot()
             }
             ImageBrowserCommand::RenameRegionDefinition { name, new_name } => {
@@ -602,10 +624,12 @@ impl ImageBrowserSession {
             }
             ImageBrowserCommand::SetDefaultMask { name } => {
                 self.set_default_mask(&name)?;
+                self.mask_reference = ImageMaskReference::Name { name };
                 self.snapshot()
             }
             ImageBrowserCommand::UnsetDefaultMask => {
                 self.unset_default_mask()?;
+                self.mask_reference = ImageMaskReference::None;
                 self.snapshot()
             }
             ImageBrowserCommand::DeleteMask { name } => {
@@ -622,6 +646,7 @@ impl ImageBrowserSession {
             }
             ImageBrowserCommand::LoadRegionFile { path } => {
                 self.load_region_file(Path::new(&path))?;
+                self.region_reference = ImageRegionReference::File { path };
                 self.snapshot()
             }
             ImageBrowserCommand::AppendRegionFile { path } => {
@@ -788,8 +813,10 @@ impl ImageBrowserSession {
             region,
             saved_region_names: self.view.saved_region_names(),
             active_region_definition_name: self.active_region_definition_name.clone(),
+            region_reference: self.region_reference.clone(),
             mask_names: self.view.mask_names(),
             default_mask_name: self.view.default_mask_name(),
+            mask_reference: self.mask_reference.clone(),
             backend_timing,
             capabilities: map_capabilities(self.view.capabilities()),
         })
@@ -1399,11 +1426,12 @@ impl ImageBrowserSession {
     fn set_view_window(&mut self, parameters: &ImageBrowserParameters) -> Result<(), ImageError> {
         let old_display_pixels = self.current_display_pixels();
         let old_non_display_pixels = self.current_non_display_pixels();
-        self.stretch = parse_stretch_parameters(parameters)?;
-        self.frozen_clip_bounds = None;
+        let stretch = parse_stretch_parameters(parameters)?;
         let window =
             self.view
                 .window_from_text(&parameters.blc, &parameters.trc, &parameters.inc)?;
+        self.stretch = stretch;
+        self.frozen_clip_bounds = None;
         self.window = window;
         self.clamp_cursor_to_window(old_display_pixels, old_non_display_pixels, None, None);
         Ok(())
@@ -1452,10 +1480,14 @@ impl ImageBrowserSession {
         self.cursor_y = self.window.nearest_sample_index(display_axes[1], y);
     }
 
-    fn set_selected_profile_axis(&mut self, axis: usize) {
-        if self.view.axis_model().non_display_axes.contains(&axis) {
-            self.selected_profile_axis = Some(axis);
+    fn set_selected_profile_axis(&mut self, axis: usize) -> Result<(), ImageError> {
+        if !self.view.axis_model().non_display_axes.contains(&axis) {
+            return Err(ImageError::InvalidMetadata(format!(
+                "axis {axis} is not a non-display axis for this image"
+            )));
         }
+        self.selected_profile_axis = Some(axis);
+        Ok(())
     }
 
     fn region_state(&self) -> Result<Option<ImageRegionState>, ImageError> {
@@ -1537,6 +1569,77 @@ impl ImageBrowserSession {
             .start_shape()?;
         self.region_revision = self.region_revision.saturating_add(1);
         Ok(())
+    }
+
+    fn set_selection_references(
+        &mut self,
+        region: Option<ImageRegionReference>,
+        mask: Option<ImageMaskReference>,
+    ) -> Result<(), ImageError> {
+        if matches!(mask.as_ref(), Some(ImageMaskReference::Expression { .. })) {
+            return Err(ImageError::InvalidMetadata(
+                "imexplore mask expressions are not supported; use a named persistent mask"
+                    .to_string(),
+            ));
+        }
+
+        let prepared_region = region
+            .as_ref()
+            .map(|reference| self.prepare_region_reference(reference))
+            .transpose()?;
+
+        if let Some(mask) = mask {
+            match &mask {
+                ImageMaskReference::None => self.unset_default_mask()?,
+                ImageMaskReference::Name { name } => self.set_default_mask(name)?,
+                ImageMaskReference::Expression { .. } => unreachable!(
+                    "mask expressions are rejected before applying either selection reference"
+                ),
+            }
+            self.mask_reference = mask;
+        }
+
+        if let Some(prepared) = prepared_region {
+            self.region = prepared.region;
+            self.active_region_definition_name = prepared.active_definition_name;
+            if prepared.reset_saved_cycle {
+                self.saved_region_cycle_index = 0;
+            }
+            self.region_revision = self.region_revision.saturating_add(1);
+            self.region_reference = region.expect("a prepared region has its source reference");
+        }
+        Ok(())
+    }
+
+    fn prepare_region_reference(
+        &self,
+        reference: &ImageRegionReference,
+    ) -> Result<PreparedRegionReference, ImageError> {
+        match reference {
+            ImageRegionReference::None => Ok(PreparedRegionReference {
+                region: None,
+                active_definition_name: None,
+                reset_saved_cycle: false,
+            }),
+            ImageRegionReference::Definition { name } => Ok(PreparedRegionReference {
+                region: Some(self.view.load_saved_region(name)?),
+                active_definition_name: Some(name.clone()),
+                reset_saved_cycle: true,
+            }),
+            ImageRegionReference::File { path } => {
+                let (region, active_definition_name) = self.prepare_region_file(Path::new(path))?;
+                Ok(PreparedRegionReference {
+                    region: Some(region),
+                    active_definition_name,
+                    reset_saved_cycle: false,
+                })
+            }
+            ImageRegionReference::Expression { expression } => Ok(PreparedRegionReference {
+                region: Some(self.prepare_region_expression(expression)?),
+                active_definition_name: None,
+                reset_saved_cycle: false,
+            }),
+        }
     }
 
     fn append_region_vertex_pixels(&mut self, x: usize, y: usize) -> Result<(), ImageError> {
@@ -1833,16 +1936,49 @@ impl ImageBrowserSession {
     }
 
     fn load_region_file(&mut self, path: &Path) -> Result<(), ImageError> {
+        let (region, active_definition_name) = self.prepare_region_file(path)?;
+        self.region = Some(region);
+        self.active_region_definition_name = active_definition_name;
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn prepare_region_file(
+        &self,
+        path: &Path,
+    ) -> Result<(ImageRegion, Option<String>), ImageError> {
         let (label, shapes) = self.read_region_file_shapes(path)?;
         let mut region = self.view.default_region(&label)?;
         region.shapes = shapes;
-        self.region = Some(region);
-        self.active_region_definition_name = path
+        let active_definition_name = path
             .file_name()
             .and_then(|value| value.to_str())
             .map(str::to_string);
-        self.region_revision = self.region_revision.saturating_add(1);
-        Ok(())
+        Ok((region, active_definition_name))
+    }
+
+    fn prepare_region_expression(&self, expression: &str) -> Result<ImageRegion, ImageError> {
+        let mut shapes = Vec::new();
+        for shape in crtf_region_shapes(expression)? {
+            let vertices = shape
+                .into_iter()
+                .map(|vertex| self.crtf_vertex_to_region_vertex(vertex))
+                .collect::<Result<Vec<_>, ImageError>>()?;
+            if vertices.len() >= 3 {
+                shapes.push(ImageRegionShape {
+                    vertices,
+                    closed: true,
+                });
+            }
+        }
+        if shapes.is_empty() {
+            return Err(ImageError::InvalidMetadata(
+                "inline region does not contain a supported CRTF box or polygon".to_string(),
+            ));
+        }
+        let mut region = self.view.default_region("Inline region")?;
+        region.shapes = shapes;
+        Ok(region)
     }
 
     fn append_region_file(&mut self, path: &Path) -> Result<(), ImageError> {
@@ -2616,7 +2752,8 @@ mod tests {
     use casa_types::measures::position::MPosition;
     use casars_imagebrowser_protocol::{
         ImageBackendPlaneCacheResult, ImageBrowserCommand, ImageBrowserParameters,
-        ImageBrowserPreviewRequest, ImageBrowserViewport, ImagePlaneContentMode,
+        ImageBrowserPreviewRequest, ImageBrowserViewport, ImageMaskReference,
+        ImagePlaneContentMode, ImageRegionReference,
     };
     use ndarray::IxDyn;
 
@@ -2751,6 +2888,71 @@ mod tests {
             .unwrap();
         assert_eq!(high_res.plane.as_ref().unwrap().width, 4);
         assert_eq!(high_res.plane.as_ref().unwrap().height, 4);
+    }
+
+    #[test]
+    fn session_accepts_inline_regions_and_rejects_unapplied_mask_expressions() {
+        let _guard = perf_env_lock();
+        clear_perf_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("selection-references.image");
+        let mut image = PagedImage::<f32>::create(vec![3, 3], direction_coords(), &path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&[3, 3]), (0..9).map(|value| value as f32).collect())
+                    .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let region = ImageRegionReference::Expression {
+            expression: "box[[0pix,0pix],[1pix,1pix]]".to_string(),
+        };
+        let mask = ImageMaskReference::Expression {
+            expression: format!("{}>0.5", path.display()),
+        };
+        let mut session =
+            ImageBrowserSession::open(&path, ImageBrowserViewport::new(16, 8)).unwrap();
+        let snapshot = session
+            .handle_command(ImageBrowserCommand::SetSelectionReferences {
+                region: Some(region.clone()),
+                mask: None,
+            })
+            .unwrap();
+
+        assert_eq!(snapshot.region_reference, region);
+        assert_eq!(
+            snapshot.region.as_ref().expect("inline region").shape_count,
+            1
+        );
+        let before = snapshot;
+        let replacement_region = ImageRegionReference::Expression {
+            expression: "box[[1pix,1pix],[2pix,2pix]]".to_string(),
+        };
+        let error = session
+            .handle_command(ImageBrowserCommand::SetSelectionReferences {
+                region: Some(replacement_region),
+                mask: Some(mask),
+            })
+            .expect_err("an unapplied mask expression must not be accepted as durable state");
+        assert!(error.to_string().contains("named persistent mask"));
+        let after = session.snapshot().unwrap();
+        assert_eq!(after, before);
+
+        let before_missing_mask = after;
+        let error = session
+            .handle_command(ImageBrowserCommand::SetSelectionReferences {
+                region: Some(ImageRegionReference::Expression {
+                    expression: "box[[1pix,1pix],[2pix,2pix]]".to_string(),
+                }),
+                mask: Some(ImageMaskReference::Name {
+                    name: "missing-mask".to_string(),
+                }),
+            })
+            .expect_err("a missing named mask must reject the complete selection update");
+        assert!(!error.to_string().is_empty());
+        assert_eq!(session.snapshot().unwrap(), before_missing_mask);
     }
 
     #[test]
@@ -3743,10 +3945,19 @@ mod tests {
             .unwrap();
         assert_eq!(stepped.non_display_axes.first().unwrap().index, 2);
         assert_eq!(stepped.probe.as_ref().unwrap().value, 400.0);
+
+        let before_rejected_axis = stepped;
+        let error = session
+            .handle_command(ImageBrowserCommand::SetSelectedNonDisplayAxis { axis: 99 })
+            .expect_err("an invalid profile axis must not be accepted");
+        assert!(error.to_string().contains("not a non-display axis"));
+        assert_eq!(session.snapshot().unwrap(), before_rejected_axis);
     }
 
     #[test]
     fn session_applies_window_parameters_to_plane_and_probe() {
+        let _guard = perf_env_lock();
+        clear_perf_env();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("windowed-session.image");
         let values = (0..5)
@@ -3799,6 +4010,23 @@ mod tests {
             .unwrap();
         assert_eq!(moved.probe.as_ref().unwrap().pixel_indices, vec![3, 3]);
         assert_eq!(moved.probe.as_ref().unwrap().value, 33.0);
+
+        let before_rejected_update = session.snapshot().unwrap();
+        let error = session
+            .handle_command(ImageBrowserCommand::SetViewWindow {
+                parameters: ImageBrowserParameters {
+                    blc: "not-a-selector".into(),
+                    trc: "4,3".into(),
+                    inc: "2,1".into(),
+                    stretch: "manual".into(),
+                    autoscale: "per_plane".into(),
+                    clip_low: "1".into(),
+                    clip_high: "2".into(),
+                },
+            })
+            .expect_err("invalid window text must reject the complete view update");
+        assert!(!error.to_string().is_empty());
+        assert_eq!(session.snapshot().unwrap(), before_rejected_update);
     }
 
     #[test]

@@ -557,6 +557,27 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
     }
 }
 
+private struct TaskParameterAttempt {
+    var surfaceID: String
+    var workspace: String
+    var values: [String: SurfaceParameterValue]
+    var saveLast: Bool
+}
+
+private struct SessionLastDestination: Hashable {
+    var surfaceID: String
+    var workspace: String
+
+    init(surfaceID: String, workspace: String) {
+        self.surfaceID = surfaceID
+        let expanded = (workspace as NSString).expandingTildeInPath
+        self.workspace = URL(fileURLWithPath: expanded, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+}
+
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     private let probeClient: ProjectProbeClient
@@ -566,11 +587,20 @@ public final class WorkbenchStore: ObservableObject {
     private let tableBrowserClient: TableBrowserClient
     private let genericTaskClient: GenericTaskClient
     private let taskUISchemaClient: TaskUISchemaClient
+    private let surfaceParameterClient: SurfaceParameterClient
     private let taskExecutionMatrixClient: TaskExecutionMatrixClient
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private var activeTaskExecutions: [String: TaskExecution] = [:]
+    private var taskParameterAttempts: [String: TaskParameterAttempt] = [:]
+    private var measurementSetParameterAttempts: [String: TaskParameterAttempt] = [:]
+    private var acceptedSessionParameterValues: [String: [String: SurfaceParameterValue]] = [:]
+    private var acceptedSessionParameterSequence: [String: UInt64] = [:]
+    private var nextSessionParameterSequence: UInt64 = 0
+    private var sessionLastValues: [SessionLastDestination: [String: SurfaceParameterValue]] = [:]
+    private var sessionLastSequence: [SessionLastDestination: UInt64] = [:]
+    private var sessionLastWrites: [String: DispatchWorkItem] = [:]
     private var tableBrowserCellWindowGenerations: [String: Int] = [:]
     private var temporaryDemoProjectRoot: String?
     private var lastProjectDiskRefresh: Date = .distantPast
@@ -585,6 +615,7 @@ public final class WorkbenchStore: ObservableObject {
         genericTaskClient: GenericTaskClient = ProcessGenericTaskClient(),
         taskCatalogClient: TaskCatalogClient = UniFFITaskCatalogClient(),
         taskUISchemaClient: TaskUISchemaClient = UniFFITaskUISchemaClient(),
+        surfaceParameterClient: SurfaceParameterClient = UniFFISurfaceParameterClient(),
         taskExecutionMatrixClient: TaskExecutionMatrixClient = UniFFITaskExecutionMatrixClient(),
         imagerProgressSource: ImagerProgressSource = EmptyImagerProgressSource()
     ) {
@@ -611,11 +642,16 @@ public final class WorkbenchStore: ObservableObject {
         self.tableBrowserClient = tableBrowserClient
         self.genericTaskClient = genericTaskClient
         self.taskUISchemaClient = taskUISchemaClient
+        self.surfaceParameterClient = surfaceParameterClient
         self.taskExecutionMatrixClient = taskExecutionMatrixClient
         self.imagerProgressSource = imagerProgressSource
     }
 
     deinit {
+        sessionLastWrites.values.forEach { $0.cancel() }
+        for sessionKey in acceptedSessionParameterValues.keys {
+            persistSessionLastIfChanged(sessionKey: sessionKey)
+        }
         cleanupTemporaryDemoProject()
     }
 
@@ -1324,15 +1360,22 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         state.selectedDatasetID = datasetID
-        refreshTableBrowser(datasetID: datasetID)
+        let tabID = tableBrowserTabID(for: dataset.id)
         openTab(
             WorkbenchTab(
-                id: tableBrowserTabID(for: dataset.id),
+                id: tabID,
                 title: "Table: \(dataset.name)",
                 kind: .tableBrowser,
                 datasetID: dataset.id
             )
         )
+        applyParameterContext(
+            surfaceID: "tablebrowser",
+            instanceID: tabID,
+            textValues: ["table": dataset.path],
+            preserveOverrides: true
+        )
+        refreshTableBrowser(datasetID: datasetID)
     }
 
     public func openTableBrowserPath(_ path: String, sourceDatasetID: String? = nil) {
@@ -1402,6 +1445,11 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
+    }
+
+    public func measurementSetExplorerPlotState(datasetID: String) -> MeasurementSetExplorerPlotState {
+        measurementSetPlotState(for: datasetID)
     }
 
     public func setMeasurementSetPlotField(_ field: String?, datasetID: String) {
@@ -1410,6 +1458,7 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
     }
 
     public func setMeasurementSetPlotSpectralWindow(_ spectralWindow: String?, datasetID: String) {
@@ -1418,6 +1467,7 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
     }
 
     public func setMeasurementSetPlotChannelSelection(_ channelSelection: String?, datasetID: String) {
@@ -1456,6 +1506,7 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
     }
 
     public func setMeasurementSetPlotArray(_ array: String?, datasetID: String) {
@@ -1494,6 +1545,7 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
     }
 
     public func setMeasurementSetPlotColorBy(_ colorBy: MeasurementSetPlotColorAxis, datasetID: String) {
@@ -1562,6 +1614,7 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
     }
 
     public func runMeasurementSetPlot(datasetID: String) {
@@ -1579,11 +1632,44 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         var plotState = measurementSetPlotState(for: datasetID)
+        let instanceID = parameterInstanceID(surfaceID: "msexplore", datasetID: datasetID)
+        let parameterAttempt = parameterSession(surfaceID: "msexplore", instanceID: instanceID).map {
+            TaskParameterAttempt(
+                surfaceID: "msexplore",
+                workspace: $0.workspace,
+                values: $0.values,
+                saveLast: $0.saveLast
+            )
+        }
+        if let parameterAttempt, parameterAttempt.saveLast {
+            do {
+                _ = try surfaceParameterClient.writeLast(
+                    surfaceID: parameterAttempt.surfaceID,
+                    workspace: parameterAttempt.workspace,
+                    values: parameterAttempt.values,
+                    successful: false
+                )
+            } catch {
+                state.lastErrors.append("Automatic msexplore Last save failed: \(error)")
+            }
+        }
         if let cached = cachedMeasurementSetPlotResult(for: dataset, plotState: plotState) {
             plotState.result = cached
             plotState.status = .ready
             plotState.lastError = nil
             state.measurementSetPlots[datasetID] = plotState
+            if let parameterAttempt, parameterAttempt.saveLast {
+                do {
+                    _ = try surfaceParameterClient.writeLast(
+                        surfaceID: parameterAttempt.surfaceID,
+                        workspace: parameterAttempt.workspace,
+                        values: parameterAttempt.values,
+                        successful: true
+                    )
+                } catch {
+                    state.lastErrors.append("Automatic msexplore Last Successful save failed: \(error)")
+                }
+            }
             return
         }
 
@@ -1617,6 +1703,9 @@ public final class WorkbenchStore: ObservableObject {
         )
         let tabID = dataset.explorerTabID
         let jobID = nextJobID(prefix: "ms-plot")
+        if let parameterAttempt {
+            measurementSetParameterAttempts[jobID] = parameterAttempt
+        }
         startJob(
             WorkbenchJob(
                 id: jobID,
@@ -1741,6 +1830,15 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
+        let closingSessionKeys = state.parameterSessions.keys.filter { $0.hasPrefix("\(tabID)::") }
+        for sessionKey in closingSessionKeys {
+            sessionLastWrites[sessionKey]?.cancel()
+            persistSessionLastIfChanged(sessionKey: sessionKey)
+            sessionLastWrites.removeValue(forKey: sessionKey)
+            acceptedSessionParameterValues.removeValue(forKey: sessionKey)
+            acceptedSessionParameterSequence.removeValue(forKey: sessionKey)
+            state.parameterSessions.removeValue(forKey: sessionKey)
+        }
         let wasActive = state.activeTabID == tabID
         state.tabs.remove(at: index)
 
@@ -1861,47 +1959,48 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         state.activeTaskID = "imager"
-        loadTaskUISchemaIfNeeded("imager")
 
         if let dataset = state.selectedDataset, dataset.kind == .measurementSet {
-            seedImagerTaskDefaults(for: dataset, preserveExistingEdits: false)
-            state.taskRun = TaskRun(
-                state: .idle,
-                progress: 0,
-                logLines: ["Imager task initialized from selected MeasurementSet metadata."],
-                warnings: [],
-                products: [],
-                requestSummary: genericTaskRequestSummary(taskID: "imager"),
-                imagerProgress: nil
-            )
-
+            let tabID = "tab-imager-\(dataset.id)"
             openTab(
                 WorkbenchTab(
-                    id: "tab-imager-\(dataset.id)",
+                    id: tabID,
                     title: "Imager: \(dataset.name)",
                     kind: .task,
                     datasetID: dataset.id,
                     taskID: "imager"
                 )
             )
+            loadTaskUISchemaIfNeeded("imager", instanceID: tabID)
+            seedImagerTaskDefaults(for: dataset, instanceID: tabID, preserveExistingEdits: false)
+            state.taskRun = TaskRun(
+                state: .idle,
+                progress: 0,
+                logLines: ["Imager task initialized from selected MeasurementSet metadata."],
+                warnings: [],
+                products: [],
+                requestSummary: genericTaskRequestSummary(taskID: "imager", instanceID: tabID),
+                imagerProgress: nil
+            )
         } else {
+            let tabID = "tab-imager-unbound"
+            openTab(
+                WorkbenchTab(
+                    id: tabID,
+                    title: "Imager",
+                    kind: .task,
+                    taskID: "imager"
+                )
+            )
+            loadTaskUISchemaIfNeeded("imager", instanceID: tabID)
             state.taskRun = TaskRun(
                 state: .idle,
                 progress: 0,
                 logLines: ["Imager task opened. Select a MeasurementSet before running."],
                 warnings: [],
                 products: [],
-                requestSummary: genericTaskRequestSummary(taskID: "imager"),
+                requestSummary: genericTaskRequestSummary(taskID: "imager", instanceID: tabID),
                 imagerProgress: nil
-            )
-
-            openTab(
-                WorkbenchTab(
-                    id: "tab-imager-unbound",
-                    title: "Imager",
-                    kind: .task,
-                    taskID: "imager"
-                )
             )
         }
     }
@@ -1942,18 +2041,42 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Dataset \(dataset.name) is not an image")
             return
         }
-        let explorerState = state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
-            datasetID: datasetID,
-            selectedView: "plane",
-            status: .idle,
-            lastError: nil,
-            snapshot: nil
-        )
+        let instanceID = state.project.datasets.first(where: { $0.id == datasetID })?.explorerTabID
+        if state.imageExplorers[datasetID] == nil {
+            applyParameterContext(
+                surfaceID: "imexplore",
+                instanceID: instanceID,
+                textValues: ["image": dataset.path],
+                preserveOverrides: true
+            )
+        }
+        guard let explorerState = state.imageExplorers[datasetID]
+            ?? profiledImageExplorerState(datasetID: datasetID, instanceID: instanceID)
+        else { return }
         do {
-            let snapshot = try imageExplorerClient.buildSnapshot(request: explorerState.snapshotRequest(datasetPath: dataset.path))
             var nextState = explorerState
+            var snapshot = try imageExplorerClient.buildSnapshot(
+                request: nextState.snapshotRequest(datasetPath: dataset.path)
+            )
+            let requestedProfileAxis = nextState.selectedProfileAxis
+            nextState.selectedProfileAxis = try Self.resolveImageExplorerAxisSelector(
+                nextState.selectedProfileAxisSelector,
+                parameter: "profileaxis",
+                snapshot: snapshot
+            )
+            nextState.movieAxis = try Self.resolveImageExplorerAxisSelector(
+                nextState.movieAxisSelector,
+                parameter: "movieaxis",
+                snapshot: snapshot
+            )
+            if nextState.selectedProfileAxis != requestedProfileAxis {
+                snapshot = try imageExplorerClient.buildSnapshot(
+                    request: nextState.snapshotRequest(datasetPath: dataset.path)
+                )
+            }
             applyReadyImageExplorerSnapshot(snapshot, to: &nextState)
             state.imageExplorers[datasetID] = nextState
+            acceptSessionParameters("imexplore", instanceID: instanceID)
         } catch {
             let originalError = error
             if explorerState.hasQueuedImageExplorerCommands {
@@ -1966,6 +2089,7 @@ public final class WorkbenchStore: ObservableObject {
                     )
                     applyReadyImageExplorerSnapshot(snapshot, to: &recoveredState)
                     state.imageExplorers[datasetID] = recoveredState
+                    acceptSessionParameters("imexplore", instanceID: instanceID)
                     state.lastErrors.append(
                         "Cleared invalid image explorer region command sequence for \(dataset.name): \(error)"
                     )
@@ -2010,18 +2134,37 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
             return
         }
-        let browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
-            datasetID: datasetID,
-            selectedView: Self.canonicalTableBrowserView(nil),
-            status: .idle,
-            lastError: nil,
-            snapshot: nil
-        )
+        let instanceID = state.tabs.first(where: { $0.datasetID == datasetID && tab($0, hosts: "tablebrowser") })?.id
+        if state.tableBrowsers[datasetID] == nil {
+            applyParameterContext(
+                surfaceID: "tablebrowser",
+                instanceID: instanceID,
+                textValues: ["table": dataset.path],
+                preserveOverrides: true
+            )
+        }
+        guard var browserState = state.tableBrowsers[datasetID]
+            ?? profiledTableBrowserState(datasetID: datasetID, instanceID: instanceID)
+        else { return }
         do {
-            let snapshot = try tableBrowserClient.buildSnapshot(request: browserState.snapshotRequest(datasetPath: dataset.path))
+            let snapshot: TableBrowserSnapshot
+            if browserState.startupProfilePending {
+                snapshot = try applyTableBrowserStartupProfile(
+                    datasetPath: dataset.path,
+                    browserState: &browserState
+                )
+                browserState.startupProfilePending = false
+            } else {
+                snapshot = try tableBrowserClient.buildSnapshot(request: browserState.snapshotRequest(datasetPath: dataset.path))
+            }
             var nextState = TableBrowserSessionState(
                 datasetID: datasetID,
-                selectedView: snapshot.view,
+                selectedView: browserState.selectedView,
+                profileView: browserState.profileView,
+                bookmark: browserState.bookmark,
+                linkedTable: browserState.linkedTable,
+                contentMode: browserState.contentMode,
+                startupProfilePending: false,
                 focus: snapshot.focus,
                 commands: browserState.commands,
                 cellWindowRowStart: browserState.cellWindowRowStart,
@@ -2037,10 +2180,16 @@ public final class WorkbenchStore: ObservableObject {
             )
             refreshTableBrowserCellWindowIfNeeded(dataset: dataset, browserState: &nextState)
             state.tableBrowsers[datasetID] = nextState
+            acceptSessionParameters("tablebrowser", instanceID: instanceID)
         } catch {
             state.tableBrowsers[datasetID] = TableBrowserSessionState(
                 datasetID: datasetID,
                 selectedView: browserState.selectedView,
+                profileView: browserState.profileView,
+                bookmark: browserState.bookmark,
+                linkedTable: browserState.linkedTable,
+                contentMode: browserState.contentMode,
+                startupProfilePending: browserState.startupProfilePending,
                 focus: browserState.focus,
                 commands: browserState.commands,
                 cellWindowRowStart: browserState.cellWindowRowStart,
@@ -2061,6 +2210,7 @@ public final class WorkbenchStore: ObservableObject {
     public func setImageExplorerView(_ view: String, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.selectedView = view
+        setImageExplorerParameterValue(datasetID: datasetID, name: "view", value: .string(view))
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
     }
@@ -2075,6 +2225,11 @@ public final class WorkbenchStore: ObservableObject {
     public func setImageExplorerPlaneContentMode(_ mode: String, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.planeContentMode = mode
+        setImageExplorerParameterValue(
+            datasetID: datasetID,
+            name: "contentmode",
+            value: .string(mode)
+        )
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
     }
@@ -2082,6 +2237,17 @@ public final class WorkbenchStore: ObservableObject {
     public func setImageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.parameters = parameters
+        for (name, value) in [
+            "blc": parameters.blc,
+            "trc": parameters.trc,
+            "inc": parameters.inc,
+            "stretch": parameters.stretch,
+            "autoscale": parameters.autoscale,
+            "clip_low": parameters.clipLow,
+            "clip_high": parameters.clipHigh,
+        ] {
+            setImageExplorerParameterValue(datasetID: datasetID, name: name, value: .string(value))
+        }
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
     }
@@ -2090,6 +2256,12 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.planeColorMap = colorMap
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(
+            datasetID: datasetID,
+            name: "colormap",
+            value: .string(colorMap == .grayscale ? "gray" : colorMap.rawValue),
+            persistImmediately: true
+        )
     }
 
     public func cycleImageExplorerColorMap(datasetID: String) {
@@ -2140,7 +2312,9 @@ public final class WorkbenchStore: ObservableObject {
         }
         explorerState.nonDisplayIndices = indices
         explorerState.selectedProfileAxis = axis
+        explorerState.selectedProfileAxisSelector = String(axis)
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(datasetID: datasetID, name: "profileaxis", value: .string(String(axis)))
         refreshImageExplorer(datasetID: datasetID)
     }
 
@@ -2163,7 +2337,9 @@ public final class WorkbenchStore: ObservableObject {
         }
         explorerState.nonDisplayIndices = indices
         explorerState.selectedProfileAxis = axis
+        explorerState.selectedProfileAxisSelector = String(axis)
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(datasetID: datasetID, name: "profileaxis", value: .string(String(axis)))
         refreshImageExplorer(datasetID: datasetID)
     }
 
@@ -2171,12 +2347,30 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.moviePlaying = true
         explorerState.movieAxis = axis
+        explorerState.movieAxisSelector = String(axis)
         if let framesPerSecond {
             explorerState.movieFramesPerSecond = Self.clampedMovieFramesPerSecond(framesPerSecond)
         }
         explorerState.movieLoop = loop
         explorerState.selectedProfileAxis = axis
+        explorerState.selectedProfileAxisSelector = String(axis)
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(datasetID: datasetID, name: "movieaxis", value: .string(String(axis)))
+        setImageExplorerParameterValue(datasetID: datasetID, name: "profileaxis", value: .string(String(axis)))
+        setImageExplorerParameterValue(datasetID: datasetID, name: "loop", value: .bool(loop))
+        if let framesPerSecond {
+            setImageExplorerParameterValue(
+                datasetID: datasetID,
+                name: "fps",
+                value: .integer(Int64(Self.clampedMovieFramesPerSecond(framesPerSecond).rounded())),
+                persistImmediately: true
+            )
+        } else {
+            acceptSessionParameters(
+                "imexplore",
+                instanceID: parameterInstanceID(surfaceID: "imexplore", datasetID: datasetID)
+            )
+        }
     }
 
     public func stopImageExplorerMovie(datasetID: String) {
@@ -2189,12 +2383,24 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.movieFramesPerSecond = Self.clampedMovieFramesPerSecond(framesPerSecond)
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(
+            datasetID: datasetID,
+            name: "fps",
+            value: .integer(Int64(explorerState.movieFramesPerSecond.rounded())),
+            persistImmediately: true
+        )
     }
 
     public func setImageExplorerMovieLoop(_ loop: Bool, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.movieLoop = loop
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(
+            datasetID: datasetID,
+            name: "loop",
+            value: .bool(loop),
+            persistImmediately: true
+        )
     }
 
     public func advanceImageExplorerMovieFrame(datasetID: String) {
@@ -2253,6 +2459,7 @@ public final class WorkbenchStore: ObservableObject {
     public func setImageExplorerSelectedProfileAxis(_ axis: Int, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.selectedProfileAxis = axis
+        explorerState.selectedProfileAxisSelector = String(axis)
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
     }
@@ -2429,6 +2636,11 @@ public final class WorkbenchStore: ObservableObject {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.transientCommands.append(command)
         state.imageExplorers[datasetID] = explorerState
+        if command.command == "set_default_mask", let name = command.name {
+            setImageExplorerParameterValue(datasetID: datasetID, name: "mask", value: .string(name))
+        } else if command.command == "unset_default_mask" {
+            setImageExplorerParameterValue(datasetID: datasetID, name: "mask", value: .string("none"))
+        }
         refreshImageExplorer(datasetID: datasetID)
     }
 
@@ -2438,6 +2650,7 @@ public final class WorkbenchStore: ObservableObject {
         explorerState.activeRegionFilePath = Self.normalizedRegionFilePath(path)
         explorerState.transientCommands = []
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(datasetID: datasetID, name: "region", value: .string(path))
         refreshImageExplorer(datasetID: datasetID)
     }
 
@@ -2454,6 +2667,11 @@ public final class WorkbenchStore: ObservableObject {
         }
         explorerState.transientCommands = []
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(
+            datasetID: datasetID,
+            name: "region",
+            value: .string(explorerState.activeRegionFilePath ?? "none")
+        )
         refreshImageExplorer(datasetID: datasetID)
     }
 
@@ -2508,6 +2726,7 @@ public final class WorkbenchStore: ObservableObject {
         explorerState.activeRegionFilePath = nil
         explorerState.transientCommands = [.clearRegion]
         state.imageExplorers[datasetID] = explorerState
+        setImageExplorerParameterValue(datasetID: datasetID, name: "region", value: .string("none"))
         refreshImageExplorer(datasetID: datasetID)
     }
 
@@ -2592,6 +2811,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func setTableBrowserView(_ view: String, datasetID: String) {
+        let instanceID = state.tabs.first(where: { $0.datasetID == datasetID && tab($0, hosts: "tablebrowser") })?.id
         var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
             datasetID: datasetID,
             selectedView: Self.canonicalTableBrowserView(nil),
@@ -2600,11 +2820,36 @@ public final class WorkbenchStore: ObservableObject {
             snapshot: nil
         )
         browserState.selectedView = Self.canonicalTableBrowserView(view)
+        browserState.profileView = Self.profileTableBrowserView(view) ?? browserState.profileView
+        browserState.startupProfilePending = false
         browserState.focus = "main"
         browserState.commands = []
         browserState.transientCommands = []
         state.tableBrowsers[datasetID] = browserState
+        if let profileView = Self.profileTableBrowserView(view) {
+            setSessionParameterValue(
+                surfaceID: "tablebrowser",
+                instanceID: instanceID,
+                name: "view",
+                value: .string(profileView)
+            )
+        }
         refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func setTableBrowserContentMode(_ contentMode: String, datasetID: String) {
+        guard ["auto", "compact", "detailed"].contains(contentMode) else { return }
+        let instanceID = state.tabs.first(where: { $0.datasetID == datasetID && tab($0, hosts: "tablebrowser") })?.id
+        var browserState = tableBrowserState(datasetID: datasetID)
+        browserState.contentMode = contentMode
+        state.tableBrowsers[datasetID] = browserState
+        setSessionParameterValue(
+            surfaceID: "tablebrowser",
+            instanceID: instanceID,
+            name: "contentmode",
+            value: .string(contentMode),
+            persistImmediately: true
+        )
     }
 
     public func runTableBrowserCommand(_ command: TableBrowserCommand, datasetID: String) {
@@ -2800,7 +3045,10 @@ public final class WorkbenchStore: ObservableObject {
             state.tabs[index].taskID = taskID
             state.tabs[index].title = taskTitle(taskID)
         }
-        loadTaskUISchemaIfNeeded(taskID)
+        loadTaskUISchemaIfNeeded(taskID, instanceID: resolvedTabID)
+        if taskID == "imager", let dataset = state.selectedDataset, dataset.kind == .measurementSet {
+            seedImagerTaskDefaults(for: dataset, instanceID: resolvedTabID, preserveExistingEdits: true)
+        }
         state.taskRun.imagerProgress = imagerProgressSnapshot(
             taskID: taskID,
             runID: state.taskRun.runID,
@@ -2819,65 +3067,277 @@ public final class WorkbenchStore: ObservableObject {
         return tab.taskID ?? ""
     }
 
-    public func loadTaskUISchemaIfNeeded(_ taskID: String? = nil) {
+    public func loadTaskUISchemaIfNeeded(_ taskID: String? = nil, instanceID: String? = nil) {
         let resolvedTaskID = taskID ?? state.activeTaskID
-        guard !resolvedTaskID.isEmpty, state.taskUISchemas[resolvedTaskID] == nil else {
+        guard !resolvedTaskID.isEmpty else {
             return
         }
-        do {
-            let schema = try taskUISchemaClient.loadTaskUISchema(taskID: resolvedTaskID)
-            state.taskUISchemas[resolvedTaskID] = schema
-            seedGenericTaskDefaults(schema)
+        if state.taskUISchemas[resolvedTaskID] == nil {
+            do {
+                state.taskUISchemas[resolvedTaskID] = try taskUISchemaClient.loadTaskUISchema(taskID: resolvedTaskID)
+            } catch {
+                state.lastErrors.append("Load task schema for \(resolvedTaskID): \(error)")
+                return
+            }
+        }
+        loadParameterSessionIfNeeded(resolvedTaskID, instanceID: instanceID)
+        applySelectedDatasetParameterContext(surfaceID: resolvedTaskID, instanceID: instanceID)
+        if let schema = state.taskUISchemas[resolvedTaskID] {
             state.taskRun = TaskRun(
                 state: .idle,
                 progress: 0,
-                logLines: ["Loaded \(schema.displayName) task schema."],
+                logLines: ["Loaded \(schema.displayName) parameter contract."],
                 warnings: [],
                 products: [],
-                requestSummary: genericTaskRequestSummary(taskID: resolvedTaskID),
+                requestSummary: genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID),
                 imagerProgress: imagerProgressSnapshot(taskID: resolvedTaskID, taskState: .idle, progress: 0)
             )
-        } catch {
-            state.lastErrors.append("Load task schema for \(resolvedTaskID): \(error)")
         }
     }
 
-    public func setGenericTaskValue(taskID: String? = nil, argumentID: String, value: String) {
+    public func setGenericTaskValue(
+        taskID: String? = nil,
+        instanceID: String? = nil,
+        argumentID: String,
+        value: String
+    ) {
         let resolvedTaskID = taskID ?? state.activeTaskID
-        var values = state.genericTaskValues[resolvedTaskID] ?? [:]
-        let argument = state.taskUISchemas[resolvedTaskID]?.arguments.first { $0.id == argumentID }
-        values[argumentID] = normalizedGenericTaskValue(value, for: argument)
-        state.genericTaskValues[resolvedTaskID] = values
-        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID)
+        loadParameterSessionIfNeeded(resolvedTaskID, instanceID: instanceID)
+        let sessionKey = parameterSessionKey(surfaceID: resolvedTaskID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey],
+              let concept = session.bundle.concept(for: argumentID)
+        else {
+            state.lastErrors.append("Unknown parameter \(argumentID) for \(resolvedTaskID)")
+            return
+        }
+        let normalized = concept.valueDomain.isPathLike && !Self.isInlineRegionSyntax(value)
+            ? projectRelativePath(value)
+            : value
+        session.overridePatch.unset.remove(argumentID)
+        session.overridePatch.values[argumentID] = concept.valueDomain.value(from: normalized)
+        session.draftText[argumentID] = normalized
+        resolveParameterSession(&session, editedParameters: [argumentID])
+        state.parameterSessions[sessionKey] = session
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID)
     }
 
-    public func setGenericTaskToggle(taskID: String? = nil, argumentID: String, value: Bool) {
+    public func setGenericTaskToggle(
+        taskID: String? = nil,
+        instanceID: String? = nil,
+        argumentID: String,
+        value: Bool
+    ) {
         let resolvedTaskID = taskID ?? state.activeTaskID
-        var toggles = state.genericTaskToggles[resolvedTaskID] ?? [:]
-        toggles[argumentID] = value
-        state.genericTaskToggles[resolvedTaskID] = toggles
-        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID)
+        loadParameterSessionIfNeeded(resolvedTaskID, instanceID: instanceID)
+        let sessionKey = parameterSessionKey(surfaceID: resolvedTaskID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else {
+            state.lastErrors.append("Parameter session for \(resolvedTaskID) is unavailable")
+            return
+        }
+        session.overridePatch.unset.remove(argumentID)
+        session.overridePatch.values[argumentID] = .bool(value)
+        session.draftText.removeValue(forKey: argumentID)
+        resolveParameterSession(&session, editedParameters: [argumentID])
+        state.parameterSessions[sessionKey] = session
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID, instanceID: instanceID)
     }
 
-    public func setGenericTaskConfirmation(taskID: String? = nil, confirmed: Bool) {
-        state.genericTaskConfirmations[taskID ?? state.activeTaskID] = confirmed
+    public func parameterText(surfaceID: String? = nil, instanceID: String? = nil, name: String) -> String {
+        parameterSession(surfaceID: surfaceID ?? state.activeTaskID, instanceID: instanceID)?.text(for: name) ?? ""
+    }
+
+    public func parameterToggle(surfaceID: String? = nil, instanceID: String? = nil, name: String) -> Bool {
+        parameterSession(surfaceID: surfaceID ?? state.activeTaskID, instanceID: instanceID)?.toggle(for: name) ?? false
+    }
+
+    public func parameterOrigin(surfaceID: String? = nil, instanceID: String? = nil, name: String) -> String {
+        parameterSession(surfaceID: surfaceID ?? state.activeTaskID, instanceID: instanceID)?.origin(for: name) ?? "default"
+    }
+
+    public func resetParameter(surfaceID: String? = nil, instanceID: String? = nil, name: String) {
+        let resolvedSurfaceID = surfaceID ?? state.activeTaskID
+        let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        session.overridePatch.values.removeValue(forKey: name)
+        session.overridePatch.unset.insert(name)
+        session.draftText.removeValue(forKey: name)
+        resolveParameterSession(&session, editedParameters: [name])
+        state.parameterSessions[sessionKey] = session
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
+    }
+
+    public func revertParameters(surfaceID: String? = nil, instanceID: String? = nil) {
+        let resolvedSurfaceID = surfaceID ?? state.activeTaskID
+        let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        session.overridePatch = SurfaceParameterPatch()
+        session.draftText = [:]
+        resolveParameterSession(&session)
+        state.parameterSessions[sessionKey] = session
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
+    }
+
+    public func setParameterSaveLast(surfaceID: String? = nil, instanceID: String? = nil, enabled: Bool) {
+        let resolvedSurfaceID = surfaceID ?? state.activeTaskID
+        let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        session.saveLast = enabled
+        state.parameterSessions[sessionKey] = session
+    }
+
+    public func setParameterWorkspace(surfaceID: String? = nil, instanceID: String? = nil, path: String) {
+        let resolvedSurfaceID = surfaceID ?? state.activeTaskID
+        let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        session.workspace = path
+        state.parameterSessions[sessionKey] = session
+    }
+
+    public func applySurfaceParameterProfile(surfaceID: String, datasetID: String, instanceID: String? = nil) {
+        guard parameterSession(surfaceID: surfaceID, instanceID: instanceID) != nil else { return }
+        switch surfaceID {
+        case "msexplore":
+            state.measurementSetPlots[datasetID] = profiledMeasurementSetPlotState(
+                datasetID: datasetID,
+                instanceID: instanceID
+            )
+        case "imexplore":
+            guard let profiled = profiledImageExplorerState(datasetID: datasetID, instanceID: instanceID) else { return }
+            state.imageExplorers[datasetID] = profiled
+            refreshImageExplorer(datasetID: datasetID)
+        case "tablebrowser":
+            guard let profiled = profiledTableBrowserState(datasetID: datasetID, instanceID: instanceID) else { return }
+            state.tableBrowsers[datasetID] = profiled
+            refreshTableBrowser(datasetID: datasetID)
+        default:
+            state.lastErrors.append("Unsupported session parameter surface \(surfaceID)")
+        }
+    }
+
+    public func selectParameterSource(
+        _ source: SurfaceParameterBaseSource,
+        surfaceID: String? = nil,
+        instanceID: String? = nil,
+        profilePath: String? = nil,
+        discardEdits: Bool = false
+    ) {
+        let resolvedSurfaceID = surfaceID ?? state.activeTaskID
+        let sessionKey = parameterSessionKey(surfaceID: resolvedSurfaceID, instanceID: instanceID)
+        if state.parameterSessions[sessionKey]?.snapshot.dirty == true, !discardEdits {
+            state.lastErrors.append(
+                "Replace edited \(resolvedSurfaceID) parameters only after confirming those edits may be discarded."
+            )
+            return
+        }
+        do {
+            let bundle = try surfaceParameterClient.loadBundle(surfaceID: resolvedSurfaceID)
+            let workspace = state.parameterSessions[sessionKey]?.workspace ?? parameterWorkspacePath()
+            let snapshot: SurfaceParameterSnapshot
+            let baseTOML: String?
+            let basePath: String?
+            switch source {
+            case .defaults:
+                snapshot = try surfaceParameterClient.defaults(surfaceID: resolvedSurfaceID)
+                baseTOML = nil
+                basePath = nil
+            case .last, .lastSuccessful:
+                let successful = source == .lastSuccessful
+                guard let loaded = try surfaceParameterClient.last(
+                    surfaceID: resolvedSurfaceID,
+                    workspace: workspace,
+                    successful: successful
+                ) else {
+                    state.lastErrors.append("No \(source.title) profile exists for \(resolvedSurfaceID).")
+                    return
+                }
+                snapshot = loaded
+                baseTOML = loaded.profileTOML
+                basePath = nil
+            case .file:
+                guard let profilePath else {
+                    state.lastErrors.append("A parameter profile path is required.")
+                    return
+                }
+                let profile = try String(contentsOfFile: profilePath, encoding: .utf8)
+                snapshot = try surfaceParameterClient.load(
+                    surfaceID: resolvedSurfaceID,
+                    profileTOML: profile,
+                    sourcePath: profilePath
+                )
+                baseTOML = profile
+                basePath = profilePath
+            }
+            let saveLast = state.parameterSessions[sessionKey]?.saveLast ?? true
+            state.parameterSessions[sessionKey] = SurfaceParameterSession(
+                bundle: bundle,
+                snapshot: snapshot,
+                selectedSource: source,
+                baseProfileTOML: baseTOML,
+                baseProfilePath: basePath,
+                workspace: workspace,
+                saveLast: saveLast
+            )
+            applySelectedDatasetParameterContext(surfaceID: resolvedSurfaceID, instanceID: instanceID)
+            state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedSurfaceID, instanceID: instanceID)
+        } catch {
+            state.lastErrors.append("Load \(source.title) parameters for \(resolvedSurfaceID): \(error)")
+        }
+    }
+
+    public func saveParameterProfile(surfaceID: String? = nil, instanceID: String? = nil, to path: String) {
+        let resolvedSurfaceID = surfaceID ?? state.activeTaskID
+        guard let session = parameterSession(surfaceID: resolvedSurfaceID, instanceID: instanceID) else {
+            state.lastErrors.append("Parameter session for \(resolvedSurfaceID) is unavailable")
+            return
+        }
+        do {
+            let result = try surfaceParameterClient.save(
+                surfaceID: resolvedSurfaceID,
+                values: session.values,
+                destinationPath: path
+            )
+            state.taskRun.logLines.append("Saved parameter profile: \(result.path)")
+        } catch {
+            state.lastErrors.append("Save parameters for \(resolvedSurfaceID): \(error)")
+        }
+    }
+
+    public func setGenericTaskConfirmation(
+        taskID: String? = nil,
+        instanceID: String? = nil,
+        confirmed: Bool
+    ) {
+        let surfaceID = taskID ?? state.activeTaskID
+        state.genericTaskConfirmations[
+            parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        ] = confirmed
     }
 
     public func taskExecutionMatrixRow(taskID: String? = nil) -> TaskExecutionMatrixRow? {
         state.taskExecutionMatrixRows.first { $0.taskID == (taskID ?? state.activeTaskID) }
     }
 
-    public func taskRequiresConfirmation(taskID: String? = nil) -> Bool {
-        guard let row = taskExecutionMatrixRow(taskID: taskID) else {
-            return false
-        }
-        return row.mutationClass != "read_only"
-            && row.mutationClass != "launcher"
-            && row.mutationClass != "not_applicable"
+    public func taskRunSafety(
+        taskID: String? = nil,
+        instanceID: String? = nil
+    ) -> SurfaceRunSafety? {
+        let surfaceID = taskID ?? state.activeTaskID
+        loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
+        guard let session = parameterSession(surfaceID: surfaceID, instanceID: instanceID),
+              !session.hasErrors
+        else { return nil }
+        return try? surfaceParameterClient.runSafety(surfaceID: surfaceID, values: session.values)
     }
 
-    public func taskHasConfirmation(taskID: String? = nil) -> Bool {
-        state.genericTaskConfirmations[taskID ?? state.activeTaskID] ?? false
+    public func taskRequiresConfirmation(taskID: String? = nil, instanceID: String? = nil) -> Bool {
+        taskRunSafety(taskID: taskID, instanceID: instanceID)?.requiresInteractiveConfirmation ?? false
+    }
+
+    public func taskHasConfirmation(taskID: String? = nil, instanceID: String? = nil) -> Bool {
+        let surfaceID = taskID ?? state.activeTaskID
+        return state.genericTaskConfirmations[
+            parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        ] ?? false
     }
 
     public func runTask() {
@@ -2912,36 +3372,73 @@ public final class WorkbenchStore: ObservableObject {
 
     private func runGenericTask() {
         let taskID = state.activeTaskID
+        let instanceID = parameterInstanceID(surfaceID: taskID)
         guard let task = state.taskCatalog.first(where: { $0.id == taskID }) else {
             state.lastErrors.append("Unknown task \(taskID)")
             return
         }
-        if state.taskUISchemas[taskID] == nil {
-            loadTaskUISchemaIfNeeded(taskID)
+        if parameterSession(surfaceID: taskID, instanceID: instanceID) == nil {
+            loadParameterSessionIfNeeded(taskID, instanceID: instanceID)
+            applySelectedDatasetParameterContext(surfaceID: taskID, instanceID: instanceID)
         }
-        guard let schema = state.taskUISchemas[taskID] else {
-            state.lastErrors.append("Task schema for \(taskID) is not available")
+        guard let parameterSession = parameterSession(surfaceID: taskID, instanceID: instanceID) else {
+            state.lastErrors.append("Parameter session for \(taskID) is unavailable")
             return
         }
-        if taskRequiresConfirmation(taskID: taskID) && !taskHasConfirmation(taskID: taskID) {
+        if parameterSession.hasErrors {
+            let messages = parameterSession.snapshot.diagnostics
+                .filter { $0.level == "error" }
+                .map(\.message)
             state.taskRun = TaskRun(
                 state: .failed,
                 progress: 1.0,
                 logLines: [],
                 warnings: [],
                 products: [],
-                diagnostics: ["Confirm this task may modify data or create products before running it."],
-                requestSummary: genericTaskRequestSummary(taskID: taskID),
+                diagnostics: messages,
+                requestSummary: genericTaskRequestSummary(taskID: taskID, instanceID: instanceID),
+                imagerProgress: imagerProgressSnapshot(taskID: taskID, taskState: .failed, progress: 1.0)
+            )
+            state.lastErrors.append("Resolve parameter errors before running \(task.displayName).")
+            return
+        }
+        let runSafety: SurfaceRunSafety
+        do {
+            runSafety = try surfaceParameterClient.runSafety(
+                surfaceID: taskID,
+                values: parameterSession.values
+            )
+        } catch {
+            state.lastErrors.append("Evaluate run safety for \(taskID): \(error)")
+            return
+        }
+        if runSafety.requiresInteractiveConfirmation
+            && !taskHasConfirmation(taskID: taskID, instanceID: instanceID) {
+            state.taskRun = TaskRun(
+                state: .failed,
+                progress: 1.0,
+                logLines: [],
+                warnings: [],
+                products: [],
+                diagnostics: ["Confirm catalog-declared run risks before running this task."],
+                requestSummary: genericTaskRequestSummary(taskID: taskID, instanceID: instanceID),
                 imagerProgress: imagerProgressSnapshot(taskID: taskID, taskState: .failed, progress: 1.0)
             )
             state.lastErrors.append("Confirm \(task.displayName) before running.")
             return
         }
-
-        let values = state.genericTaskValues[taskID] ?? [:]
-        let toggles = state.genericTaskToggles[taskID] ?? [:]
+        let providerInvocation: SurfaceProviderInvocation
+        do {
+            providerInvocation = try surfaceParameterClient.providerInvocation(
+                surfaceID: taskID,
+                values: parameterSession.values
+            )
+        } catch {
+            state.lastErrors.append("Project provider invocation for \(taskID): \(error)")
+            return
+        }
         let runID = nextJobID(prefix: taskID)
-        let summary = genericTaskRequestSummary(taskID: taskID)
+        let summary = genericTaskRequestSummary(taskID: taskID, instanceID: instanceID)
         let tabID = state.activeTabID.isEmpty ? "tab-task-\(taskID)" : state.activeTabID
         startJob(WorkbenchJob(
             id: runID,
@@ -2950,7 +3447,7 @@ public final class WorkbenchStore: ObservableObject {
             owner: .user,
             status: .running,
             progress: 0.05,
-            title: schema.displayName,
+            title: task.displayName,
             detail: summary,
             logLines: ["Starting \(task.binaryName).", summary],
             lastEvent: "started"
@@ -2967,14 +3464,34 @@ public final class WorkbenchStore: ObservableObject {
             imagerProgress: imagerProgressSnapshot(taskID: taskID, runID: runID, taskState: .running, progress: 0.05)
         )
 
+        let parameterAttempt = TaskParameterAttempt(
+            surfaceID: taskID,
+            workspace: parameterSession.workspace,
+            values: parameterSession.values,
+            saveLast: parameterSession.saveLast
+        )
+        taskParameterAttempts[runID] = parameterAttempt
+        if parameterAttempt.saveLast {
+            do {
+                _ = try surfaceParameterClient.writeLast(
+                    surfaceID: taskID,
+                    workspace: parameterAttempt.workspace,
+                    values: parameterAttempt.values,
+                    successful: false
+                )
+            } catch {
+                state.taskRun.warnings.append("Automatic Last save failed: \(error)")
+            }
+        }
+
         do {
             let execution = try genericTaskClient.startTask(
                 request: GenericTaskRequest(
                     runID: runID,
                     task: task,
-                    schema: schema,
-                    values: values,
-                    toggles: toggles,
+                    providerInvocation: providerInvocation,
+                    parameterBundle: parameterSession.bundle,
+                    parameterValues: parameterSession.values,
                     workingDirectoryPath: state.project.rootPath
                 )
             ) { [weak self] event in
@@ -2984,6 +3501,7 @@ public final class WorkbenchStore: ObservableObject {
             }
             activeTaskExecutions[runID] = execution
         } catch {
+            taskParameterAttempts.removeValue(forKey: runID)
             state.taskRun = TaskRun(
                 state: .failed,
                 progress: 1.0,
@@ -3141,6 +3659,7 @@ public final class WorkbenchStore: ObservableObject {
 
         switch job.kind {
         case .measurementSetPlot:
+            measurementSetParameterAttempts.removeValue(forKey: jobID)
             if let datasetID = datasetIDForExplorerTabID(job.tabID),
                var plotState = state.measurementSetPlots[datasetID] {
                 plotState.status = .idle
@@ -3150,6 +3669,7 @@ public final class WorkbenchStore: ObservableObject {
         case .genericTask:
             activeTaskExecutions[jobID]?.cancel()
             activeTaskExecutions.removeValue(forKey: jobID)
+            taskParameterAttempts.removeValue(forKey: jobID)
             if state.taskRun.runID == jobID {
                 let progressSnapshot = terminalImagerProgressSnapshot(
                     taskID: state.activeTaskID,
@@ -3256,24 +3776,145 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func tableBrowserState(datasetID: String) -> TableBrowserSessionState {
-        state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+        if let existing = state.tableBrowsers[datasetID] {
+            return existing
+        }
+        if let dataset = state.project.datasets.first(where: { $0.id == datasetID }) {
+            let instanceID = state.tabs.first(where: { $0.datasetID == datasetID && tab($0, hosts: "tablebrowser") })?.id
+            applyParameterContext(
+                surfaceID: "tablebrowser",
+                instanceID: instanceID,
+                textValues: ["table": dataset.path],
+                preserveOverrides: true
+            )
+            if let profiled = profiledTableBrowserState(datasetID: datasetID, instanceID: instanceID) {
+                return profiled
+            }
+        }
+        return TableBrowserSessionState(
             datasetID: datasetID,
-            selectedView: Self.canonicalTableBrowserView(nil),
-            status: .idle,
-            lastError: nil,
+            selectedView: "overview",
+            status: .failed,
+            lastError: "The tablebrowser parameter contract could not be resolved.",
             snapshot: nil
         )
     }
 
     private static func canonicalTableBrowserView(_ view: String?) -> String {
         switch view?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "summary", "overview":
+            "overview"
+        case "columns":
+            "columns"
         case "keywords":
             "keywords"
         case "subtables":
             "subtables"
-        default:
+        case "rows", "cells":
             "cells"
+        default:
+            "overview"
         }
+    }
+
+    private static func profileTableBrowserView(_ view: String) -> String? {
+        switch canonicalTableBrowserView(view) {
+        case "overview": "summary"
+        case "columns": "columns"
+        case "keywords": "keywords"
+        case "cells": "rows"
+        default: nil
+        }
+    }
+
+    private func applyTableBrowserStartupProfile(
+        datasetPath: String,
+        browserState: inout TableBrowserSessionState
+    ) throws -> TableBrowserSnapshot {
+        browserState.selectedView = "overview"
+        browserState.focus = "main"
+        browserState.commands = [
+            .configure(parameters: try Self.tableBrowserParameters(from: browserState))
+        ]
+        browserState.transientCommands = []
+        return try tableBrowserClient.buildSnapshot(
+            request: browserState.snapshotRequest(datasetPath: datasetPath)
+        )
+    }
+
+    private static func tableBrowserParameters(
+        from browserState: TableBrowserSessionState
+    ) throws -> TableBrowserParameters {
+        let contentMode = browserState.contentMode
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard ["auto", "compact", "detailed"].contains(contentMode) else {
+            throw NSError(
+                domain: "CasarsMac.TableBrowserProfile",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Unsupported tablebrowser contentmode \(browserState.contentMode.debugDescription)."
+                ]
+            )
+        }
+        let linkedTable = browserState.linkedTable.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TableBrowserParameters(
+            view: canonicalTableBrowserView(browserState.profileView),
+            rowStart: max(0, browserState.cellWindowRowStart),
+            rowCount: max(1, browserState.cellWindowRowLimit),
+            linkedTable: linkedTable.isEmpty || linkedTable.caseInsensitiveCompare("none") == .orderedSame
+                ? nil
+                : linkedTable,
+            bookmark: try parseTableBrowserBookmark(browserState.bookmark),
+            contentMode: contentMode
+        )
+    }
+
+    private static func parseTableBrowserBookmark(_ rawValue: String) throws -> TableBrowserBookmark? {
+        let bookmark = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if bookmark.isEmpty || bookmark.caseInsensitiveCompare("none") == .orderedSame {
+            return nil
+        }
+        let parts = bookmark.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        if parts.count >= 3, parts[0] == "cell", let row = Int(parts[1]) {
+            let column = parts.dropFirst(2).joined(separator: ":")
+            if row >= 0, !column.isEmpty {
+                return .cell(row: row, column: column)
+            }
+        } else if parts.count >= 2, parts[0] == "table-keyword" {
+            let path = tableBrowserBookmarkPath(parts.dropFirst().joined(separator: ":"))
+            if !path.isEmpty {
+                return .tableKeyword(path: path)
+            }
+        } else if parts.count >= 3, parts[0] == "column-keyword" {
+            let column = parts[1]
+            let path = tableBrowserBookmarkPath(parts.dropFirst(2).joined(separator: ":"))
+            if !column.isEmpty, !path.isEmpty {
+                return .columnKeyword(column: column, path: path)
+            }
+        } else if parts.count >= 2, parts[0] == "subtable" {
+            let name = parts.dropFirst().joined(separator: ":")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                return .subtable(name: name)
+            }
+        }
+        throw NSError(
+            domain: "CasarsMac.TableBrowserProfile",
+            code: 2,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Invalid tablebrowser bookmark \(bookmark.debugDescription)."
+            ]
+        )
+    }
+
+    private static func tableBrowserBookmarkPath(_ value: String) -> [String] {
+        value
+            .split(whereSeparator: { $0 == "." || $0 == "/" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     @discardableResult
@@ -3294,177 +3935,455 @@ public final class WorkbenchStore: ObservableObject {
         return false
     }
 
-    private func seedGenericTaskDefaults(_ schema: TaskUISchema) {
-        var values = state.genericTaskValues[schema.commandID] ?? [:]
-        var toggles = state.genericTaskToggles[schema.commandID] ?? [:]
-        for argument in schema.arguments where !argument.hiddenInTUI {
-            switch argument.parser.kind {
-            case "toggle":
-                if toggles[argument.id] == nil {
-                    toggles[argument.id] = argument.defaultToggleValue(values: values)
-                }
-            case "option", "positional":
-                if values[argument.id] == nil {
-                    if let defaultValue = argument.default {
-                        values[argument.id] = defaultValue
-                    } else if argumentLooksLikeOutput(argument) {
-                        values[argument.id] = defaultTaskOutputPath(
-                            taskID: schema.commandID,
-                            argument: argument
-                        )
-                    } else if argument.valueKind == "path",
-                              let dataset = state.selectedDataset,
-                              argumentLooksLikeInputDataset(argument),
-                              selectedDataset(dataset, matches: argument) {
-                        values[argument.id] = normalizedGenericTaskValue(dataset.path, for: argument)
-                    } else if argument.id == "imagename" {
-                        values[argument.id] = defaultTaskOutputPath(
-                            taskID: schema.commandID,
-                            argument: argument
-                        )
-                    } else if argument.id == "spw",
-                              let spectralWindow = state.selectedDataset?.spectralWindows.first {
-                        values[argument.id] = spectralWindowSelectorValue(spectralWindow)
-                    } else if argument.id == "field",
-                              let field = state.selectedDataset?.fields.first {
-                        values[argument.id] = selectorIDValue(field) ?? field
-                    } else if argument.id == "phasecenter_field",
-                              let field = state.selectedDataset?.fields.first {
-                        values[argument.id] = selectorIDValue(field) ?? field
-                    } else if argument.id == "scan",
-                              let scan = state.selectedDataset?.scans.first {
-                        values[argument.id] = selectorIDValue(scan) ?? scan
-                    } else if argument.id == "antenna",
-                              let antenna = state.selectedDataset?.antennas.first {
-                        values[argument.id] = antenna
-                    } else if argument.id == "correlation",
-                              let correlation = state.selectedDataset?.correlations.first {
-                        values[argument.id] = correlation
-                    } else if argument.id == "datacolumn",
-                              let dataColumn = state.selectedDataset?.dataColumns.first {
-                        values[argument.id] = dataColumn
-                    }
-                }
-            default:
-                break
-            }
+    private func parameterWorkspacePath() -> String {
+        let root = state.project.rootPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if state.hasProject, !root.isEmpty {
+            return root
         }
-        state.genericTaskValues[schema.commandID] = values
-        state.genericTaskToggles[schema.commandID] = toggles
+        return FileManager.default.currentDirectoryPath
     }
 
-    private func seedImagerTaskDefaults(for dataset: DatasetSummary, preserveExistingEdits: Bool) {
-        loadTaskUISchemaIfNeeded("imager")
-        var values = state.genericTaskValues["imager"] ?? [:]
-        var toggles = state.genericTaskToggles["imager"] ?? [:]
-
-        func setValue(_ argumentID: String, _ value: String?) {
-            guard let value else { return }
-            if preserveExistingEdits,
-               let existing = values[argumentID],
-               !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return
-            }
-            let argument = state.taskUISchemas["imager"]?.arguments.first { $0.id == argumentID }
-            values[argumentID] = normalizedGenericTaskValue(value, for: argument)
+    private func parameterInstanceID(surfaceID: String, requested: String? = nil) -> String {
+        if let requested, !requested.isEmpty {
+            return requested
         }
-
-        func setToggle(_ argumentID: String, _ value: Bool) {
-            if preserveExistingEdits, toggles[argumentID] != nil {
-                return
-            }
-            toggles[argumentID] = value
+        if let activeTab = state.tabs.first(where: { $0.id == state.activeTabID }),
+           tab(activeTab, hosts: surfaceID) {
+            return activeTab.id
         }
+        if let matchingTab = state.tabs.first(where: { tab($0, hosts: surfaceID) }) {
+            return matchingTab.id
+        }
+        return "surface-\(surfaceID)"
+    }
 
-        setValue("ms", dataset.path)
-        setValue("imagename", defaultImagerOutputPrefix(for: dataset))
+    private func tab(_ tab: WorkbenchTab, hosts surfaceID: String) -> Bool {
+        if tab.kind == .task {
+            return tab.taskID == surfaceID
+        }
+        guard let datasetID = tab.datasetID,
+              let dataset = state.project.datasets.first(where: { $0.id == datasetID })
+        else { return false }
+        switch surfaceID {
+        case "msexplore":
+            return tab.kind == .datasetExplorer && dataset.kind == .measurementSet
+        case "imexplore":
+            return tab.kind == .datasetExplorer && dataset.kind == .imageCube
+        case "tablebrowser":
+            return tab.kind == .tableBrowser
+                || (tab.kind == .datasetExplorer
+                    && (dataset.kind == .table || dataset.kind == .calibrationTable))
+        default:
+            return false
+        }
+    }
+
+    private func parameterSessionKey(surfaceID: String, instanceID: String? = nil) -> String {
+        "\(parameterInstanceID(surfaceID: surfaceID, requested: instanceID))::\(surfaceID)"
+    }
+
+    private func parameterInstanceID(surfaceID: String, datasetID: String) -> String {
+        if let tab = state.tabs.first(where: { $0.datasetID == datasetID && tab($0, hosts: surfaceID) }) {
+            return tab.id
+        }
+        if surfaceID == "tablebrowser" {
+            return tableBrowserTabID(for: datasetID)
+        }
+        return state.project.datasets.first(where: { $0.id == datasetID })?.explorerTabID
+            ?? "tab-explorer-\(datasetID)"
+    }
+
+    public func parameterSession(
+        surfaceID: String,
+        instanceID: String? = nil
+    ) -> SurfaceParameterSession? {
+        state.parameterSessions[parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)]
+    }
+
+    private func loadParameterSessionIfNeeded(_ surfaceID: String, instanceID: String? = nil) {
+        let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        guard !surfaceID.isEmpty, state.parameterSessions[sessionKey] == nil else { return }
+        do {
+            let bundle = try surfaceParameterClient.loadBundle(surfaceID: surfaceID)
+            let workspace = parameterWorkspacePath()
+            do {
+                if let snapshot = try surfaceParameterClient.last(
+                    surfaceID: surfaceID,
+                    workspace: workspace,
+                    successful: false
+                ) {
+                    state.parameterSessions[sessionKey] = SurfaceParameterSession(
+                        bundle: bundle,
+                        snapshot: snapshot,
+                        selectedSource: .last,
+                        baseProfileTOML: snapshot.profileTOML,
+                        baseProfilePath: nil,
+                        workspace: workspace
+                    )
+                    return
+                }
+            } catch {
+                state.lastErrors.append(
+                    "Last parameters for \(surfaceID) could not be loaded; using Defaults: \(error)"
+                )
+            }
+            let snapshot = try surfaceParameterClient.defaults(surfaceID: surfaceID)
+            state.parameterSessions[sessionKey] = SurfaceParameterSession(
+                bundle: bundle,
+                snapshot: snapshot,
+                selectedSource: .defaults,
+                baseProfileTOML: nil,
+                baseProfilePath: nil,
+                workspace: workspace
+            )
+        } catch {
+            state.lastErrors.append("Load parameter contract for \(surfaceID): \(error)")
+        }
+    }
+
+    @discardableResult
+    private func resolveParameterSession(
+        _ session: inout SurfaceParameterSession,
+        editedParameters: Set<String> = []
+    ) -> Bool {
+        do {
+            session.snapshot = try surfaceParameterClient.resolve(
+                surfaceID: session.bundle.surface.id,
+                baseSource: session.selectedSource,
+                profileTOML: session.baseProfileTOML,
+                profilePath: session.baseProfilePath,
+                context: session.contextPatch,
+                override: session.overridePatch
+            )
+            session.draftText = [:]
+            return true
+        } catch {
+            let unresolvedParameters = Set(session.draftText.keys)
+                .union(editedParameters)
+                .sorted()
+            let subject = unresolvedParameters.isEmpty
+                ? "parameter draft"
+                : "parameter draft for \(unresolvedParameters.joined(separator: ", "))"
+            let message = "Could not resolve \(subject): \(error)"
+            session.snapshot.diagnostics.removeAll { $0.code == "draft_resolution_failed" }
+            session.snapshot.diagnostics.append(SurfaceParameterDiagnostic(
+                level: "error",
+                code: "draft_resolution_failed",
+                message: message,
+                parameter: unresolvedParameters.count == 1 ? unresolvedParameters[0] : nil
+            ))
+            session.snapshot.dirty = true
+            state.lastErrors.append("Resolve parameters for \(session.bundle.surface.id): \(error)")
+            return false
+        }
+    }
+
+    private func applyParameterContext(
+        surfaceID: String,
+        instanceID: String? = nil,
+        textValues: [String: String],
+        boolValues: [String: Bool] = [:],
+        preserveOverrides: Bool
+    ) {
+        loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
+        let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        var editedParameters = Set<String>()
+        for (name, text) in textValues {
+            guard let concept = session.bundle.concept(for: name) else { continue }
+            if preserveOverrides, session.overridePatch.values[name] != nil { continue }
+            session.contextPatch.unset.remove(name)
+            session.contextPatch.values[name] = concept.valueDomain.value(from: text)
+            editedParameters.insert(name)
+            if !preserveOverrides {
+                session.overridePatch.values.removeValue(forKey: name)
+                session.overridePatch.unset.remove(name)
+            }
+        }
+        for (name, value) in boolValues {
+            guard session.bundle.concept(for: name) != nil else { continue }
+            if preserveOverrides, session.overridePatch.values[name] != nil { continue }
+            session.contextPatch.unset.remove(name)
+            session.contextPatch.values[name] = .bool(value)
+            editedParameters.insert(name)
+            if !preserveOverrides {
+                session.overridePatch.values.removeValue(forKey: name)
+                session.overridePatch.unset.remove(name)
+            }
+        }
+        resolveParameterSession(&session, editedParameters: editedParameters)
+        state.parameterSessions[sessionKey] = session
+    }
+
+    private func applySelectedDatasetParameterContext(surfaceID: String, instanceID: String? = nil) {
+        let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        guard let dataset = state.selectedDataset,
+              let session = state.parameterSessions[sessionKey]
+        else { return }
+        var suggestions: [String: String] = [:]
+        for binding in session.bundle.surface.bindings {
+            guard session.snapshot.states[binding.name]?.origin == "default",
+                  let concept = session.bundle.concept(for: binding.name)
+            else { continue }
+            if binding.contextRole == "region_reference", dataset.kind == .region {
+                suggestions[binding.name] = projectRelativePath(dataset.path)
+                continue
+            }
+            if concept.semanticRole == "input_data",
+               parameterResource(concept.valueDomain.resourceKind, accepts: dataset) {
+                suggestions[binding.name] = projectRelativePath(dataset.path)
+                continue
+            }
+            if concept.semanticRole == "output_data",
+               session.snapshot.states[binding.name]?.value == nil {
+                suggestions[binding.name] = suggestedOutputPath(
+                    taskID: surfaceID,
+                    parameter: binding.name,
+                    resourceKind: concept.valueDomain.resourceKind,
+                    dataset: dataset
+                )
+            }
+        }
+        guard !suggestions.isEmpty else { return }
+        applyParameterContext(
+            surfaceID: surfaceID,
+            instanceID: instanceID,
+            textValues: suggestions,
+            preserveOverrides: true
+        )
+    }
+
+    private func parameterResource(_ resourceKind: String?, accepts dataset: DatasetSummary) -> Bool {
+        switch resourceKind {
+        case "measurement_set": return dataset.kind == .measurementSet
+        case "image": return dataset.kind == .imageCube
+        case "table": return dataset.kind == .table || dataset.kind == .calibrationTable
+        case "calibration_table": return dataset.kind == .calibrationTable
+        case "file": return dataset.kind == .runProduct
+        case "any", nil: return false
+        default: return false
+        }
+    }
+
+    private func suggestedOutputPath(
+        taskID: String,
+        parameter: String,
+        resourceKind: String?,
+        dataset: DatasetSummary
+    ) -> String {
+        let stem = [".image", ".ms", ".MS", ".fits", ".fit", ".fts"].reduce(dataset.name) {
+            $0.hasSuffix($1) ? String($0.dropLast($1.count)) : $0
+        }
+        switch resourceKind {
+        case "measurement_set": return "\(stem)-\(taskID).ms"
+        case "image": return "\(stem)-\(taskID).image"
+        case "file" where parameter == "fitsimage": return "\(stem).fits"
+        default: return "\(stem)-\(taskID)"
+        }
+    }
+
+    private func sessionParameterText(_ surfaceID: String, _ name: String, instanceID: String? = nil) -> String? {
+        parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.snapshot.states[name]?.value?.displayText
+    }
+
+    private func sessionParameterInt(_ surfaceID: String, _ name: String, instanceID: String? = nil) -> Int? {
+        guard let value = parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.snapshot.states[name]?.value else { return nil }
+        switch value {
+        case .integer(let value): return Int(value)
+        case .float(let value): return Int(value)
+        case .string(let value): return Int(value)
+        default: return nil
+        }
+    }
+
+    private func sessionParameterDouble(_ surfaceID: String, _ name: String, instanceID: String? = nil) -> Double? {
+        guard let value = parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.snapshot.states[name]?.value else { return nil }
+        switch value {
+        case .integer(let value): return Double(value)
+        case .float(let value): return value
+        case .string(let value): return Double(value)
+        default: return nil
+        }
+    }
+
+    private func sessionParameterBool(_ surfaceID: String, _ name: String, instanceID: String? = nil) -> Bool? {
+        parameterSession(surfaceID: surfaceID, instanceID: instanceID)?.snapshot.states[name]?.value?.boolValue
+    }
+
+    private func setSessionParameterValue(
+        surfaceID: String,
+        instanceID: String? = nil,
+        name: String,
+        value: SurfaceParameterValue,
+        persistImmediately: Bool = false
+    ) {
+        loadParameterSessionIfNeeded(surfaceID, instanceID: instanceID)
+        let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        session.overridePatch.unset.remove(name)
+        session.overridePatch.values[name] = value
+        resolveParameterSession(&session, editedParameters: [name])
+        state.parameterSessions[sessionKey] = session
+        if persistImmediately {
+            acceptSessionParameters(surfaceID, instanceID: instanceID)
+        }
+    }
+
+    private func setImageExplorerParameterValue(
+        datasetID: String,
+        name: String,
+        value: SurfaceParameterValue,
+        persistImmediately: Bool = false
+    ) {
+        setSessionParameterValue(
+            surfaceID: "imexplore",
+            instanceID: parameterInstanceID(surfaceID: "imexplore", datasetID: datasetID),
+            name: name,
+            value: value,
+            persistImmediately: persistImmediately
+        )
+    }
+
+    private func acceptSessionParameters(_ surfaceID: String, instanceID: String? = nil) {
+        let sessionKey = parameterSessionKey(surfaceID: surfaceID, instanceID: instanceID)
+        guard let session = state.parameterSessions[sessionKey],
+              session.snapshot.surfaceKind == "session",
+              !session.hasErrors
+        else { return }
+        nextSessionParameterSequence &+= 1
+        acceptedSessionParameterValues[sessionKey] = session.values
+        acceptedSessionParameterSequence[sessionKey] = nextSessionParameterSequence
+        scheduleSessionLast(sessionKey: sessionKey)
+    }
+
+    private func scheduleSessionLast(sessionKey: String) {
+        sessionLastWrites[sessionKey]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.persistSessionLastIfChanged(sessionKey: sessionKey)
+            self?.sessionLastWrites.removeValue(forKey: sessionKey)
+        }
+        sessionLastWrites[sessionKey] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func persistSessionLastIfChanged(sessionKey: String) {
+        guard let session = state.parameterSessions[sessionKey] else { return }
+        let surfaceID = session.snapshot.surfaceID
+        let destination = SessionLastDestination(surfaceID: surfaceID, workspace: session.workspace)
+        guard session.snapshot.surfaceKind == "session",
+              session.saveLast,
+              let acceptedValues = acceptedSessionParameterValues[sessionKey],
+              let acceptedSequence = acceptedSessionParameterSequence[sessionKey],
+              acceptedSequence >= (sessionLastSequence[destination] ?? 0)
+        else { return }
+        if sessionLastValues[destination] == acceptedValues {
+            sessionLastSequence[destination] = acceptedSequence
+            return
+        }
+        do {
+            _ = try surfaceParameterClient.writeLast(
+                surfaceID: surfaceID,
+                workspace: session.workspace,
+                values: acceptedValues,
+                successful: false
+            )
+            sessionLastValues[destination] = acceptedValues
+            sessionLastSequence[destination] = acceptedSequence
+        } catch {
+            state.lastErrors.append("Automatic Last save failed for \(surfaceID): \(error)")
+        }
+    }
+
+    private func seedImagerTaskDefaults(
+        for dataset: DatasetSummary,
+        instanceID: String? = nil,
+        preserveExistingEdits: Bool
+    ) {
+        loadTaskUISchemaIfNeeded("imager", instanceID: instanceID)
         let defaultField = defaultImagerField(for: dataset)
         let defaultSpectralWindow = defaultImagerSpectralWindow(for: dataset)
         let defaultCorrelation = defaultImagerCorrelation(for: dataset)
-        setValue("field", selectorToken(defaultField) ?? defaultField)
-        values["phasecenter_field"] = ""
-        setValue("spw", selectorToken(defaultSpectralWindow) ?? defaultSpectralWindow)
-        setValue("datacolumn", dataset.dataColumns.first ?? "DATA")
-        setValue("polarization", selectorToken(defaultCorrelation) ?? defaultCorrelation)
-        setValue("imsize", isTWHyaTutorialDataset(dataset) ? "250" : "512")
-        setValue("cell_arcsec", isTWHyaTutorialDataset(dataset) ? "0.1" : "1.0")
-        setValue("specmode", "mfs")
-        setValue("deconvolver", "hogbom")
-        setValue("weighting", isTWHyaTutorialDataset(dataset) ? "briggs" : "natural")
-        setValue("gridder", "standard")
-        setValue("robust", "0.5")
-        setValue("niter", "0")
-        setValue("threshold_jy", "0.0")
-        setToggle("dirty_only", true)
-        state.genericTaskValues["imager"] = values
-        state.genericTaskToggles["imager"] = toggles
-        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: "imager")
+        var contextValues = [
+            "vis": projectRelativePath(dataset.path),
+            "imagename": projectRelativePath(defaultImagerOutputPrefix(for: dataset)),
+            "datacolumn": dataset.dataColumns.first ?? "DATA",
+        ]
+        if isTWHyaTutorialDataset(dataset) {
+            contextValues["imsize"] = "250"
+            contextValues["cell"] = "0.1arcsec"
+            contextValues["weighting"] = "briggs"
+        }
+        if let defaultField {
+            contextValues["field"] = selectorToken(defaultField) ?? defaultField
+        }
+        if let defaultSpectralWindow {
+            contextValues["spw"] = selectorToken(defaultSpectralWindow) ?? defaultSpectralWindow
+        }
+        if let defaultCorrelation {
+            contextValues["polarization"] = selectorToken(defaultCorrelation) ?? defaultCorrelation
+        }
+        applyParameterContext(
+            surfaceID: "imager",
+            instanceID: instanceID,
+            textValues: contextValues,
+            boolValues: ["dirty_only": true],
+            preserveOverrides: preserveExistingEdits
+        )
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: "imager", instanceID: instanceID)
     }
 
-    private func seedDirectMeasurementSetImagerDefaults(for dataset: DatasetSummary) {
-        seedImagerTaskDefaults(for: dataset, preserveExistingEdits: false)
-        var values = state.genericTaskValues["imager"] ?? [:]
-        var toggles = state.genericTaskToggles["imager"] ?? [:]
+    private func seedDirectMeasurementSetImagerDefaults(for dataset: DatasetSummary, instanceID: String? = nil) {
+        seedImagerTaskDefaults(for: dataset, instanceID: instanceID, preserveExistingEdits: false)
         let phaseCenterField = dataset.fields.count > 1 ? dataset.fields.first.flatMap(selectorToken) : nil
-
-        values["field"] = ""
-        values["phasecenter_field"] = phaseCenterField ?? ""
-        values["specmode"] = "cube"
-        values["gridder"] = "mosaic"
-        values["interpolation"] = "nearest"
-        values["channel_start"] = "0"
-        values["channel_count"] = "512"
-        values["imsize"] = "1024"
-        values["cell_arcsec"] = "1.0"
-        values["weighting"] = "briggs"
-        values["robust"] = "0.5"
-        values["niter"] = "2048"
-        values["threshold_jy"] = "0.0"
-        toggles["dirty_only"] = false
-        toggles["perchanweightdensity"] = true
-        toggles["write_pb"] = true
-        toggles["pbcor"] = true
-
-        state.genericTaskValues["imager"] = values
-        state.genericTaskToggles["imager"] = toggles
-        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: "imager")
+        applyParameterContext(
+            surfaceID: "imager",
+            instanceID: instanceID,
+            textValues: [
+                "field": "",
+                "phasecenter_field": phaseCenterField ?? "",
+                "specmode": "cube",
+                "gridder": "mosaic",
+                "interpolation": "nearest",
+                "channel_start": "0",
+                "channel_count": "512",
+                "imsize": "1024",
+                "cell": "1.0arcsec",
+                "weighting": "briggs",
+                "robust": "0.5",
+                "niter": "2048",
+                "threshold": "0.0Jy",
+            ],
+            boolValues: [
+                "dirty_only": false,
+                "perchanweightdensity": true,
+                "write_pb": true,
+                "pbcor": true,
+            ],
+            preserveOverrides: false
+        )
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: "imager", instanceID: instanceID)
     }
 
-    private func genericTaskRequestSummary(taskID: String) -> String {
-        guard let schema = state.taskUISchemas[taskID] else {
+    private func genericTaskRequestSummary(taskID: String, instanceID: String? = nil) -> String {
+        guard let session = parameterSession(surfaceID: taskID, instanceID: instanceID) else {
             return "task=\(taskID)"
         }
-        let values = state.genericTaskValues[taskID] ?? [:]
-        let toggles = state.genericTaskToggles[taskID] ?? [:]
-        return schema.arguments
-            .filter { !$0.hiddenInTUI }
-            .compactMap { argument -> String? in
-                if argument.parser.kind == "toggle" {
-                    return "\(argument.id)=\(toggles[argument.id] ?? false)"
+        return session.bundle.surface.bindings
+            .filter { !$0.projections.presentation.hidden }
+            .sorted { $0.order < $1.order }
+            .compactMap { binding -> String? in
+                guard let parameterState = session.snapshot.states[binding.name], parameterState.active else {
+                    return nil
                 }
-                guard let value = values[argument.id], !value.isEmpty else {
-                    return argument.required ? "\(argument.id)=<required>" : nil
+                guard let value = parameterState.value else {
+                    return parameterState.required ? "\(binding.name)=<required>" : nil
                 }
-                return "\(argument.id)=\(genericTaskDisplayValue(value, for: argument))"
+                let display = session.bundle.concept(for: binding.name)?.valueDomain.isPathLike == true
+                    ? projectRelativePath(value.displayText)
+                    : value.displayText
+                return "\(binding.name)=\(display)"
             }
             .joined(separator: ", ")
-    }
-
-    private func genericTaskDisplayValue(_ value: String, for argument: TaskUIArgument) -> String {
-        guard argument.valueKind == "path" || argument.parameterType?.contains("path") == true else {
-            return value
-        }
-        return projectRelativePath(value)
-    }
-
-    private func normalizedGenericTaskValue(_ value: String, for argument: TaskUIArgument?) -> String {
-        guard argument?.valueKind == "path" || argument?.parameterType?.contains("path") == true else {
-            return value
-        }
-        guard !Self.isInlineRegionSyntax(value) else {
-            return value
-        }
-        return projectRelativePath(value)
     }
 
     private func projectRelativePath(_ path: String) -> String {
@@ -3486,58 +4405,6 @@ public final class WorkbenchStore: ObservableObject {
         return path
     }
 
-    private func argumentLooksLikeInputDataset(_ argument: TaskUIArgument) -> Bool {
-        if argumentLooksLikeOutput(argument) {
-            return false
-        }
-        if argument.parameterType == "fits_path" {
-            return true
-        }
-        return ["ms", "vis", "image", "image_path", "imagename", "table", "infile", "fitsimage", "region"].contains(argument.id)
-            || argument.parameterType == "region_path_or_box"
-            || argument.label.localizedCaseInsensitiveContains("input")
-            || argument.label.localizedCaseInsensitiveContains("measurementset")
-    }
-
-    private func argumentLooksLikeOutput(_ argument: TaskUIArgument) -> Bool {
-        if argument.parameterType?.hasPrefix("output_") == true {
-            return true
-        }
-        return ["outfile", "output", "outputvis", "outputms", "fitsimage"].contains(argument.id)
-            && !["fits_path"].contains(argument.parameterType ?? "")
-    }
-
-    private func selectedDataset(_ dataset: DatasetSummary, matches argument: TaskUIArgument) -> Bool {
-        if argument.parameterType == "image_path" || ["image", "imagename"].contains(argument.id) {
-            return dataset.kind == .imageCube
-        }
-        if argument.parameterType == "fits_path" {
-            return isFitsDataset(dataset)
-        }
-        if argument.parameterType == "region_path_or_box" || argument.id == "region" {
-            return dataset.kind == .region
-        }
-        if argument.parameterType == "measurement_set_path" || ["ms", "vis"].contains(argument.id) {
-            return dataset.kind == .measurementSet
-        }
-        if ["table_path", "calibration_table_path"].contains(argument.parameterType ?? "") {
-            return dataset.kind == .table || dataset.kind == .calibrationTable
-        }
-        return dataset.kind != .region
-    }
-
-    private func isFitsDataset(_ dataset: DatasetSummary) -> Bool {
-        guard dataset.kind == .runProduct else {
-            return false
-        }
-        switch URL(fileURLWithPath: dataset.path).pathExtension.lowercased() {
-        case "fits", "fit", "fts":
-            return true
-        default:
-            return false
-        }
-    }
-
     private func applyTutorialPackParameters(
         _ parameters: [String: TutorialPackValue],
         taskID: String,
@@ -3554,7 +4421,7 @@ public final class WorkbenchStore: ObservableObject {
             guard var textValue = value.stringValue else {
                 continue
             }
-            if shouldResolveTutorialPath(argumentID: argumentID, argument: argumentsByID[argumentID], value: textValue) {
+            if shouldResolveTutorialPath(taskID: taskID, argumentID: argumentID, value: textValue) {
                 textValue = URL(fileURLWithPath: packRoot, isDirectory: true)
                     .appendingPathComponent(textValue)
                     .standardizedFileURL
@@ -3564,7 +4431,7 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func shouldResolveTutorialPath(argumentID: String, argument: TaskUIArgument?, value: String) -> Bool {
+    private func shouldResolveTutorialPath(taskID: String, argumentID: String, value: String) -> Bool {
         guard !value.isEmpty,
               !value.hasPrefix("/"),
               !value.hasPrefix("~"),
@@ -3574,17 +4441,13 @@ public final class WorkbenchStore: ObservableObject {
         else {
             return false
         }
-        if argument?.valueKind == "path" || argument?.parameterType?.contains("path") == true {
-            return true
+        guard let domain = parameterSession(
+            surfaceID: taskID,
+            instanceID: state.activeTabID
+        )?.bundle.concept(for: argumentID)?.valueDomain else {
+            return false
         }
-        return [
-            "image_path",
-            "imagename",
-            "fitsimage",
-            "outfile",
-            "input",
-            "output"
-        ].contains(argumentID)
+        return domain.isPathLike
     }
 
     private static func isInlineRegionSyntax(_ value: String) -> Bool {
@@ -3593,37 +4456,6 @@ public final class WorkbenchStore: ObservableObject {
             || trimmed.hasPrefix("poly [[")
             || trimmed.hasPrefix("box:")
             || trimmed.hasPrefix("pixelbox(")
-    }
-
-    private func defaultTaskOutputPath(taskID: String, argument: TaskUIArgument? = nil) -> String {
-        let datasetStem = defaultTaskOutputStem(taskID: taskID)
-        let basename: String
-        switch argument?.parameterType {
-        case "output_fits_path":
-            basename = "\(datasetStem).fits"
-        case "output_measurement_set_path":
-            basename = "\(datasetStem)-\(taskID).ms"
-        case "output_image_path":
-            basename = "\(datasetStem)-\(taskID).image"
-        default:
-            basename = "\(datasetStem)-\(taskID)"
-        }
-        if !state.project.rootPath.isEmpty {
-            return basename
-        }
-        return FileManager.default.temporaryDirectory
-            .appendingPathComponent("casa-rs-runs", isDirectory: true)
-            .appendingPathComponent(basename)
-            .path
-    }
-
-    private func defaultTaskOutputStem(taskID: String) -> String {
-        let name = state.selectedDataset?.name ?? taskID
-        let knownSuffixes = [".image", ".ms", ".MS", ".fits", ".fit", ".fts"]
-        let trimmed = knownSuffixes.reduce(name) { partial, suffix in
-            partial.hasSuffix(suffix) ? String(partial.dropLast(suffix.count)) : partial
-        }
-        return trimmed.replacingOccurrences(of: " ", with: "-")
     }
 
     public func taskOutputSaveDirectory() -> String {
@@ -3638,101 +4470,41 @@ public final class WorkbenchStore: ObservableObject {
         return "\(sanitizedPathComponent(state.activeTaskID))-result.\(extensionName)"
     }
 
-    public func taskRequestSaveDirectory() -> String {
+    public func parameterProfileDirectory() -> String {
         if !state.project.rootPath.isEmpty {
             return state.project.rootPath
         }
         return FileManager.default.currentDirectoryPath
     }
 
-    public func taskRequestSaveFilename() -> String {
-        "\(sanitizedPathComponent(state.activeTaskID))-family-request.json"
+    public func parameterProfileFilename() -> String {
+        "\(sanitizedPathComponent(state.activeTaskID)).toml"
     }
 
-    public func hasSaveableActiveGenericTaskRequest() -> Bool {
-        activeGenericTaskRequest() != nil
+    public func hasSaveableActiveParameterProfile() -> Bool {
+        guard let session = parameterSession(
+            surfaceID: state.activeTaskID,
+            instanceID: parameterInstanceID(surfaceID: state.activeTaskID)
+        ) else { return false }
+        return !session.hasErrors
     }
 
-    public func saveActiveGenericTaskRequest(to path: String) {
-        guard let request = activeGenericTaskRequest() else {
-            state.lastErrors.append("No task request is available to save.")
-            return
-        }
-        do {
-            let data = try ProcessGenericTaskClient.savedJSONRequestData(for: request)
-            let url = URL(fileURLWithPath: path)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: url, options: .atomic)
-            setGenericTaskValue(taskID: request.task.id, argumentID: "request_json", value: url.path)
-            state.taskRun.logLines.append("Saved request: \(url.path)")
-            state.history.append(ProcessingHistoryEvent(
-                id: "hist-save-task-request-\(state.history.count + 1)",
-                timestamp: currentTimestamp(),
-                title: "Saved \(request.task.id) request",
-                reason: "User saved the current \(request.task.id) task request.",
-                affectedPaths: [url.path],
-                approval: "user"
-            ))
-        } catch {
-            state.lastErrors.append("Save \(state.activeTaskID) request: \(error)")
-        }
+    public func saveActiveParameterProfile(to path: String) {
+        saveParameterProfile(
+            surfaceID: state.activeTaskID,
+            instanceID: parameterInstanceID(surfaceID: state.activeTaskID),
+            to: path
+        )
     }
 
-    public func loadGenericTaskRequest(from path: String, tabID: String? = nil) {
-        let url = URL(fileURLWithPath: path)
-        do {
-            let data = try Data(contentsOf: url)
-            let object = try JSONSerialization.jsonObject(with: data)
-            guard let envelope = object as? [String: Any],
-                  envelope["kind"] as? String == "family",
-                  let request = envelope["request"] as? [String: Any]
-            else {
-                state.lastErrors.append("Open task request: expected a canonical simobserve family envelope.")
-                return
-            }
-            selectTask("simobserve", tabID: tabID)
-            setGenericTaskValue(taskID: "simobserve", argumentID: "request_kind", value: "family")
-            setGenericTaskValue(taskID: "simobserve", argumentID: "request_json", value: url.path)
-            if let sourceModel = request["source_model"] {
-                let sourceData = try JSONSerialization.data(withJSONObject: sourceModel, options: [.sortedKeys])
-                setGenericTaskValue(
-                    taskID: "simobserve",
-                    argumentID: "source_model",
-                    value: String(decoding: sourceData, as: UTF8.self)
-                )
-            }
-            for key in [
-                "telescope",
-                "array_config",
-                "band",
-                "imaging_mode",
-                "worker_policy",
-                "output_ms"
-            ] {
-                if let value = request[key] as? String {
-                    setGenericTaskValue(taskID: "simobserve", argumentID: key, value: value)
-                }
-            }
-            for key in [
-                "target_ms_size_gib",
-                "polarizations",
-                "ms_channels",
-                "image_channels",
-                "pointing_count",
-                "row_workers",
-                "channel_workers"
-            ] {
-                if let value = request[key] {
-                    setGenericTaskValue(taskID: "simobserve", argumentID: key, value: "\(value)")
-                }
-            }
-            if let value = request["measure_actual_size"] as? Bool {
-                setGenericTaskValue(taskID: "simobserve", argumentID: "measure_actual_size", value: value ? "true" : "false")
-            }
-            state.taskRun.logLines.append("Opened request: \(url.path)")
-        } catch {
-            state.lastErrors.append("Open task request \(path): \(error)")
-        }
+    public func loadActiveParameterProfile(from path: String, discardEdits: Bool = false) {
+        selectParameterSource(
+            .file,
+            surfaceID: state.activeTaskID,
+            instanceID: parameterInstanceID(surfaceID: state.activeTaskID),
+            profilePath: path,
+            discardEdits: discardEdits
+        )
     }
 
     public func hasSaveableActiveTaskOutput() -> Bool {
@@ -3781,30 +4553,6 @@ public final class WorkbenchStore: ObservableObject {
         return (try? JSONSerialization.jsonObject(with: data)) != nil
     }
 
-    private func activeGenericTaskRequest() -> GenericTaskRequest? {
-        let taskID = state.activeTaskID
-        let requestKind = state.genericTaskValues[taskID]?["request_kind"]
-            ?? state.taskUISchemas[taskID]?.arguments.first { $0.id == "request_kind" }?.default
-        guard let task = state.taskCatalog.first(where: { $0.id == taskID }),
-              let schema = state.taskUISchemas[taskID],
-              requestKind == "family"
-        else {
-            return nil
-        }
-        return GenericTaskRequest(
-            runID: "save-\(taskID)",
-            task: task,
-            schema: schema,
-            values: state.genericTaskValues[taskID] ?? [:],
-            toggles: state.genericTaskToggles[taskID] ?? [:],
-            workingDirectoryPath: state.project.rootPath
-        )
-    }
-
-    private func spectralWindowSelectorValue(_ label: String) -> String {
-        selectorIDValue(label) ?? label
-    }
-
     private func selectorIDValue(_ label: String) -> String? {
         let prefix = label.split(separator: ":", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines)
         return prefix?.split(separator: " ").last.map(String.init)
@@ -3838,6 +4586,19 @@ public final class WorkbenchStore: ObservableObject {
         )
         state.jobs[jobID] = job
         state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+        if let parameterAttempt = measurementSetParameterAttempts.removeValue(forKey: jobID),
+           parameterAttempt.saveLast {
+            do {
+                _ = try surfaceParameterClient.writeLast(
+                    surfaceID: parameterAttempt.surfaceID,
+                    workspace: parameterAttempt.workspace,
+                    values: parameterAttempt.values,
+                    successful: true
+                )
+            } catch {
+                state.lastErrors.append("Automatic msexplore Last Successful save failed: \(error)")
+            }
+        }
     }
 
     private func failMeasurementSetPlotJob(
@@ -3865,35 +4626,340 @@ public final class WorkbenchStore: ObservableObject {
         job.logLines.append(error)
         state.jobs[jobID] = job
         state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+        measurementSetParameterAttempts.removeValue(forKey: jobID)
         state.lastErrors.append("Render plot for \(datasetName): \(error)")
     }
 
     private func openExplorer(for dataset: DatasetSummary) {
+        let tab = WorkbenchTab(
+            id: dataset.explorerTabID,
+            title: dataset.explorerTabTitle,
+            kind: .datasetExplorer,
+            datasetID: dataset.id
+        )
+        openTab(tab)
         if dataset.kind == .measurementSet && !state.isDemoProject {
+            applyParameterContext(
+                surfaceID: "msexplore",
+                instanceID: tab.id,
+                textValues: [
+                    "vis": dataset.path,
+                    "datacolumn": dataset.dataColumns.first ?? "DATA",
+                ],
+                preserveOverrides: true
+            )
             _ = measurementSetPlotState(for: dataset.id)
         } else if dataset.kind == .imageCube && !state.isDemoProject {
+            applyParameterContext(
+                surfaceID: "imexplore",
+                instanceID: tab.id,
+                textValues: ["image": dataset.path],
+                preserveOverrides: true
+            )
             refreshImageExplorer(datasetID: dataset.id)
         } else if (dataset.kind == .table || dataset.kind == .calibrationTable) && !state.isDemoProject {
             refreshTableBrowser(datasetID: dataset.id)
         }
-        openTab(
-            WorkbenchTab(
-                id: dataset.explorerTabID,
-                title: dataset.explorerTabTitle,
-                kind: .datasetExplorer,
-                datasetID: dataset.id
-            )
-        )
     }
 
     private func imageExplorerState(datasetID: String) -> ImageExplorerSessionState {
-        state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
+        if let existing = state.imageExplorers[datasetID] {
+            return existing
+        }
+        if let dataset = state.project.datasets.first(where: { $0.id == datasetID }) {
+            let instanceID = parameterInstanceID(surfaceID: "imexplore", datasetID: datasetID)
+            applyParameterContext(
+                surfaceID: "imexplore",
+                instanceID: instanceID,
+                textValues: ["image": dataset.path],
+                preserveOverrides: true
+            )
+            if let profiled = profiledImageExplorerState(datasetID: datasetID, instanceID: instanceID) {
+                return profiled
+            }
+        }
+        return ImageExplorerSessionState(
             datasetID: datasetID,
-            selectedView: "plane",
+            selectedView: "",
+            status: .failed,
+            lastError: "The imexplore parameter contract could not be resolved.",
+            snapshot: nil
+        )
+    }
+
+    private func profiledImageExplorerState(
+        datasetID: String,
+        instanceID: String? = nil
+    ) -> ImageExplorerSessionState? {
+        guard let blc = sessionParameterText("imexplore", "blc", instanceID: instanceID),
+              let trc = sessionParameterText("imexplore", "trc", instanceID: instanceID),
+              let inc = sessionParameterText("imexplore", "inc", instanceID: instanceID),
+              let stretch = sessionParameterText("imexplore", "stretch", instanceID: instanceID),
+              let autoscale = sessionParameterText("imexplore", "autoscale", instanceID: instanceID),
+              let clipLow = sessionParameterText("imexplore", "clip_low", instanceID: instanceID),
+              let clipHigh = sessionParameterText("imexplore", "clip_high", instanceID: instanceID),
+              let selectedView = sessionParameterText("imexplore", "view", instanceID: instanceID),
+              let contentMode = sessionParameterText("imexplore", "contentmode", instanceID: instanceID),
+              let colorMapName = sessionParameterText("imexplore", "colormap", instanceID: instanceID),
+              let profileAxis = sessionParameterText("imexplore", "profileaxis", instanceID: instanceID),
+              let movieAxis = sessionParameterText("imexplore", "movieaxis", instanceID: instanceID),
+              let framesPerSecond = sessionParameterDouble("imexplore", "fps", instanceID: instanceID),
+              let movieLoop = sessionParameterBool("imexplore", "loop", instanceID: instanceID),
+              let region = sessionParameterText("imexplore", "region", instanceID: instanceID),
+              let mask = sessionParameterText("imexplore", "mask", instanceID: instanceID)
+        else {
+            state.lastErrors.append("The resolved imexplore contract is missing a presentation parameter.")
+            return nil
+        }
+        let parameters = ImageExplorerParameters(
+            blc: blc,
+            trc: trc,
+            inc: inc,
+            stretch: stretch,
+            autoscale: autoscale,
+            clipLow: clipLow,
+            clipHigh: clipHigh
+        )
+        let colorMap: ImageExplorerColorMap?
+        switch colorMapName {
+        case "gray", "grayscale": colorMap = .grayscale
+        default: colorMap = ImageExplorerColorMap(rawValue: colorMapName)
+        }
+        guard let colorMap else {
+            state.lastErrors.append("Unsupported imexplore colormap \(colorMapName).")
+            return nil
+        }
+        let regionReference: ImageExplorerRegionReference?
+        do {
+            regionReference = try Self.parseImageExplorerRegionReference(region)
+        } catch {
+            state.lastErrors.append("Invalid imexplore region reference: \(error)")
+            return nil
+        }
+        var commands: [ImageExplorerCommand] = []
+        if let regionReference {
+            commands.append(.setSelectionReference(regionReference))
+        }
+        if mask != "none", !mask.isEmpty {
+            commands.append(.setDefaultMask(name: mask))
+        }
+        return ImageExplorerSessionState(
+            datasetID: datasetID,
+            selectedView: selectedView,
+            planeContentMode: contentMode,
+            planeColorMap: colorMap,
+            parameters: parameters,
+            selectedProfileAxis: Int(profileAxis.trimmingCharacters(in: .whitespacesAndNewlines)),
+            selectedProfileAxisSelector: Self.normalizedImageExplorerAxisSelector(profileAxis),
+            movieAxis: Int(movieAxis.trimmingCharacters(in: .whitespacesAndNewlines)),
+            movieAxisSelector: Self.normalizedImageExplorerAxisSelector(movieAxis),
+            movieFramesPerSecond: Self.clampedMovieFramesPerSecond(framesPerSecond),
+            movieLoop: movieLoop,
+            profileCommands: commands,
+            activeRegionFilePath: regionReference.flatMap { reference in
+                if case .file(let path) = reference { return path }
+                return nil
+            },
             status: .idle,
             lastError: nil,
             snapshot: nil
         )
+    }
+
+    private static func normalizedImageExplorerAxisSelector(_ selector: String) -> String? {
+        let selector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selector.isEmpty || selector.caseInsensitiveCompare("auto") == .orderedSame
+            ? nil
+            : selector
+    }
+
+    private static func resolveImageExplorerAxisSelector(
+        _ selector: String?,
+        parameter: String,
+        snapshot: ImageExplorerSnapshot
+    ) throws -> Int? {
+        guard let selector = normalizedImageExplorerAxisSelector(selector ?? "") else {
+            return nil
+        }
+        let selected = snapshot.nonDisplayAxes?.first { axis in
+            if let index = Int(selector), axis.axis == index {
+                return true
+            }
+            return axis.label.caseInsensitiveCompare(selector) == .orderedSame
+        }
+        guard let selected else {
+            let available = snapshot.nonDisplayAxes?
+                .map { "\($0.label) (\($0.axis))" }
+                .joined(separator: ", ") ?? "none"
+            throw NSError(
+                domain: "CasarsMac.ImageExplorerProfile",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "imexplore \(parameter)=\(selector.debugDescription) does not identify a non-display axis; available axes: \(available)"
+                ]
+            )
+        }
+        return selected.axis
+    }
+
+    private static func parseImageExplorerRegionReference(
+        _ rawValue: String
+    ) throws -> ImageExplorerRegionReference? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty || value.caseInsensitiveCompare("none") == .orderedSame {
+            return nil
+        }
+        if value.hasPrefix("file:") {
+            let path = String(value.dropFirst("file:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else {
+                throw NSError(
+                    domain: "CasarsMac.ImageExplorerProfile",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "region file reference cannot be empty"]
+                )
+            }
+            return .file(path: path)
+        }
+        if value.hasPrefix("definition:") {
+            let name = String(value.dropFirst("definition:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else {
+                throw NSError(
+                    domain: "CasarsMac.ImageExplorerProfile",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "saved region definition name cannot be empty"]
+                )
+            }
+            return .definition(name: name)
+        }
+        if value.contains(where: { "[](){}&|=<>!*+;".contains($0) }) {
+            return .expression(expression: value)
+        }
+        if value.contains("/")
+            || value.contains("\\")
+            || value.hasSuffix(".crtf")
+            || value.hasSuffix(".reg")
+            || value.hasSuffix(".region")
+        {
+            return .file(path: value)
+        }
+        return .definition(name: value)
+    }
+
+    private func profiledTableBrowserState(
+        datasetID: String,
+        instanceID: String? = nil
+    ) -> TableBrowserSessionState? {
+        guard let profileView = sessionParameterText("tablebrowser", "view", instanceID: instanceID),
+              let bookmark = sessionParameterText("tablebrowser", "bookmark", instanceID: instanceID),
+              let rowStart = sessionParameterInt("tablebrowser", "rowstart", instanceID: instanceID),
+              let rowLimit = sessionParameterInt("tablebrowser", "nrow", instanceID: instanceID),
+              let linkedTable = sessionParameterText("tablebrowser", "linkedtable", instanceID: instanceID),
+              let contentMode = sessionParameterText("tablebrowser", "contentmode", instanceID: instanceID)
+        else {
+            state.lastErrors.append("The resolved tablebrowser contract is missing a startup parameter.")
+            return nil
+        }
+        return TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: "overview",
+            profileView: profileView,
+            bookmark: bookmark,
+            linkedTable: linkedTable,
+            contentMode: contentMode,
+            startupProfilePending: true,
+            cellWindowRowStart: rowStart,
+            cellWindowRowLimit: max(1, rowLimit),
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+    }
+
+    private func profiledMeasurementSetPlotState(
+        datasetID: String,
+        instanceID: String? = nil
+    ) -> MeasurementSetExplorerPlotState {
+        func optionalText(_ name: String) -> String? {
+            guard let value = sessionParameterText("msexplore", name, instanceID: instanceID),
+                  !value.isEmpty,
+                  value != "none"
+            else { return nil }
+            return value
+        }
+        let presetText = optionalText("preset")
+        let preset = presetText.flatMap(Self.measurementSetPreset(profileValue:)) ?? .uvCoverage
+        let colorBy = Self.measurementSetColorAxis(
+            profileValue: sessionParameterText("msexplore", "color_by", instanceID: instanceID)
+        ) ?? .none
+        let iterationAxis = Self.measurementSetIterationAxis(profileValue: optionalText("iteraxis"))
+        let spectralSelection = optionalText("spw")
+        let spectralParts = spectralSelection?.split(separator: ":", maxSplits: 1).map(String.init) ?? []
+        return MeasurementSetExplorerPlotState(
+            datasetID: datasetID,
+            preset: preset,
+            selectedField: optionalText("field"),
+            selectedSpectralWindow: spectralParts.first,
+            selectedChannelSelection: spectralParts.count == 2 ? spectralParts[1] : nil,
+            selectedTimerange: optionalText("timerange"),
+            selectedUVRange: optionalText("uvrange"),
+            selectedAntenna: optionalText("antenna"),
+            selectedScan: optionalText("scan"),
+            selectedCorrelation: optionalText("correlation"),
+            selectedArray: optionalText("array"),
+            selectedObservation: optionalText("observation"),
+            selectedIntent: optionalText("intent"),
+            selectedFeed: optionalText("feed"),
+            selectedMSSelect: optionalText("msselect"),
+            dataColumn: sessionParameterText("msexplore", "datacolumn", instanceID: instanceID) ?? "",
+            colorBy: colorBy,
+            avgChannel: sessionParameterInt("msexplore", "avgchannel", instanceID: instanceID).flatMap(UInt64.init),
+            avgTime: sessionParameterDouble("msexplore", "avgtime", instanceID: instanceID),
+            avgScan: sessionParameterBool("msexplore", "avgscan", instanceID: instanceID) ?? false,
+            avgField: sessionParameterBool("msexplore", "avgfield", instanceID: instanceID) ?? false,
+            avgBaseline: sessionParameterBool("msexplore", "avgbaseline", instanceID: instanceID) ?? false,
+            avgAntenna: sessionParameterBool("msexplore", "avgantenna", instanceID: instanceID) ?? false,
+            avgSPW: sessionParameterBool("msexplore", "avgspw", instanceID: instanceID) ?? false,
+            scalarAverage: sessionParameterBool("msexplore", "scalar", instanceID: instanceID) ?? false,
+            iterationAxis: iterationAxis,
+            maxPlotPoints: sessionParameterInt("msexplore", "max_points", instanceID: instanceID)
+                .flatMap(UInt64.init) ?? 0,
+            status: .idle,
+            lastError: nil,
+            result: nil
+        )
+    }
+
+    private static func measurementSetPreset(profileValue: String) -> MeasurementSetExplorerPlotPreset? {
+        let parts = profileValue.split(separator: "_")
+        let swiftValue = parts.enumerated().map { index, part in
+            index == 0 ? String(part) : part.prefix(1).uppercased() + part.dropFirst()
+        }.joined()
+        return MeasurementSetExplorerPlotPreset(rawValue: swiftValue)
+    }
+
+    private static func measurementSetColorAxis(profileValue: String?) -> MeasurementSetPlotColorAxis? {
+        switch profileValue {
+        case "none": MeasurementSetPlotColorAxis.none
+        case "field": .field
+        case "scan": .scan
+        case "spw": .spectralWindow
+        case "baseline": .baseline
+        case "correlation": .correlation
+        default: nil
+        }
+    }
+
+    private static func measurementSetIterationAxis(profileValue: String?) -> MeasurementSetPlotIterationAxis? {
+        switch profileValue {
+        case "field": .field
+        case "scan": .scan
+        case "spw": .spectralWindow
+        case "correlation": .correlation
+        default: nil
+        }
     }
 
     private static func clampedMovieFramesPerSecond(_ framesPerSecond: Double) -> Double {
@@ -3934,7 +5000,17 @@ public final class WorkbenchStore: ObservableObject {
                 result: nil
             )
         }
-        let plotState = MeasurementSetExplorerPlotState.defaultState(for: dataset)
+        let instanceID = parameterInstanceID(surfaceID: "msexplore", datasetID: datasetID)
+        applyParameterContext(
+            surfaceID: "msexplore",
+            instanceID: instanceID,
+            textValues: [
+                "vis": dataset.path,
+                "datacolumn": dataset.dataColumns.first ?? "DATA",
+            ],
+            preserveOverrides: true
+        )
+        let plotState = profiledMeasurementSetPlotState(datasetID: datasetID, instanceID: instanceID)
         state.measurementSetPlots[datasetID] = plotState
         return plotState
     }
@@ -4127,6 +5203,7 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         activeTaskExecutions.removeValue(forKey: runID)
+        let parameterAttempt = taskParameterAttempts.removeValue(forKey: runID)
         if var job = state.jobs[runID] {
             if case .cancelled = event {
                 job.progress = min(1, max(0, job.progress))
@@ -4178,7 +5255,7 @@ public final class WorkbenchStore: ObservableObject {
                         )
                     } else {
                         let genericProducts = genericTaskProducts(from: result)
-                        let outputPaths = ([result.requestJSONPath] + genericProducts.map(\.path)).compactMap { $0 }
+                        let outputPaths = genericProducts.map(\.path)
                         state.taskRun = TaskRun(
                             runID: runID,
                             state: .succeeded,
@@ -4201,7 +5278,7 @@ public final class WorkbenchStore: ObservableObject {
                 } else {
                     let products = appendProducedDatasets(from: genericTaskProducts(from: result), runID: runID)
                     recordGenericRunProductGroup(runID: runID, taskID: result.taskID, products: products)
-                    affectedPaths = ([result.requestJSONPath] + products.map(\.path)).compactMap { $0 }
+                    affectedPaths = products.map(\.path)
                 }
                 state.history.append(ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
@@ -4211,6 +5288,18 @@ public final class WorkbenchStore: ObservableObject {
                     affectedPaths: affectedPaths,
                     approval: "user"
                 ))
+                if let parameterAttempt, parameterAttempt.saveLast {
+                    do {
+                        _ = try surfaceParameterClient.writeLast(
+                            surfaceID: parameterAttempt.surfaceID,
+                            workspace: parameterAttempt.workspace,
+                            values: parameterAttempt.values,
+                            successful: true
+                        )
+                    } catch {
+                        state.taskRun.warnings.append("Automatic Last Successful save failed: \(error)")
+                    }
+                }
             case .failed(let failure):
                 job.status = .failed
                 job.error = failure.message
@@ -4519,6 +5608,63 @@ public final class WorkbenchStore: ObservableObject {
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+        syncMeasurementSetParameterSession(plotState, datasetID: datasetID)
+    }
+
+    private func syncMeasurementSetParameterSession(
+        _ plotState: MeasurementSetExplorerPlotState,
+        datasetID: String
+    ) {
+        let instanceID = parameterInstanceID(surfaceID: "msexplore", datasetID: datasetID)
+        loadParameterSessionIfNeeded("msexplore", instanceID: instanceID)
+        let sessionKey = parameterSessionKey(surfaceID: "msexplore", instanceID: instanceID)
+        guard var session = state.parameterSessions[sessionKey] else { return }
+        let optional: (String?) -> SurfaceParameterValue = { .string($0 ?? "none") }
+        let presetValue = Self.snakeCase(plotState.preset.rawValue)
+        let values: [String: SurfaceParameterValue] = [
+            "preset": .string(presetValue),
+            "field": optional(plotState.selectedField),
+            "spw": optional(spectralWindowSelectorToken(plotState)),
+            "timerange": optional(plotState.selectedTimerange),
+            "uvrange": optional(plotState.selectedUVRange),
+            "antenna": optional(plotState.selectedAntenna),
+            "scan": optional(plotState.selectedScan),
+            "correlation": optional(plotState.selectedCorrelation),
+            "array": optional(plotState.selectedArray),
+            "observation": optional(plotState.selectedObservation),
+            "intent": optional(plotState.selectedIntent),
+            "feed": optional(plotState.selectedFeed),
+            "msselect": optional(plotState.selectedMSSelect),
+            "datacolumn": .string(plotState.dataColumn),
+            "color_by": .string(plotState.colorBy.protocolValue),
+            "avgchannel": plotState.avgChannel.map { .integer(Int64($0)) } ?? .string("none"),
+            "avgtime": plotState.avgTime.map(SurfaceParameterValue.float) ?? .string("none"),
+            "avgscan": .bool(plotState.avgScan),
+            "avgfield": .bool(plotState.avgField),
+            "avgbaseline": .bool(plotState.avgBaseline),
+            "avgantenna": .bool(plotState.avgAntenna),
+            "avgspw": .bool(plotState.avgSPW),
+            "scalar": .bool(plotState.scalarAverage),
+            "iteraxis": .string(plotState.iterationAxis?.protocolValue ?? "none"),
+            "max_points": .integer(Int64(plotState.maxPlotPoints)),
+        ]
+        for (name, value) in values where session.bundle.concept(for: name) != nil {
+            session.overridePatch.unset.remove(name)
+            session.overridePatch.values[name] = value
+        }
+        resolveParameterSession(&session)
+        state.parameterSessions[sessionKey] = session
+    }
+
+    private static func snakeCase(_ value: String) -> String {
+        value.reduce(into: "") { result, character in
+            if character.isUppercase {
+                if !result.isEmpty { result.append("_") }
+                result.append(contentsOf: character.lowercased())
+            } else {
+                result.append(character)
+            }
+        }
     }
 
     private func selectorToken(_ value: String?) -> String? {

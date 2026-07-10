@@ -6,10 +6,7 @@ use std::path::PathBuf;
 use std::process;
 
 use casa_ms::selection::MsSelection;
-use casa_ms::ui_schema::{
-    UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
-    logging_argument_schemas,
-};
+use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{MsTransformRequest, TransformDataColumn, mstransform, parse_numeric_id_selector};
 use schemars::schema_for;
 use serde_json::json;
@@ -211,171 +208,24 @@ fn usage() -> String {
 }
 
 fn command_schema(program_name: &str) -> UiCommandSchema {
-    let mut schema = UiCommandSchema {
-        schema_version: 1,
-        command_id: "mstransform".to_string(),
-        invocation_name: program_name.to_string(),
-        display_name: "MSTransform".to_string(),
-        category: "MeasurementSet".to_string(),
-        summary: "Materialize a selected MeasurementSet into a new output MS.".to_string(),
-        usage: usage(),
-        arguments: vec![
-            option_argument(OptionConfig {
-                id: "ms",
-                label: "Input MS",
-                order: 0,
-                flags: &["--ms", "--vis"],
-                metavar: "MS",
-                value_kind: UiValueKind::Path,
-                choices: &[],
-                default: None,
-                required: true,
-                help: "Input MeasurementSet path.",
-                group: "Input",
-            }),
-            option_argument(OptionConfig {
-                id: "out",
-                label: "Output MS",
-                order: 1,
-                flags: &["--out", "--outputvis"],
-                metavar: "MS",
-                value_kind: UiValueKind::Path,
-                choices: &[],
-                default: None,
-                required: true,
-                help: "Output MeasurementSet path to create.",
-                group: "Output",
-            }),
-            option_argument(OptionConfig {
-                id: "spw",
-                label: "Spectral Window",
-                order: 2,
-                flags: &["--spw"],
-                metavar: "SPW[:CHANNELS]",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "CASA-style spectral-window and channel selector.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "width",
-                label: "Channel Width",
-                order: 3,
-                flags: &["--width"],
-                metavar: "N",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: Some("1"),
-                required: false,
-                help: "Average this many adjacent selected channels into each output channel, matching CASA split width.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "field",
-                label: "Field",
-                order: 4,
-                flags: &["--field"],
-                metavar: "IDS",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Comma-separated numeric field ids.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "scan",
-                label: "Scan",
-                order: 5,
-                flags: &["--scan"],
-                metavar: "IDS",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Comma-separated numeric scan ids.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "antenna",
-                label: "Antenna",
-                order: 6,
-                flags: &["--antenna"],
-                metavar: "IDS",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "Comma-separated numeric antenna ids.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "timerange",
-                label: "Time Range",
-                order: 7,
-                flags: &["--timerange"],
-                metavar: "START~END",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "MJD-second time range.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "msselect",
-                label: "MS Select",
-                order: 8,
-                flags: &["--msselect"],
-                metavar: "TAQL",
-                value_kind: UiValueKind::String,
-                choices: &[],
-                default: None,
-                required: false,
-                help: "TAQL row-selection expression.",
-                group: "Selection",
-            }),
-            option_argument(OptionConfig {
-                id: "datacolumn",
-                label: "Data Column",
-                order: 9,
-                flags: &["--datacolumn"],
-                metavar: "COLUMN",
-                value_kind: UiValueKind::Choice,
-                choices: &["DATA", "CORRECTED_DATA"],
-                default: Some("DATA"),
-                required: false,
-                help: "Input visibility column copied to output DATA.",
-                group: "Data",
-            }),
-            toggle_argument(ToggleConfig {
-                id: "keepflags",
-                label: "Keep Fully Flagged Rows",
-                order: 10,
-                true_flags: &["--keepflags"],
-                false_flags: &["--no-keepflags"],
-                default: Some("true"),
-                help: "Preserve rows that are fully flagged in the selected output.",
-                group: "Data",
-            }),
-            action_argument("help", "Help", 100, &["-h", "--help"], UiActionKind::Help),
-            action_argument(
-                "ui_schema",
-                "UI Schema",
-                101,
-                &["--ui-schema"],
-                UiActionKind::UiSchema,
-            ),
-        ],
-        managed_output: None,
-    };
-    schema.arguments.extend(logging_argument_schemas(900));
+    let bundle = casa_provider_contracts::builtin_surface_bundle("mstransform")
+        .expect("built-in mstransform parameter surface must remain valid");
+    let mut schema: UiCommandSchema =
+        serde_json::from_value(casa_provider_contracts::project_ui_schema(&bundle))
+            .expect("canonical mstransform UI projection must match UiCommandSchema");
+    schema.invocation_name = program_name.to_string();
+    schema.usage = format!("{program_name} [parameters]");
     schema
 }
-
 fn schema_bundle(program_name: &str) -> serde_json::Value {
+    let parameter_surfaces = ["mstransform", "split"]
+        .into_iter()
+        .map(|surface| {
+            casa_provider_contracts::builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                panic!("built-in MS transform parameter surface {surface:?}: {error}")
+            })
+        })
+        .collect::<Vec<_>>();
     json!({
         "protocol": {
             "protocol_name": "casa_ms_transform_task",
@@ -385,6 +235,7 @@ fn schema_bundle(program_name: &str) -> serde_json::Value {
         "projections": {
             "ui_schema": command_schema(program_name)
         },
+        "parameter_surfaces": parameter_surfaces,
         "request_schema": {
             "type": "object",
             "required": ["input_ms", "output_ms"],
@@ -401,107 +252,33 @@ fn schema_bundle(program_name: &str) -> serde_json::Value {
     })
 }
 
-struct OptionConfig<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    flags: &'a [&'a str],
-    metavar: &'a str,
-    value_kind: UiValueKind,
-    choices: &'a [&'a str],
-    default: Option<&'a str>,
-    required: bool,
-    help: &'a str,
-    group: &'a str,
-}
+#[cfg(test)]
+mod tests {
+    use casa_provider_contracts::SurfaceContractBundle;
 
-fn option_argument(config: OptionConfig<'_>) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: config.id.to_string(),
-        label: config.label.to_string(),
-        order: config.order,
-        parser: UiArgumentParser::Option {
-            flags: config
-                .flags
-                .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-            metavar: config.metavar.to_string(),
-            choices: config
-                .choices
-                .iter()
-                .map(|choice| (*choice).to_string())
-                .collect(),
-        },
-        value_kind: config.value_kind,
-        required: config.required,
-        default: config.default.map(str::to_string),
-        help: config.help.to_string(),
-        group: config.group.to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
+    use super::*;
 
-struct ToggleConfig<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    true_flags: &'a [&'a str],
-    false_flags: &'a [&'a str],
-    default: Option<&'a str>,
-    help: &'a str,
-    group: &'a str,
-}
+    #[test]
+    fn schema_bundle_embeds_transform_family_parameter_contracts() {
+        let bundle = schema_bundle("mstransform");
+        assert_eq!(
+            bundle["protocol"]["protocol_name"],
+            "casa_ms_transform_task"
+        );
+        assert!(bundle["request_schema"]["properties"]["input_ms"].is_object());
+        assert!(bundle["result_schema"].is_object());
 
-fn toggle_argument(config: ToggleConfig<'_>) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: config.id.to_string(),
-        label: config.label.to_string(),
-        order: config.order,
-        parser: UiArgumentParser::Toggle {
-            true_flags: config
-                .true_flags
+        let surfaces = serde_json::from_value::<Vec<SurfaceContractBundle>>(
+            bundle["parameter_surfaces"].clone(),
+        )
+        .expect("serialized transform parameter surfaces");
+        assert_eq!(
+            surfaces
                 .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-            false_flags: config
-                .false_flags
-                .iter()
-                .map(|flag| (*flag).to_string())
-                .collect(),
-        },
-        value_kind: UiValueKind::Bool,
-        required: false,
-        default: config.default.map(str::to_string),
-        help: config.help.to_string(),
-        group: config.group.to_string(),
-        advanced: false,
-        hidden_in_tui: false,
-    }
-}
-
-fn action_argument(
-    id: &str,
-    label: &str,
-    order: usize,
-    flags: &[&str],
-    action: UiActionKind,
-) -> UiArgumentSchema {
-    UiArgumentSchema {
-        id: id.to_string(),
-        label: label.to_string(),
-        order,
-        parser: UiArgumentParser::Action {
-            flags: flags.iter().map(|flag| (*flag).to_string()).collect(),
-            action,
-        },
-        value_kind: UiValueKind::None,
-        required: false,
-        default: None,
-        help: label.to_string(),
-        group: "Machine".to_string(),
-        advanced: true,
-        hidden_in_tui: true,
+                .map(|surface| surface.surface.id())
+                .collect::<Vec<_>>(),
+            ["mstransform", "split"]
+        );
+        assert!(surfaces.iter().all(|surface| surface.validate().is_ok()));
     }
 }

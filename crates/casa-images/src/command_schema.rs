@@ -1,198 +1,35 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `imexplore` command schema shared by the CLI and `casars`.
+//! `imexplore` command schema projected from its canonical surface contract.
 
-use serde_json::json;
+use casa_provider_contracts::{builtin_surface_bundle, project_ui_schema};
 
 /// Return the `imexplore` UI schema as formatted JSON.
 pub fn ui_schema_json(invocation_name: &str) -> Result<String, String> {
-    let schema = json!({
-        "schema_version": 1,
-        "command_id": "imexplore",
-        "invocation_name": invocation_name,
-        "display_name": "ImExplore",
-        "category": "Images",
-        "summary": "browse persistent casacore images",
-        "usage": format!("{invocation_name} <image-path>"),
-        "arguments": [
-            {
-                "id": "image_path",
-                "label": "Image Path",
-                "order": 0,
-                "parser": {
-                    "kind": "positional",
-                    "metavar": "image-path"
-                },
-                "value_kind": "path",
-                "required": true,
-                "default": null,
-                "help": "Path to the casacore image root directory",
-                "group": "Input",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "blc",
-                "label": "BLC",
-                "order": 1,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--blc"],
-                    "metavar": "BLC",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Comma-separated inclusive bottom-left-corner pixel indices",
-                "group": "View",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "trc",
-                "label": "TRC",
-                "order": 2,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--trc"],
-                    "metavar": "TRC",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Comma-separated inclusive top-right-corner pixel indices",
-                "group": "View",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "inc",
-                "label": "INC",
-                "order": 3,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--inc"],
-                    "metavar": "INC",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Comma-separated per-axis pixel increments",
-                "group": "View",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "stretch",
-                "label": "Stretch",
-                "order": 4,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--stretch"],
-                    "metavar": "STRETCH",
-                    "choices": ["percentile99", "percentile95", "minmax", "zscale", "manual"]
-                },
-                "value_kind": "choice",
-                "required": false,
-                "default": "percentile99",
-                "help": "Plane stretch preset",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "autoscale",
-                "label": "Autoscale",
-                "order": 5,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--autoscale"],
-                    "metavar": "AUTOSCALE",
-                    "choices": ["per_plane", "frozen"]
-                },
-                "value_kind": "choice",
-                "required": false,
-                "default": "per_plane",
-                "help": "Whether clip bounds update per plane or stay frozen while stepping cubes",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "clip_low",
-                "label": "Clip Low",
-                "order": 6,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--clip-low"],
-                    "metavar": "LOW",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Manual lower clip bound in image value units",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "clip_high",
-                "label": "Clip High",
-                "order": 7,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--clip-high"],
-                    "metavar": "HIGH",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "",
-                "help": "Manual upper clip bound in image value units",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "fps",
-                "label": "FPS",
-                "order": 8,
-                "parser": {
-                    "kind": "option",
-                    "flags": ["--fps"],
-                    "metavar": "FPS",
-                    "choices": []
-                },
-                "value_kind": "string",
-                "required": false,
-                "default": "1",
-                "help": "Movie playback frames per second",
-                "group": "Display",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "help",
-                "label": "Help",
-                "order": 9,
-                "parser": {
-                    "kind": "action",
-                    "flags": ["-h", "--help"],
-                    "action": "help"
-                },
-                "value_kind": "none",
-                "required": false,
-                "default": null,
-                "help": "Print this help message",
-                "group": "Input",
-                "advanced": true,
-                "hidden_in_tui": true
-            }
-        ],
-        "managed_output": null
-    });
-    serde_json::to_string_pretty(&schema).map_err(|error| format!("serialize ui schema: {error}"))
+    let bundle = builtin_surface_bundle("imexplore")?;
+    let canonical_invocation = bundle.surface.execution().invocation_name.as_str();
+    if invocation_name != canonical_invocation {
+        return Err(format!(
+            "imexplore UI schema invocation {invocation_name:?} does not match canonical invocation {canonical_invocation:?}"
+        ));
+    }
+    serde_json::to_string_pretty(&project_ui_schema(&bundle))
+        .map_err(|error| format!("serialize imexplore UI schema: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_schema_is_exact_canonical_projection() {
+        let actual: serde_json::Value =
+            serde_json::from_str(&ui_schema_json("imexplore").unwrap()).unwrap();
+        let expected = project_ui_schema(&builtin_surface_bundle("imexplore").unwrap());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn ui_schema_rejects_noncanonical_invocation_alias() {
+        assert!(ui_schema_json("image-browser").is_err());
+    }
 }

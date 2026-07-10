@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -19,7 +20,11 @@ use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, MsPlotPreset, OptionalMainColumn, SubtableId,
 };
+use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casa_task_runtime::{
+    BaseSource, ManagedProfileKind, ManagedStateStore, ParameterSession, parse_profile,
+};
 use casa_types::{
     ArrayD, ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
     quanta::MvTime,
@@ -129,8 +134,8 @@ fn launcher_lists_registered_apps_in_expected_order() {
 
 #[test]
 fn mutating_tui_task_requires_second_run_key_to_confirm() {
-    let app = resolve_app(Some("flagdata")).expect("flagdata app");
-    let schema = app.load_schema().expect("flagdata schema");
+    let app = resolve_app(Some("statwt")).expect("statwt app");
+    let schema = app.load_schema().expect("statwt schema");
     let mut app = AppState::from_schema(app, schema);
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
@@ -142,6 +147,344 @@ fn mutating_tui_task_requires_second_run_key_to_confirm() {
         app.status_line_for_test()
     );
     assert!(!app.is_running_for_test());
+}
+
+#[test]
+fn tui_confirmation_is_driven_by_catalog_safety_for_adapter_mutations() {
+    for id in ["statwt", "clearcal", "delmod", "ft"] {
+        let temp = tempdir().expect("tempdir");
+        let app_definition = resolve_app(Some(id)).expect("registered adapter task");
+        let schema = app_definition.load_schema().expect("canonical UI schema");
+        let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+        let app = AppState::from_schema_with_config(app_definition, schema, config);
+        assert_eq!(
+            app.requires_run_confirmation_for_test(),
+            Ok(true),
+            "{id} must require interactive confirmation"
+        );
+    }
+}
+
+#[test]
+fn app_state_contract_failure_never_uses_the_supplied_schema_as_a_fallback() {
+    let temp = tempdir().expect("tempdir");
+    let fallback_schema = msexplore_command_schema("msexplore");
+    let mut missing_contract_app = msexplore_app();
+    missing_contract_app.id = "missing-parameter-contract".to_string();
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+
+    let app = AppState::from_schema_with_config(missing_contract_app, fallback_schema, config);
+
+    assert_eq!(app.active_result_tab(), ResultTab::Stderr);
+    assert_eq!(app.status_line_for_test(), "Failed to load UI schema.");
+    assert!(app.field_text_for_test("vis").is_none());
+    assert!(app.stderr_for_test().contains("missing-parameter-contract"));
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_open_fails_closed_when_the_typed_parameter_session_is_unavailable() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let script = write_fake_imexplore_script(temp.path(), &[], None);
+    set_imexplore_launcher_bin(&script);
+    let schema = imexplore_app()
+        .load_schema()
+        .expect("load fake imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
+    app.set_text_value("image", "/tmp/fake.image");
+    app.clear_parameter_session_for_test();
+
+    app.start_run_for_test();
+
+    assert!(!app.browser_is_active());
+    assert!(
+        app.status_line_for_test()
+            .contains("typed parameter contract is unavailable")
+    );
+}
+
+#[test]
+fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
+    let profile_text = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/test-profiles/imager-cross-surface.toml"
+    ));
+    let expected: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../resources/test-profiles/imager-cross-surface.expected.json"
+    )))
+    .expect("parse shared expected values");
+    let bundle = builtin_surface_bundle("imager").expect("imager parameter bundle");
+    let profile = parse_profile(profile_text).expect("parse shared imager profile");
+    let session = ParameterSession::from_profile(
+        bundle,
+        BaseSource::File(PathBuf::from("imager-cross-surface.toml")),
+        &profile,
+    )
+    .expect("resolve shared imager profile");
+    let temp = tempdir().expect("tempdir");
+    let app_definition = imager_app();
+    let schema = app_definition.load_schema().expect("imager UI schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+    app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
+
+    for name in ["vis", "imagename", "imsize", "cell", "niter"] {
+        assert_eq!(
+            app.parameter_value_for_test(name)
+                .map(parameter_value_as_plain_json),
+            expected["values"].get(name).cloned(),
+            "canonical value mismatch for {name}"
+        );
+    }
+}
+
+#[test]
+fn tui_typed_sessions_match_shared_browser_cross_surface_profiles() {
+    let fixtures = [
+        (
+            "imexplore",
+            "imexplore-cross-surface.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../resources/test-profiles/imexplore-cross-surface.toml"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../resources/test-profiles/imexplore-cross-surface.expected.json"
+            )),
+        ),
+        (
+            "tablebrowser",
+            "tablebrowser-cross-surface.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../resources/test-profiles/tablebrowser-cross-surface.toml"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../resources/test-profiles/tablebrowser-cross-surface.expected.json"
+            )),
+        ),
+    ];
+
+    for (surface, filename, profile_text, expected_text) in fixtures {
+        let expected: serde_json::Value =
+            serde_json::from_str(expected_text).expect("parse shared expected values");
+        let profile = parse_profile(profile_text).expect("parse shared browser profile");
+        let session = ParameterSession::from_profile(
+            builtin_surface_bundle(surface).expect("browser parameter bundle"),
+            BaseSource::File(PathBuf::from(filename)),
+            &profile,
+        )
+        .expect("resolve shared browser profile");
+        let temp = tempdir().expect("tempdir");
+        let app_definition = resolve_app(Some(surface)).expect("browser registry app");
+        let schema = app_definition.load_schema().expect("browser UI schema");
+        let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+        let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+        app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
+
+        for (name, expected_value) in expected["values"]
+            .as_object()
+            .expect("expected browser values")
+        {
+            assert_eq!(
+                app.parameter_value_for_test(name)
+                    .map(parameter_value_as_plain_json),
+                Some(expected_value.clone()),
+                "canonical {surface}.{name} mismatch"
+            );
+        }
+    }
+}
+
+#[test]
+fn tui_execution_plan_preserves_simobserve_family_stdin_projection() {
+    let temp = tempdir().expect("tempdir");
+    let bundle = builtin_surface_bundle("simobserve").expect("simobserve parameter bundle");
+    let mut session = ParameterSession::defaults(bundle).expect("default parameter session");
+    session
+        .set("request_kind", ParameterValue::String("family".into()))
+        .expect("select family request");
+    let app_definition = resolve_app(Some("simobserve")).expect("simobserve app");
+    let schema = app_definition.load_schema().expect("simobserve UI schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+    app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
+
+    assert_eq!(
+        app.execution_arguments_for_test().unwrap(),
+        [OsString::from("--json-run"), OsString::from("-")]
+    );
+    let request: serde_json::Value =
+        serde_json::from_str(&app.execution_stdin_for_test().unwrap().unwrap()).unwrap();
+    assert_eq!(request["kind"], "family");
+}
+
+#[test]
+fn parameter_sources_confirm_dirty_replacement_and_load_last_successful() {
+    let (temp, mut app) = test_app();
+    let bundle = builtin_surface_bundle("msexplore").expect("msexplore parameter bundle");
+    app.configure_parameter_runtime(
+        temp.path().to_path_buf(),
+        false,
+        Some(ParameterSession::defaults(bundle).expect("default parameter session")),
+    );
+    let successful_profile = msexplore_profile("successful.ms");
+    ManagedStateStore::for_workspace(temp.path())
+        .write(
+            "msexplore",
+            ManagedProfileKind::LastSuccessful,
+            &successful_profile,
+        )
+        .expect("write Last Successful profile");
+
+    app.apply_startup_text_value("vis", "dirty.ms".to_string())
+        .expect("edit vis");
+    assert!(app.parameter_title().contains('*'));
+
+    open_parameter_source_picker(&mut app);
+    assert_eq!(
+        app.choice_picker_labels_for_test(),
+        vec![
+            "Defaults",
+            "Last",
+            "Last Successful",
+            "Open TOML...",
+            "Save As...",
+            "Revert edits"
+        ]
+    );
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(app.parameter_source_confirmation_message().is_some());
+    assert!(render_app(&app, 120, 28).contains("Replace Modified Parameters?"));
+    assert!(
+        app.field_text_for_test("vis")
+            .is_some_and(|value| value.contains("dirty.ms"))
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.parameter_source_confirmation_message().is_none());
+    assert!(
+        app.field_text_for_test("vis")
+            .is_some_and(|value| value.contains("dirty.ms"))
+    );
+
+    open_parameter_source_picker(&mut app);
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(app.parameter_source_confirmation_message().is_none());
+    assert!(app.parameter_title().contains("Last Successful"));
+    assert!(!app.parameter_title().contains('*'));
+    assert!(
+        app.field_text_for_test("vis")
+            .is_some_and(|value| value.contains("successful.ms"))
+    );
+}
+
+#[test]
+fn named_parameter_profiles_open_save_as_and_never_auto_rewrite() {
+    let (temp, mut app) = test_app();
+    let bundle = builtin_surface_bundle("msexplore").expect("msexplore parameter bundle");
+    app.configure_parameter_runtime(
+        temp.path().to_path_buf(),
+        false,
+        Some(ParameterSession::defaults(bundle).expect("default parameter session")),
+    );
+    let named = temp.path().join("named.toml");
+    let original = msexplore_profile("named.ms");
+    fs::write(&named, &original).expect("write named profile");
+
+    open_parameter_source_picker(&mut app);
+    type_text(&mut app, "open");
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.parameter_profile_path_entry_active());
+    app.handle_paste(named.display().to_string());
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(!app.parameter_profile_path_entry_active());
+    assert!(app.parameter_title().contains("named.toml"));
+    assert!(
+        app.field_text_for_test("vis")
+            .is_some_and(|value| value.contains("named.ms"))
+    );
+
+    app.apply_startup_text_value("vis", "edited.ms".to_string())
+        .expect("edit opened profile");
+    assert_eq!(
+        fs::read_to_string(&named).expect("read named profile"),
+        original
+    );
+    assert!(app.parameter_title().contains('*'));
+
+    let saved = temp.path().join("saved.toml");
+    open_parameter_source_picker(&mut app);
+    type_text(&mut app, "save");
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.parameter_profile_path_entry_active());
+    app.handle_paste(saved.display().to_string());
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(!app.parameter_profile_path_entry_active());
+    assert!(app.parameter_title().contains("saved.toml"));
+    assert!(!app.parameter_title().contains('*'));
+    assert!(
+        fs::read_to_string(&saved)
+            .expect("read Save As profile")
+            .contains("edited.ms")
+    );
+
+    let saved_before_second_edit = fs::read_to_string(&saved).expect("read saved profile");
+    app.apply_startup_text_value("vis", "later.ms".to_string())
+        .expect("edit saved profile draft");
+    assert_eq!(
+        fs::read_to_string(&saved).expect("re-read saved profile"),
+        saved_before_second_edit
+    );
+}
+
+#[test]
+fn parameter_origins_reset_source_chrome_and_help_are_visible() {
+    let (temp, mut app) = test_app();
+    let bundle = builtin_surface_bundle("msexplore").expect("msexplore parameter bundle");
+    app.configure_parameter_runtime(
+        temp.path().to_path_buf(),
+        false,
+        Some(ParameterSession::defaults(bundle).expect("default parameter session")),
+    );
+    assert!(app.select_form_field_for_test("vis"));
+    app.apply_startup_text_value("vis", "origin.ms".to_string())
+        .expect("edit vis");
+
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("[override]"))
+    );
+    assert!(app.parameter_title().contains("Defaults *"));
+    assert!(app.footer_text().contains("^p sources"));
+    assert!(app.footer_text().contains("Del reset"));
+    assert!(
+        app.help_overlay_lines()
+            .iter()
+            .any(|line| line.contains("Ctrl-P") && line.contains("Save As"))
+    );
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+
+    assert_eq!(app.field_text_for_test("vis").as_deref(), Some(""));
+    assert!(
+        app.selected_form_text_for_test()
+            .is_some_and(|text| text.contains("[default]"))
+    );
 }
 
 #[test]
@@ -272,7 +615,7 @@ fn calibrate_apply_mode_arguments_do_not_include_stats_only_flags() {
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
     app.select_workflow_stage_for_test(WorkflowStageId::Apply);
     app.set_text_value("mode", "apply");
-    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_text_value("vis", "/tmp/example.ms");
 
     let args = app
         .execution_arguments_for_test()
@@ -312,7 +655,7 @@ fn calibrate_first_run_with_prefilled_ms_executes_dataset_summary() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
 
     start_run_with_default_calibrate_launcher(&mut app);
 
@@ -347,7 +690,7 @@ fn calibrate_guided_flow_runs_inspect_and_solve_gain_on_ngc5921() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", writable_ms.to_string_lossy().as_ref());
+    app.set_text_value("vis", writable_ms.to_string_lossy().as_ref());
 
     start_run_with_default_calibrate_launcher(&mut app);
     assert!(
@@ -412,7 +755,7 @@ fn calibrate_guided_flow_runs_gain_bandpass_and_apply_on_ngc5921() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", writable_ms.to_string_lossy().as_ref());
+    app.set_text_value("vis", writable_ms.to_string_lossy().as_ref());
 
     start_run_with_default_calibrate_launcher(&mut app);
     assert!(
@@ -545,13 +888,13 @@ fn calibrate_prefilled_measurement_set_populates_idle_summary_tabs() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
 
     let summary = app.structured_for_test().expect("structured summary");
     assert_eq!(summary.measurement_set.row_count, 2);
     assert_eq!(
-        app.field_text_for_test("measurement_set").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some(ms_path.to_string_lossy().as_ref())
     );
 
@@ -575,7 +918,7 @@ fn calibrate_overview_horizontal_thumb_tracks_real_overflow_ratio() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
     app.set_active_result_tab(ResultTab::Overview);
 
@@ -740,7 +1083,7 @@ fn calibrate_field_picker_uses_summary_derived_choices() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
     assert!(app.select_form_field_for_test("field"));
 
@@ -773,7 +1116,7 @@ fn calibrate_workflow_overview_recommends_the_next_stage() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_text_value("vis", "/tmp/example.ms");
     app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
         output_table: PathBuf::from("/tmp/phase.gcal"),
         gain_type: GainType::G,
@@ -810,7 +1153,7 @@ fn calibrate_workflow_products_track_revisions_and_staleness() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_text_value("vis", "/tmp/example.ms");
     app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
         output_table: PathBuf::from("/tmp/phase-r1.gcal"),
         gain_type: GainType::G,
@@ -875,7 +1218,7 @@ fn calibrate_products_section_shows_chain_entries_and_artifacts() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", "/tmp/example.ms");
+    app.set_text_value("vis", "/tmp/example.ms");
     app.set_text_value("gaintables", "/tmp/phase.gcal,/tmp/bandpass.bcal");
     app.set_text_value("callib", "/tmp/apply.callib");
     app.set_calibration_report_for_test(ManagedCalibrationOutput::SolveGain(GainSolveReport {
@@ -920,7 +1263,7 @@ fn calibrate_context_section_shows_native_role_rows() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
     let ms_path = create_fixture_ms(temp.path());
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
 
     let rows = app
@@ -995,7 +1338,7 @@ fn calibrate_context_role_rows_support_native_editing() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
     let ms_path = create_fixture_ms(temp.path());
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
 
     assert!(app.select_workflow_context_setting_for_test(WorkflowContextSettingKind::ActiveFields));
@@ -1055,7 +1398,7 @@ fn choice_picker_scrolls_long_refant_lists_to_selected_entry() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
     let ms_path = create_fixture_ms_with_antenna_count(temp.path(), 12);
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
 
     assert!(app.select_workflow_context_setting_for_test(WorkflowContextSettingKind::RefAnt));
@@ -1131,7 +1474,7 @@ fn calibrate_chain_setting_rows_support_native_editing() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
     let ms_path = create_fixture_ms(temp.path());
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
     app.set_text_value("gaintables", "/tmp/phase.gcal");
 
@@ -1285,7 +1628,7 @@ fn calibrate_callibrary_entries_support_native_setting_editing() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
     let ms_path = create_fixture_ms(temp.path());
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
     let callib = temp.path().join("apply.callib");
     fs::write(&callib, "caltable='phase.gcal' calwt=F tinterp='nearest'\n").expect("write callib");
@@ -1606,7 +1949,7 @@ fn calibrate_stage_selection_and_post_run_guidance_prime_defaults() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", "/tmp/ngc5921.ms");
+    app.set_text_value("vis", "/tmp/ngc5921.ms");
 
     assert!(app.select_workflow_stage_for_test(WorkflowStageId::SolveGain));
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -1659,7 +2002,7 @@ fn calibrate_idle_summary_shows_plots_tab() {
         .expect("load calibrate schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(calibrate_app(), schema, config);
-    app.set_text_value("measurement_set", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.prime_idle_summary_for_launch();
 
     let rendered = render_app(&app, 160, 32);
@@ -2002,7 +2345,7 @@ fn software_direct_overlay_refresh_uploads_reuses_and_clears_movie_frames() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(140, 32);
     app.on_tick();
@@ -2300,14 +2643,14 @@ fn ctrl_o_opens_path_chooser_for_path_field_and_escape_cancels() {
     std::fs::write(&path, "").expect("write fake ms");
 
     let (_temp, mut app) = test_app();
-    app.set_text_value("ms_path", path.to_string_lossy().as_ref());
+    app.set_text_value("vis", path.to_string_lossy().as_ref());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert!(app.path_chooser_active());
 
     app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(!app.path_chooser_active());
     assert_eq!(
-        app.field_text_for_test("ms_path").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some(path.to_string_lossy().as_ref())
     );
 }
@@ -2319,7 +2662,7 @@ fn path_chooser_enter_confirms_selected_path() {
     std::fs::write(&path, "").expect("write fake ms");
 
     let (_temp, mut app) = test_app();
-    app.set_text_value("ms_path", path.to_string_lossy().as_ref());
+    app.set_text_value("vis", path.to_string_lossy().as_ref());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert!(app.path_chooser_active());
 
@@ -2327,7 +2670,7 @@ fn path_chooser_enter_confirms_selected_path() {
     assert!(!app.path_chooser_active());
     let expected = path.canonicalize().expect("canonical path");
     assert_eq!(
-        app.field_text_for_test("ms_path").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some(expected.to_string_lossy().as_ref())
     );
 }
@@ -2351,14 +2694,19 @@ fn clicking_path_browse_affordance_opens_chooser() {
         .rect
         .x
         .saturating_add(row_text.chars().count() as u16)
-        .saturating_sub(3);
+        .saturating_sub(3)
+        .min(row_hit.rect.right().saturating_sub(1));
 
     app.handle_mouse_event(
         mouse(MouseEventKind::Down(MouseButton::Left), x, row_hit.rect.y),
         &layout,
     );
 
-    assert!(app.path_chooser_active());
+    assert!(
+        app.path_chooser_active(),
+        "browse click missed: row={row_text:?}, rect={:?}, x={x}",
+        row_hit.rect
+    );
 }
 
 #[test]
@@ -2380,7 +2728,7 @@ fn typing_directory_then_opening_chooser_confirms_selected_file() {
     }
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(
-        app.field_text_for_test("ms_path").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some(temp.path().to_string_lossy().as_ref())
     );
     app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
@@ -2403,7 +2751,7 @@ fn typing_directory_then_opening_chooser_confirms_selected_file() {
     assert!(app.edit_buffer_for_test().is_none());
     let expected = ms_path.canonicalize().expect("canonical path");
     assert_eq!(
-        app.field_text_for_test("ms_path").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some(expected.to_string_lossy().as_ref())
     );
 }
@@ -2415,7 +2763,7 @@ fn path_chooser_enter_selects_directory_path() {
     std::fs::create_dir(&ms_path).expect("create fake ms directory");
 
     let (_temp, mut app) = test_app();
-    app.set_text_value("ms_path", temp.path().to_string_lossy().as_ref());
+    app.set_text_value("vis", temp.path().to_string_lossy().as_ref());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert!(app.path_chooser_active());
 
@@ -2431,7 +2779,7 @@ fn path_chooser_enter_selects_directory_path() {
     assert!(!app.path_chooser_active());
     let expected = ms_path.canonicalize().expect("canonical path");
     assert_eq!(
-        app.field_text_for_test("ms_path").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some(expected.to_string_lossy().as_ref())
     );
 }
@@ -2443,7 +2791,7 @@ fn path_chooser_right_descends_into_selected_directory() {
     std::fs::create_dir(&ms_path).expect("create fake ms directory");
 
     let (_temp, mut app) = test_app();
-    app.set_text_value("ms_path", temp.path().to_string_lossy().as_ref());
+    app.set_text_value("vis", temp.path().to_string_lossy().as_ref());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     assert!(app.path_chooser_active());
 
@@ -2617,10 +2965,15 @@ fn tablebrowser_session_opens_cells_and_linked_subtables() {
         .expect("tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", table_path.to_string_lossy().as_ref());
+    app.set_text_value("table", table_path.to_string_lossy().as_ref());
     app.start_run_for_test();
 
-    assert!(app.browser_is_active());
+    assert!(
+        app.browser_is_active(),
+        "{}: {}",
+        app.status_line_for_test(),
+        app.stderr_for_test()
+    );
     app.sync_browser_viewport(90, 25, 10);
     let overview = render_app(&app, 180, 30);
     assert!(overview.contains("Tables / Table Browser"));
@@ -2658,7 +3011,7 @@ fn browser_footer_describes_escape_and_backspace_semantics() {
         .expect("tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", table_path.to_string_lossy().as_ref());
+    app.set_text_value("table", table_path.to_string_lossy().as_ref());
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
@@ -2724,7 +3077,7 @@ fn imexplore_help_overlay_lists_plane_controls() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
@@ -2782,7 +3135,7 @@ fn imexplore_left_pane_switches_between_live_regions_and_masks() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let rendered = render_app(&app, 140, 34);
@@ -2885,7 +3238,7 @@ fn imexplore_left_pane_picker_keyboard_selects_and_dismisses() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 34), &app);
@@ -2949,7 +3302,7 @@ fn imexplore_left_pane_picker_renders_and_supports_hjkl_space_and_escape() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 34), &app);
@@ -3046,7 +3399,7 @@ fn imexplore_left_pane_picker_click_outside_dismisses_without_changing_mode() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 34), &app);
@@ -3112,7 +3465,7 @@ fn imexplore_regions_mode_empty_state_and_region_actions_warn_cleanly() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     switch_imexplore_left_pane_mode(&mut app, 1);
 
@@ -3169,7 +3522,7 @@ fn imexplore_masks_mode_empty_state_and_mask_actions_warn_cleanly() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     switch_imexplore_left_pane_mode(&mut app, 2);
 
@@ -3224,7 +3577,7 @@ fn imexplore_browser_manager_rows_start_below_selector_and_clip_to_available_spa
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     switch_imexplore_left_pane_mode(&mut app, 1);
 
@@ -3294,7 +3647,7 @@ fn imexplore_left_pane_actions_target_selected_region_and_mask() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 34), &app);
@@ -3436,7 +3789,7 @@ fn imexplore_mask_checkbox_toggles_default_mask_off() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     switch_imexplore_left_pane_mode(&mut app, 2);
 
@@ -3544,7 +3897,7 @@ fn imexplore_mask_toggle_changes_plane_and_spectrum_render_requests() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     switch_imexplore_left_pane_mode(&mut app, 2);
 
@@ -3633,7 +3986,7 @@ fn imexplore_clicking_region_name_opens_rename_prompt() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 34), &app);
@@ -3735,7 +4088,7 @@ fn imexplore_region_summary_auto_scales_stat_units() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 34), &app);
@@ -3804,7 +4157,7 @@ fn imexplore_local_display_controls_update_inspector_lines() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
@@ -3915,7 +4268,7 @@ fn imexplore_cycles_to_spectrum_tab() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
@@ -3965,7 +4318,7 @@ fn imexplore_result_strip_shows_browser_view_tabs() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let rendered = render_app(&app, 120, 24);
@@ -4037,7 +4390,7 @@ fn imexplore_cycle_view_resyncs_result_content_from_stderr() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.set_active_result_tab(ResultTab::Stderr);
 
@@ -4060,7 +4413,7 @@ fn edit_tab_commits_and_moves_to_next_field() {
 
     assert!(app.edit_buffer_for_test().is_none());
     assert_eq!(
-        app.field_text_for_test("ms_path").as_deref(),
+        app.field_text_for_test("vis").as_deref(),
         Some("/tmp/demo.ms")
     );
     assert!(app.selected_form_text_for_test().is_some());
@@ -4146,7 +4499,7 @@ fn browser_tab_moves_focus_and_brackets_switch_views() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     assert_eq!(app.browser_focus_for_test(), Some(BrowserPaneFocus::Main));
@@ -4202,7 +4555,7 @@ fn browser_views_are_clickable_from_the_browser_shell() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 120, 30), &app);
@@ -4238,7 +4591,7 @@ fn back_to_launcher_closes_active_browser_session() {
         .expect("tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", table_path.to_string_lossy().as_ref());
+    app.set_text_value("table", table_path.to_string_lossy().as_ref());
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
@@ -4284,7 +4637,7 @@ fn browser_cells_expose_scrollbar_metrics() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     assert_eq!(app.active_browser_scroll(), 11);
@@ -4318,7 +4671,7 @@ fn browser_cells_render_styled_separators_and_strip_selection_markers() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     let rendered = render_app(&app, 160, 28);
@@ -4371,7 +4724,7 @@ fn browser_inspector_renders_in_left_pane_without_duplicate_result_content() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     let rendered = render_app(&app, 160, 28);
@@ -4415,7 +4768,7 @@ fn browser_copy_shortcut_writes_selected_value_to_clipboard() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
@@ -4558,7 +4911,7 @@ fn drag_selection_copies_browser_inspector_text_on_mouse_up() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     drag_select_visible_text(&mut app, 160, 28, OutputPane::LeftOutput, "alpha beta");
@@ -4630,7 +4983,7 @@ fn browser_result_selection_copies_visible_text_in_every_view() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     for (index, expected) in [
@@ -4715,7 +5068,7 @@ fn browser_inspector_selection_copies_visible_text() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     drag_select_visible_text(&mut app, 160, 28, OutputPane::LeftOutput, "alpha beta");
@@ -4802,7 +5155,7 @@ fn browser_view_change_clears_active_output_selection() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     drag_select_visible_text(&mut app, 160, 28, OutputPane::Result, "token-overview");
@@ -4933,7 +5286,7 @@ fn fake_tablebrowser_session_drives_casars_navigation() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     let overview = render_app(&app, 160, 28);
@@ -5003,7 +5356,7 @@ fn imexplore_session_starts_from_image_path_and_prepares_raster_plane_view() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let rendered = render_app(&app, 160, 28);
@@ -5097,7 +5450,7 @@ fn imexplore_plane_request_changes_when_non_display_axis_changes() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 28), &app);
@@ -5172,7 +5525,7 @@ fn imexplore_plane_view_prepares_linked_spectrum_plot() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(160, 32);
 
@@ -5232,11 +5585,11 @@ fn imexplore_uses_live_parameters_pane() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let rendered = render_app(&app, 160, 28);
-    assert!(rendered.contains("Parameters [live]"));
+    assert!(rendered.contains("Parameters [live;"));
     assert!(rendered.contains("Image Path"));
     assert!(rendered.contains("Hidden axis Frequency (2): 0/2"));
 
@@ -5296,7 +5649,7 @@ fn imexplore_defers_backend_resize_while_dragging_divider() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 30), &app);
@@ -5409,7 +5762,7 @@ fn imexplore_startup_uses_cached_layout_viewport() {
         schema,
         ConfigStore::load_for_tests(config_path),
     );
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 30), &app);
     app.cache_output_layout(&layout);
@@ -5479,7 +5832,7 @@ fn imexplore_workspace_split_ratio_persists_after_drag() {
         schema,
         ConfigStore::load_for_tests(config_path.clone()),
     );
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let original = app.image_workspace_split_ratio_for_test();
@@ -5570,7 +5923,7 @@ fn imexplore_workspace_toggle_collapses_and_restores_spectrum() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let original = app.image_workspace_split_ratio_for_test();
@@ -5672,7 +6025,7 @@ fn imexplore_keyboard_toggle_collapses_and_restores_spectrum() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let original = app.image_workspace_split_ratio_for_test();
@@ -5738,7 +6091,7 @@ fn imexplore_live_window_parameters_update_plane_view() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
     app.set_text_value("trc", "3,1");
@@ -5791,7 +6144,7 @@ fn imexplore_invalid_live_window_parameters_keep_session_open() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.set_text_value_and_apply("inc", "0,1");
 
@@ -5805,6 +6158,7 @@ fn imexplore_invalid_live_window_parameters_keep_session_open() {
         app.stderr_for_test()
             .contains("command_failed: INC axis 0 must be >= 1")
     );
+    assert_eq!(app.field_text_for_test("inc").as_deref(), Some("1,1"));
 }
 
 #[cfg(unix)]
@@ -5832,7 +6186,7 @@ fn imexplore_pane_toggle_and_chevron_work() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     assert!(!app.parameters_pane_collapsed());
@@ -5893,7 +6247,7 @@ fn imexplore_plane_selected_cell_uses_highlight_background() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
 
@@ -5958,7 +6312,7 @@ fn imexplore_copy_shortcut_writes_probe_summary_to_clipboard() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
@@ -6013,7 +6367,7 @@ fn imexplore_copy_formats_radec_probe_axes() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
@@ -6116,7 +6470,7 @@ fn imexplore_tab_focuses_live_parameters_pane() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
@@ -6156,7 +6510,7 @@ fn imexplore_exposes_and_applies_horizontal_scrollbar() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let width = 56;
@@ -6285,7 +6639,7 @@ fn imexplore_auto_scrolls_plane_view_to_keep_selected_pixel_visible() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
 
@@ -6360,7 +6714,7 @@ fn imexplore_clicking_plane_cell_moves_active_pixel() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
 
@@ -6444,7 +6798,7 @@ fn imexplore_clicking_raster_plane_moves_active_pixel() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(80, 24);
 
@@ -6539,7 +6893,7 @@ fn imexplore_dragging_raster_plane_updates_active_pixel() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(80, 24);
 
@@ -6645,7 +6999,7 @@ fn imexplore_clicking_linked_spectrum_updates_plane() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(120, 32);
 
@@ -6699,7 +7053,7 @@ fn imexplore_clicking_raster_letterbox_keeps_active_pixel() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(80, 24);
 
@@ -6860,12 +7214,13 @@ fn imexplore_movie_mode_steps_and_loops_hidden_axis() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(120, 28);
     app.on_tick();
     app.note_image_plane_presented();
     app.set_text_value_and_apply("fps", "4");
+    app.set_toggle_value_and_apply("loop", true);
 
     assert!(!app.image_movie_playing_for_test());
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -6941,7 +7296,7 @@ fn imexplore_direct_movie_frame_preserves_full_pane_render_size() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(120, 28);
 
@@ -7012,7 +7367,7 @@ fn imexplore_direct_overlay_skips_plane_panel_requests() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.set_text_value_and_apply("fps", "10");
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -7071,7 +7426,7 @@ fn imexplore_direct_overlay_skips_spectrum_panel_requests() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.set_text_value_and_apply("fps", "10");
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -7127,7 +7482,7 @@ fn imexplore_stopping_movie_preserves_pane_state() {
         schema,
         ConfigStore::load_for_tests(config_path),
     );
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let main_ratio = app.pane_split_ratio_for_test();
@@ -7226,7 +7581,7 @@ fn imexplore_stopping_movie_keeps_frozen_spectrum_workspace_visible() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.seed_image_spectrum_content_for_test((320, 120));
 
@@ -7298,7 +7653,7 @@ fn kitty_enoent_response_invalidates_movie_store_cache() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('_'), KeyModifiers::ALT));
@@ -7356,7 +7711,7 @@ fn imexplore_late_kitty_response_after_movie_stop_does_not_toggle_ui_state() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let original_ratio = app.pane_split_ratio_for_test();
@@ -7418,7 +7773,7 @@ fn imexplore_perf_disabled_does_not_create_trace_files() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     assert!(app.movie_perf_json_path_for_test().is_none());
@@ -7497,7 +7852,7 @@ fn imexplore_perf_trace_emits_ordered_frame_events_and_summary() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.prepare_graphics_for_test(120, 28);
     app.on_tick();
@@ -7647,7 +8002,7 @@ fn imexplore_perf_trace_emits_startup_breakdown() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let json_path = app
@@ -7828,7 +8183,7 @@ fn imexplore_perf_sigusr1_flushes_summary_without_stopping_movie() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
     app.set_text_value_and_apply("fps", "30");
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -7893,7 +8248,7 @@ fn imexplore_mouse_move_does_not_stop_movie_mode() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -7954,7 +8309,7 @@ fn imexplore_unmapped_key_does_not_stop_movie_mode() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -8007,7 +8362,7 @@ fn imexplore_quit_keys_bypass_movie_stop_handling() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -8069,7 +8424,7 @@ fn imexplore_ignores_embedded_kitty_protocol_responses() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
@@ -8136,7 +8491,7 @@ fn imexplore_escape_toggles_live_reticle() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     assert!(app.image_live_reticle_visible_for_test());
@@ -8188,7 +8543,7 @@ fn imexplore_region_start_hides_live_reticle() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     assert!(app.image_live_reticle_visible_for_test());
@@ -8231,7 +8586,7 @@ fn imexplore_region_display_suppresses_point_reticle_in_plane_render() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 140, 48), &app);
@@ -8335,7 +8690,7 @@ fn imexplore_can_pin_cycle_and_remove_probes() {
         .expect("load fake imexplore schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imexplore_app(), schema, config);
-    app.set_text_value("image_path", "/tmp/fake.image");
+    app.set_text_value("image", "/tmp/fake.image");
     app.start_run_for_test();
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT));
@@ -8387,6 +8742,307 @@ fn imexplore_can_pin_cycle_and_remove_probes() {
 
 #[cfg(unix)]
 #[test]
+fn tablebrowser_startup_sends_typed_durable_configuration_before_recording_last() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let request_log = temp.path().join("table-requests.jsonl");
+    let opened = fake_browser_snapshot_json(
+        ProtocolBrowserView::Overview,
+        "Opened",
+        vec!["Overview".to_string()],
+    );
+    let configured = fake_browser_snapshot_json(
+        ProtocolBrowserView::Cells,
+        "Configured",
+        vec!["Cells".to_string()],
+    );
+    let script =
+        write_fake_tablebrowser_script_with_log(temp.path(), &[opened, configured], &request_log);
+    set_tablebrowser_launcher_bin(&script);
+
+    let app_definition = tablebrowser_app();
+    let schema = app_definition.load_schema().expect("tablebrowser schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+    let session = ParameterSession::defaults(
+        builtin_surface_bundle("tablebrowser").expect("tablebrowser parameter bundle"),
+    )
+    .expect("tablebrowser defaults");
+    app.configure_parameter_runtime(temp.path().to_path_buf(), true, Some(session));
+    app.set_text_value("table", "/tmp/fake.ms");
+    app.set_text_value("view", "rows");
+    app.set_text_value("rowstart", "1");
+    app.set_text_value("nrow", "2");
+    app.set_text_value("linkedtable", "CHILD");
+    app.set_text_value("bookmark", "cell:1:VALUE");
+    app.set_text_value("contentmode", "detailed");
+    app.start_run_for_test();
+
+    assert!(app.browser_is_active(), "{}", app.stderr_for_test());
+    let requests = read_json_lines(&request_log);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["command"]["command"], "open_root");
+    assert_eq!(requests[1]["command"]["command"], "configure");
+    let parameters = &requests[1]["command"]["parameters"];
+    assert_eq!(parameters["view"], "cells");
+    assert_eq!(parameters["row_start"], 1);
+    assert_eq!(parameters["row_count"], 2);
+    assert_eq!(parameters["linked_table"], "CHILD");
+    assert_eq!(parameters["bookmark"]["kind"], "cell");
+    assert_eq!(parameters["content_mode"], "detailed");
+    let last = ManagedStateStore::for_workspace(temp.path())
+        .read("tablebrowser", ManagedProfileKind::Last)
+        .expect("read tablebrowser Last")
+        .expect("tablebrowser Last exists");
+    assert!(last.contains("rowstart = 1"));
+    assert!(last.contains("bookmark = \"cell:1:VALUE\""));
+}
+
+#[cfg(unix)]
+#[test]
+fn imexplore_startup_applies_all_typed_durable_configuration_before_last() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let request_log = temp.path().join("image-requests.jsonl");
+    let axes = vec![
+        ImageNonDisplayAxisState {
+            axis: 2,
+            label: "Frequency".to_string(),
+            index: 0,
+            length: 3,
+            pixel: 0,
+        },
+        ImageNonDisplayAxisState {
+            axis: 3,
+            label: "Stokes".to_string(),
+            index: 0,
+            length: 2,
+            pixel: 0,
+        },
+    ];
+    let snapshot = |view, status| {
+        fake_imexplore_snapshot_json_with_axes(
+            fake_imexplore_snapshot_json(
+                view,
+                ProtocolImageFocus::Content,
+                status,
+                vec![status.to_string()],
+                vec![format!("View: {status}")],
+                None,
+                None,
+            ),
+            axes.clone(),
+        )
+    };
+    let script = write_fake_imexplore_script_with_log(
+        temp.path(),
+        &[
+            snapshot(ProtocolImageView::Plane, "Opened"),
+            snapshot(ProtocolImageView::Metadata, "View configured"),
+            snapshot(ProtocolImageView::Metadata, "Content configured"),
+            snapshot(ProtocolImageView::Metadata, "Profile axis configured"),
+            snapshot(ProtocolImageView::Metadata, "Selection configured"),
+        ],
+        &request_log,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let app_definition = imexplore_app();
+    let schema = app_definition.load_schema().expect("imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+    let session = ParameterSession::defaults(
+        builtin_surface_bundle("imexplore").expect("imexplore parameter bundle"),
+    )
+    .expect("imexplore defaults");
+    app.configure_parameter_runtime(temp.path().to_path_buf(), true, Some(session));
+    app.set_text_value("image", "/tmp/fake.image");
+    app.set_text_value("view", "metadata");
+    app.set_text_value("contentmode", "spreadsheet");
+    app.set_text_value("colormap", "inferno");
+    app.set_text_value("movieaxis", "Frequency");
+    app.set_text_value("profileaxis", "Stokes");
+    app.set_text_value("fps", "4");
+    app.set_toggle_value("loop", true);
+    app.set_text_value("region", "box[[0pix,0pix],[1pix,1pix]]");
+    app.set_text_value("mask", "/tmp/fake.image>0.5");
+    app.start_run_for_test();
+
+    assert!(app.browser_is_active(), "{}", app.stderr_for_test());
+    assert_eq!(app.image_colormap_for_test(), Some("inferno"));
+    assert_eq!(app.image_movie_axis_for_test(), Some(2));
+    assert_eq!(app.image_movie_configuration_for_test(), Some((4.0, true)));
+    let requests = read_json_lines(&request_log);
+    assert_eq!(requests.len(), 5);
+    assert_eq!(requests[0]["command"]["command"], "open_root");
+    assert_eq!(requests[1]["command"]["command"], "cycle_view");
+    assert_eq!(requests[2]["command"]["command"], "set_plane_content_mode");
+    assert_eq!(requests[2]["command"]["mode"], "spreadsheet");
+    assert_eq!(
+        requests[3]["command"]["command"],
+        "set_selected_non_display_axis"
+    );
+    assert_eq!(requests[3]["command"]["axis"], 3);
+    assert_eq!(
+        requests[4]["command"]["command"],
+        "set_selection_references"
+    );
+    assert_eq!(requests[4]["command"]["region"]["kind"], "expression");
+    assert_eq!(requests[4]["command"]["mask"]["kind"], "expression");
+    let last = ManagedStateStore::for_workspace(temp.path())
+        .read("imexplore", ManagedProfileKind::Last)
+        .expect("read imexplore Last")
+        .expect("imexplore Last exists");
+    assert!(last.contains("colormap = \"inferno\""));
+    assert!(last.contains("contentmode = \"spreadsheet\""));
+    assert!(last.contains("loop = true"));
+}
+
+#[cfg(unix)]
+#[test]
+fn accepted_live_imexplore_parameters_flush_to_last_on_close() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let request_log = temp.path().join("live-image-requests.jsonl");
+    let axes = vec![
+        ImageNonDisplayAxisState {
+            axis: 2,
+            label: "Frequency".to_string(),
+            index: 0,
+            length: 3,
+            pixel: 0,
+        },
+        ImageNonDisplayAxisState {
+            axis: 3,
+            label: "Stokes".to_string(),
+            index: 0,
+            length: 2,
+            pixel: 0,
+        },
+    ];
+    let snapshot = |status| {
+        fake_imexplore_snapshot_json_with_axes(
+            fake_imexplore_snapshot_json(
+                ProtocolImageView::Plane,
+                ProtocolImageFocus::Content,
+                status,
+                vec![status.to_string()],
+                vec![format!("View: {status}")],
+                None,
+                None,
+            ),
+            axes.clone(),
+        )
+    };
+    let script = write_fake_imexplore_script_with_log(
+        temp.path(),
+        &[
+            snapshot("Opened"),
+            snapshot("Content mode configured"),
+            snapshot("Profile axis configured"),
+        ],
+        &request_log,
+    );
+    set_imexplore_launcher_bin(&script);
+
+    let app_definition = imexplore_app();
+    let schema = app_definition.load_schema().expect("imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+    let session = ParameterSession::defaults(
+        builtin_surface_bundle("imexplore").expect("imexplore parameter bundle"),
+    )
+    .expect("imexplore defaults");
+    app.configure_parameter_runtime(temp.path().to_path_buf(), true, Some(session));
+    app.set_text_value("image", "/tmp/fake.image");
+    app.start_run_for_test();
+    assert!(app.browser_is_active(), "{}", app.stderr_for_test());
+
+    app.set_text_value_and_apply("colormap", "inferno");
+    app.set_toggle_value_and_apply("loop", true);
+    app.set_text_value_and_apply("contentmode", "spreadsheet");
+    app.set_text_value_and_apply("profileaxis", "Stokes");
+    assert!(app.browser_is_active(), "{}", app.stderr_for_test());
+    app.cancel_for_test();
+
+    let requests = read_json_lines(&request_log);
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["command"]["command"], "set_plane_content_mode");
+    assert_eq!(requests[1]["command"]["mode"], "spreadsheet");
+    assert_eq!(
+        requests[2]["command"]["command"],
+        "set_selected_non_display_axis"
+    );
+    assert_eq!(requests[2]["command"]["axis"], 3);
+    let last = ManagedStateStore::for_workspace(temp.path())
+        .read("imexplore", ManagedProfileKind::Last)
+        .expect("read imexplore Last")
+        .expect("imexplore Last exists");
+    assert!(last.contains("colormap = \"inferno\""));
+    assert!(last.contains("contentmode = \"spreadsheet\""));
+    assert!(last.contains("loop = true"));
+    assert!(last.contains("profileaxis = \"3\""));
+}
+
+#[cfg(unix)]
+#[test]
+fn rejected_imexplore_startup_configuration_preserves_previous_last() {
+    let _guard = launcher_env_lock();
+    let temp = tempdir().expect("tempdir");
+    let previous = session_profile(
+        "imexplore",
+        &[
+            ("image", ParameterValue::String("old.image".to_string())),
+            ("colormap", ParameterValue::String("viridis".to_string())),
+        ],
+    );
+    let store = ManagedStateStore::for_workspace(temp.path());
+    store
+        .write("imexplore", ManagedProfileKind::Last, &previous)
+        .expect("seed imexplore Last");
+    let opened = fake_imexplore_snapshot_json(
+        ProtocolImageView::Plane,
+        ProtocolImageFocus::Content,
+        "Opened",
+        vec!["Plane".to_string()],
+        vec!["View: Plane".to_string()],
+        None,
+        None,
+    );
+    let rejected = serde_json::to_string(&ImageBrowserResponseEnvelope::error(
+        "unsupported_view",
+        "metadata view rejected",
+    ))
+    .expect("serialize startup rejection");
+    let script = write_fake_imexplore_script(temp.path(), &[opened, rejected], None);
+    set_imexplore_launcher_bin(&script);
+
+    let app_definition = imexplore_app();
+    let schema = app_definition.load_schema().expect("imexplore schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(app_definition, schema, config);
+    let session = ParameterSession::defaults(
+        builtin_surface_bundle("imexplore").expect("imexplore parameter bundle"),
+    )
+    .expect("imexplore defaults");
+    app.configure_parameter_runtime(temp.path().to_path_buf(), true, Some(session));
+    app.set_text_value("image", "new.image");
+    app.set_text_value("view", "metadata");
+    app.start_run_for_test();
+
+    assert!(!app.browser_is_active());
+    assert!(app.stderr_for_test().contains("metadata view rejected"));
+    assert_eq!(
+        store
+            .read("imexplore", ManagedProfileKind::Last)
+            .expect("read preserved Last")
+            .expect("preserved Last exists"),
+        previous
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn browser_session_reports_structured_open_errors() {
     let _guard = launcher_env_lock();
     let temp = tempdir().expect("tempdir");
@@ -8403,7 +9059,7 @@ fn browser_session_reports_structured_open_errors() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     assert!(
@@ -8431,7 +9087,7 @@ fn browser_session_reports_malformed_backend_responses() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     assert!(
@@ -8466,7 +9122,7 @@ fn browser_command_errors_close_the_session_and_surface_stderr() {
         .expect("load fake tablebrowser schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(tablebrowser_app(), schema, config);
-    app.set_text_value("table_path", "/tmp/fake.ms");
+    app.set_text_value("table", "/tmp/fake.ms");
     app.start_run_for_test();
 
     assert!(app.browser_is_active());
@@ -8525,7 +9181,7 @@ fn msexplore_run_parses_structured_output_into_tabs() {
     let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(
@@ -8555,7 +9211,7 @@ fn plots_tab_renders_current_msexplore_preview() {
         .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("preset", "uv_coverage");
 
     app.set_active_result_tab(ResultTab::Plots);
@@ -8609,7 +9265,7 @@ fn msexplore_plots_tab_previews_current_form_without_run() {
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("preset", "amplitude_vs_time");
 
     app.set_active_result_tab(ResultTab::Plots);
@@ -8655,7 +9311,7 @@ fn msexplore_start_run_on_launch_opens_plots_preview_instead_of_spawning_process
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("preset", "amplitude_vs_time");
 
     app.start_run_on_launch();
@@ -8693,7 +9349,7 @@ fn msexplore_summary_tabs_populate_from_current_form_without_subprocess_run() {
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
 
     app.set_active_result_tab(ResultTab::Observations);
 
@@ -8713,7 +9369,7 @@ fn imager_summary_tabs_do_not_treat_stokes_i_as_ms_correlation_selector() {
     let schema = imager_app().load_schema().expect("load imager schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
-    app.set_text_value("ms", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("polarization", "I");
 
     app.set_active_result_tab(ResultTab::Observations);
@@ -8738,10 +9394,10 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     let schema = imager_app().load_schema().expect("load imager schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
-    app.set_text_value("ms", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("imagename", imagename.to_string_lossy().as_ref());
     app.set_text_value("imsize", "32");
-    app.set_text_value("cell_arcsec", "20.0");
+    app.set_text_value("cell", "20.0");
     app.set_text_value("field", "0");
     app.set_text_value("spw", "0");
     app.set_text_value("specmode", "cube");
@@ -8858,9 +9514,11 @@ fn msexplore_plots_tab_copy_cli_and_export_png_use_current_form() {
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("preset", "amplitude_vs_time");
     app.set_text_value("plot_output", export_path.to_string_lossy().as_ref());
+    app.set_toggle_value("showlegend", true);
+    app.set_text_value("legendposition", "exteriorRight");
 
     app.set_active_result_tab(ResultTab::Plots);
     app.prepare_graphics_for_test(140, 32);
@@ -8930,7 +9588,7 @@ fn msexplore_plots_sidebar_lists_standard_presets() {
     assert!(labels.contains(&"Real vs Imaginary".to_string()));
     assert_eq!(
         app.field_text_for_test("legendposition").as_deref(),
-        Some("exteriorRight")
+        Some("upperRight")
     );
 }
 
@@ -8970,7 +9628,9 @@ fn msexplore_clicking_catalog_preset_updates_preview_cli() {
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
+    app.set_toggle_value("showlegend", true);
+    app.set_text_value("legendposition", "exteriorRight");
     app.set_active_result_tab(ResultTab::Plots);
 
     let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 40), &app);
@@ -9037,7 +9697,7 @@ fn msexplore_selecting_preset_immediately_invalidates_existing_preview() {
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("preset", "amplitude_vs_time");
     app.set_active_result_tab(ResultTab::Plots);
 
@@ -9253,7 +9913,7 @@ fn plot_workspace_mouse_selection_and_export_pdf_work() {
         .expect("load schema from msexplore");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("preset", "amplitude_vs_time");
     app.set_text_value("plot_output", export_path.to_string_lossy().as_ref());
 
@@ -9558,7 +10218,7 @@ fn records_output_file_path_for_advanced_output_mode() {
     let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_text_value("output", output_path.to_string_lossy().as_ref());
     start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
@@ -9570,16 +10230,15 @@ fn records_output_file_path_for_advanced_output_mode() {
 }
 
 #[test]
-fn selection_inputs_force_selectdata_on_run() {
+fn explicit_selectdata_false_is_not_overridden_by_frontend_inference() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_fixture_ms(temp.path());
 
     let schema = load_default_msexplore_schema();
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app.set_toggle_value("selectdata", false);
-    app.set_text_value("field", "3C286");
     start_run_with_default_msexplore_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(60)));
     assert!(
@@ -9601,7 +10260,7 @@ exit 1
     let schema = load_fake_msexplore_schema(&script);
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", "/tmp/fake.ms");
+    app.set_text_value("vis", "/tmp/fake.ms");
     start_run_with_msexplore_launcher_bin(&mut app, &script);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(10)));
     assert!(app.status_line_for_test().contains("Execution failed"));
@@ -9623,7 +10282,7 @@ exit 0
     let schema = load_fake_msexplore_schema(&script);
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", "/tmp/fake.ms");
+    app.set_text_value("vis", "/tmp/fake.ms");
     start_run_with_msexplore_launcher_bin(&mut app, &script);
     assert!(app.is_running_for_test());
     std::thread::sleep(Duration::from_millis(100));
@@ -9773,6 +10432,44 @@ fn test_app() -> (tempfile::TempDir, AppState) {
     (temp, app)
 }
 
+fn msexplore_profile(vis: &str) -> String {
+    let bundle = builtin_surface_bundle("msexplore").expect("msexplore parameter bundle");
+    let mut session = ParameterSession::defaults(bundle).expect("default parameter session");
+    session
+        .set("vis", ParameterValue::String(vis.to_string()))
+        .expect("set profile vis");
+    session.render_sparse().expect("render sparse profile")
+}
+
+fn parameter_value_as_plain_json(value: &ParameterValue) -> serde_json::Value {
+    match value {
+        ParameterValue::Bool(value) => serde_json::Value::Bool(*value),
+        ParameterValue::Integer(value) => (*value).into(),
+        ParameterValue::Float(value) => serde_json::json!(value),
+        ParameterValue::String(value) => value.clone().into(),
+        ParameterValue::Array(values) => {
+            serde_json::Value::Array(values.iter().map(parameter_value_as_plain_json).collect())
+        }
+        ParameterValue::Table(values) => serde_json::Value::Object(
+            values
+                .iter()
+                .map(|(name, value)| (name.clone(), parameter_value_as_plain_json(value)))
+                .collect(),
+        ),
+    }
+}
+
+fn open_parameter_source_picker(app: &mut AppState) {
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    assert!(app.choice_picker_active());
+}
+
+fn type_text(app: &mut AppState, text: &str) {
+    for ch in text.chars() {
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+    }
+}
+
 fn unpack_casa_ms_fixture(archive_name: &str) -> (tempfile::TempDir, PathBuf) {
     let temp = tempdir().expect("tempdir");
     let archive_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9843,7 +10540,7 @@ fn new_msexplore_summary_app(temp_root: &Path, ms_path: &Path) -> AppState {
     let schema = msexplore_command_schema("msexplore");
     let config = ConfigStore::load_for_tests(temp_root.join("casars.toml"));
     let mut app = AppState::from_schema_with_config(msexplore_app(), schema, config);
-    app.set_text_value("ms_path", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("vis", ms_path.to_string_lossy().as_ref());
     app
 }
 
@@ -10188,6 +10885,26 @@ fn read_perf_events(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn read_json_lines(path: &Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(path)
+        .expect("read JSON Lines")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("decode JSON line"))
+        .collect()
+}
+
+fn session_profile(surface: &str, values: &[(&str, ParameterValue)]) -> String {
+    let bundle = builtin_surface_bundle(surface).expect("session parameter bundle");
+    let mut session = ParameterSession::defaults(bundle).expect("default parameter session");
+    for (name, value) in values {
+        session
+            .set((*name).to_string(), value.clone())
+            .expect("set session profile value");
+    }
+    session.render_sparse().expect("render session profile")
+}
+
 #[cfg(unix)]
 fn write_fake_msexplore_script(root: &Path, body: &str) -> PathBuf {
     use std::fs;
@@ -10214,6 +10931,25 @@ fn write_fake_tablebrowser_script(
     responses: &[String],
     raw_response: Option<String>,
 ) -> PathBuf {
+    write_fake_tablebrowser_script_impl(root, responses, raw_response, None)
+}
+
+#[cfg(unix)]
+fn write_fake_tablebrowser_script_with_log(
+    root: &Path,
+    responses: &[String],
+    request_log: &Path,
+) -> PathBuf {
+    write_fake_tablebrowser_script_impl(root, responses, None, Some(request_log))
+}
+
+#[cfg(unix)]
+fn write_fake_tablebrowser_script_impl(
+    root: &Path,
+    responses: &[String],
+    raw_response: Option<String>,
+    request_log: Option<&Path>,
+) -> PathBuf {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
@@ -10227,6 +10963,12 @@ fn write_fake_tablebrowser_script(
     } else {
         session_body.push_str("count=0\n");
         session_body.push_str("while IFS= read -r line; do\n");
+        if let Some(request_log) = request_log {
+            session_body.push_str(&format!(
+                "  printf '%s\\n' \"$line\" >> \"{}\"\n",
+                request_log.display()
+            ));
+        }
         session_body.push_str("  count=$((count + 1))\n");
         session_body.push_str("  case \"$count\" in\n");
         for (index, response) in responses.iter().enumerate() {
@@ -10266,7 +11008,7 @@ fn fake_tablebrowser_schema_json() -> String {
         "usage": "tablebrowser <table-path>",
         "arguments": [
             {
-                "id": "table_path",
+                "id": "table",
                 "label": "Table Path",
                 "order": 0,
                 "parser": {
@@ -10293,6 +11035,25 @@ fn write_fake_imexplore_script(
     responses: &[String],
     raw_response: Option<String>,
 ) -> PathBuf {
+    write_fake_imexplore_script_impl(root, responses, raw_response, None)
+}
+
+#[cfg(unix)]
+fn write_fake_imexplore_script_with_log(
+    root: &Path,
+    responses: &[String],
+    request_log: &Path,
+) -> PathBuf {
+    write_fake_imexplore_script_impl(root, responses, None, Some(request_log))
+}
+
+#[cfg(unix)]
+fn write_fake_imexplore_script_impl(
+    root: &Path,
+    responses: &[String],
+    raw_response: Option<String>,
+    request_log: Option<&Path>,
+) -> PathBuf {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
@@ -10306,6 +11067,12 @@ fn write_fake_imexplore_script(
     } else {
         session_body.push_str("count=0\n");
         session_body.push_str("while IFS= read -r line; do\n");
+        if let Some(request_log) = request_log {
+            session_body.push_str(&format!(
+                "  printf '%s\\n' \"$line\" >> \"{}\"\n",
+                request_log.display()
+            ));
+        }
         session_body.push_str("  count=$((count + 1))\n");
         session_body.push_str("  case \"$count\" in\n");
         for (index, response) in responses.iter().enumerate() {
@@ -10373,7 +11140,7 @@ fn fake_imexplore_schema_json() -> String {
         "usage": "imexplore <image-path>",
         "arguments": [
             {
-                "id": "image_path",
+                "id": "image",
                 "label": "Image Path",
                 "order": 0,
                 "parser": {
@@ -10585,6 +11352,7 @@ fn fake_browser_snapshot_with_focus_and_metrics_json(
     serde_json::to_string(&BrowserResponseEnvelope::snapshot(BrowserSnapshot {
         capabilities: BrowserCapabilities { editable: false },
         view,
+        parameters: casars_tablebrowser_protocol::BrowserParameters::default(),
         focus,
         table_path: "/tmp/fake.ms".to_string(),
         breadcrumb: vec![BrowserBreadcrumbEntry {
@@ -10850,8 +11618,10 @@ fn fake_imexplore_snapshot_json_full(
             region: None,
             saved_region_names: Vec::new(),
             active_region_definition_name: None,
+            region_reference: casars_imagebrowser_protocol::ImageRegionReference::None,
             mask_names: Vec::new(),
             default_mask_name: None,
+            mask_reference: casars_imagebrowser_protocol::ImageMaskReference::None,
             backend_timing: None,
             capabilities: ImageBrowserCapabilities {
                 renderable_plane: true,
@@ -10886,6 +11656,19 @@ fn fake_imexplore_snapshot_json_with_saved_items(
     snapshot.mask_names = mask_names.iter().map(|name| (*name).to_string()).collect();
     snapshot.default_mask_name = default_mask.map(str::to_string);
     snapshot.capabilities.mask_present = !snapshot.mask_names.is_empty();
+    serde_json::to_string(&envelope).expect("serialize fake imexplore snapshot")
+}
+
+fn fake_imexplore_snapshot_json_with_axes(
+    base: String,
+    axes: Vec<ImageNonDisplayAxisState>,
+) -> String {
+    let mut envelope: ImageBrowserResponseEnvelope =
+        serde_json::from_str(&base).expect("parse fake imexplore snapshot");
+    let ImageBrowserResponse::Snapshot(snapshot) = &mut envelope.response else {
+        panic!("expected snapshot response");
+    };
+    snapshot.non_display_axes = axes;
     serde_json::to_string(&envelope).expect("serialize fake imexplore snapshot")
 }
 

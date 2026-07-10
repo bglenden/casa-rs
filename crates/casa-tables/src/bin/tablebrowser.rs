@@ -8,10 +8,9 @@ use std::process;
 
 use casa_tables::{TableBrowser, TableBrowserView};
 use casars_tablebrowser_protocol::{
-    BrowserCommand, BrowserProtocolInfo, BrowserRequestEnvelope, BrowserViewport, PROTOCOL_VERSION,
-    schema_bundle_json,
+    BrowserCommand, BrowserProtocolInfo, BrowserRequestEnvelope, BrowserSessionSchemaBundle,
+    BrowserViewport, PROTOCOL_VERSION, schema_bundle_json,
 };
-use serde_json::json;
 
 const DEFAULT_ROW_LIMIT: usize = 20;
 const DEFAULT_CLI_WIDTH: u16 = 160;
@@ -76,7 +75,7 @@ fn run() -> Result<(), String> {
     if args.peek().is_some_and(|arg| arg == "--json-schema") {
         print!(
             "{}",
-            schema_bundle_json(ui_schema_value())
+            schema_bundle_json()
                 .map_err(|error| format!("serialize tablebrowser schema bundle: {error}"))?
         );
         return Ok(());
@@ -460,56 +459,8 @@ fn run_session() -> Result<(), String> {
 }
 
 fn ui_schema_json() -> Result<String, String> {
-    serde_json::to_string_pretty(&ui_schema_value())
-        .map_err(|error| format!("serialize ui schema: {error}"))
-}
-
-fn ui_schema_value() -> serde_json::Value {
-    json!({
-        "schema_version": 1,
-        "command_id": "tablebrowser",
-        "invocation_name": "tablebrowser",
-        "display_name": "Table Browser",
-        "category": "Tables",
-        "summary": "browse arbitrary casacore tables",
-        "usage": "tablebrowser <table-path>",
-        "arguments": [
-            {
-                "id": "table_path",
-                "label": "Table Path",
-                "order": 0,
-                "parser": {
-                    "kind": "positional",
-                    "metavar": "table-path"
-                },
-                "value_kind": "path",
-                "required": true,
-                "default": null,
-                "help": "Path to the casacore table root directory",
-                "group": "Input",
-                "advanced": false,
-                "hidden_in_tui": false
-            },
-            {
-                "id": "help",
-                "label": "Help",
-                "order": 1,
-                "parser": {
-                    "kind": "action",
-                    "flags": ["-h", "--help"],
-                    "action": "help"
-                },
-                "value_kind": "none",
-                "required": false,
-                "default": null,
-                "help": "Print this help message",
-                "group": "Input",
-                "advanced": true,
-                "hidden_in_tui": true
-            }
-        ],
-        "managed_output": null
-    })
+    let schema = BrowserSessionSchemaBundle::current().ui_schema_projection()?;
+    serde_json::to_string_pretty(&schema).map_err(|error| format!("serialize ui schema: {error}"))
 }
 
 fn print_section(title: &str, lines: &[String]) {

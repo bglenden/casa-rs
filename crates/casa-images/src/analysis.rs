@@ -12,8 +12,9 @@ use casa_coordinates::{
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
+    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
+    derived_ui_schema_annotations, merged_components, project_ui_schema,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
@@ -38,6 +39,20 @@ use crate::{
 pub const IMAGE_ANALYSIS_TASK_PROTOCOL_NAME: &str = "casa_image_analysis_task";
 /// Stable protocol version advertised by the image-analysis task binaries.
 pub const IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION: u32 = 1;
+
+const IMAGE_ANALYSIS_TASK_SURFACES: [&str; 11] = [
+    "imhead",
+    "imstat",
+    "immoments",
+    "impv",
+    "imsubimage",
+    "immath",
+    "impbcor",
+    "imregrid",
+    "feather",
+    "exportfits",
+    "importfits",
+];
 
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
@@ -81,6 +96,8 @@ pub struct ImageAnalysisTaskSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI, CLI, and Python consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical parameter contracts for every image-analysis task surface.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`ImageAnalysisTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`ImageAnalysisTaskResult`].
@@ -185,736 +202,31 @@ impl ImageAnalysisTaskSchemaBundle {
                     ],
                 })),
             },
+            parameter_surfaces: IMAGE_ANALYSIS_TASK_SURFACES
+                .into_iter()
+                .map(|surface| {
+                    builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                        panic!("built-in image-analysis parameter surface {surface:?}: {error}")
+                    })
+                })
+                .collect(),
             request_schema,
             result_schema,
         }
     }
 }
 
-/// Return a launcher-compatible UI schema JSON document for image-analysis binaries.
-pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError> {
-    let (command_id, display_name, summary, usage, arguments) = match binary {
-        "immoments" => (
-            "immoments",
-            "Image Moments",
-            "Create CASA-style image moment maps",
-            "immoments <imagename> --outfile <path> [--moments -1|0|1|2|3] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 0,
-                    parser: positional("imagename"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "outfile",
-                    label: "Output",
-                    order: 1,
-                    parser: option(["--outfile"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "moments",
-                    label: "Moment",
-                    order: 2,
-                    parser: option(["--moments"], "-1|0|1|2|3", ["-1", "0", "1", "2", "3"]),
-                    value_kind: "choice",
-                    required: false,
-                    default: serde_json::json!("0"),
-                    help: "CASA moment number: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity",
-                    group: "Moment",
-                }),
-                arg(UiArgument {
-                    id: "chans",
-                    label: "Channels",
-                    order: 3,
-                    parser: option(["--chans"], "range", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "CASA channel range, for example 4~12",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "includepix",
-                    label: "Include Pixels",
-                    order: 4,
-                    parser: option(["--includepix"], "min,max", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Inclusive pixel range",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "mask",
-                    label: "Mask Expression",
-                    order: 5,
-                    parser: option(["--mask"], "image>threshold", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "CASA image mask expression, for example pb.image>0.3",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 6,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "impv" => (
-            "impv",
-            "Position-Velocity Slice",
-            "Extract a CASA-style position-velocity image",
-            "impv <imagename> --outfile <path> --start x,y --end x,y [--width pixels] [--chans 4~12] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 0,
-                    parser: positional("imagename"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "outfile",
-                    label: "Output",
-                    order: 1,
-                    parser: option(["--outfile"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "start",
-                    label: "Start",
-                    order: 2,
-                    parser: option(["--start"], "x,y", []),
-                    value_kind: "string",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Start pixel coordinate",
-                    group: "Slice",
-                }),
-                arg(UiArgument {
-                    id: "end",
-                    label: "End",
-                    order: 3,
-                    parser: option(["--end"], "x,y", []),
-                    value_kind: "string",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "End pixel coordinate",
-                    group: "Slice",
-                }),
-                arg(UiArgument {
-                    id: "width",
-                    label: "Width",
-                    order: 4,
-                    parser: option(["--width"], "pixels", []),
-                    value_kind: "number",
-                    required: false,
-                    default: serde_json::json!("1"),
-                    help: "Averaging width in pixels",
-                    group: "Slice",
-                }),
-                arg(UiArgument {
-                    id: "chans",
-                    label: "Channels",
-                    order: 5,
-                    parser: option(["--chans"], "range", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "CASA channel range, for example 4~12",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 6,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "imsubimage" => (
-            "imsubimage",
-            "Subimage",
-            "Extract a CASA-style image section",
-            "imsubimage <imagename> <outfile> [--box x0,y0,x1,y1] [--chans 4~12] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 0,
-                    parser: positional("imagename"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "outfile",
-                    label: "Output",
-                    order: 1,
-                    parser: positional("outfile"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "box",
-                    label: "Box",
-                    order: 2,
-                    parser: option(["--box"], "x0,y0,x1,y1", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Inclusive pixel box",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "chans",
-                    label: "Channels",
-                    order: 3,
-                    parser: option(["--chans"], "range", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "CASA channel range",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 4,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "immath" => (
-            "immath",
-            "Image Math",
-            "Evaluate tutorial image arithmetic expressions",
-            "immath --imagename <image0> --imagename <image1> --expr 'IM0 * IM1|IM0 / IM1' --outfile <path> [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Images",
-                    order: 0,
-                    parser: option(["--imagename", "--input"], "path", []),
-                    value_kind: "path-list",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image paths",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "expr",
-                    label: "Expression",
-                    order: 1,
-                    parser: option(["--expr"], "expression", []),
-                    value_kind: "string",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Expression such as IM0 * IM1 or IM0 / IM1",
-                    group: "Math",
-                }),
-                arg(UiArgument {
-                    id: "outfile",
-                    label: "Output",
-                    order: 2,
-                    parser: option(["--outfile"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 3,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "impbcor" => (
-            "impbcor",
-            "Primary Beam Correction",
-            "Apply primary-beam correction to a CASA image",
-            "impbcor --imagename <image> --pbimage <pb> --outfile <path> [--cutoff 0.2] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 0,
-                    parser: option(["--imagename"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "pbimage",
-                    label: "PB Image",
-                    order: 1,
-                    parser: option(["--pbimage"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Primary-beam CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "outfile",
-                    label: "Output",
-                    order: 2,
-                    parser: option(["--outfile"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output PB-corrected CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "cutoff",
-                    label: "Cutoff",
-                    order: 3,
-                    parser: option(["--cutoff"], "value", []),
-                    value_kind: "float",
-                    required: false,
-                    default: serde_json::json!("-1.0"),
-                    help: "Minimum PB value to keep; negative disables cutoff masking",
-                    group: "Correction",
-                }),
-                arg(UiArgument {
-                    id: "mode",
-                    label: "Mode",
-                    order: 9,
-                    parser: option(["--mode"], "divide|multiply", ["divide", "multiply"]),
-                    value_kind: "choice",
-                    required: false,
-                    default: serde_json::json!("divide"),
-                    help: "Correction mode",
-                    group: "Correction",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 10,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "box",
-                    label: "Box",
-                    order: 4,
-                    parser: option(["--box"], "x0,y0,x1,y1", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Optional CASA pixel box selection. Selection-limited impbcor is not implemented yet.",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "region",
-                    label: "Region",
-                    order: 5,
-                    parser: option(["--region"], "path|CRTF box", []),
-                    value_kind: "path",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Optional CASA CRTF region file or inline CRTF region. Selection-limited impbcor is not implemented yet.",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "chans",
-                    label: "Channels",
-                    order: 6,
-                    parser: option(["--chans"], "selector", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Optional channel selector. Selection-limited impbcor is not implemented yet.",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "stokes",
-                    label: "Stokes",
-                    order: 7,
-                    parser: option(["--stokes"], "selector", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Optional Stokes selector. Selection-limited impbcor is not implemented yet.",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "mask",
-                    label: "Mask",
-                    order: 8,
-                    parser: option(["--mask"], "expression", []),
-                    value_kind: "string",
-                    required: false,
-                    default: JsonValue::Null,
-                    help: "Optional mask expression. Selection-limited impbcor is not implemented yet.",
-                    group: "Selection",
-                }),
-                arg(UiArgument {
-                    id: "stretch",
-                    label: "Stretch",
-                    order: 11,
-                    parser: toggle(["--stretch"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Stretch masks to fit the selected image shape. Selection-limited impbcor is not implemented yet.",
-                    group: "Selection",
-                })
-            ]),
-        ),
-        "exportfits" => (
-            "exportfits",
-            "Export FITS",
-            "Export CASA images to FITS",
-            "exportfits <imagename> <fitsimage> [--velocity] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 0,
-                    parser: positional("imagename"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "fitsimage",
-                    label: "FITS",
-                    order: 1,
-                    parser: positional("fitsimage"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output FITS path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "velocity",
-                    label: "Velocity Axis",
-                    order: 2,
-                    parser: toggle(["--velocity"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Write spectral axis as velocity where possible",
-                    group: "FITS",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 3,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing FITS output",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "imregrid" => (
-            "imregrid",
-            "Image Regrid",
-            "Regrid a CASA image onto a template image",
-            "imregrid --imagename <image> --template <image> --output <path> [--interpolation linear|nearest] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 0,
-                    parser: option(["--imagename", "--input"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "template",
-                    label: "Template",
-                    order: 1,
-                    parser: option(["--template"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Template CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "output",
-                    label: "Output",
-                    order: 2,
-                    parser: option(["--output", "--outfile"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "interpolation",
-                    label: "Interpolation",
-                    order: 3,
-                    parser: option(["--interpolation"], "linear|nearest", ["linear", "nearest"]),
-                    value_kind: "choice",
-                    required: false,
-                    default: serde_json::json!("linear"),
-                    help: "Interpolation method",
-                    group: "Regrid",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 4,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "feather" => (
-            "feather",
-            "Feather Images",
-            "Combine high-resolution and low-resolution images in the Fourier domain",
-            "feather --imagename <output> --highres <image> --lowres <image> [--sdfactor N] [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Output",
-                    order: 0,
-                    parser: option(["--imagename", "--output"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "highres",
-                    label: "High Resolution",
-                    order: 1,
-                    parser: option(["--highres"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "High-resolution CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "lowres",
-                    label: "Low Resolution",
-                    order: 2,
-                    parser: option(["--lowres"], "path", []),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Low-resolution CASA image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "sdfactor",
-                    label: "SD Factor",
-                    order: 3,
-                    parser: option(["--sdfactor"], "scale", []),
-                    value_kind: "number",
-                    required: false,
-                    default: serde_json::json!("1.0"),
-                    help: "Single-dish scaling factor",
-                    group: "Feather",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 4,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        "importfits" => (
-            "importfits",
-            "Import FITS",
-            "Import a FITS primary image into a CASA image",
-            "importfits <fitsimage> <imagename> [--overwrite]",
-            serde_json::json!([
-                arg(UiArgument {
-                    id: "fitsimage",
-                    label: "FITS",
-                    order: 0,
-                    parser: positional("fitsimage"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Input FITS image path",
-                    group: "Input",
-                }),
-                arg(UiArgument {
-                    id: "imagename",
-                    label: "Image",
-                    order: 1,
-                    parser: positional("imagename"),
-                    value_kind: "path",
-                    required: true,
-                    default: JsonValue::Null,
-                    help: "Output CASA image path",
-                    group: "Output",
-                }),
-                arg(UiArgument {
-                    id: "overwrite",
-                    label: "Overwrite",
-                    order: 2,
-                    parser: toggle(["--overwrite"], []),
-                    value_kind: "bool",
-                    required: false,
-                    default: serde_json::json!("false"),
-                    help: "Replace existing output image",
-                    group: "Output",
-                })
-            ]),
-        ),
-        _ => (
-            "image-analysis",
-            "Image Analysis",
-            "CASA-style image analysis",
-            "image-analysis",
-            serde_json::json!([]),
-        ),
-    };
-    let value = serde_json::json!({
-        "schema_version": 1,
-        "command_id": command_id,
-        "invocation_name": binary,
-        "display_name": display_name,
-        "category": "Images",
-        "summary": summary,
-        "usage": usage,
-        "arguments": arguments,
-        "managed_output": null
-    });
-    serde_json::to_string_pretty(&value)
+/// Return the launcher-compatible UI projection of a canonical image-analysis surface.
+pub fn image_analysis_ui_schema_json(surface: &str) -> Result<String, ImageError> {
+    if !IMAGE_ANALYSIS_TASK_SURFACES.contains(&surface) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "unknown image-analysis parameter surface {surface:?}"
+        )));
+    }
+    let bundle = builtin_surface_bundle(surface).map_err(ImageError::InvalidMetadata)?;
+    let schema = project_ui_schema(&bundle);
+    serde_json::to_string_pretty(&schema)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
-}
-
-struct UiArgument<'a> {
-    id: &'a str,
-    label: &'a str,
-    order: usize,
-    parser: JsonValue,
-    value_kind: &'a str,
-    required: bool,
-    default: JsonValue,
-    help: &'a str,
-    group: &'a str,
-}
-
-fn arg(argument: UiArgument<'_>) -> JsonValue {
-    serde_json::json!({
-        "id": argument.id,
-        "label": argument.label,
-        "order": argument.order,
-        "parser": argument.parser,
-        "value_kind": argument.value_kind,
-        "required": argument.required,
-        "default": argument.default,
-        "help": argument.help,
-        "group": argument.group,
-        "advanced": false,
-        "hidden_in_tui": false
-    })
-}
-
-fn positional(metavar: &str) -> JsonValue {
-    serde_json::json!({"kind": "positional", "metavar": metavar})
-}
-
-fn option(
-    flags: impl IntoIterator<Item = &'static str>,
-    metavar: &str,
-    choices: impl IntoIterator<Item = &'static str>,
-) -> JsonValue {
-    serde_json::json!({
-        "kind": "option",
-        "flags": flags.into_iter().collect::<Vec<_>>(),
-        "metavar": metavar,
-        "choices": choices.into_iter().collect::<Vec<_>>()
-    })
-}
-
-fn toggle(
-    true_flags: impl IntoIterator<Item = &'static str>,
-    false_flags: impl IntoIterator<Item = &'static str>,
-) -> JsonValue {
-    serde_json::json!({
-        "kind": "toggle",
-        "true_flags": true_flags.into_iter().collect::<Vec<_>>(),
-        "false_flags": false_flags.into_iter().collect::<Vec<_>>()
-    })
 }
 
 /// Top-level image-analysis JSON task request.
@@ -5068,6 +4380,24 @@ mod tests {
             IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
         );
         assert_eq!(bundle.semantic.operations.len(), 11);
+        assert_eq!(bundle.parameter_surfaces.len(), 11);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imhead");
+        assert_eq!(bundle.parameter_surfaces[10].surface.id(), "importfits");
+        for surface in &bundle.parameter_surfaces {
+            surface.validate().unwrap_or_else(|errors| {
+                panic!(
+                    "invalid embedded image-analysis surface {}: {errors:?}",
+                    surface.surface.id()
+                )
+            });
+        }
+        assert_eq!(
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            11
+        );
         assert_eq!(
             bundle
                 .projections
@@ -5084,51 +4414,31 @@ mod tests {
             "casars.tasks.image_analysis"
         );
 
-        for (binary, expected_args) in [
-            ("immoments", ["imagename", "outfile", "moments"].as_slice()),
-            ("impv", ["imagename", "outfile", "start", "end"].as_slice()),
-            ("imsubimage", ["imagename", "outfile", "box"].as_slice()),
-            ("immath", ["imagename", "expr", "outfile"].as_slice()),
-            (
-                "impbcor",
-                ["imagename", "pbimage", "outfile", "cutoff"].as_slice(),
-            ),
-            (
-                "imregrid",
-                ["imagename", "template", "output", "interpolation"].as_slice(),
-            ),
-            (
-                "feather",
-                ["imagename", "highres", "lowres", "sdfactor"].as_slice(),
-            ),
-            (
-                "exportfits",
-                ["imagename", "fitsimage", "velocity"].as_slice(),
-            ),
-            (
-                "importfits",
-                ["fitsimage", "imagename", "overwrite"].as_slice(),
-            ),
-            ("unknown-tool", [].as_slice()),
+        for surface in [
+            "imhead",
+            "imstat",
+            "immoments",
+            "impv",
+            "imsubimage",
+            "immath",
+            "impbcor",
+            "imregrid",
+            "feather",
+            "exportfits",
+            "importfits",
         ] {
-            let schema: serde_json::Value =
-                serde_json::from_str(&image_analysis_ui_schema_json(binary).unwrap()).unwrap();
-            assert_eq!(schema["schema_version"], 1);
-            assert_eq!(schema["invocation_name"], binary);
-            assert_eq!(schema["category"], "Images");
-            let argument_ids = schema["arguments"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|argument| argument["id"].as_str().unwrap())
-                .collect::<Vec<_>>();
-            for expected in expected_args {
-                assert!(
-                    argument_ids.contains(expected),
-                    "{binary} schema missing {expected}: {argument_ids:?}"
-                );
-            }
+            let actual: serde_json::Value = serde_json::from_str(
+                &image_analysis_ui_schema_json(surface).expect("provider UI schema"),
+            )
+            .expect("provider UI schema JSON");
+            let expected = project_ui_schema(
+                &builtin_surface_bundle(surface).expect("canonical image-analysis surface"),
+            );
+            assert_eq!(actual, expected, "{surface} provider projection diverged");
+            assert_eq!(actual["schema_version"], 2);
+            assert_eq!(actual["command_id"], surface);
         }
+        assert!(image_analysis_ui_schema_json("unknown-tool").is_err());
     }
 
     #[test]

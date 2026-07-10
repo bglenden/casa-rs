@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from casars import _task_runtime
+from casars import _task_runtime, parameters
 from casars.tasks import simobserve
 
 
@@ -160,30 +160,29 @@ def test_family_wrapper_encodes_canonical_request(tmp_path: Path) -> None:
     assert request["pointing_count"] == 7
 
 
-def test_saved_request_round_trip_runs_json_file(tmp_path: Path) -> None:
-    binary = _write_stub_binary(tmp_path / "ok" / "simobserve", version="ok")
-    request_path = tmp_path / "requests" / "family.json"
-    request = {
-        "source_model": {"kind": "fits_image", "path": "model.fits"},
-        "telescope": "VLA",
-        "array_config": "synthetic-vla-d",
-        "band": "Q",
-        "target_ms_size_gib": 0.01,
-        "polarizations": 2,
-        "ms_channels": 4,
-        "image_channels": 1,
-        "pointing_count": 1,
-        "imaging_mode": "mfs",
-        "output_ms": "family.ms",
-    }
+def test_saved_configuration_uses_common_sparse_toml_profile(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profiles" / "family.toml"
+    draft = parameters.defaults("simobserve", workspace=tmp_path)
+    draft.update(
+        request_kind="family",
+        source_model="fits_image",
+        telescope="VLA",
+        array_config="synthetic-vla-d",
+        band="Q",
+        target_ms_size_gib=0.01,
+        output_ms="family.ms",
+        ms_channels=4,
+    )
 
-    simobserve.save_request(request_path, kind="family", request=request)
-    loaded = simobserve.load_request(request_path)
-    result = simobserve.run_file(request_path, binary=binary)
+    draft.save(profile_path)
+    loaded = parameters.load(profile_path, workspace=tmp_path)
 
-    assert loaded == {"kind": "family", "request": request}
-    assert result["kind"] == "family"
-    assert result["result"]["request"]["array_config"] == "synthetic-vla-d"
+    text = profile_path.read_text(encoding="utf-8")
+    assert '[casars]' in text
+    assert 'surface = "simobserve"' in text
+    assert '[parameters]' in text
+    assert loaded["array_config"] == "synthetic-vla-d"
+    assert loaded["target_ms_size_gib"] == 0.01
 
 
 def _write_stub_binary(

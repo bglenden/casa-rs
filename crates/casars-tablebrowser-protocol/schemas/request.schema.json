@@ -24,6 +24,109 @@
     }
   },
   "definitions": {
+    "BrowserBookmark": {
+      "description": "Stable startup address independent of a rendered viewport.",
+      "oneOf": [
+        {
+          "description": "A cell addressed by zero-based row and column name.",
+          "type": "object",
+          "required": [
+            "column",
+            "kind",
+            "row"
+          ],
+          "properties": {
+            "column": {
+              "description": "Stable column name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "cell"
+              ]
+            },
+            "row": {
+              "description": "Zero-based row index.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "description": "A table keyword path.",
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "table_keyword"
+              ]
+            },
+            "path": {
+              "description": "Keyword-name path from the table keyword root.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "description": "A keyword path owned by one column.",
+          "type": "object",
+          "required": [
+            "column",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "column": {
+              "description": "Owning column name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "column_keyword"
+              ]
+            },
+            "path": {
+              "description": "Keyword-name path from the column keyword root.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "description": "A linked subtable entry selected by stable name/path/source text.",
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "subtable"
+              ]
+            },
+            "name": {
+              "description": "Linked-table selector.",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
     "BrowserCommand": {
       "description": "Command sent to the browser backend.",
       "oneOf": [
@@ -53,6 +156,25 @@
                   "$ref": "#/definitions/BrowserViewport"
                 }
               ]
+            }
+          }
+        },
+        {
+          "description": "Apply the durable startup/update parameters to the opened table.",
+          "type": "object",
+          "required": [
+            "command",
+            "parameters"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": [
+                "configure"
+              ]
+            },
+            "parameters": {
+              "$ref": "#/definitions/BrowserParameters"
             }
           }
         },
@@ -450,6 +572,32 @@
         }
       ]
     },
+    "BrowserContentMode": {
+      "description": "Requested verbosity for rendered table-browser content.",
+      "oneOf": [
+        {
+          "description": "Let the backend choose the representation appropriate to the view.",
+          "type": "string",
+          "enum": [
+            "auto"
+          ]
+        },
+        {
+          "description": "Prefer compact one-line values and summaries.",
+          "type": "string",
+          "enum": [
+            "compact"
+          ]
+        },
+        {
+          "description": "Prefer expanded details and an inspector-oriented presentation.",
+          "type": "string",
+          "enum": [
+            "detailed"
+          ]
+        }
+      ]
+    },
     "BrowserFocus": {
       "description": "Active focus target inside the browser.",
       "oneOf": [
@@ -465,6 +613,104 @@
           "type": "string",
           "enum": [
             "inspector"
+          ]
+        }
+      ]
+    },
+    "BrowserParameters": {
+      "description": "Durable table-browser parameters applied after a root table is open.",
+      "type": "object",
+      "required": [
+        "row_count",
+        "row_start",
+        "view"
+      ],
+      "properties": {
+        "bookmark": {
+          "description": "Optional stable selection restored after opening the target table.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BrowserBookmark"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_mode": {
+          "description": "Requested content verbosity.",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/BrowserContentMode"
+            }
+          ]
+        },
+        "linked_table": {
+          "description": "Optional linked table to open before applying the view/bookmark.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "row_count": {
+          "description": "Maximum number of rows in the navigable cell window.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "row_start": {
+          "description": "First zero-based row in the navigable cell window.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "view": {
+          "description": "Initial top-level view.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/BrowserView"
+            }
+          ]
+        }
+      }
+    },
+    "BrowserView": {
+      "description": "Top-level browser view.",
+      "oneOf": [
+        {
+          "description": "Table summary and storage metadata.",
+          "type": "string",
+          "enum": [
+            "overview"
+          ]
+        },
+        {
+          "description": "Column inventory and per-column metadata.",
+          "type": "string",
+          "enum": [
+            "columns"
+          ]
+        },
+        {
+          "description": "Table and column keyword tree.",
+          "type": "string",
+          "enum": [
+            "keywords"
+          ]
+        },
+        {
+          "description": "Row/column cell grid.",
+          "type": "string",
+          "enum": [
+            "cells"
+          ]
+        },
+        {
+          "description": "Linked persistent subtables.",
+          "type": "string",
+          "enum": [
+            "subtables"
           ]
         }
       ]

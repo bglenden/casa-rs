@@ -17,6 +17,8 @@ casa-calibration = { path = "../casa-calibration" }
 casa-images = { path = "../casa-images" }
 casa-imaging = { path = "../casa-imaging" }
 casa-logging = { path = "../casa-logging" }
+casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-task-runtime = { path = "../casa-task-runtime" }
 casa-vla = { path = "../casa-vla" }
 casars-imager = { path = "../casars-imager" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }

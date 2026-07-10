@@ -100,8 +100,9 @@ exact point-source and Gaussian visibility predictions plus per-channel spectra.
 
 ## Family Inputs
 
-The dialog-persistent shape is `kind: "family"`. It records the parameters
-needed to size and regenerate a family member for an imaging mode:
+The machine invocation envelope uses `kind: "family"`. It records the values
+needed to size and generate a family member for an imaging mode. Human-saved
+configuration uses the equivalent sparse TOML profile shown below:
 
 ```json
 {
@@ -176,23 +177,25 @@ diagnostics and manifests; it does not change the MS channel count by itself.
 Python callers can use the same contract without a second schema:
 
 ```python
-from casars.tasks import simobserve
+from casars import parameters, tasks
 
-request = {
-    "source_model": {"kind": "analytic_components", "path": "models/14pt-3gauss-v1.json"},
-    "telescope": "ALMA",
-    "array_config": "synthetic-aca",
-    "band": "Band 3",
-    "target_ms_size_gib": 0.25,
-    "polarizations": 4,
-    "ms_channels": 32,
-    "image_channels": 8,
-    "pointing_count": 7,
-    "imaging_mode": "mosaic",
-    "output_ms": "out/aca-mosaic.ms",
-}
-simobserve.save_request("out/aca-mosaic.json", kind="family", request=request)
-result = simobserve.run_file("out/aca-mosaic.json")
+profile = parameters.defaults("simobserve")
+profile.update(
+    request_kind="family",
+    source_model='{"kind":"analytic_components","path":"models/14pt-3gauss-v1.json"}',
+    telescope="ALMA",
+    array_config="synthetic-aca",
+    band="Band 3",
+    target_ms_size_gib=0.25,
+    polarizations=4,
+    ms_channels=32,
+    image_channels=8,
+    pointing_count=7,
+    imaging_mode="mosaic",
+    output_ms="out/aca-mosaic.ms",
+)
+profile.save("out/aca-mosaic.toml")
+result = tasks.run("simobserve", parameters=profile)
 ```
 
 ## Spectral Diagnostics

@@ -1,0 +1,17 @@
+[casars]
+format = 1
+surface = "imexplore"
+kind = "session"
+contract = 2
+
+[parameters]
+image = "fixtures/science.image"
+view = "spectrum"
+contentmode = "spreadsheet"
+colormap = "viridis"
+profileaxis = "Stokes"
+movieaxis = "Frequency"
+fps = 12
+loop = true
+region = "definition:source"
+mask = "mask0"

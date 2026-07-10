@@ -1,0 +1,12 @@
+[casars]
+format = 1
+surface = "imager"
+kind = "task"
+contract = 1
+
+[parameters]
+vis = "input.ms"
+imagename = "products/image"
+imsize = 1024
+cell = "0.0002777777777777778deg"
+niter = 7

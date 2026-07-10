@@ -7,7 +7,6 @@
     "tui": "Each parameter id must be invokable from the TUI unless hidden_in_tui is explicitly true for a meta action.",
     "gui": "Each parameter id must be rendered by the generic Swift task panel, using dataset-grounded selectors where the selected dataset provides real options.",
     "grounded_selectors": [
-      "ms",
       "vis",
       "field",
       "phasecenter_field",
@@ -26,10 +25,10 @@
       "task_id": "imager",
       "task_represents": "tclean",
       "parameters": [
-        "ms",
+        "vis",
         "imagename",
         "imsize",
-        "cell_arcsec",
+        "cell",
         "field",
         "spw",
         "specmode",
@@ -38,7 +37,7 @@
         "robust",
         "deconvolver",
         "niter",
-        "threshold_jy"
+        "threshold"
       ]
     },
     {
@@ -48,7 +47,7 @@
       "task_id": "imager",
       "task_represents": "tclean",
       "parameters": [
-        "ms",
+        "vis",
         "imagename",
         "field",
         "spw",
@@ -63,10 +62,10 @@
         "perchanweightdensity",
         "restoringbeam",
         "imsize",
-        "cell_arcsec",
+        "cell",
         "phasecenter_field",
         "niter",
-        "threshold_jy",
+        "threshold",
         "datacolumn"
       ]
     },
@@ -77,7 +76,7 @@
       "task_id": "imager",
       "task_represents": "tclean",
       "parameters": [
-        "ms",
+        "vis",
         "imagename",
         "specmode",
         "channel_count",
@@ -90,9 +89,9 @@
         "robust",
         "restoringbeam",
         "imsize",
-        "cell_arcsec",
+        "cell",
         "niter",
-        "threshold_jy",
+        "threshold",
         "usemask",
         "noisethreshold",
         "sidelobethreshold",
@@ -112,7 +111,7 @@
       "task_id": "imager",
       "task_represents": "tclean",
       "parameters": [
-        "ms",
+        "vis",
         "imagename",
         "phasecenter_field",
         "spw",
@@ -123,12 +122,12 @@
         "weighting",
         "robust",
         "imsize",
-        "cell_arcsec",
+        "cell",
         "niter",
         "minor_cycle_length",
         "hogbom_iteration_mode",
         "gain",
-        "threshold_jy",
+        "threshold",
         "pbcor",
         "pblimit"
       ]
@@ -140,10 +139,10 @@
       "task_id": "imager",
       "task_represents": "tclean",
       "parameters": [
-        "ms",
+        "vis",
         "imagename",
         "imsize",
-        "cell_arcsec",
+        "cell",
         "pblimit",
         "spw",
         "deconvolver",
@@ -154,7 +153,7 @@
         "wprojplanes",
         "niter",
         "nmajor",
-        "threshold_jy",
+        "threshold",
         "weighting",
         "robust",
         "savemodel",
@@ -180,7 +179,7 @@
         "antenna",
         "scan",
         "correlation",
-        "data_column",
+        "datacolumn",
         "preset",
         "x_axis",
         "y_axis",
@@ -199,7 +198,7 @@
       "task_id": "imhead",
       "task_represents": "imhead",
       "parameters": [
-        "image_path",
+        "imagename",
         "json",
         "mode",
         "hdkey",
@@ -212,7 +211,7 @@
       "task_id": "imstat",
       "task_represents": "imstat",
       "parameters": [
-        "image_path",
+        "imagename",
         "box",
         "region",
         "chans",
@@ -225,7 +224,7 @@
       "task_id": "split",
       "task_represents": "split",
       "parameters": [
-        "ms",
+        "vis",
         "out",
         "spw",
         "field",
@@ -284,8 +283,8 @@
       "task_represents": "uvcontsub, gencal, gaincal, bandpass, fluxscale, applycal",
       "parameters": [
         "mode",
-        "measurement_set",
-        "output_measurement_set",
+        "vis",
+        "outputvis",
         "table_path",
         "gaintables",
         "callib",
@@ -330,8 +329,8 @@
       "task_id": "uvcontsub",
       "task_represents": "uvcontsub",
       "parameters": [
-        "measurement_set",
-        "output_measurement_set",
+        "vis",
+        "outputvis",
         "fit_spw",
         "fit_order",
         "stats_datacolumn",
@@ -355,7 +354,7 @@
       "task_id": "applycal",
       "task_represents": "applycal",
       "parameters": [
-        "measurement_set",
+        "vis",
         "gaintables",
         "callib",
         "gainfield",
@@ -384,7 +383,7 @@
       "task_id": "gaincal",
       "task_represents": "gaincal",
       "parameters": [
-        "measurement_set",
+        "vis",
         "out_table",
         "refant",
         "gaintables",
@@ -420,7 +419,7 @@
       "task_id": "bandpass",
       "task_represents": "bandpass",
       "parameters": [
-        "measurement_set",
+        "vis",
         "out_table",
         "refant",
         "gaintables",
@@ -471,7 +470,7 @@
       "task_id": "gencal",
       "task_represents": "gencal",
       "parameters": [
-        "measurement_set",
+        "vis",
         "out_table",
         "caltype",
         "antenna",

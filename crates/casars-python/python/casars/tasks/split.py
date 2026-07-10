@@ -1,4 +1,9 @@
-"""CASA-style split wrapper backed by the canonical ``mstransform`` executable."""
+"""Raw mstransform-provider request/result object API for ``split``.
+
+This module intentionally does not load profiles or update managed Last state.
+Use :func:`casars.tasks.profiles.split` for the unified CASA-named parameter
+lifecycle.
+"""
 
 from __future__ import annotations
 

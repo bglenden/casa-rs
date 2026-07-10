@@ -1,4 +1,9 @@
-"""Image-analysis task wrappers backed by casa-rs executables."""
+"""Raw image-analysis provider request/result object APIs.
+
+These functions intentionally do not load profiles or update managed Last
+state. Use the corresponding functions in :mod:`casars.tasks.profiles` for the
+unified CASA-named parameter lifecycle.
+"""
 
 from __future__ import annotations
 

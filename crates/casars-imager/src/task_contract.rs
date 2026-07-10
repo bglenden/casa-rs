@@ -17,8 +17,9 @@ use casa_ms::{
 };
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
-    ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
-    derived_ui_schema_annotations, merged_components,
+    ProviderProjectionMetadata, ProviderSurfaceKind, SurfaceContractBundle,
+    TaskOperationDescriptor, TaskSemanticContract, builtin_surface_bundle,
+    derived_ui_schema_annotations, merged_components, project_ui_schema,
 };
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
@@ -29,7 +30,7 @@ use serde_json::Value as JsonValue;
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
     ImagingFftPrecisionPolicy, RunSummary, SaveModelMode, SpectralMode,
-    StandardMfsAccelerationPolicy, command_schema, run_from_request,
+    StandardMfsAccelerationPolicy, run_from_request,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -110,6 +111,8 @@ pub struct ImagerTaskSchemaBundle {
     pub annotations: JsonValue,
     /// Derived projection metadata for UI and CLI consumers.
     pub projections: ProviderProjectionMetadata,
+    /// Canonical parameter contract embedded for self-contained consumers.
+    pub parameter_surfaces: Vec<SurfaceContractBundle>,
     /// JSON schema for [`ImagerTaskRequest`].
     pub request_schema: RootSchema,
     /// JSON schema for [`ImagerTaskResult`].
@@ -124,8 +127,10 @@ impl ImagerTaskSchemaBundle {
         let request_schema = schema_for!(ImagerTaskRequest);
         let result_schema = schema_for!(ImagerTaskResult);
         let progress_event_schema = schema_for!(ImagerProgressEvent);
-        let ui_schema = serde_json::to_value(command_schema("casars-imager"))
-            .expect("serialize imager ui schema projection");
+        let ui_schema = project_ui_schema(
+            &builtin_surface_bundle("imager")
+                .expect("built-in imager parameter surface must remain valid"),
+        );
         Self {
             protocol: ImagerProtocolInfo::current(),
             semantic: TaskSemanticContract {
@@ -156,6 +161,10 @@ impl ImagerTaskSchemaBundle {
                 ui_schema: Some(ui_schema),
                 python: None,
             },
+            parameter_surfaces: vec![
+                builtin_surface_bundle("imager")
+                    .expect("built-in imager parameter surface must remain valid"),
+            ],
             request_schema,
             result_schema,
             progress_event_schema,
@@ -2883,6 +2892,18 @@ mod tests {
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
         assert!(bundle.projections.ui_schema.is_some());
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
+        bundle.parameter_surfaces[0]
+            .validate()
+            .expect("embedded imager parameter surface");
+        assert_eq!(
+            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         let request_schema = serde_json::to_value(&bundle.request_schema).unwrap();
         let result_schema = serde_json::to_value(&bundle.result_schema).unwrap();
         let progress_event_schema = serde_json::to_value(&bundle.progress_event_schema).unwrap();
