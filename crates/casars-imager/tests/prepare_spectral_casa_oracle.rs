@@ -11,8 +11,8 @@ use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_c
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casars_imager::{
-    CliConfig, PreparedSampleRejectionReason, SelectedRowTrace, SpectralMode, WeightSourceKind,
-    build_prepare_spectral_trace_from_config,
+    CliConfig, ImagingFftPrecisionPolicy, PreparedSampleRejectionReason, SelectedRowTrace,
+    SpectralMode, WeightSourceKind, build_prepare_spectral_trace_from_config,
 };
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
@@ -531,6 +531,7 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         imaging_prepare_buffer_mb: None,
         imaging_row_block_rows: None,
         imaging_prepare_workers: None,
+        imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
         write_preview_pngs: false,
     }
 }

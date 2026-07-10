@@ -13,4 +13,5 @@ IMAGING_WEIGHT_*/
 __pycache__/
 *.py[cod]
 .codex/
+.codex-run-worktrees/
 docs/generated/cargo-metadata.json

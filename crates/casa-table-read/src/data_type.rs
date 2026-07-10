@@ -102,10 +102,9 @@ pub fn parse_column_class_name(class_name: &str) -> Option<(CasacoreDataType, bo
 
     let (inner, is_array) = if let Some(inner) = class_name.strip_prefix("ScalarColumnDesc<") {
         (inner, false)
-    } else if let Some(inner) = class_name.strip_prefix("ArrayColumnDesc<") {
-        (inner, true)
     } else {
-        return None;
+        let inner = class_name.strip_prefix("ArrayColumnDesc<")?;
+        (inner, true)
     };
 
     let inner = inner.strip_suffix('>').unwrap_or(inner).trim();
