@@ -39,7 +39,7 @@ results; the catalog-driven generic runner is the uniform path for all tasks.
 Generated CASA-named conveniences live in `casars.tasks.catalog`; session
 conveniences are `casars.sessions.imexplore` and
 `casars.sessions.tablebrowser`. Their checked `.pyi` files are regenerated from
-`resources/parameter-surfaces.json`.
+`crates/casa-provider-contracts/resources/parameter-surfaces.json`.
 
 ## `casars.data`
 

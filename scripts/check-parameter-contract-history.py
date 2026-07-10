@@ -13,8 +13,9 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CATALOG_PATH = REPO_ROOT / "resources/parameter-catalog.json"
-SURFACES_PATH = REPO_ROOT / "resources/parameter-surfaces.json"
+CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
+SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 HISTORY_PATH = REPO_ROOT / "resources/parameter-contract-history.json"
 
 

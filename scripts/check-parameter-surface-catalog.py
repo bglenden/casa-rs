@@ -12,8 +12,9 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = REPO_ROOT / "resources" / "task-catalog.json"
-PARAMETER_SURFACES_PATH = REPO_ROOT / "resources" / "parameter-surfaces.json"
-PARAMETER_CATALOG_PATH = REPO_ROOT / "resources" / "parameter-catalog.json"
+CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+PARAMETER_SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
+PARAMETER_CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
 EXPECTED_SCHEMA_VERSION = 1
 
 CATALOG_FIELDS = {
@@ -318,7 +319,7 @@ def validate_parameter_surfaces(
     concepts_by_id: dict[str, dict[str, Any]],
 ) -> None:
     if not isinstance(index, dict):
-        fail("resources/parameter-surfaces.json must contain a JSON object")
+        fail(f"{PARAMETER_SURFACES_PATH} must contain a JSON object")
     require_exact_fields(index, {"schema_version", "surfaces"}, "parameter surface index")
     if type(index["schema_version"]) is not int:
         fail("parameter surface index schema_version must be an integer")
@@ -407,7 +408,7 @@ def validate_parameter_surfaces(
 
 def validate_parameter_catalog(catalog: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(catalog, dict):
-        fail("resources/parameter-catalog.json must contain a JSON object")
+        fail(f"{PARAMETER_CATALOG_PATH} must contain a JSON object")
     require_exact_fields(catalog, {"schema_version", "concepts"}, "parameter catalog")
     if catalog["schema_version"] != EXPECTED_SCHEMA_VERSION:
         fail(
