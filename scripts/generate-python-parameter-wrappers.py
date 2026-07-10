@@ -13,8 +13,9 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SURFACES_PATH = REPO_ROOT / "resources" / "parameter-surfaces.json"
-CATALOG_PATH = REPO_ROOT / "resources" / "parameter-catalog.json"
+CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
+CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
 TASK_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.py"
 TASK_STUB = REPO_ROOT / "crates/casars-python/python/casars/tasks/catalog.pyi"
 SESSION_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.py"

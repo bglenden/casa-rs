@@ -9,11 +9,11 @@ use crate::{ParameterCatalog, SurfaceCatalogBundle, SurfaceContractBundle, Surfa
 
 const PARAMETER_CATALOG_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/parameter-catalog.json"
+    "/resources/parameter-catalog.json"
 ));
 const PARAMETER_SURFACES_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../resources/parameter-surfaces.json"
+    "/resources/parameter-surfaces.json"
 ));
 
 #[derive(Deserialize)]
@@ -28,9 +28,9 @@ pub fn builtin_surface_catalog() -> Result<&'static SurfaceCatalogBundle, String
     BUILTIN
         .get_or_init(|| {
             let catalog = serde_json::from_str::<ParameterCatalog>(PARAMETER_CATALOG_JSON)
-                .map_err(|error| format!("parse resources/parameter-catalog.json: {error}"))?;
+                .map_err(|error| format!("parse provider parameter-catalog.json: {error}"))?;
             let index = serde_json::from_str::<SurfaceIndex>(PARAMETER_SURFACES_JSON)
-                .map_err(|error| format!("parse resources/parameter-surfaces.json: {error}"))?;
+                .map_err(|error| format!("parse provider parameter-surfaces.json: {error}"))?;
             let bundle = SurfaceCatalogBundle {
                 schema_version: index.schema_version,
                 catalog,
