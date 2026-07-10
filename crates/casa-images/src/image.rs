@@ -3144,7 +3144,7 @@ mod tests {
         eprintln!(
             "full shape: {:?}, expected: {:?}",
             full.shape(),
-            &[size, size, size]
+            [size, size, size]
         );
         assert_eq!(full.shape(), &[size, size, size]);
         for z in 0..size {

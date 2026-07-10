@@ -227,7 +227,7 @@ impl<'a> ScalarQuantColumn<'a> {
         })?;
         let fixed_unit = if !desc.is_unit_variable() && !desc.units.is_empty() {
             Some(Unit::new(&desc.units[0]).map_err(|e| {
-                TableError::Storage(format!("invalid unit '{}': {e}", &desc.units[0]))
+                TableError::Storage(format!("invalid unit '{}': {e}", desc.units[0]))
             })?)
         } else {
             None
