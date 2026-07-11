@@ -15,7 +15,8 @@ mod store;
 pub use ids::{CellId, NotebookId, RunId};
 pub use markdown::{CellKind, NotebookCell, NotebookDocument, NotebookParseError, TaskCellIntent};
 pub use receipt::{
-    ApprovalRecord, ArtifactReference, ExecutionReceipt, ExecutionStatus, LogReferences,
+    ApprovalRecord, ArtifactReference, ExecutionInput, ExecutionReceipt, ExecutionStatus,
+    LogReferences, PythonEnvironmentIdentity, PythonExecutionAuthority, PythonExecutionInput,
     ReceiptFinalization, RecordingRequest, ReplayAssessment, RunSafetyRecord, Timestamp,
 };
 pub use store::{

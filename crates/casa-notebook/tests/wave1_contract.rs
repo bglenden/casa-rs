@@ -36,6 +36,7 @@ fn request(notebook_id: Option<NotebookId>, cell_id: Option<CellId>) -> Recordin
         notebook_id,
         cell_id,
         task_intent: Some(intent()),
+        execution_input: None,
         provider_contract_version: 3,
         resolved_parameters: BTreeMap::from([
             ("vis".into(), serde_json::json!("data/twhya.ms")),

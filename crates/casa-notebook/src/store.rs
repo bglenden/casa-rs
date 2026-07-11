@@ -220,6 +220,13 @@ impl NotebookStore {
     }
 
     pub fn begin_attempt(&self, request: RecordingRequest) -> Result<AttemptHandle, StoreError> {
+        if let Some(message) = request
+            .execution_input
+            .as_ref()
+            .and_then(crate::ExecutionInput::validation_error)
+        {
+            return Err(StoreError::InvalidExecutionInput { message });
+        }
         let _lock = self.lock_project()?;
         let mut snapshot = match request.notebook_id {
             Some(id) => self.open_notebook_id(id)?,
@@ -330,6 +337,7 @@ impl NotebookStore {
             finished_at: finalization.finished_at,
             status: finalization.status,
             sparse_intent: pending.request.task_intent,
+            execution_input: pending.request.execution_input,
             resolved_parameters: pending.request.resolved_parameters,
             provider_contract_version: pending.request.provider_contract_version,
             run_safety: pending.request.run_safety,
@@ -692,6 +700,8 @@ pub enum StoreError {
     ReceiptAlreadyFinalized { run_id: RunId },
     #[error("attempt state does not match handle {run_id}")]
     AttemptIdentityMismatch { run_id: RunId },
+    #[error("invalid execution input: {message}")]
+    InvalidExecutionInput { message: &'static str },
     #[error("active notebook-attempt lease registry is unavailable")]
     AttemptLeaseRegistryUnavailable,
     #[error("export destination already exists: {path}", path = .path.display())]
@@ -991,6 +1001,7 @@ mod tests {
                     contract: 1,
                     parameters: BTreeMap::new(),
                 }),
+                execution_input: None,
                 provider_contract_version: 1,
                 resolved_parameters: BTreeMap::new(),
                 run_safety: RunSafetyRecord {
