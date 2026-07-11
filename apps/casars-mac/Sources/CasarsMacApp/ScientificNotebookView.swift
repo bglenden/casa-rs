@@ -86,7 +86,7 @@ struct ScientificNotebookView: View {
             Spacer()
             Text("Fixture controls only · no task, provider, data, or network access")
                 .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
